@@ -385,6 +385,28 @@ def apply_proposal(
             label=label,
         )
 
+    # Refuse to operate when tracked files have uncommitted edits —
+    # ``git checkout -b`` would carry them into the new branch, and
+    # our later ``git add <paths>`` could silently sweep them into
+    # the commit. Untracked files (e.g. ``state/improvements/*.json``,
+    # which is exactly where the proposals JSON we just wrote lives)
+    # are fine because ``git add <paths>`` won't pick them up.
+    diff_proc = _run(
+        ["git", "diff", "--quiet", "HEAD", "--"],
+        cwd=repo_path,
+        runner=runner,
+        timeout=15,
+    )
+    if diff_proc.returncode != 0:
+        return ApplyResult(
+            proposal_index=proposal_index,
+            classification=classification,
+            status="abandoned",
+            error="dirty_working_tree",
+            title=title,
+            label=label,
+        )
+
     def _cleanup() -> None:
         # Best-effort restore. We never raise from cleanup — the
         # caller already has an error to report.

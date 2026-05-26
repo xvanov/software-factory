@@ -437,6 +437,44 @@ def test_apply_proposal_aborts_on_patch_apply_failure(tmp_path: Path) -> None:
     assert head.stdout.strip() == "main"
 
 
+def test_apply_proposal_refuses_dirty_tree(tmp_path: Path) -> None:
+    """Uncommitted edits to *tracked* files → abandoned, no branch
+    created. The operator's WIP must never get swept into an improver
+    commit. (Untracked files are tolerated — that's where the
+    proposals JSON lives in real runs.)"""
+    rel = "factory/personas/dev.md"
+    repo = _make_repo_with_file(tmp_path, rel, "# Persona\nbody line\n")
+    # Modify a tracked file (the persona itself) so the working tree
+    # diverges from HEAD.
+    (repo / rel).write_text("# Persona\nbody line\nlocal edit\n", encoding="utf-8")
+    proposal = {
+        "kind": "prompt_edit",
+        "target": rel,
+        "rationale": "Should be refused.",
+        "suggested_patch": _persona_diff_safe(rel),
+    }
+    runner, _calls = _make_runner_with_capture()
+
+    result = apply_proposal(
+        proposal,
+        repo,
+        proposal_index=0,
+        timestamp="123",
+        runner=runner,
+    )
+    assert result.status == "abandoned"
+    assert result.error == "dirty_working_tree"
+    # We did NOT create the branch.
+    branches = subprocess.run(
+        ["git", "branch", "--list"],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "factory-improver/" not in branches.stdout
+
+
 def test_apply_proposal_invalid_short_circuits(tmp_path: Path) -> None:
     """An invalid proposal returns immediately without touching git."""
     repo = _make_repo_with_file(tmp_path, "factory/personas/dev.md", "x\n")
