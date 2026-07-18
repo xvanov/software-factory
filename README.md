@@ -1,0 +1,138 @@
+# Repository Coverage
+
+[Full report](https://htmlpreview.github.io/?https://github.com/xvanov/software-factory/blob/python-coverage-comment-action-data/htmlcov/index.html)
+
+| Name                                                   |    Stmts |     Miss |   Cover |   Missing |
+|------------------------------------------------------- | -------: | -------: | ------: | --------: |
+| factory/\_\_init\_\_.py                                |        2 |        0 |    100% |           |
+| factory/app\_config.py                                 |       61 |        4 |     93% |107, 111, 126, 144 |
+| factory/artifacts/\_\_init\_\_.py                      |        0 |        0 |    100% |           |
+| factory/backpressure/\_\_init\_\_.py                   |        0 |        0 |    100% |           |
+| factory/backpressure/parser.py                         |       67 |        5 |     93% |103-104, 128, 132-133 |
+| factory/backpressure/validator.py                      |       78 |        3 |     96% | 52-53, 72 |
+| factory/chain/\_\_init\_\_.py                          |        0 |        0 |    100% |           |
+| factory/chain/auto\_merge.py                           |      176 |       36 |     80% |253, 267, 464, 487-501, 524, 632-640, 651-655, 672-719, 746 |
+| factory/chain/branch.py                                |       56 |        4 |     93% |   163-166 |
+| factory/chain/bug\_hunter.py                           |        8 |        8 |      0% |     13-62 |
+| factory/chain/context\_refresh.py                      |      179 |       40 |     78% |123-130, 211, 222-248, 277-290, 360-369, 411, 442, 477, 524-526, 541-543, 545-548, 553-556, 564-565, 567, 571-572 |
+| factory/chain/dual\_draft.py                           |       79 |        6 |     92% |61-62, 194, 225, 227, 231 |
+| factory/chain/event\_log.py                            |       55 |        3 |     95% |122, 132-133 |
+| factory/chain/factory\_improver.py                     |      274 |       92 |     66% |142, 159-160, 162, 167-168, 184-221, 254-255, 262-263, 330, 373-395, 409-410, 435-436, 513-514, 535, 561, 629-667, 684-686, 700-712, 739-782 |
+| factory/chain/factory\_improver\_apply.py              |      327 |       41 |     87% |120, 124, 153-154, 233, 246, 314, 379-380, 428-429, 439, 468-469, 516, 523-524, 547-548, 570, 607, 663-664, 692, 752, 785-794, 832-833, 836, 846-855, 869, 907-911 |
+| factory/chain/factory\_status.py                       |      144 |        8 |     94% |81-82, 114-115, 117, 260, 282-284 |
+| factory/chain/gates/\_\_init\_\_.py                    |        3 |        0 |    100% |           |
+| factory/chain/gates/canonical\_paths\_only.py          |       10 |        0 |    100% |           |
+| factory/chain/gates/coverage\_verified.py              |       19 |        4 |     79% |     51-55 |
+| factory/chain/gates/docs\_current.py                   |       23 |        3 |     87% | 19, 24-25 |
+| factory/chain/gates/evaluator.py                       |       52 |        5 |     90% |103, 133-138 |
+| factory/chain/gates/flow\_verified.py                  |       57 |        6 |     89% |56, 63-64, 94, 101, 113 |
+| factory/chain/gates/format\_clean.py                   |       19 |        5 |     74% | 28, 40-43 |
+| factory/chain/gates/lint\_clean.py                     |       19 |        3 |     84% | 30, 44-45 |
+| factory/chain/gates/smoke\_green.py                    |       15 |        0 |    100% |           |
+| factory/chain/gates/tests\_green.py                    |       20 |        3 |     85% | 30, 38-39 |
+| factory/chain/gates/tests\_meaningful.py               |       13 |        0 |    100% |           |
+| factory/chain/gates/tests\_red\_first\_confirmed.py    |       20 |        2 |     90% |     34-35 |
+| factory/chain/gates/types\_clean.py                    |       19 |        5 |     74% | 28, 40-43 |
+| factory/chain/handlers.py                              |     1007 |      209 |     79% |158, 183-185, 291-305, 312-313, 340-351, 373-374, 383-395, 476-477, 481-482, 621-624, 626-629, 633-634, 676, 849, 870-872, 886-887, 986-992, 1126, 1148, 1155, 1163-1164, 1166-1169, 1228-1229, 1239-1246, 1248-1256, 1439-1441, 1478-1480, 1507, 1537, 1553-1556, 1589-1590, 1598, 1604, 1614, 1654-1655, 1761, 1765-1766, 1818, 1831-1832, 1834-1845, 1885-1886, 1888, 1898-1899, 1910-1911, 1913, 1921, 1923, 1986-1987, 2097-2098, 2104-2110, 2150-2151, 2165, 2216, 2250-2254, 2276-2279, 2380-2381, 2664-2668, 2741-2742, 2774-2778, 2798-2802, 2831-2866, 2889-3048, 3208-3211 |
+| factory/chain/idle.py                                  |      128 |       28 |     78% |61-63, 84-85, 96-110, 130-131, 153, 178, 181, 205-217, 235 |
+| factory/chain/orchestrator.py                          |      345 |       54 |     84% |167, 182-186, 325, 653-656, 669, 676-681, 701-702, 717-719, 727-729, 747-752, 767-768, 789-794, 804-805, 840-847, 867-868, 899, 938-948, 993-994, 1059-1060, 1087-1091, 1094-1096, 1116-1117 |
+| factory/chain/pm\_sync.py                              |      230 |       33 |     86% |148-149, 151-152, 154-156, 174, 183, 214, 412, 444, 477-481, 485, 508, 541-554, 580, 585-586, 610, 617, 627-629, 645, 657-659, 714 |
+| factory/chain/review\_events.py                        |       11 |        0 |    100% |           |
+| factory/chain/rollback.py                              |      106 |        3 |     97% |102-103, 105 |
+| factory/chain/scheduled\_tasks.py                      |      181 |       46 |     75% |231, 240-243, 276, 293-294, 326, 335, 474-478, 493, 498, 507-509, 564-577, 598-629 |
+| factory/chain/security.py                              |        7 |        7 |      0% |     11-46 |
+| factory/chain/slop\_detector.py                        |      257 |       38 |     85% |109-112, 135, 137, 156, 160, 164, 179, 185, 195, 202, 236-237, 258-259, 289, 296, 300, 331-346, 361, 368, 370, 433, 491, 499-500, 503 |
+| factory/chain/state\_machine.py                        |      109 |        0 |    100% |           |
+| factory/chain/ux\_auditor.py                           |        7 |        7 |      0% |     14-49 |
+| factory/chain/worktree.py                              |      112 |       29 |     74% |134-135, 140, 153-156, 169, 172-174, 190-191, 232, 235-241, 262, 279-280, 303, 307, 316-317, 325, 327-328 |
+| factory/cli.py                                         |     1252 |      699 |     44% |45-46, 61, 88-140, 155-168, 182-198, 206-212, 221-242, 259-292, 301-336, 345-357, 384-387, 411-416, 438-486, 490-491, 496, 522, 531-533, 545-563, 588-610, 627-666, 674-689, 713, 785, 798-799, 808, 814, 844-845, 847, 862-863, 865-866, 868, 893-901, 903, 921-922, 925-927, 929, 947-948, 950, 962-1000, 1029-1053, 1089-1090, 1188-1189, 1245-1249, 1289-1329, 1335-1340, 1364-1381, 1401-1475, 1479-1514, 1533-1543, 1565-1576, 1589-1621, 1633-1670, 1703, 1707-1715, 1833-1889, 1902-1929, 1947-1950, 1967, 1970, 2037-2092, 2132, 2166-2167, 2197-2203, 2259-2261, 2276-2299, 2322, 2325-2329, 2350-2357, 2361-2363, 2372-2373, 2379-2380, 2384, 2387-2388, 2393-2395, 2401-2402, 2481-2494, 2531-2545, 2589-2607, 2662-2687, 2706-2722, 2736-2754, 2776-2792, 2805-2829, 2869-2930 |
+| factory/context/\_\_init\_\_.py                        |        0 |        0 |    100% |           |
+| factory/context/canonical\_paths.py                    |       36 |        2 |     94% |     90-91 |
+| factory/context/enforcer.py                            |       49 |        0 |    100% |           |
+| factory/context/loader.py                              |       66 |        8 |     88% |96-110, 132 |
+| factory/context/navigator.py                           |       39 |        2 |     95% |     65-66 |
+| factory/context/updater.py                             |       29 |        1 |     97% |        77 |
+| factory/deploy/\_\_init\_\_.py                         |        4 |        0 |    100% |           |
+| factory/deploy/models.py                               |       28 |        0 |    100% |           |
+| factory/deploy/orchestrator.py                         |      282 |       34 |     88% |255, 257-260, 263-265, 314, 400-403, 429-439, 484-488, 520-524, 543-544, 549, 566, 577, 584, 692-693 |
+| factory/deploy/runner.py                               |       56 |        0 |    100% |           |
+| factory/directions/\_\_init\_\_.py                     |        0 |        0 |    100% |           |
+| factory/directions/creator.py                          |      150 |       69 |     54% |126, 156, 163, 197, 214-222, 232-343 |
+| factory/directions/ingester.py                         |       77 |        2 |     97% |   55, 131 |
+| factory/directions/parser.py                           |      242 |       26 |     89% |58, 127, 148, 158-159, 168-171, 173, 201-203, 258, 264-265, 269, 291, 297, 307, 333, 346, 358, 383, 396-398 |
+| factory/directions/tracker\_issue.py                   |      109 |       11 |     90% |70-72, 110, 116, 120, 195-199 |
+| factory/directions/watcher.py                          |       76 |       25 |     67% |77-81, 86, 110-114, 122-132, 137-142 |
+| factory/manager/\_\_init\_\_.py                        |        0 |        0 |    100% |           |
+| factory/manager/apply.py                               |      422 |      117 |     72% |148-150, 164-166, 192-195, 234, 256, 261, 279, 282, 326, 336-337, 344-351, 356, 361, 375, 386-416, 453, 456, 478-480, 505, 518, 523, 527, 561-565, 619-620, 641-645, 655-658, 673-674, 679-681, 705-709, 739, 742-746, 750-754, 772-774, 784-786, 827-829, 834, 838-843, 915-917, 938, 953-954 |
+| factory/manager/circuit\_breaker.py                    |      175 |       38 |     78% |126-127, 149, 154-157, 178-180, 195-197, 256-259, 267-272, 348-351, 372-373, 403, 407, 410, 412-413, 430-432, 507-512 |
+| factory/manager/detectors/\_\_init\_\_.py              |       15 |        0 |    100% |           |
+| factory/manager/detectors/cost\_spike.py               |       50 |        4 |     92% |29, 32-33, 112 |
+| factory/manager/detectors/placeholder\_prompts.py      |       32 |        1 |     97% |        66 |
+| factory/manager/detectors/retry\_storm.py              |       44 |        3 |     93% | 67, 70-71 |
+| factory/manager/detectors/review\_churn.py             |       52 |        5 |     90% |110, 113-114, 120, 123 |
+| factory/manager/detectors/runs\_failed\_since.py       |       25 |        3 |     88% | 49, 52-53 |
+| factory/manager/detectors/stalled\_stories.py          |      139 |       21 |     85% |50, 53-54, 56, 76, 79-80, 82, 86-87, 107, 110-111, 114-115, 135-136, 139, 218-219, 237 |
+| factory/manager/detectors/state\_distribution\_skew.py |       41 |        5 |     88% |77, 80-81, 83, 89 |
+| factory/manager/detectors/tick\_duration\_outliers.py  |       70 |        8 |     89% |23, 25-26, 87, 90-91, 95, 117 |
+| factory/manager/detectors/worktree\_orphans.py         |       38 |        4 |     89% |64-65, 86-87 |
+| factory/manager/diagnostician.py                       |      423 |       98 |     77% |206-207, 216-217, 263-264, 271, 278, 317-318, 320, 449-451, 460, 471-472, 477, 482-484, 487, 495, 554-558, 639-640, 654, 695-698, 727-732, 761-762, 765, 782-783, 828-830, 847-848, 910-915, 917-922, 1020-1021, 1033-1034, 1055-1056, 1088-1164 |
+| factory/manager/halt.py                                |       99 |       16 |     84% |93-94, 135-136, 219-220, 222, 227-229, 237-242 |
+| factory/manager/self\_context.py                       |      141 |       29 |     79% |43-45, 55-57, 170-171, 189, 200, 203, 206-207, 212-213, 257-258, 292-298, 323, 338-339, 388, 393-400 |
+| factory/manager/signals.py                             |       69 |        1 |     99% |       201 |
+| factory/manager/summarizer.py                          |      349 |      113 |     68% |41-43, 54-56, 102, 107, 131, 134-135, 139-140, 156, 159-160, 162-163, 176-200, 214-215, 455-458, 460, 466-488, 529-531, 548-549, 612, 643, 650-652, 657-659, 728-796 |
+| factory/manager/watcher.py                             |      334 |       95 |     72% |41-43, 54-56, 103, 106-107, 111-112, 127, 142, 145-146, 148-149, 160, 164, 166-167, 354-357, 359, 367-389, 457-458, 465-466, 476-477, 482-483, 490-491, 498-499, 504-505, 514-515, 527-528, 590-593, 674-688, 697-703, 724, 752, 792-805, 816-849 |
+| factory/model\_router.py                               |      122 |        9 |     93% |53, 55, 67, 89, 100, 189-192 |
+| factory/observability/\_\_init\_\_.py                  |        0 |        0 |    100% |           |
+| factory/observability/estimator.py                     |      185 |       31 |     83% |170-185, 219, 242-244, 331, 333, 337, 384, 417, 450, 470, 489, 491, 493, 498 |
+| factory/observability/heartbeat.py                     |       60 |        7 |     88% |69, 74-77, 129-130 |
+| factory/observability/queries.py                       |      321 |       62 |     81% |150-151, 153, 197-200, 253-258, 265, 317-318, 332, 360-361, 455, 457-481, 529-532, 538, 586-589, 635-644, 647-653 |
+| factory/observability/schema.py                        |       48 |        0 |    100% |           |
+| factory/personas/\_\_init\_\_.py                       |        0 |        0 |    100% |           |
+| factory/providers/\_\_init\_\_.py                      |        0 |        0 |    100% |           |
+| factory/providers/azure\_foundry.py                    |       33 |        0 |    100% |           |
+| factory/providers/github.py                            |       16 |        0 |    100% |           |
+| factory/runner.py                                      |      639 |      111 |     83% |132-133, 281-282, 308-309, 320, 362, 396-397, 399-404, 423-424, 427-433, 494-495, 534-535, 551, 554, 556, 561-562, 570-585, 593, 596-602, 611-621, 626, 629, 668, 683, 720-721, 726-738, 806, 808-812, 1093, 1095, 1137-1158, 1202-1207, 1228, 1322-1373, 1497, 1522-1523, 1531-1535, 1603, 1616-1617, 1620-1621 |
+| factory/scheduler/\_\_init\_\_.py                      |        0 |        0 |    100% |           |
+| factory/scheduler/cron.py                              |      132 |       11 |     92% |117, 122, 124, 171-175, 211, 353-354 |
+| factory/settings/\_\_init\_\_.py                       |        0 |        0 |    100% |           |
+| factory/settings/enforcer.py                           |       54 |        0 |    100% |           |
+| factory/settings/loader.py                             |       76 |        0 |    100% |           |
+| factory/settings/modes.py                              |       40 |        1 |     98% |        67 |
+| factory/settings/spend.py                              |       83 |       25 |     70% |56-57, 78-79, 81, 93, 120-133, 152-158 |
+| factory/tui/\_\_init\_\_.py                            |        2 |        0 |    100% |           |
+| factory/tui/app.py                                     |      183 |      151 |     17% |48-57, 61, 66-74, 78, 87-121, 130-161, 166-232, 241-250, 254-274, 278-312, 316-339, 372-377, 380-388, 391-406, 409-415, 418-442, 454-461 |
+| factory/webhook/\_\_init\_\_.py                        |        0 |        0 |    100% |           |
+| factory/webhook/github.py                              |      190 |       40 |     79% |56, 60, 63-64, 96, 126, 162-167, 191-207, 253, 308-312, 355-356, 379-391, 395 |
+| factory/webhook/openhands\_events.py                   |       36 |        7 |     81% |69, 84-123 |
+| **TOTAL**                                              | **11528** | **2635** | **77%** |           |
+
+
+## Setup coverage badge
+
+Below are examples of the badges you can use in your main branch `README` file.
+
+### Direct image
+
+[![Coverage badge](https://raw.githubusercontent.com/xvanov/software-factory/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/xvanov/software-factory/blob/python-coverage-comment-action-data/htmlcov/index.html)
+
+This is the one to use if your repository is private or if you don't want to customize anything.
+
+### [Shields.io](https://shields.io) Json Endpoint
+
+[![Coverage badge](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/xvanov/software-factory/python-coverage-comment-action-data/endpoint.json)](https://htmlpreview.github.io/?https://github.com/xvanov/software-factory/blob/python-coverage-comment-action-data/htmlcov/index.html)
+
+Using this one will allow you to [customize](https://shields.io/endpoint) the look of your badge.
+It won't work with private repositories. It won't be refreshed more than once per five minutes.
+
+### [Shields.io](https://shields.io) Dynamic Badge
+
+[![Coverage badge](https://img.shields.io/badge/dynamic/json?color=brightgreen&label=coverage&query=%24.message&url=https%3A%2F%2Fraw.githubusercontent.com%2Fxvanov%2Fsoftware-factory%2Fpython-coverage-comment-action-data%2Fendpoint.json)](https://htmlpreview.github.io/?https://github.com/xvanov/software-factory/blob/python-coverage-comment-action-data/htmlcov/index.html)
+
+This one will always be the same color. It won't work for private repos. I'm not even sure why we included it.
+
+## What is that?
+
+This branch is part of the
+[python-coverage-comment-action](https://github.com/marketplace/actions/python-coverage-comment)
+GitHub Action. All the files in this branch are automatically generated and may be
+overwritten at any moment.
