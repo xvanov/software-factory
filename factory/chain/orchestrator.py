@@ -522,6 +522,19 @@ def _story_failure_signature(story: StoryRecord) -> str:
     normalized = re.sub(r"(?:/[\w.\-]+){2,}", "<path>", normalized)
     normalized = re.sub(r"\b\d+(?:\.\d+)?s\b", "<dur>", normalized)
     normalized = re.sub(r"\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b", "<dur>", normalized)
+    # Strip non-deterministic identifiers so the SAME logical failure hashes
+    # identically across cycles: hex memory addresses / object ids
+    # (0x7f..., id=140234..., "at 0x..."), and generic long hex/uuid runs that
+    # appear in mock/object reprs and temp names. Without this the guard fails
+    # OPEN on failures whose tail embeds an address and never detects the loop.
+    normalized = re.sub(r"0x[0-9a-fA-F]+", "<addr>", normalized)
+    normalized = re.sub(r"\bid=\d+", "id=<id>", normalized)
+    normalized = re.sub(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+        "<uuid>",
+        normalized,
+    )
+    normalized = re.sub(r"\b[0-9a-fA-F]{12,}\b", "<hex>", normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
 
     # The tail carries the actual assertion/error; the head is often

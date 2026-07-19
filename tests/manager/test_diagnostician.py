@@ -441,12 +441,35 @@ class TestPreLoadSourceRespectsProposedArea:
         assert any("factory-file-listing" in k or "orchestrator.py" in k for k in files)
 
     def test_file_cap_applied(self) -> None:
-        """Each dispatch_code file should be capped at 60KB (chain/ files can
-        be large); the final total-bundle enforcement may shrink further, so
-        60KB is an upper bound, not an exact figure."""
+        """Each dispatch_code file is capped at the 160KB per-file cap."""
         files = _pre_load_source("dispatch_code", factory_dir=self._factory_dir)
         for content in files.values():
-            assert len(content) <= 60 * 1024 + 100  # small buffer for the truncation notice
+            assert len(content) <= 160 * 1024 + 100  # small buffer for the truncation notice
+
+    def test_dispatch_code_loads_handlers_whole_against_real_repo(self) -> None:
+        """Regression guard: the whole point of widening the dispatch_code
+        bundle is that L3 sees the real files. A pre-existing 100KB total-bundle
+        enforcement used to re-shrink every file to ~5KB (worse than the old
+        3-file bundle). Against the REAL factory/ tree, handlers.py (~137KB) and
+        the small git files must load essentially whole — this test uses real
+        file sizes precisely because synthetic tiny fixtures never trip the
+        enforcement that caused the regression."""
+        files = _pre_load_source("dispatch_code", factory_dir=self._factory_dir)
+        handlers = next((v for k, v in files.items() if k.endswith("chain/handlers.py")), "")
+        # handlers.py is ~137KB on disk; must NOT be shredded down toward the
+        # old 100KB/len(files) ~= 5KB share.
+        assert len(handlers) > 100 * 1024, f"handlers.py shredded to {len(handlers)} chars"
+        for name in ("worktree.py", "branch.py", "rollback.py", "auto_merge.py"):
+            assert any(
+                k.endswith(f"chain/{name}") for k in files
+            ), f"{name} missing from dispatch_code bundle"
+
+    def test_narrow_area_still_trimmed(self) -> None:
+        """persona-loading areas keep the 100KB ceiling (prompt_edit loads all
+        personas and is meant to be trimmed) — the wide ceiling is chain-only."""
+        files = _pre_load_source("prompt_edit", factory_dir=self._factory_dir)
+        total = sum(len(v) for v in files.values())
+        assert total <= 100 * 1024 + 5000  # _BUNDLE_TOTAL_CAP + truncation notices
 
     def test_dispatch_code_area_widens_bundle_to_chain_dir(self, tmp_path: Path) -> None:
         """The dispatch_code bundle must no longer be a 3-file allowlist:

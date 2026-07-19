@@ -89,7 +89,21 @@ _BUNDLE_TOTAL_CAP = 100 * 1024  # 100 KB
 # and still not find the buggy function. The bundle budget fits the full
 # high-signal set plus headroom (~100K tokens for gpt-5.3-codex's context).
 _CHAIN_FILE_CAP = 160 * 1024  # 160 KB per file
-_DISPATCH_CODE_BUNDLE_CAP = 400 * 1024  # 400 KB for the dispatch_code chain/ bundle
+_DISPATCH_CODE_BUNDLE_CAP = 400 * 1024  # 400 KB for the dispatch_code chain/ loading budget
+# The final bundle-total enforcement (see bottom of _pre_load_source) otherwise
+# re-shrinks EVERY file to fit _BUNDLE_TOTAL_CAP (100KB), which would truncate
+# handlers.py back down to a few KB and defeat the widened dispatch_code/unknown
+# bundle. Chain-loading areas get this larger enforcement ceiling instead, sized
+# to hold the full priority set (~278KB) + glob fill + context modules with
+# headroom. ~140K tokens — within gpt-5.3-codex's context window.
+_WIDE_BUNDLE_TOTAL_CAP = 560 * 1024
+# proposed_area values that load persona/detector/observability files (small,
+# capped at 100KB deliberately — e.g. prompt_edit loads ALL personas ~147KB and
+# is MEANT to be trimmed). Everything else (dispatch_code + the unknown/else
+# branch) loads chain/ source and uses the wide ceiling.
+_NARROW_BUNDLE_AREAS = frozenset(
+    {"prompt", "prompt_edit", "persona_settings", "detector_tool", "observability"}
+)
 
 # Slug character validation pattern.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{0,58}[a-z0-9]$|^[a-z0-9]$")
@@ -397,22 +411,25 @@ def _pre_load_source(
     # diagnosis. Deterministically shrink each file to an equal share of the
     # budget so the total stays under the cap and every file remains visible
     # (truncated, not dropped). Files already under their share are untouched.
+    effective_cap = (
+        _BUNDLE_TOTAL_CAP if proposed_area in _NARROW_BUNDLE_AREAS else _WIDE_BUNDLE_TOTAL_CAP
+    )
     total = sum(len(v) for v in files.values())
-    if total > _BUNDLE_TOTAL_CAP and files:
-        per_file_budget = max(1, _BUNDLE_TOTAL_CAP // len(files))
+    if total > effective_cap and files:
+        per_file_budget = max(1, effective_cap // len(files))
         trimmed = 0
         for key in list(files):
             if len(files[key]) > per_file_budget:
                 files[key] = (
                     files[key][:per_file_budget]
                     + f"\n...[truncated to {per_file_budget} chars to fit the "
-                    f"{_BUNDLE_TOTAL_CAP}-char L3 context budget across "
+                    f"{effective_cap}-char L3 context budget across "
                     f"{len(files)} files]"
                 )
                 trimmed += 1
         new_total = sum(len(v) for v in files.values())
         print(
-            f"[diagnostician] bundle was {total} chars (>{_BUNDLE_TOTAL_CAP} cap); "
+            f"[diagnostician] bundle was {total} chars (>{effective_cap} cap); "
             f"trimmed {trimmed}/{len(files)} files to {per_file_budget} chars each "
             f"-> {new_total} chars.",
             file=sys.stderr,
