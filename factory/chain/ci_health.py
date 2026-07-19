@@ -19,12 +19,26 @@ Design notes:
   noisier copy of the pre-merge gate.
 * Dedup is signature-based: a direction is only filed when no OPEN
   ci-health direction already carries the same (failing-check-names,
-  failure-digest) signature. The signature is embedded verbatim in the
-  direction body as an HTML-comment marker so a later cycle can find it
-  with a simple substring scan — no separate index needed.
+  main-head-sha) signature. Deliberately EXCLUDES the ``gh run view
+  --log-failed`` digest — that fetch is itself best-effort and can
+  flake/timeout independently of the underlying CI failure, which would
+  otherwise flip the signature between fetch-success and fetch-fail ticks
+  and file a duplicate direction for the exact same red check (caught in
+  review). The signature is embedded verbatim in the direction body as an
+  HTML-comment marker so a later cycle can find it with a simple substring
+  scan — no separate index needed. Because the log digest is no longer
+  part of the signature, it is only fetched once we're actually about to
+  file (not on every dedup check) — avoiding a repeated ~60s log fetch on
+  every tick while a required check sits red.
 * Every ``gh`` call is best-effort: subprocess errors/timeouts/unparseable
   output all fall back to "nothing to report" so a flaky ``gh`` never
   crashes a tick or, worse, files a spurious direction.
+* KNOWN LIMITATION (documented, not a bug): a required context whose
+  workflow triggers only on ``on: pull_request`` never posts a check-run
+  against a direct-push-to-main commit (GitHub only attaches PR-triggered
+  runs to the PR's merge commit, not to main's tip after a squash-merge in
+  some configurations) — this monitor has no coverage for that branch-
+  protection shape; it only sees checks that actually run against main.
 """
 
 from __future__ import annotations
@@ -122,17 +136,54 @@ def _required_contexts(app_config: AppConfig, *, branch: str = "main") -> list[s
     return names or None
 
 
+# check-runs page size + a hard page-count cap (2000 check runs) so a
+# pathological repo can never spin this into an unbounded loop.
+_CHECK_RUNS_PER_PAGE = 100
+_CHECK_RUNS_MAX_PAGES = 20
+
+
 def _main_check_runs(app_config: AppConfig, *, branch: str = "main") -> list[dict[str, Any]] | None:
-    """Check-runs reported against the tip of ``branch``. ``None`` on error."""
-    data = _gh_json(
-        ["gh", "api", f"repos/{app_config.repo}/commits/{branch}/check-runs"]
-    )
-    if not isinstance(data, dict):
-        return None
-    runs = data.get("check_runs")
-    if not isinstance(runs, list):
-        return None
-    return [r for r in runs if isinstance(r, dict)]
+    """Check-runs reported against the tip of ``branch``, across ALL pages.
+
+    The check-runs endpoint defaults to 30 results/page; a required check
+    whose run happens to sort onto page 2+ (e.g. a large CI matrix) would
+    otherwise be silently invisible to this monitor and read as "green" by
+    omission — a false-green (caught in review). Walks pages manually with
+    ``per_page=100`` until a short page signals the end, merging every
+    page's ``check_runs`` array. (Manual ``page``/``per_page`` params
+    rather than ``gh api --paginate``: that flag concatenates raw page
+    bodies for non-array-top-level responses like this endpoint's
+    ``{"check_runs": [...]}`` shape, which a single ``json.loads`` cannot
+    parse back apart — walking pages ourselves keeps the JSON shape
+    unambiguous.)
+
+    ``None`` when the FIRST page errors (mirrors ``_gh_json``'s
+    all-or-nothing failure convention, so a real ``gh`` outage still reads
+    as "nothing to gate on" rather than "green"). A LATER page's failure
+    stops pagination but returns whatever was already collected —
+    best-effort partial coverage beats discarding real, already-fetched
+    required-check data.
+    """
+    all_runs: list[dict[str, Any]] = []
+    page = 1
+    while page <= _CHECK_RUNS_MAX_PAGES:
+        data = _gh_json(
+            [
+                "gh", "api",
+                f"repos/{app_config.repo}/commits/{branch}/check-runs"
+                f"?per_page={_CHECK_RUNS_PER_PAGE}&page={page}",
+            ]
+        )
+        if not isinstance(data, dict):
+            return all_runs if all_runs else None
+        runs = data.get("check_runs")
+        if not isinstance(runs, list):
+            return all_runs if all_runs else None
+        all_runs.extend(r for r in runs if isinstance(r, dict))
+        if len(runs) < _CHECK_RUNS_PER_PAGE:
+            break
+        page += 1
+    return all_runs
 
 
 def query_main_ci_status(app_config: AppConfig, *, branch: str = "main") -> MainCiStatus:
@@ -229,19 +280,21 @@ def _fetch_required_failure_digest(
     return "\n\n".join(parts)
 
 
-def _ci_health_signature(check_names: list[str], log_digest: str) -> str:
-    """Stable signature of "this required check failed for this reason".
+def _ci_health_signature(check_names: list[str], sha: str | None) -> str:
+    """Stable signature of "these required checks are failing on THIS commit".
 
-    Reuses ``orchestrator._normalize_failure_text`` — the same
-    timestamp/path/duration/address stripping the dev/review and real-CI
-    (``auto_merge``) failure signatures use — so a re-run that fails for
-    the identical reason hashes identically even though timestamps/paths
-    differ between runs.
+    Deliberately built from ONLY stable inputs — sorted required-check
+    names + main's head sha — and NOT the ``gh run view --log-failed``
+    digest. The digest fetch is itself best-effort and can time out/error
+    independently of the underlying CI failure; hashing it would flip the
+    signature between a fetch-success tick and a fetch-fail tick for the
+    exact same red check and file a duplicate direction each flip (caught
+    in review). A new push to main naturally gets a fresh sha and
+    therefore a fresh signature, which is exactly the "did this actually
+    change" semantics dedup needs — while the digest text (log timestamps,
+    runner ids, etc.) can vary tick-to-tick for the identical failure.
     """
-    from factory.chain.orchestrator import _normalize_failure_text
-
-    normalized_digest = _normalize_failure_text(log_digest or "")
-    basis = f"{','.join(sorted(check_names))}::{normalized_digest[-500:]}"
+    basis = f"{','.join(sorted(check_names))}::{sha or ''}"
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()
 
 
@@ -353,7 +406,7 @@ def main_ci_health_tick(
     * ``red_advisory`` -> a warning event only, no direction.
     * ``red_required`` -> files (at most) one ``ci-health`` direction,
       deduped against any already-open one carrying the same
-      (failing-check-names, failure-digest) signature.
+      (failing-check-names, main-head-sha) signature.
 
     ``dry_run`` gates the actual direction write (real filesystem
     mutation under ``apps/<app>/directions/``) — set ``False`` only in a
@@ -404,11 +457,11 @@ def main_ci_health_tick(
 
     # red_required
     required_names = sorted({str(r.get("name") or "") for r in status.required_failing})
-    try:
-        log_digest = _fetch_required_failure_digest(cfg, status.required_failing)
-    except Exception:  # noqa: BLE001
-        log_digest = ""
-    signature = _ci_health_signature(required_names, log_digest)
+    # Signature depends ONLY on stable inputs (check names + main's head
+    # sha) — see ``_ci_health_signature`` — so it's computed BEFORE any log
+    # fetch and the dedup check below never needs the (best-effort, can
+    # flake) log digest at all.
+    signature = _ci_health_signature(required_names, status.sha)
 
     try:
         already_open = _has_open_ci_health_direction(app, signature, root)
@@ -431,6 +484,15 @@ def main_ci_health_tick(
             required_failing=required_names,
             advisory_failing=list(status.advisory_failing),
         )
+
+    # Only fetch the (best-effort, ~60s-per-check) log digest once we're
+    # ACTUALLY about to file — not on every dedup check above — since the
+    # digest no longer feeds the signature and re-fetching it every tick
+    # while a required check sits red is pure wasted load.
+    try:
+        log_digest = _fetch_required_failure_digest(cfg, status.required_failing)
+    except Exception:  # noqa: BLE001
+        log_digest = ""
 
     try:
         direction_id = _file_ci_health_direction(

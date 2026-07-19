@@ -68,13 +68,17 @@ def _direction_dirs(root: Path, app: str = "sacrifice") -> list[Path]:
 
 
 def _required_check_run(
-    *, name: str = "ci/tests", conclusion: str = "failure", run_id: str = "123"
+    *,
+    name: str = "ci/tests",
+    conclusion: str = "failure",
+    run_id: str = "123",
+    head_sha: str = "deadbeef",
 ) -> dict:
     return {
         "name": name,
         "status": "completed",
         "conclusion": conclusion,
-        "head_sha": "deadbeef",
+        "head_sha": head_sha,
         "details_url": f"https://github.com/o/r/actions/runs/{run_id}/jobs/999",
     }
 
@@ -199,30 +203,123 @@ def test_same_failure_is_not_refiled_while_open(
     assert len(_direction_dirs(factory_root)) == 1
 
 
-def test_different_failure_after_prior_closed_is_refiled(
+def test_different_commit_after_prior_open_is_refiled(
     factory_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A DIFFERENT failure signature (not the same one) should file a
-    second, independent direction — dedup keys on the failure, not on
-    "any open ci-health direction exists"."""
+    """A failure on a DIFFERENT main head sha is a DIFFERENT failure and
+    files a second, independent direction — dedup keys on
+    (check-names, sha), not on "any open ci-health direction exists"."""
     fake = _make_gh_fake(
         protection={"required_status_checks": {"contexts": ["ci/tests"]}},
-        check_runs=[_required_check_run()],
+        check_runs=[_required_check_run(head_sha="deadbeef")],
         log_text="AssertionError: expected 200 got 500\n  at test_healthz.py:9",
     )
     monkeypatch.setattr(subprocess, "run", fake, raising=True)
     first = main_ci_health_tick(factory_root, "sacrifice", dry_run=False)
     assert first.filed is True
 
+    # A new push to main landed (fresh sha) and the SAME required check is
+    # red again for an unrelated reason — a genuinely new failure.
     fake2 = _make_gh_fake(
         protection={"required_status_checks": {"contexts": ["ci/tests"]}},
-        check_runs=[_required_check_run(run_id="456")],
+        check_runs=[_required_check_run(run_id="456", head_sha="cafebabe")],
         log_text="KeyError: 'total'\n  at test_pledge.py:44",
     )
     monkeypatch.setattr(subprocess, "run", fake2, raising=True)
     second = main_ci_health_tick(factory_root, "sacrifice", dry_run=False)
     assert second.filed is True
     assert len(_direction_dirs(factory_root)) == 2
+
+
+def test_log_fetch_fails_then_succeeds_still_files_exactly_one(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dedup signature must NOT depend on the (best-effort) log digest.
+
+    Tick 1: the required check is red and ``gh run view --log-failed``
+    times out (empty digest gets filed). Tick 2: the SAME commit's SAME
+    check is still red, but this time the log fetch SUCCEEDS with real
+    text. Because the signature is (check-names, sha) only — never the
+    digest — this must still read as the identical failure and NOT file a
+    second direction, even though the fetched digest text flipped from
+    empty to non-empty between ticks.
+    """
+
+    def _fake_run_fetch_fails(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        joined = " ".join(cmd)
+        if _PROTECTION_URL in joined:
+            return _completed(
+                cmd, 0, json.dumps({"required_status_checks": {"contexts": ["ci/tests"]}}), ""
+            )
+        if _CHECK_RUNS_URL in joined:
+            return _completed(cmd, 0, json.dumps({"check_runs": [_required_check_run()]}), "")
+        if cmd[:3] == ["gh", "run", "view"]:
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=60)
+        raise AssertionError(f"unexpected gh invocation: {cmd!r}")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run_fetch_fails, raising=True)
+    first = main_ci_health_tick(factory_root, "sacrifice", dry_run=False)
+    assert first.filed is True
+    assert len(_direction_dirs(factory_root)) == 1
+
+    fake_fetch_succeeds = _make_gh_fake(
+        protection={"required_status_checks": {"contexts": ["ci/tests"]}},
+        check_runs=[_required_check_run()],
+        log_text="AssertionError: expected 200 got 500\n  at test_healthz.py:9",
+    )
+    monkeypatch.setattr(subprocess, "run", fake_fetch_succeeds, raising=True)
+    second = main_ci_health_tick(factory_root, "sacrifice", dry_run=False)
+    assert second.filed is False
+    assert "duplicate" in second.reason
+    assert len(_direction_dirs(factory_root)) == 1
+
+
+# --------------------------------------------------------------------------- #
+# pagination — a required failure that sorts onto page 2+ must still be seen
+# --------------------------------------------------------------------------- #
+
+
+def test_required_failure_beyond_first_page_is_still_detected(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check-runs endpoint pages at (our) 100/page. A full first page of
+    100 PASSING, non-required checks must not make the monitor stop looking
+    and read "green" by omission — the failing REQUIRED check living on
+    page 2 must still be found (false-green risk flagged in review)."""
+    page_1 = [
+        {
+            "name": f"matrix-shard-{i}",
+            "status": "completed",
+            "conclusion": "success",
+            "head_sha": "deadbeef",
+        }
+        for i in range(100)
+    ]
+    page_2 = [_required_check_run()]
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        joined = " ".join(cmd)
+        if _PROTECTION_URL in joined:
+            return _completed(
+                cmd, 0, json.dumps({"required_status_checks": {"contexts": ["ci/tests"]}}), ""
+            )
+        if _CHECK_RUNS_URL in joined:
+            if "page=2" in joined:
+                return _completed(cmd, 0, json.dumps({"check_runs": page_2}), "")
+            # Any other page (page=1, or an unparameterized call) -> page 1.
+            return _completed(cmd, 0, json.dumps({"check_runs": page_1}), "")
+        if cmd[:3] == ["gh", "run", "view"]:
+            return _completed(cmd, 0, "AssertionError: boom", "")
+        raise AssertionError(f"unexpected gh invocation: {cmd!r}")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run, raising=True)
+
+    result = main_ci_health_tick(factory_root, "sacrifice", dry_run=False)
+
+    assert result.state == "red_required"
+    assert result.filed is True
+    assert result.required_failing == ["ci/tests"]
+    assert len(_direction_dirs(factory_root)) == 1
 
 
 # --------------------------------------------------------------------------- #
