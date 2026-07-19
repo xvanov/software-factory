@@ -441,10 +441,78 @@ class TestPreLoadSourceRespectsProposedArea:
         assert any("factory-file-listing" in k or "orchestrator.py" in k for k in files)
 
     def test_file_cap_applied(self) -> None:
-        """Each file should be capped at 16KB (16384 chars)."""
+        """Each dispatch_code file should be capped at 60KB (chain/ files can
+        be large); the final total-bundle enforcement may shrink further, so
+        60KB is an upper bound, not an exact figure."""
         files = _pre_load_source("dispatch_code", factory_dir=self._factory_dir)
         for content in files.values():
-            assert len(content) <= 16384 + 50  # small buffer for the truncation notice
+            assert len(content) <= 60 * 1024 + 100  # small buffer for the truncation notice
+
+    def test_dispatch_code_area_widens_bundle_to_chain_dir(self, tmp_path: Path) -> None:
+        """The dispatch_code bundle must no longer be a 3-file allowlist:
+        auto_merge.py and worktree.py (previously omitted entirely) must be
+        loadable. Uses a synthetic factory/chain/ dir sized so every file
+        fits comfortably within the bundle budget, independent of how large
+        the real repo's chain/ files happen to be."""
+        factory_dir = tmp_path / "factory"
+        chain_dir = factory_dir / "chain"
+        chain_dir.mkdir(parents=True)
+        for name in (
+            "orchestrator.py",
+            "handlers.py",
+            "state_machine.py",
+            "auto_merge.py",
+            "worktree.py",
+            "branch.py",
+            "rollback.py",
+            "recovery.py",
+        ):
+            (chain_dir / name).write_text(f"# {name}\ncontent\n", encoding="utf-8")
+
+        files = _pre_load_source("dispatch_code", factory_dir=factory_dir, root=tmp_path)
+
+        assert any("chain/auto_merge.py" in k for k in files)
+        assert any("chain/worktree.py" in k for k in files)
+        assert any("chain/branch.py" in k for k in files)
+        assert any("chain/rollback.py" in k for k in files)
+        assert any("chain/recovery.py" in k for k in files)
+
+    def test_dispatch_code_priority_files_load_before_budget_cutoff(self, tmp_path: Path) -> None:
+        """orchestrator.py, handlers.py, state_machine.py, auto_merge.py must
+        always be included even when the rest of chain/ blows the bundle
+        budget."""
+        from factory.manager.diagnostician import _DISPATCH_CODE_BUNDLE_CAP
+
+        factory_dir = tmp_path / "factory"
+        chain_dir = factory_dir / "chain"
+        chain_dir.mkdir(parents=True)
+        big = "x" * (_DISPATCH_CODE_BUNDLE_CAP // 2)
+        for name in ("orchestrator.py", "handlers.py", "state_machine.py", "auto_merge.py"):
+            (chain_dir / name).write_text(big, encoding="utf-8")
+        # Padding files that would blow the remaining budget on their own.
+        for i in range(5):
+            (chain_dir / f"zzz_padding_{i}.py").write_text(big, encoding="utf-8")
+
+        files = _pre_load_source("dispatch_code", factory_dir=factory_dir, root=tmp_path)
+
+        for name in ("orchestrator.py", "handlers.py", "state_machine.py", "auto_merge.py"):
+            assert any(f"chain/{name}" in k for k in files), name
+
+    def test_unknown_area_loads_handlers_py(self, tmp_path: Path) -> None:
+        """chain/handlers.py must be loaded for proposed_area='unknown' — it
+        was previously named in the file listing but never actually
+        pre-loaded, so an "unknown" dispatch-code concern got no chance at a
+        correct diagnosis."""
+        factory_dir = tmp_path / "factory"
+        (factory_dir / "chain").mkdir(parents=True)
+        (factory_dir / "chain" / "handlers.py").write_text("# handlers\n", encoding="utf-8")
+        (factory_dir / "chain" / "orchestrator.py").write_text("# orchestrator\n", encoding="utf-8")
+        (factory_dir / "chain" / "auto_merge.py").write_text("# auto_merge\n", encoding="utf-8")
+        (factory_dir / "runner.py").write_text("# runner\n", encoding="utf-8")
+
+        files = _pre_load_source("unknown", factory_dir=factory_dir, root=tmp_path)
+
+        assert any("chain/handlers.py" in k for k in files)
 
     def test_total_bundle_cap_enforced(self) -> None:
         """The whole bundle must stay within _BUNDLE_TOTAL_CAP, not just warn.

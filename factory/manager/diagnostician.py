@@ -77,6 +77,16 @@ _SOURCE_FILE_CAP = 16 * 1024  # 16 KB per file
 # Total bundle cap before we warn (chars).
 _BUNDLE_TOTAL_CAP = 100 * 1024  # 100 KB
 
+# factory/chain/ holds the orchestrator/merge/git/recovery logic where most
+# dispatch_code bugs actually live, but several files there (handlers.py,
+# orchestrator.py) are much larger than the generic 16KB cap allows. Give
+# chain/ files a wider per-file cap and a dedicated bundle budget so the L3
+# diagnostician's source bundle can include the whole directory instead of a
+# hardcoded three-file allowlist that omitted auto_merge.py, worktree.py,
+# branch.py, rollback.py and recovery.py entirely.
+_CHAIN_FILE_CAP = 60 * 1024  # 60 KB per file
+_DISPATCH_CODE_BUNDLE_CAP = 250 * 1024  # 250 KB for the dispatch_code chain/ bundle
+
 # Slug character validation pattern.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{0,58}[a-z0-9]$|^[a-z0-9]$")
 
@@ -200,14 +210,17 @@ def _pre_load_source(
     """
     files: dict[str, str] = {}
 
-    def _read_file(abs_path: Path) -> str:
+    def _read_file_capped(abs_path: Path, cap: int) -> str:
         try:
             text = abs_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return ""
-        if len(text) > _SOURCE_FILE_CAP:
-            text = text[:_SOURCE_FILE_CAP] + "\n...[truncated at 16KB]"
+        if len(text) > cap:
+            text = text[:cap] + f"\n...[truncated at {cap // 1024}KB]"
         return text
+
+    def _read_file(abs_path: Path) -> str:
+        return _read_file_capped(abs_path, _SOURCE_FILE_CAP)
 
     def _rel(abs_path: Path) -> str:
         """Return path relative to factory_dir.parent (the repo root)."""
@@ -230,10 +243,40 @@ def _pre_load_source(
             files[_rel(p)] = _read_file(p)
 
     elif proposed_area == "dispatch_code":
-        for name in ("orchestrator.py", "handlers.py", "state_machine.py"):
-            p = factory_dir / "chain" / name
-            if p.exists():
-                files[_rel(p)] = _read_file(p)
+        # Bugs in this area live throughout factory/chain/ (merge, git,
+        # recovery logic), not just the three files historically loaded here
+        # — that hardcoded allowlist is why L3 escalated ~100% of the time
+        # instead of proposing a fix. Load the whole directory, with the
+        # highest-signal files guaranteed to load first (in case the bundle
+        # budget is exhausted before the glob finishes) and a wider per-file
+        # cap since several chain/ files exceed the generic 16KB one.
+        chain_dir = factory_dir / "chain"
+        _priority_names = ("orchestrator.py", "handlers.py", "state_machine.py", "auto_merge.py")
+        _seen: set[Path] = set()
+        running_total = 0
+
+        # Priority files always load first, regardless of budget.
+        for name in _priority_names:
+            p = chain_dir / name
+            if not p.exists():
+                continue
+            _seen.add(p)
+            content = _read_file_capped(p, _CHAIN_FILE_CAP)
+            files[_rel(p)] = content
+            running_total += len(content)
+
+        # Remaining chain/ files fill the rest of the budget in glob order;
+        # once exhausted, stop adding (lower-signal files are dropped, not
+        # truncated further — the priority files above stay whole).
+        if chain_dir.exists():
+            for p in sorted(chain_dir.glob("*.py")):
+                if p in _seen:
+                    continue
+                content = _read_file_capped(p, _CHAIN_FILE_CAP)
+                if running_total + len(content) > _DISPATCH_CODE_BUNDLE_CAP:
+                    break
+                files[_rel(p)] = content
+                running_total += len(content)
 
     elif proposed_area == "detector_tool":
         detectors_dir = factory_dir / "manager" / "detectors"
@@ -254,16 +297,27 @@ def _pre_load_source(
 
     else:
         # unknown or any other value: provide a file listing + a few key files.
-        for name in ("__main__.py", "chain/orchestrator.py", "runner.py"):
+        # chain/handlers.py and chain/auto_merge.py were previously omitted
+        # here even though the file listing below names them — an "unknown"
+        # concern about dispatch/merge behavior had no chance of a correct L3
+        # diagnosis without them.
+        for name in (
+            "__main__.py",
+            "chain/orchestrator.py",
+            "chain/handlers.py",
+            "chain/auto_merge.py",
+            "runner.py",
+        ):
+            cap = _CHAIN_FILE_CAP if name.startswith("chain/") else _SOURCE_FILE_CAP
             p = factory_dir / name
             if not p.exists():
                 # try without the subpath
                 p2 = factory_dir / Path(name).name
                 if p2.exists():
-                    files[_rel(p2)] = _read_file(p2)
+                    files[_rel(p2)] = _read_file_capped(p2, cap)
                     continue
             if p.exists():
-                files[_rel(p)] = _read_file(p)
+                files[_rel(p)] = _read_file_capped(p, cap)
         # File listing (capped at 100 lines)
         py_files: list[str] = []
         for p in sorted(factory_dir.rglob("*.py")):
