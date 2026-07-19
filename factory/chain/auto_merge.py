@@ -396,49 +396,54 @@ def _pr_terminally_unmergeable(
 def _query_ci_state(*, app_config: AppConfig, pr_number: int) -> str | None:
     """Query the REAL CI conclusion for a PR via the ``gh`` CLI.
 
-    Returns ``"success"`` (every reported check is in a passing bucket),
-    ``"failure"`` (at least one check failed/cancelled/timed out),
-    ``"pending"`` (checks still queued/running), or ``None`` when there is
-    nothing to consult — no checks configured, ``gh`` missing/timeout,
-    a placeholder (non-positive) PR number, or an unparseable response.
+    Returns ``"success"`` (every REQUIRED check passed/skipped), ``"failure"``
+    (at least one required check failed/cancelled/errored), ``"pending"``
+    (required checks still queued/running), or ``None`` when there is nothing
+    to gate on — no branch protection / no required checks, ``gh``
+    missing/timeout, a placeholder (non-positive) PR number, or unparseable
+    output. ``None`` makes the ``tests-green`` gate fall back to the recorded
+    dev flag, so apps without CI/protection (e.g. sacrifice pre-CI) are
+    unaffected while protected repos gate on their real Actions run.
 
     This replaces the historical hardcoded ``ci_state="success"``, which let
-    the ``tests-green`` merge gate pass on a string literal instead of a real
-    signal (the "thinks CI passed then it crashes" class). Read-only and
-    safe to call in dry-run. ``gh pr checks --json`` writes JSON to stdout
-    regardless of exit code (non-zero on fail/pending), so we parse stdout,
-    not the exit status.
+    the gate pass on a string literal instead of a real signal (the "thinks
+    CI passed then it crashes" class). Read-only; safe in dry-run.
+
+    Implementation note: ``gh pr checks`` (v2.45) does NOT support ``--json``,
+    so we parse its tab-separated rows and use ``--required`` so non-required
+    integrations (e.g. CodeRabbit, which can sit PENDING forever) never poison
+    the aggregate and block the factory's own merges. CRITICAL: gh prints
+    "no required checks reported" and exits 0 when protection is absent —
+    that must map to ``None`` (nothing to consult), never ``"success"``.
     """
-    import json as _json
     import subprocess
 
     if pr_number <= 0:  # synthesized placeholder (dry-run docs) — nothing to query
         return None
     cmd = [
-        "gh", "pr", "checks", str(pr_number), "--repo", app_config.repo,
-        "--json", "bucket,state,name",
+        "gh", "pr", "checks", str(pr_number), "--repo", app_config.repo, "--required",
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
-    out = (proc.stdout or "").strip()
-    if not out:
-        # No checks reported → gh writes nothing to stdout. Treat "no checks"
-        # as None so the gate falls back to its recorded-flag path rather than
-        # fabricating a pass.
+    combined = ((proc.stdout or "") + " " + (proc.stderr or "")).lower()
+    if "no required checks" in combined or "no checks reported" in combined:
+        # No protection / no required checks → nothing real to gate on.
         return None
-    try:
-        checks = _json.loads(out)
-    except ValueError:
+    # Each row: "<name>\t<status>\t<elapsed>\t<url>"; status is the 2nd column.
+    statuses: set[str] = set()
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[1].strip():
+            statuses.add(parts[1].strip().lower())
+    if not statuses:
         return None
-    if not isinstance(checks, list) or not checks:
-        return None
-    buckets = {str(c.get("bucket") or c.get("state") or "").lower() for c in checks}
-    if buckets & {"fail", "failure", "cancel", "cancelled", "timed_out", "error"}:
+    if statuses & {"fail", "failing", "failure", "cancel", "cancelled", "timed_out", "error"}:
         return "failure"
-    if buckets & {"pending", "queued", "in_progress", "waiting", ""}:
+    if statuses & {"pending", "in_progress", "queued", "waiting"}:
         return "pending"
+    # Remaining rows are all pass/skipping/neutral → required set is green.
     return "success"
 
 
