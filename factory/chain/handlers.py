@@ -291,6 +291,36 @@ def _slug_of(text: str) -> str:
     return (s[:60] or "story").strip("-") or "story"
 
 
+def _author_acceptance_oracle(
+    story: StoryRecord,
+    direction: Direction,
+    app_config: AppConfig,
+    software_factory_root: Path,
+    *,
+    dry_run: bool,
+    db_path: Path,
+) -> None:
+    """WS1.2: author the independent acceptance oracle for a freshly-spawned
+    story (best-effort, never raises — must not fail story spawn).
+
+    Authored here (spawn time, before dev runs) from the SPEC ONLY and stored
+    outside the dev worktree — see ``factory.chain.acceptance``.
+    """
+    try:
+        from factory.chain.acceptance import author_acceptance_test
+
+        author_acceptance_test(
+            story,
+            direction,
+            app_config,
+            software_factory_root,
+            dry_run=dry_run,
+            db_path=db_path,
+        )
+    except Exception:  # noqa: BLE001 - oracle authoring is best-effort
+        pass
+
+
 def handle_stories_spawned(
     direction: Direction,
     pm_result: dict[str, Any],
@@ -397,6 +427,10 @@ def handle_stories_spawned(
                 estimated_seconds=dd_estimated_seconds,
             )
             persist_story(story, db)
+            _author_acceptance_oracle(
+                story, direction, app_config, software_factory_root,
+                dry_run=dry_run, db_path=db,
+            )
             out.append(story)
 
         # Post the comparison comment on the tracker (real-run only).
@@ -473,6 +507,10 @@ def handle_stories_spawned(
             estimated_seconds=estimated_seconds,
         )
         persist_story(story, db)
+        _author_acceptance_oracle(
+            story, direction, app_config, software_factory_root,
+            dry_run=dry_run, db_path=db,
+        )
         out.append(story)
     return out
 

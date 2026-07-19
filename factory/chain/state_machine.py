@@ -188,6 +188,18 @@ class StoryRecord(SQLModel, table=True):
     # before this column existed keep ``None``.
     points: int | None = None
     estimated_seconds: float | None = None
+    # WS1.2 independent acceptance oracle. Path (relative to the factory root)
+    # of the acceptance test authored from THIS story's direction acceptance
+    # criteria — the SPEC ONLY, blind to the dev's implementation and the dev's
+    # own tests. Authored EARLY (at story spawn, before dev runs) and stored in
+    # factory state UNDER ``state/acceptance/<app>/<story_id>/`` — deliberately
+    # outside the app repo and outside the per-story dev worktree, so the dev
+    # sandbox never receives it (the anti-reward-hack property: a coder that
+    # cannot see the test judging it cannot special-case it — ImpossibleBench).
+    # None means no oracle was authored (app hasn't opted in, no ACs, or a
+    # legacy story) — the ``acceptance-verified`` gate treats None as "not
+    # applicable / not required", never as a pass.
+    acceptance_test_ref: str | None = None
 
 
 # Event names — strings the chain emits when a handler completes.
