@@ -43,3 +43,6 @@ state/.halt_history.json
 state/.manager_apply_history.json
 state/.improver_backoff.json
 state/*.log
+# pytest-cov data file, written into the repo root by coverage runs.
+.coverage
+.coverage.*
