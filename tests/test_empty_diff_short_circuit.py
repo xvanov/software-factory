@@ -262,6 +262,74 @@ def test_real_diff_flows_through_review_normally(
     assert result.next_state == StoryState.REVIEWER_DONE
 
 
+def test_uncommitted_real_work_does_not_short_circuit(
+    temp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dev produced REAL, test-passing changes but never ran the final
+    ``git commit`` (e.g. it hit a turn/timeout limit near the end of the
+    run) — a common real-world case since the dev agent is only
+    INSTRUCTED to commit, not forced to. ``files_changed``/test results
+    come from the on-disk working tree, so this is genuine work, not an
+    empty diff. The short-circuit must NOT fire; the story must flow
+    through the normal review path (not get permanently blocked on its
+    first pass over a missed commit)."""
+    app_dir = temp_root / "sacrifice"
+    _init_repo_with_origin(app_dir)
+    app_config = AppConfig(
+        name="sacrifice", repo="x/y", app_repo_path=str(app_dir), default_branch="main",
+    )
+    story = _mk_story(temp_root, slug="uncommitted-real-work", dev_attempts=_ONE_GREEN_ATTEMPT)
+    db = temp_root / "state" / "factory.db"
+
+    # Create the story's worktree and leave a REAL, uncommitted, untracked
+    # change sitting in it — exactly what an agent that skipped its final
+    # commit would leave behind.
+    from factory.chain.handlers import _writing_worktree
+
+    worktree = _writing_worktree(app_config, temp_root, story)
+    (worktree / "feature.py").write_text("x = 1\n", encoding="utf-8")
+    # Deliberately NOT committed.
+
+    # Sanity: the helper itself must report "not empty" (False) for this
+    # topology — uncommitted work must never read as an empty diff.
+    assert _dev_produced_empty_diff(story, app_config, temp_root) is False
+
+    import factory.chain.handlers as handlers_mod
+
+    monkeypatch.setattr(handlers_mod, "find_direction_for_story", lambda *a, **k: None)
+    monkeypatch.setattr(handlers_mod, "_read_story_file_content", lambda *a, **k: "story")
+    monkeypatch.setattr(handlers_mod, "_fetch_latest_test_output", lambda *a, **k: "1 passed")
+    monkeypatch.setattr(handlers_mod, "route", lambda *a, **k: "azure/gpt-5.4")
+    monkeypatch.setattr(handlers_mod, "_slop_findings_for_story", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "factory.context.loader.compose_context_prelude", lambda *a, **k: "ctx"
+    )
+
+    calls: list[dict[str, Any]] = []
+    import factory.runner as runner_mod
+
+    def _fake_text_run(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return json.dumps(
+            {
+                "verdict": "approve",
+                "findings": [],
+                "test_quality_score": 0.95,
+                "test_quality_findings": [],
+                "comments_to_post": [],
+                "summary": "lgtm",
+            }
+        )
+
+    monkeypatch.setattr(runner_mod, "text_run", _fake_text_run)
+
+    result = handle_review(story, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert calls, "uncommitted-but-real work must flow to the normal review path"
+    assert result.next_state == StoryState.REVIEWER_DONE
+    assert story.state != StoryState.BLOCKED_REVIEW_NONCONVERGENT.value
+
+
 def test_git_error_falls_back_to_normal_review(
     temp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

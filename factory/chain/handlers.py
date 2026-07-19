@@ -1936,14 +1936,26 @@ def _dev_produced_empty_diff(
 ) -> bool | None:
     """Best-effort check: is the story's branch diff-empty against its base?
 
-    Returns ``True`` when ``git diff --quiet origin/<base>...HEAD`` in the
-    story's worktree confirms there is NO diff (dev ran but produced
-    nothing), ``False`` when a real diff exists, or ``None`` when the check
-    itself could not be performed (no worktree yet, git error, unexpected
-    exit code, missing ``origin/<base>`` ref). ``None`` means "unknown" —
-    callers MUST treat it as "do not short-circuit" and fall back to the
-    normal review path. This must never be able to block a story that
-    actually has changes because of a transient git/filesystem failure.
+    Returns ``True`` when the COMMITTED diff (``git diff --quiet
+    origin/<base>...HEAD``) AND the working tree are both empty — i.e. the
+    dev genuinely produced nothing at all — ``False`` when either a real
+    committed diff OR uncommitted/untracked working-tree changes exist, or
+    ``None`` when the check itself could not be performed (no worktree yet,
+    git error, unexpected exit code, missing ``origin/<base>`` ref). ``None``
+    means "unknown" — callers MUST treat it as "do not short-circuit" and
+    fall back to the normal review path.
+
+    The working-tree check matters because the dev's "work happened" signal
+    is commit-agnostic: ``files_changed``/``test_run_passed`` come from the
+    on-disk working tree (``git status --porcelain`` / the pytest run
+    against it), but the dev agent is only INSTRUCTED to commit, not forced
+    to. An agent that produces real, test-passing work but never runs its
+    final ``git commit`` (e.g. it hit a turn/timeout limit) would otherwise
+    show an empty COMMITTED diff and get permanently blocked on its first
+    pass — worse than the review churn this check exists to prevent. So an
+    uncommitted/untracked change in the worktree is treated the same as a
+    committed one: NOT empty, fall back to the normal review path (which at
+    least gives dev more retries to land the commit).
     """
     import subprocess
 
@@ -1951,6 +1963,25 @@ def _dev_produced_empty_diff(
         worktree = _writing_worktree(app_config, software_factory_root, story)
     except Exception:  # noqa: BLE001 - best-effort, fail open
         return None
+
+    # Working-tree check FIRST: uncommitted/untracked changes mean dev did
+    # real work even if it never committed. Never short-circuit on that.
+    try:
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(worktree),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    if status_proc.returncode != 0:
+        return None
+    if status_proc.stdout.strip():
+        return False
+
     base = app_config.default_branch or "main"
     try:
         proc = subprocess.run(
