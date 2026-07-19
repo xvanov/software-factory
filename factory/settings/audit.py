@@ -51,6 +51,11 @@ class RollupRow:
     tokens_out: int = 0
     cost_usd: float = 0.0
     duration_s: float = 0.0
+    # True if ANY run in this bucket used a model whose price registration
+    # carries an "estimated" ``factory_cost_note`` (currently only
+    # ``azure/deepseek-v4-pro``'s cache-read rate) — the CLI marks these
+    # rows with ``~`` so operators don't read a guess as exact.
+    has_estimated_cost: bool = False
 
 
 @dataclass
@@ -73,6 +78,16 @@ class AuditReport:
     by_direction: list[RollupRow]
     by_app: list[RollupRow]
     unattributed: UnattributedSummary
+    # Cost-accuracy caveat (D003 follow-up): the share of ``total_cost_usd``
+    # that came from a model whose price registration is flagged
+    # ESTIMATED (see ``_model_cost_is_estimated``) — today that's just
+    # ``azure/deepseek-v4-pro``'s cache-read rate, which has no published
+    # Azure meter and was derived by scaling a same-model rate published for
+    # a different host. Operators must not read cost_usd as exact for the
+    # runs this covers until it's reconciled against a real provider bill.
+    estimated_cost_usd: float = 0.0
+    estimated_cost_pct: float = 0.0
+    estimated_models: tuple[str, ...] = ()
 
 
 def _window_runs(
@@ -99,6 +114,33 @@ def _window_runs(
     return out
 
 
+_ESTIMATED_MARKER = "estimated"
+
+
+def _model_cost_is_estimated(model: str) -> bool:
+    """True if ``model``'s LiteLLM price registration flags itself as an
+    ESTIMATE rather than a published provider rate.
+
+    Keys off the ``factory_cost_note`` metadata stamped by
+    ``factory.providers.azure_foundry._register_litellm_pricing`` (currently
+    only ``azure/deepseek-v4-pro``, whose cache-read rate has no published
+    Azure meter). This is a live introspection of LiteLLM's price table —
+    not a hardcoded model list — so the flag stays correct if the note is
+    ever removed (rate confirmed) or added to another model.
+    """
+    try:
+        from factory.providers.azure_foundry import ensure_bootstrapped
+
+        ensure_bootstrapped()
+        import litellm
+
+        entry = litellm.model_cost.get(model) or {}
+        note = str(entry.get("factory_cost_note", ""))
+        return _ESTIMATED_MARKER in note.lower()
+    except Exception:
+        return False
+
+
 def _rollup(runs: list[Run], keyfn: Callable[[Run], str | None]) -> list[RollupRow]:
     buckets: dict[str, RollupRow] = {}
     for r in runs:
@@ -111,6 +153,8 @@ def _rollup(runs: list[Run], keyfn: Callable[[Run], str | None]) -> list[RollupR
         row.tokens_out += r.tokens_out or 0
         row.cost_usd += float(r.cost_usd or 0.0)
         row.duration_s += float(r.duration_s or 0.0)
+        if _model_cost_is_estimated(r.model):
+            row.has_estimated_cost = True
     for row in buckets.values():
         row.cost_usd = round(row.cost_usd, 6)
     return sorted(buckets.values(), key=lambda row: row.cost_usd, reverse=True)
@@ -149,14 +193,29 @@ def build_audit_report(
     by_app = _rollup(runs, lambda r: r.app)
     unattributed = _unattributed(runs)
 
+    total_cost_usd = round(sum(float(r.cost_usd or 0.0) for r in runs), 6)
+    estimated_cost_usd = 0.0
+    estimated_models: set[str] = set()
+    for r in runs:
+        if _model_cost_is_estimated(r.model):
+            estimated_cost_usd += float(r.cost_usd or 0.0)
+            estimated_models.add(r.model)
+    estimated_cost_usd = round(estimated_cost_usd, 6)
+    estimated_cost_pct = (
+        round(100.0 * estimated_cost_usd / total_cost_usd, 2) if total_cost_usd else 0.0
+    )
+
     return AuditReport(
         window_days=days,
         total_run_count=len(runs),
-        total_cost_usd=round(sum(float(r.cost_usd or 0.0) for r in runs), 6),
+        total_cost_usd=total_cost_usd,
         by_story=by_story,
         by_direction=by_direction,
         by_app=by_app,
         unattributed=unattributed,
+        estimated_cost_usd=estimated_cost_usd,
+        estimated_cost_pct=estimated_cost_pct,
+        estimated_models=tuple(sorted(estimated_models)),
     )
 
 

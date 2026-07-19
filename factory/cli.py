@@ -1631,6 +1631,11 @@ def audit_cmd(
         f"window={report.window_days}d  runs={report.total_run_count}  "
         f"total_cost_usd=${report.total_cost_usd:.4f}"
     )
+    if report.estimated_cost_usd > 0:
+        header += (
+            f"  [yellow]~estimated={report.estimated_cost_pct:.1f}% "
+            f"(${report.estimated_cost_usd:.4f})[/yellow]"
+        )
     console.print(Panel.fit(header, title="audit"))
 
     def _rows_table(title: str, key_col: str, rows: list[Any]) -> Table:
@@ -1642,8 +1647,12 @@ def audit_cmd(
         t.add_column("cost_usd", justify="right")
         t.add_column("duration_s", justify="right")
         for row in rows[:top]:
+            # ``~`` marks rows whose cost_usd includes spend priced at an
+            # ESTIMATED rate (see the footnote below) — operators must not
+            # read these as exact until reconciled against the real bill.
+            key_display = f"~{row.key}" if row.has_estimated_cost else row.key
             t.add_row(
-                row.key,
+                key_display,
                 str(row.run_count),
                 str(row.tokens_in),
                 str(row.tokens_out),
@@ -1655,6 +1664,20 @@ def audit_cmd(
     console.print(_rows_table("audit — by story", "story_id", report.by_story))
     console.print(_rows_table("audit — by direction", "direction_id", report.by_direction))
     console.print(_rows_table("audit — by app", "app", report.by_app))
+
+    if report.estimated_cost_usd > 0:
+        models = ", ".join(report.estimated_models)
+        console.print(
+            Panel.fit(
+                f"[yellow]~ marks rows priced with an ESTIMATED rate, not an exact "
+                f"one: {report.estimated_cost_pct:.1f}% of window spend "
+                f"(${report.estimated_cost_usd:.4f}) used a model whose LiteLLM "
+                f"price registration is flagged estimated ({models}) — the "
+                f"cache-read rate has no published provider meter and is pending "
+                f"reconciliation against the real bill. See --reconcile.[/yellow]",
+                title="audit — cost-accuracy caveat",
+            )
+        )
 
     u = report.unattributed
     by_persona = ", ".join(f"{k}={v}" for k, v in sorted(u.by_persona.items())) or "(none)"

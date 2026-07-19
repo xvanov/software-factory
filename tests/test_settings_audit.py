@@ -10,6 +10,7 @@ from sqlmodel import Session
 from factory.runner import Run, _engine
 from factory.settings.audit import (
     CHAIN_PERSONAS,
+    _model_cost_is_estimated,
     build_audit_report,
     count_unattributed_chain_runs,
 )
@@ -152,3 +153,83 @@ def test_rollup_respects_window(tmp_path: Path) -> None:
     report = build_audit_report(tmp_path, days=7)
     assert report.total_run_count == 1
     assert report.total_cost_usd == 0.20
+
+
+# --------------------------------------------------------------------------- #
+# Cost-accuracy caveat: flag spend priced with an ESTIMATED cache-read rate.
+# --------------------------------------------------------------------------- #
+
+
+def test_model_cost_is_estimated_flags_deepseek_v4_pro() -> None:
+    """azure/deepseek-v4-pro's cache-read rate has no published Azure meter
+    and is registered with an ``factory_cost_note`` flagging it as an
+    estimate — this must be detected via live introspection of LiteLLM's
+    price table, not a hardcoded model list."""
+    assert _model_cost_is_estimated("azure/deepseek-v4-pro") is True
+
+
+def test_model_cost_is_estimated_false_for_published_rates() -> None:
+    """azure/gpt-5.4 uses LiteLLM's built-in published rate — no estimate
+    caveat applies."""
+    assert _model_cost_is_estimated("azure/gpt-5.4") is False
+    assert _model_cost_is_estimated("totally-unknown-model-xyz") is False
+
+
+def test_audit_report_surfaces_estimated_cost_share(tmp_path: Path) -> None:
+    """Spend on a model with an estimated cache-read rate is called out as
+    a percentage + dollar amount + the affected model list — not silently
+    blended into total_cost_usd with no indication it's a guess."""
+    db = tmp_path / "state" / "factory.db"
+    _seed(
+        db,
+        [
+            {
+                "persona": "dev",
+                "story_id": 1,
+                "app": "sacrifice",
+                "model": "azure/deepseek-v4-pro",
+                "cost_usd": 0.30,
+            },
+            {
+                "persona": "reviewer",
+                "story_id": 1,
+                "app": "sacrifice",
+                "model": "azure/gpt-5.4",
+                "cost_usd": 0.70,
+            },
+        ],
+    )
+
+    report = build_audit_report(tmp_path, days=7)
+    assert report.total_cost_usd == 1.00
+    assert report.estimated_cost_usd == 0.30
+    assert report.estimated_cost_pct == 30.0
+    assert report.estimated_models == ("azure/deepseek-v4-pro",)
+
+    by_story = {row.key: row for row in report.by_story}
+    # The story mixes an estimated-rate run with a published-rate run — the
+    # bucket must be flagged since SOME of its cost is a guess.
+    assert by_story["1"].has_estimated_cost is True
+
+
+def test_audit_report_no_estimate_flag_when_no_estimated_model_present(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "state" / "factory.db"
+    _seed(
+        db,
+        [
+            {
+                "persona": "dev",
+                "story_id": 1,
+                "app": "sacrifice",
+                "model": "azure/gpt-5.4",
+                "cost_usd": 0.10,
+            },
+        ],
+    )
+    report = build_audit_report(tmp_path, days=7)
+    assert report.estimated_cost_usd == 0.0
+    assert report.estimated_cost_pct == 0.0
+    assert report.estimated_models == ()
+    assert report.by_story[0].has_estimated_cost is False
