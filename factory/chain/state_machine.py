@@ -84,6 +84,16 @@ class StoryState(StrEnum):
     # per-story cap, the orchestrator routes it here. Terminal (no outgoing
     # transition) so a broken story stops burning spend and surfaces for a
     # human with the evidence event the breaker emits.
+    #
+    # OPERATOR RESET (this is a terminal sink and its worktree gets pruned):
+    # to re-run a story parked here, move it back to a live dispatch state
+    # (e.g. ``sm_done`` to replay dev→review→merge, or ``story_created`` from
+    # scratch) AND zero the accumulators (``total_attempts = 0``,
+    # ``total_spend_usd = 0.0``) — otherwise the pre-dispatch breaker re-trips
+    # immediately. To raise the ceiling globally instead, bump
+    # ``caps.per_story_attempts`` / ``caps.per_story_spend_usd`` in
+    # factory_settings.yaml. There is deliberately no auto-recovery path
+    # (this state is absent from ``_AUTO_RECOVERABLE_STATES``).
     BLOCKED_BUDGET_EXCEEDED = "blocked_budget_exceeded"
 
 

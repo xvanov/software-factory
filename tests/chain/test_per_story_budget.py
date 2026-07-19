@@ -295,3 +295,149 @@ def test_under_cap_dispatches_normally_and_counts_attempt(
     assert refreshed.state == StoryState.SM_DONE.value
     # The dispatch was counted toward the aggregate breaker accumulator.
     assert refreshed.total_attempts == 1
+
+
+# --------------------------------------------------------------------------- #
+# Metered-set derivation invariant + transition coverage
+# --------------------------------------------------------------------------- #
+
+
+def test_metered_set_is_derived_from_dispatch() -> None:
+    """The breaker's metered set MUST be derived from the single source of
+    truth (``_DISPATCH``) minus DEPLOY_PENDING, so a future dispatch state
+    can't silently escape the breaker."""
+    assert O._BUDGET_METERED_STATES == frozenset(O._DISPATCH) - {StoryState.DEPLOY_PENDING}
+    # DEPLOY_PENDING is a dispatch state that is deliberately NOT metered.
+    assert StoryState.DEPLOY_PENDING in O._DISPATCH
+    assert StoryState.DEPLOY_PENDING not in O._BUDGET_METERED_STATES
+
+
+def test_every_metered_state_has_budget_transition() -> None:
+    """Every metered state must have an EVENT_BUDGET_EXCEEDED edge to the
+    terminal sink — otherwise ``advance`` would raise IllegalTransitionError
+    at dispatch time and crash a live tick. This test catches a new dispatch
+    state added without its breaker transition."""
+    for src in O._BUDGET_METERED_STATES:
+        s = _story(src)
+        assert advance(s, EVENT_BUDGET_EXCEEDED) == StoryState.BLOCKED_BUDGET_EXCEEDED, src
+
+
+# --------------------------------------------------------------------------- #
+# Transient ledger-read fail-safe (MAJOR 1)
+# --------------------------------------------------------------------------- #
+
+
+def test_ledger_spend_returns_none_on_read_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient read failure must return None (caller keeps prior value),
+    NEVER a sentinel like inf that would poison the accumulator."""
+    monkeypatch.setattr("time.sleep", lambda *_a, **_k: None)  # don't actually sleep
+    bad_db = tmp_path / "not-a-db-dir"
+    bad_db.mkdir()  # a directory is not a usable sqlite file → OperationalError
+    assert O._story_ledger_spend_usd(bad_db, story_id=123) is None
+
+
+def test_transient_read_does_not_poison_accumulator_or_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: if the ledger read fails during a dispatch, the story keeps
+    its prior (healthy, under-cap) total_spend_usd and advances normally — a
+    transient sqlite lock must NOT trip the terminal breaker."""
+    _write_app_and_settings(tmp_path, per_story_attempts=20, per_story_spend=5.0)
+    story = _story(StoryState.STORY_CREATED, slug="healthy", total_spend_usd=2.0)
+    db = _seed_db(tmp_path, [story])
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+    with Session(eng) as session:
+        sid = session.exec(__import__("sqlmodel").select(StoryRecord)).one().id
+
+    def _fake_sm(story: StoryRecord, *_a: object, **_k: object) -> H.HandlerResult:
+        story.state = StoryState.SM_DONE.value
+        H.persist_story(story, db_path=db)
+        return H.HandlerResult(next_state=StoryState.SM_DONE)
+
+    monkeypatch.setattr(H, "handle_sm", _fake_sm)
+    # Simulate a transient read failure for the whole tick.
+    monkeypatch.setattr(O, "_story_ledger_spend_usd", lambda *_a, **_k: None)
+
+    O.tick(tmp_path, "sacrifice", db_path=db, max_advances_per_story=1)
+
+    with Session(eng) as session:
+        refreshed = session.get(StoryRecord, sid)
+    assert refreshed is not None
+    # Advanced normally — NOT tripped into the terminal budget sink.
+    assert refreshed.state == StoryState.SM_DONE.value
+    # Prior accumulator preserved (not overwritten with a sentinel).
+    assert refreshed.total_spend_usd == pytest.approx(2.0)
+
+
+# --------------------------------------------------------------------------- #
+# Accumulator hooks: exception-path increment + success-path spend refresh
+# --------------------------------------------------------------------------- #
+
+
+def test_crashing_handler_still_counts_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """total_attempts is bumped BEFORE invoking the handler, so a handler that
+    advances to *_in_progress and then crashes still burns an attempt (and the
+    story rolls back so the next tick can retry)."""
+    _write_app_and_settings(tmp_path, per_story_attempts=20, per_story_spend=5.0)
+    story = _story(StoryState.STORY_CREATED, slug="boom")
+    db = _seed_db(tmp_path, [story])
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+    with Session(eng) as session:
+        sid = session.exec(__import__("sqlmodel").select(StoryRecord)).one().id
+
+    def _boom_sm(story: StoryRecord, *_a: object, **_k: object) -> H.HandlerResult:
+        story.state = StoryState.SM_IN_PROGRESS.value
+        H.persist_story(story, db_path=db)
+        raise RuntimeError("simulated crash")
+
+    monkeypatch.setattr(H, "handle_sm", _boom_sm)
+
+    O.tick(tmp_path, "sacrifice", db_path=db, max_advances_per_story=1)
+
+    with Session(eng) as session:
+        refreshed = session.get(StoryRecord, sid)
+    assert refreshed is not None
+    # Rolled back for retry, but the burned attempt is still counted.
+    assert refreshed.state == StoryState.STORY_CREATED.value
+    assert refreshed.total_attempts == 1
+
+
+def test_successful_dispatch_refreshes_spend_from_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After a successful dispatch, total_spend_usd is refreshed from the D003
+    per-run ledger (runs.cost_usd attributed to this story)."""
+    from factory.runner import Run
+
+    _write_app_and_settings(tmp_path, per_story_attempts=20, per_story_spend=100.0)
+    story = _story(StoryState.STORY_CREATED, slug="costed")
+    db = _seed_db(tmp_path, [story])
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+    with Session(eng) as session:
+        sid = session.exec(__import__("sqlmodel").select(StoryRecord)).one().id
+    # Seed a ledger row attributed to this story (as a real handler run would).
+    with Session(eng) as session:
+        session.add(
+            Run(ts="2026-07-19T00:00:00", persona="sm", model="m", mode="sandbox",
+                cost_usd=1.25, story_id=sid)
+        )
+        session.commit()
+
+    def _fake_sm(story: StoryRecord, *_a: object, **_k: object) -> H.HandlerResult:
+        story.state = StoryState.SM_DONE.value
+        H.persist_story(story, db_path=db)
+        return H.HandlerResult(next_state=StoryState.SM_DONE)
+
+    monkeypatch.setattr(H, "handle_sm", _fake_sm)
+
+    O.tick(tmp_path, "sacrifice", db_path=db, max_advances_per_story=1)
+
+    with Session(eng) as session:
+        refreshed = session.get(StoryRecord, sid)
+    assert refreshed is not None
+    assert refreshed.state == StoryState.SM_DONE.value
+    assert refreshed.total_spend_usd == pytest.approx(1.25)
