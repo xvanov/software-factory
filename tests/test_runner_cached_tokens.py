@@ -80,7 +80,12 @@ def test_extract_cached_tokens_never_raises_on_malformed_input() -> None:
 def test_text_run_persists_cached_input_tokens(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
+    # model_id is "azure/..." -> _provider_env_key resolves to AZURE_API_KEY,
+    # NOT DEEPSEEK_API_KEY (that mismatch is exactly what let this test pass
+    # locally against a real .env key while failing in a credential-less CI
+    # env). Fake, obviously-not-real placeholder, matching
+    # tests/test_runner_iteration_cap.py's pattern for the same gate.
+    monkeypatch.setenv("AZURE_API_KEY", "test-key")
 
     def fake_completion(**kwargs: Any) -> dict[str, Any]:
         return {
@@ -114,7 +119,9 @@ def test_text_run_zero_cache_hit_records_zero_not_null(
 ) -> None:
     """A real call with NO cache hit records ``0`` (known value), which is
     distinct from ``None`` (pre-model failure / not applicable)."""
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test")
+    # See comment in test_text_run_persists_cached_input_tokens: azure/*
+    # model ids resolve through AZURE_API_KEY, not DEEPSEEK_API_KEY.
+    monkeypatch.setenv("AZURE_API_KEY", "test-key")
 
     def fake_completion(**kwargs: Any) -> dict[str, Any]:
         return {
