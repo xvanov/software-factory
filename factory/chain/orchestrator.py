@@ -32,7 +32,12 @@ from factory.chain import handlers as H
 from factory.chain.auto_merge import MergeAction, auto_merge_tick
 from factory.chain.ci_health import CiHealthResult, main_ci_health_tick
 from factory.chain.event_log import log_story_event
-from factory.chain.state_machine import StoryRecord, StoryState
+from factory.chain.state_machine import (
+    EVENT_BUDGET_EXCEEDED,
+    StoryRecord,
+    StoryState,
+    advance,
+)
 from factory.directions.parser import Direction
 from factory.settings.enforcer import can_dispatch
 from factory.settings.loader import load_settings
@@ -135,6 +140,77 @@ _DISPATCH = {
 }
 
 
+# WS1.1 per-story budget circuit breaker — the dispatch states that burn LLM
+# spend. Membership gates the breaker: only a story ABOUT to enter one of these
+# (via _dispatch_for_story) is checked. DEPLOY_PENDING is a dispatch state too
+# but is intentionally excluded — see the EVENT_BUDGET_EXCEEDED transition
+# comment in state_machine.py (blocking deploy strands merged work without
+# saving meaningful spend). Every state here has an EVENT_BUDGET_EXCEEDED edge
+# to BLOCKED_BUDGET_EXCEEDED in the transition table.
+_BUDGET_METERED_STATES: frozenset[StoryState] = frozenset(
+    {
+        StoryState.STORY_CREATED,
+        StoryState.SM_DONE,
+        StoryState.DEV_RETRY,
+        StoryState.REVIEWER_REQUESTED_CHANGES,
+        StoryState.TESTS_GREEN,
+        StoryState.REVIEWER_DONE,
+        StoryState.TECH_WRITER_DONE,
+        StoryState.DOCS_SM_DONE,
+        StoryState.DOCS_ONBOARDER_DONE,
+    }
+)
+
+
+def _story_ledger_spend_usd(db_path: Path, story_id: int | None) -> float:
+    """Total ``runs.cost_usd`` attributed to ``story_id`` (D003 per-run ledger).
+
+    This is the authoritative per-story spend: the run rows already carry the
+    real cost of every LLM round-trip, so the breaker's ``total_spend_usd``
+    accumulator is *derived* from the ledger rather than re-summed by hand
+    (no double-counting on retries, self-healing after a crash).
+
+    Returns 0.0 for an unsaved story (no id yet, no runs). On a broken ledger
+    it returns ``inf`` so the breaker FAILS SAFE — it stops the story rather
+    than letting it spend blind against an unreadable budget.
+    """
+    if story_id is None:
+        return 0.0
+    try:
+        from factory.runner import Run
+
+        eng = create_engine(f"sqlite:///{db_path}", echo=False)
+        total = 0.0
+        with Session(eng) as session:
+            for r in session.exec(select(Run).where(Run.story_id == story_id)).all():
+                total += float(r.cost_usd or 0.0)
+        return total
+    except Exception:  # noqa: BLE001
+        return float("inf")
+
+
+def _story_budget_breaker_reason(story: StoryRecord, caps: Any) -> str | None:
+    """Return a human-readable reason iff the per-story breaker has tripped.
+
+    Pure: reads only the accumulator fields on ``story`` and the caps. The
+    caller is responsible for the state transition + evidence event. Only
+    budget-metered states are checked so a story that reached DEPLOY_PENDING
+    (or a terminal state) is never budget-blocked.
+    """
+    if StoryState(story.state) not in _BUDGET_METERED_STATES:
+        return None
+    per_story_attempts = int(getattr(caps, "per_story_attempts", 0) or 0)
+    per_story_spend = float(getattr(caps, "per_story_spend_usd", 0.0) or 0.0)
+    if per_story_attempts > 0 and story.total_attempts >= per_story_attempts:
+        return f"total_attempts={story.total_attempts} >= per_story_attempts={per_story_attempts}"
+    if per_story_spend > 0 and story.total_spend_usd >= per_story_spend:
+        return (
+            f"total_spend_usd={story.total_spend_usd:.4f} >= "
+            f"per_story_spend_usd={per_story_spend}"
+        )
+    return None
+
+
 def _dispatch_for_story(story: StoryRecord) -> str | None:
     """Pick the handler name for ``story`` given its current state.
 
@@ -212,6 +288,9 @@ _NON_CAP_COUNTING_STATES = {
     StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
     StoryState.BLOCKED_DEPLOY_FAILED.value,
     StoryState.BLOCKED_REVIEW_NONCONVERGENT.value,
+    # WS1.1 terminal budget sink — the story is done burning spend; it must
+    # not count against concurrency caps.
+    StoryState.BLOCKED_BUDGET_EXCEEDED.value,
     # Passive transition states — no agent is actively running; the story
     # is simply waiting for the orchestrator to dispatch the next handler
     # on the next tick. Counting these against the cap deadlocks any
@@ -1012,6 +1091,52 @@ def tick(
                     # webhook) or terminal. Stop driving.
                     break
 
+                # ---- WS1.1 GLOBAL per-story budget circuit breaker ----------
+                # BEFORE dispatching the handler, check the aggregate per-story
+                # ceiling. The composed loops (dev retries, reviewer cycles,
+                # auto-recovery re-dispatch, CI-fix) each have their own counter
+                # but no shared ceiling; a pathological story can burn the
+                # product of all of them. If the story's total attempts or total
+                # spend has crossed the per-story cap, route it to the terminal
+                # BLOCKED_BUDGET_EXCEEDED sink and emit an EVIDENCE event — never
+                # silently drop. Terminal (no auto-recovery back into the loop)
+                # so a broken story stops burning spend.
+                _budget_reason = _story_budget_breaker_reason(story, settings.caps)
+                if _budget_reason is not None:
+                    from_state = story.state
+                    story.state = advance(story, EVENT_BUDGET_EXCEEDED).value
+                    story.last_rejection_reason = _budget_reason
+                    H.persist_story(story, db)
+                    _last_signature = story.error or story.last_rejection_reason
+                    log_story_event(
+                        story.id,
+                        "budget_exceeded",
+                        {
+                            "story_id": story.id,
+                            "slug": story.slug,
+                            "handler": handler_name,
+                            "from_state": from_state,
+                            "to_state": story.state,
+                            "reason": _budget_reason,
+                            "total_attempts": story.total_attempts,
+                            "total_spend_usd": round(story.total_spend_usd, 4),
+                            "per_story_attempts": getattr(
+                                settings.caps, "per_story_attempts", None
+                            ),
+                            "per_story_spend_usd": getattr(
+                                settings.caps, "per_story_spend_usd", None
+                            ),
+                            "dev_retries": story.dev_retries,
+                            "reviewer_cycles": story.reviewer_cycles,
+                            "last_failure_signature": _last_signature,
+                        },
+                        software_factory_root=root,
+                        slug_hint=story.slug,
+                    )
+                    summary.handler_runs.append((story.slug, from_state, story.state))
+                    summary.stories_blocked += 1
+                    break
+
                 # Dependency-ordering gate. A story does not build until every
                 # lower-id story in its own direction is deployed (id order ==
                 # SM build order: foundations first). This stops a dependent
@@ -1120,6 +1245,10 @@ def tick(
                     software_factory_root=root,
                     slug_hint=story.slug,
                 )
+                # WS1.1 breaker accumulator: count this dispatch. Bumped BEFORE
+                # invoking so a handler that crashes still counts as a burned
+                # attempt (the pre-dispatch check above reads this next tick).
+                story.total_attempts += 1
                 try:
                     result = _invoke_handler(
                         handler_name,
@@ -1140,6 +1269,9 @@ def tick(
                     # next tick will dispatch the same handler again.
                     story.state = from_state
                     story.error = repr(exc)
+                    # Refresh the breaker's spend accumulator from the ledger:
+                    # a crashed handler may still have recorded partial run cost.
+                    story.total_spend_usd = _story_ledger_spend_usd(db, story.id)
                     H.persist_story(story, db)
                     summary.errors.append((story.slug, repr(exc)))
                     log_story_event(
@@ -1154,6 +1286,13 @@ def tick(
                         slug_hint=story.slug,
                     )
                     break
+                # WS1.1 breaker accumulator: refresh this story's aggregate
+                # spend from the D003 per-run ledger (authoritative — no
+                # double-count on retries). The handler persisted its own state
+                # transition; persist again so total_attempts/total_spend_usd
+                # survive to the next tick's pre-dispatch breaker check.
+                story.total_spend_usd = _story_ledger_spend_usd(db, story.id)
+                H.persist_story(story, db)
                 summary.handler_runs.append((story.slug, from_state, story.state))
                 summary.stories_advanced += 1
                 log_story_event(
