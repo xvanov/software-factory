@@ -37,7 +37,9 @@ from factory.directions.parser import Direction
 # --------------------------------------------------------------------------- #
 
 
-def _story(*, story_id: int | None = 7, ref: str | None = None) -> StoryRecord:
+def _story(
+    *, story_id: int | None = 7, ref: str | None = None, expected: bool = True
+) -> StoryRecord:
     s = StoryRecord(
         id=story_id,
         direction_id="002",
@@ -47,6 +49,7 @@ def _story(*, story_id: int | None = 7, ref: str | None = None) -> StoryRecord:
         scope="backend",
         state=StoryState.PR_OPEN.value,
         acceptance_test_ref=ref,
+        acceptance_expected=expected,
     )
     return s
 
@@ -280,12 +283,21 @@ def test_not_required_without_opt_in() -> None:
     assert "acceptance-verified" not in required_gate_labels(_oracle_cfg(on=False), story)
 
 
-def test_not_required_when_opted_in_but_no_ref() -> None:
-    """Opt-in app, but this story has no authored oracle (legacy / no ACs) —
+def test_not_required_when_opted_in_but_no_acs() -> None:
+    """Opt-in app, but this story has NO acceptance criteria (expected=False) —
     the gate must NOT be required for it, so it never blocks such stories."""
-    story = _story(ref=None)
+    story = _story(ref=None, expected=False)
     labels = required_gate_labels(_oracle_cfg(on=True), story)
     assert "acceptance-verified" not in labels
+
+
+def test_required_when_expected_even_if_authoring_failed() -> None:
+    """The false-green fix: a story that is EXPECTED to have an oracle but whose
+    authoring FAILED (expected=True, ref=None) is STILL required — so it blocks
+    rather than silently shipping un-gated code."""
+    story = _story(ref=None, expected=True)
+    labels = required_gate_labels(_oracle_cfg(on=True), story)
+    assert "acceptance-verified" in labels
 
 
 def test_required_when_opted_in_and_ref_present() -> None:
@@ -323,33 +335,54 @@ def test_dry_run_is_non_authoritative(tmp_path: Path) -> None:
     assert r.details["authoritative"] is False
 
 
-def test_opted_in_no_ref_is_non_authoritative_not_pass(tmp_path: Path) -> None:
+def test_opted_in_expected_no_ref_blocks_authoritatively(tmp_path: Path) -> None:
+    """THE FALSE-GREEN FIX: opted-in + EXPECTED + authoring failed (no ref) must
+    BLOCK authoritatively — never a silent skip that ships un-gated code."""
     pr = PRContext(
         pr_number=1,
         head_sha="a",
         base_branch="main",
-        story=_story(ref=None),
+        story=_story(ref=None, expected=True),
         software_factory_root=tmp_path,
         dry_run=False,
     )
     r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
     assert not r.passed
-    assert r.details["authoritative"] is False
+    assert r.details["authoritative"] is True
+    assert "EXPECTED but not available" in r.reason
 
 
-def test_missing_stored_file_is_non_authoritative(tmp_path: Path) -> None:
+def test_opted_in_not_expected_no_ref_is_skip(tmp_path: Path) -> None:
+    """opted-in + NOT expected (no ACs) + no ref → not applicable skip (pass)."""
     pr = PRContext(
         pr_number=1,
         head_sha="a",
         base_branch="main",
-        story=_story(ref="state/acceptance/sacrifice/7/test_acceptance.py"),
+        story=_story(ref=None, expected=False),
+        software_factory_root=tmp_path,
+        dry_run=False,
+    )
+    r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
+    assert r.passed
+    assert r.details["acceptance_expected"] is False
+
+
+def test_missing_stored_file_expected_blocks_authoritatively(tmp_path: Path) -> None:
+    """Expected + a ref recorded but the FILE is gone → authoritative block."""
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        story=_story(
+            ref="state/acceptance/sacrifice/7/test_acceptance.py", expected=True
+        ),
         software_factory_root=tmp_path,  # file does not exist under here
         repo_root=tmp_path / "repo",
         dry_run=False,
     )
     r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
     assert not r.passed
-    assert r.details["authoritative"] is False
+    assert r.details["authoritative"] is True
 
 
 # --------------------------------------------------------------------------- #
@@ -366,6 +399,7 @@ def test_author_returns_none_when_not_opted_in(tmp_path: Path) -> None:
     )
     assert ref is None
     assert story.acceptance_test_ref is None
+    assert story.acceptance_expected is False  # not opted in → not expected
 
 
 def test_author_returns_none_without_acceptance_criteria(tmp_path: Path) -> None:
@@ -376,9 +410,10 @@ def test_author_returns_none_without_acceptance_criteria(tmp_path: Path) -> None
         author_fn=lambda _s, _st: _ACCEPTANCE_TEST_SRC,
     )
     assert ref is None
+    assert story.acceptance_expected is False  # no ACs → not expected
 
 
-def test_author_skips_llm_in_dry_run(tmp_path: Path) -> None:
+def test_author_skips_llm_in_dry_run_but_sets_expected(tmp_path: Path) -> None:
     story = _story()
     direction = _direction(tmp_path, ["some AC"])
     calls: list[str] = []
@@ -392,7 +427,9 @@ def test_author_skips_llm_in_dry_run(tmp_path: Path) -> None:
         dry_run=True, author_fn=_fake,
     )
     assert ref is None
-    assert calls == []  # no author call in dry-run → gate stays non-authoritative
+    assert calls == []  # no author call in dry-run
+    # ...but the story is still marked EXPECTED so a real tick authors + gates it.
+    assert story.acceptance_expected is True
 
 
 def test_author_writes_outside_repo_and_sets_ref(tmp_path: Path) -> None:
@@ -405,5 +442,127 @@ def test_author_writes_outside_repo_and_sets_ref(tmp_path: Path) -> None:
         author_fn=lambda _s, _st: _ACCEPTANCE_TEST_SRC,
     )
     assert ref == story.acceptance_test_ref
+    assert story.acceptance_expected is True
     assert (root / ref).read_text() == _ACCEPTANCE_TEST_SRC
     assert ref.startswith("state/acceptance/sacrifice/42/")
+
+
+# --------------------------------------------------------------------------- #
+# self-heal: authoring failure blocks (not silent-pass) AND eventually recovers
+# --------------------------------------------------------------------------- #
+
+
+def test_author_sets_expected_true_even_when_authoring_raises(tmp_path: Path) -> None:
+    """The BLOCKER fix: authoring flakes, but acceptance_expected is still set
+    True (so the gate blocks) and the ref stays None."""
+    story = _story(story_id=9)
+    direction = _direction(tmp_path, ["the email is lowercased"])
+    root = tmp_path / "factory"
+
+    def _boom(_spec: str, _st: StoryRecord) -> str:
+        raise RuntimeError("transient LLM error")
+
+    ref = author_acceptance_test(
+        story, direction, _oracle_cfg(on=True), root,
+        dry_run=False, db_path=root / "state" / "factory.db", author_fn=_boom,
+    )
+    assert ref is None
+    assert story.acceptance_test_ref is None
+    assert story.acceptance_expected is True  # BLOCKS, never silently ships
+
+
+def test_author_retries_transient_failure(tmp_path: Path) -> None:
+    """A couple of transient author failures are absorbed within one call."""
+    story = _story(story_id=11)
+    direction = _direction(tmp_path, ["the email is lowercased"])
+    root = tmp_path / "factory"
+    attempts = {"n": 0}
+
+    def _flaky(_spec: str, _st: StoryRecord) -> str:
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise RuntimeError("flaky")
+        return _ACCEPTANCE_TEST_SRC
+
+    ref = author_acceptance_test(
+        story, direction, _oracle_cfg(on=True), root,
+        dry_run=False, db_path=root / "state" / "factory.db", author_fn=_flaky,
+    )
+    assert ref is not None
+    assert attempts["n"] == 3
+
+
+def test_gate_blocks_then_passes_after_reauthor(tmp_path: Path) -> None:
+    """Requirement 7: expected+missing → gate BLOCKS authoritatively; after a
+    (spec-only) re-author writes the oracle, the same gate PASSES."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _make_app_checkout(repo, correct=True)
+    root = tmp_path / "factory"
+
+    story = _story(story_id=7, ref=None, expected=True)
+    pr = PRContext(
+        pr_number=1, head_sha="abc", base_branch="main",
+        story=story, repo_root=repo, software_factory_root=root, dry_run=False,
+    )
+    # 1) Authoring failed earlier → gate blocks authoritatively.
+    r_blocked = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
+    assert not r_blocked.passed and r_blocked.details["authoritative"] is True
+
+    # 2) Self-heal re-authors from the SPEC (still dev-blind).
+    direction = _direction(tmp_path, ["the email is lowercased"])
+    ref = author_acceptance_test(
+        story, direction, _oracle_cfg(on=True), root,
+        dry_run=False, db_path=root / "state" / "factory.db",
+        author_fn=lambda _s, _st: _ACCEPTANCE_TEST_SRC,
+    )
+    assert ref is not None
+
+    # 3) Same gate now passes against satisfying code.
+    r_ok = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
+    assert r_ok.passed and r_ok.details["authoritative"] is True
+
+
+def test_reauthor_sweep_heals_missing_oracle(tmp_path: Path) -> None:
+    """The tick sweep re-authors an expected-but-missing story end to end:
+    resolves the direction from disk, authors from spec, writes + persists."""
+    from factory.chain.acceptance import reauthor_missing_oracles
+    from factory.chain.handlers import get_story, persist_story
+
+    root = tmp_path
+    (root / "state").mkdir(parents=True, exist_ok=True)
+    (root / "apps" / "sacrifice").mkdir(parents=True, exist_ok=True)
+    # App config opting in.
+    (root / "apps" / "sacrifice" / "config.yaml").write_text(
+        "name: sacrifice\nrepo: o/r\ngates:\n  acceptance_oracle: true\n",
+        encoding="utf-8",
+    )
+    # Direction on disk with ACs.
+    ddir = root / "apps" / "sacrifice" / "directions" / "002-emails"
+    ddir.mkdir(parents=True, exist_ok=True)
+    (ddir / "direction.md").write_text(
+        "---\ntitle: emails\n---\n\n# emails\n\n## Why\n\nx.\n\n"
+        "## Acceptance Criteria\n\n- the email is lowercased\n",
+        encoding="utf-8",
+    )
+    db = root / "state" / "factory.db"
+    # An expected-but-unauthored story (authoring flaked at spawn).
+    story = persist_story(
+        _story(story_id=None, ref=None, expected=True), db
+    )
+
+    healed = reauthor_missing_oracles(
+        "sacrifice", root, dry_run=False, db_path=db,
+        author_fn=lambda _s, _st: _ACCEPTANCE_TEST_SRC,
+    )
+    assert healed == 1
+    refreshed = get_story(story.id, db)
+    assert refreshed is not None
+    assert refreshed.acceptance_test_ref is not None
+    assert (root / refreshed.acceptance_test_ref).read_text() == _ACCEPTANCE_TEST_SRC
+
+    # Idempotent: a second sweep finds nothing to heal.
+    assert reauthor_missing_oracles(
+        "sacrifice", root, dry_run=False, db_path=db,
+        author_fn=lambda _s, _st: _ACCEPTANCE_TEST_SRC,
+    ) == 0

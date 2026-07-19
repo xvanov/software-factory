@@ -64,19 +64,25 @@ def required_gate_labels(
     satisfy it). ``smoke-green`` becomes required exactly when the app has a
     working, declared smoke harness.
 
-    ``acceptance-verified`` (WS1.2) becomes required only when the app opts in
-    (``gates.acceptance_oracle``) AND the story actually has an authored oracle
-    (``story.acceptance_test_ref`` set — which happens only when the direction
-    carried acceptance criteria). Requiring it story-by-story means legacy
-    stories and no-AC stories are never blocked, and apps that haven't opted in
-    are wholly unaffected. Without a ``story`` (app-level query) it stays out of
-    the required set — there is nothing to verify against yet.
+    ``acceptance-verified`` (WS1.2) becomes required when the app opts in
+    (``gates.acceptance_oracle``) AND the story is EXPECTED to have an oracle
+    (``story.acceptance_expected`` — set at spawn to "opted in AND the direction
+    carried ACs", INDEPENDENT of whether authoring succeeded). Keying off
+    ``acceptance_expected`` — NOT ``acceptance_test_ref`` — is the false-green
+    fix: a story whose author flaked (expected, no stored file) is STILL
+    required to pass, so it blocks (and self-heals) rather than silently
+    shipping un-gated. Legacy stories (``acceptance_expected`` default False)
+    with a stored ref are still required via the ref fallback. No-AC stories and
+    apps that haven't opted in are never blocked; without a ``story`` (app-level
+    query) it stays out of the required set.
     """
     labels = list(LOOP4_REQUIRED_GATE_LABELS)
     gates = app_config.gates
     if gates.smoke_harness_ready and gates.smoke_command:
         labels.append("smoke-green")
-    if gates.acceptance_oracle and story is not None and story.acceptance_test_ref:
+    if gates.acceptance_oracle and story is not None and (
+        story.acceptance_expected or story.acceptance_test_ref
+    ):
         labels.append("acceptance-verified")
     return labels
 

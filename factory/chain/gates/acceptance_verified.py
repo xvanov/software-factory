@@ -20,20 +20,26 @@ the merge-candidate checkout, runs it against the app's python env, and passes
 iff it exits 0 — so a story whose OWN tests are green but whose behaviour
 violates an acceptance criterion is caught here.
 
-Per-app opt-in (regression-safe), mirroring ``smoke-green``
-==========================================================
+The blocking decision keys off ``story.acceptance_expected`` — set at spawn to
+"app opted in AND the direction has ACs", INDEPENDENT of whether authoring
+succeeded — NOT off the presence of the stored file. That is the fix for the
+false-green hole: an authoring failure leaves ``acceptance_expected=True`` with
+no stored test, and this gate then BLOCKS AUTHORITATIVELY (never a silent skip).
+It is not a permanent dead-end: ``acceptance.reauthor_missing_oracles`` re-authors
+expected-but-missing oracles on a later tick (spec-only, so still dev-blind), so
+the story heals and gets gated for real.
 
-* Not opted in (``gates.acceptance_oracle`` False): PASS (skip). The gate does
-  not apply and ``required_gate_labels`` never adds it — apps without the oracle
-  see no new merge blocks.
-* Opted in but no oracle authored for this story (``acceptance_test_ref`` None —
-  a legacy story or a direction with no ACs): NON-AUTHORITATIVE (passed=False,
-  authoritative=False). ``required_gate_labels`` does NOT require it in this
-  case (no ref), so the honest "no oracle ran" result surfaces without blocking.
-* Opted in + oracle authored (``acceptance_test_ref`` set): the gate is
-  REQUIRED. Real-run (checkout present): copy the stored test in, run it, pass
-  iff exit 0, remove it. Dry-run / no checkout / missing stored file: cannot
-  verify → NON-AUTHORITATIVE (never a false pass).
+Resolution
+==========
+
+* Not opted in (``gates.acceptance_oracle`` False): PASS (skip). Never required.
+* Opted in but this story is NOT expected to have an oracle (no ACs): PASS
+  (skip, not applicable). ``required_gate_labels`` does not require it.
+* Expected + stored test readable:
+    - real-run (checkout present): copy in, run, pass iff exit 0, remove.
+    - dry-run / no checkout: NON-AUTHORITATIVE (cannot verify), never a pass.
+* Expected + stored test MISSING/unreadable (authoring flaked): AUTHORITATIVE
+  BLOCK (passed=False, authoritative=True) — self-heal re-authors next tick.
 """
 
 from __future__ import annotations
@@ -42,6 +48,7 @@ import shutil
 from pathlib import Path
 
 from factory.app_config import AppConfig
+from factory.chain.acceptance import ref_is_readable
 from factory.chain.gates.evaluator import GateResult, PRContext, _run_command
 
 _DEFAULT_ACCEPTANCE_COMMAND = "python -m pytest {test_file} -q"
@@ -63,34 +70,37 @@ def evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:
 
     story = pr.story
     ref = getattr(story, "acceptance_test_ref", None) if story is not None else None
-    if not ref:
-        # Opted in but nothing was authored (legacy story / no ACs). Not
-        # required in this case (required_gate_labels keys off the ref), so a
-        # non-authoritative result is honest without blocking.
+    # Expected is the required/blocking source of truth. Fall back to "a ref
+    # exists" for legacy stories spawned before ``acceptance_expected`` existed.
+    expected = bool(getattr(story, "acceptance_expected", False)) or bool(ref)
+
+    if not expected:
+        # Opted in, but this story has no acceptance criteria to verify — not
+        # applicable, and required_gate_labels does not require it.
         return GateResult(
             label=label,
-            passed=False,
-            reason="no acceptance test authored for this story (not applicable)",
-            details={"authoritative": False, "acceptance_test_ref": None},
+            passed=True,
+            reason="story has no acceptance criteria (not applicable, skipped)",
+            details={"acceptance_oracle": True, "acceptance_expected": False},
         )
 
-    # Resolve the stored test. It lives under the factory root, deliberately
-    # outside repo_root / the dev worktree.
     root = pr.software_factory_root
-    stored: Path | None = None
-    if root is not None:
-        candidate = Path(ref)
-        stored = candidate if candidate.is_absolute() else Path(root) / candidate
 
-    if stored is None or not stored.exists():
+    # Expected but the stored oracle is missing/unreadable → authoring flaked.
+    # BLOCK AUTHORITATIVELY (never a silent pass). The tick self-heal
+    # (reauthor_missing_oracles) re-authors it before a later merge attempt, so
+    # this is not a permanent dead-end.
+    if not ref_is_readable(story, root):
         return GateResult(
             label=label,
             passed=False,
             reason=(
-                "acceptance test ref recorded but the stored file is unreadable "
-                f"(ref={ref!r}, root={'set' if root else 'unset'}) — cannot verify"
+                "acceptance oracle EXPECTED but not available "
+                f"(ref={ref!r}, root={'set' if root else 'unset'}) — authoring "
+                "failed; blocking until it is re-authored (self-heals next tick)"
             ),
-            details={"authoritative": False, "acceptance_test_ref": ref},
+            details={"authoritative": True, "acceptance_expected": True,
+                     "acceptance_test_ref": ref},
         )
 
     # Need a real checkout to run against. Dry-run (no worktree) cannot
@@ -99,16 +109,23 @@ def evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:
         return GateResult(
             label=label,
             passed=False,
-            reason="[dry-run] acceptance oracle authored but not run (no checkout)",
+            reason="[dry-run] acceptance oracle present but not run (no checkout)",
             details={"authoritative": False, "acceptance_test_ref": ref},
         )
 
     # Real-run: copy the independent test into the merge-candidate checkout,
     # run it against the app's env, then remove it (never leave it behind to be
-    # committed). Named distinctively so it cannot collide with app tests.
-    sid = getattr(story, "id", None)
-    dest_name = f"test_acceptance_oracle_{sid if sid is not None else 'story'}.py"
+    # committed). Named distinctively (story id, else head_sha) so it cannot
+    # collide with app tests.
+    # ref_is_readable(story, root) returned True above → story, ref, root all set.
+    assert story is not None and ref is not None and root is not None
+    sid = story.id if story.id is not None else pr.head_sha
+    dest_name = f"test_acceptance_oracle_{sid}.py"
     dest = Path(pr.repo_root) / dest_name
+
+    p = Path(ref)
+    stored = p if p.is_absolute() else Path(root) / p
+
     cmd_template = gates.acceptance_test_command or _DEFAULT_ACCEPTANCE_COMMAND
     cmd = cmd_template.format(test_file=dest_name)
     try:

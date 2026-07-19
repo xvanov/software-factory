@@ -199,6 +199,13 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     # Review-cycle history (last 4 cycles) — reviewer finality memory + dev's
     # "already addressed" digest. See StoryRecord.reviewer_history_json.
     "reviewer_history_json": "TEXT",
+    # WS1.2 independent acceptance oracle. ``acceptance_test_ref`` is the stored
+    # test path; ``acceptance_expected`` (INTEGER 0/1) is the required/blocking
+    # source of truth (set at spawn regardless of authoring success). Pre-WS1.2
+    # stories gain both on next visit: expected defaults 0 so they are never
+    # retroactively blocked.
+    "acceptance_test_ref": "TEXT",
+    "acceptance_expected": "INTEGER NOT NULL DEFAULT 0",
 }
 
 
@@ -304,7 +311,10 @@ def _author_acceptance_oracle(
     story (best-effort, never raises — must not fail story spawn).
 
     Authored here (spawn time, before dev runs) from the SPEC ONLY and stored
-    outside the dev worktree — see ``factory.chain.acceptance``.
+    outside the dev worktree — see ``factory.chain.acceptance``. author_...
+    sets ``story.acceptance_expected`` (the required/blocking flag) even when
+    authoring itself fails, so a flaked author BLOCKS rather than silently
+    ships; the tick self-heal re-authors it later.
     """
     try:
         from factory.chain.acceptance import author_acceptance_test
@@ -317,8 +327,12 @@ def _author_acceptance_oracle(
             dry_run=dry_run,
             db_path=db_path,
         )
-    except Exception:  # noqa: BLE001 - oracle authoring is best-effort
-        pass
+    except Exception as exc:  # noqa: BLE001 - oracle authoring must never fail spawn
+        _logger.warning(
+            "acceptance oracle authoring raised for story %s (%s): %r — "
+            "acceptance_expected governs blocking; tick self-heal will retry",
+            getattr(story, "id", None), story.slug, exc,
+        )
 
 
 def handle_stories_spawned(
