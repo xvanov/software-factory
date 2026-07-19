@@ -84,8 +84,12 @@ _BUNDLE_TOTAL_CAP = 100 * 1024  # 100 KB
 # diagnostician's source bundle can include the whole directory instead of a
 # hardcoded three-file allowlist that omitted auto_merge.py, worktree.py,
 # branch.py, rollback.py and recovery.py entirely.
-_CHAIN_FILE_CAP = 60 * 1024  # 60 KB per file
-_DISPATCH_CODE_BUNDLE_CAP = 250 * 1024  # 250 KB for the dispatch_code chain/ bundle
+# Wide enough that the largest chain file (handlers.py, ~137KB) loads WHOLE —
+# a partial handlers.py was worse than useless: L3 would see a truncated file
+# and still not find the buggy function. The bundle budget fits the full
+# high-signal set plus headroom (~100K tokens for gpt-5.3-codex's context).
+_CHAIN_FILE_CAP = 160 * 1024  # 160 KB per file
+_DISPATCH_CODE_BUNDLE_CAP = 400 * 1024  # 400 KB for the dispatch_code chain/ bundle
 
 # Slug character validation pattern.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{0,58}[a-z0-9]$|^[a-z0-9]$")
@@ -251,7 +255,19 @@ def _pre_load_source(
         # budget is exhausted before the glob finishes) and a wider per-file
         # cap since several chain/ files exceed the generic 16KB one.
         chain_dir = factory_dir / "chain"
-        _priority_names = ("orchestrator.py", "handlers.py", "state_machine.py", "auto_merge.py")
+        # Priority = the dispatch/merge/git/recovery surface where dispatch_code
+        # bugs actually live. The small git files (worktree/branch/rollback)
+        # are listed explicitly so a budget cutoff can never drop them the way
+        # a plain alphabetical glob did (worktree.py sorts after factory_*).
+        _priority_names = (
+            "orchestrator.py",
+            "handlers.py",
+            "state_machine.py",
+            "auto_merge.py",
+            "worktree.py",
+            "branch.py",
+            "rollback.py",
+        )
         _seen: set[Path] = set()
         running_total = 0
 
