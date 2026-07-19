@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 from factory.app_config import AppConfig
-from factory.chain.handlers import _writing_worktree, persist_story
+from factory.chain.handlers import _abort_inflight_merge, _writing_worktree, persist_story
 from factory.chain.state_machine import StoryRecord
 
 
@@ -75,3 +75,49 @@ def test_writing_worktree_refreshes_base_and_preserves_wip(tmp_path: Path) -> No
     assert (wt / "dev_wip.txt").read_text(encoding="utf-8") == "in progress\n", (
         "uncommitted dev WIP must be preserved by the base refresh"
     )
+
+
+def test_abort_inflight_merge_clears_leftover_merge_no_conflict_markers(tmp_path: Path) -> None:
+    """A merge left in progress (e.g. the base-refresh merge timed out and the
+    except skipped the abort) must be cleared, so a later `git add -A` + commit
+    cannot bake unresolved conflict markers into a real commit and push them.
+    """
+    repo = tmp_path / "r"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "--initial-branch=main", str(repo)], check=True)
+    _seed_repo(repo)
+    f = repo / "c.txt"
+    f.write_text("base\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "base")
+    # Two branches that conflict on the same line.
+    _git(repo, "checkout", "-q", "-b", "feature")
+    f.write_text("feature\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "feature")
+    _git(repo, "checkout", "-q", "main")
+    f.write_text("mainline\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "mainline")
+    _git(repo, "checkout", "-q", "feature")
+    # Start a merge that conflicts and is LEFT IN PROGRESS (simulates the
+    # timeout/kill path where our except skipped `git merge --abort`).
+    subprocess.run(["git", "merge", "--no-edit", "main"], cwd=str(repo), capture_output=True)
+    merge_head = subprocess.run(
+        ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=str(repo), capture_output=True
+    )
+    assert merge_head.returncode == 0, "precondition: merge should be in progress"
+
+    _abort_inflight_merge(repo)
+
+    after = subprocess.run(
+        ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=str(repo), capture_output=True
+    )
+    assert after.returncode != 0, "MERGE_HEAD must be cleared after abort"
+    assert "<<<<<<<" not in f.read_text(encoding="utf-8"), "no conflict markers left in file"
+    # And a subsequent add -A + commit is a clean no-op (nothing to corrupt).
+    _git(repo, "add", "-A")
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=str(repo), capture_output=True, text=True
+    ).stdout.strip()
+    assert status == "", f"worktree should be clean after abort, got: {status!r}"

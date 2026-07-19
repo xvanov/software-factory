@@ -140,7 +140,36 @@ def _writing_worktree(
             )
     except (OSError, subprocess.SubprocessError):
         pass  # base refresh is best-effort; never block the writing handler
+    finally:
+        # CRITICAL: if the merge timed out or the process was killed mid-merge,
+        # the except above skips the return-code abort and leaves the worktree
+        # with MERGE_HEAD + an unmerged index. A later `git add -A` + commit in
+        # a writing handler would then bake unresolved conflict markers into a
+        # real commit and push them (silent corruption, worse than a stale
+        # base). Guarantee no in-progress merge is ever left behind, however
+        # the merge call exited.
+        _abort_inflight_merge(wt)
     return wt
+
+
+def _abort_inflight_merge(worktree: Path) -> None:
+    """Best-effort: clear a left-in-progress merge (MERGE_HEAD present) so no
+    downstream ``git add -A`` + commit can bake conflict markers into a real
+    commit. Idempotent — a no-op when no merge is in progress."""
+    import subprocess
+
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+            cwd=str(worktree), capture_output=True, timeout=15,
+        )
+        if head.returncode == 0:
+            subprocess.run(
+                ["git", "merge", "--abort"],
+                cwd=str(worktree), check=False, capture_output=True, timeout=30,
+            )
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 # --------------------------------------------------------------------------- #
