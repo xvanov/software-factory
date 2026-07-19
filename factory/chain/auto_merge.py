@@ -687,7 +687,13 @@ def _handle_ci_failure(
     # re-dispatch needs to reuse.
     story.reviewer_result_json = json.dumps(reviewer_payload)
     story.state = StoryState.REVIEWER_REQUESTED_CHANGES.value
+    # Reset BOTH counters (mirror _recover_blocked_stories). A CI-fix redispatch
+    # hits an already-approved story whose reviewer_cycles may be near
+    # _MAX_REVIEW_CYCLES; without resetting it, the follow-up review pass could
+    # trip BLOCKED_REVIEW_NONCONVERGENT on the first non-approving pass and
+    # mislabel a CI-only hiccup as review non-convergence.
     story.dev_retries = 0
+    story.reviewer_cycles = 0
     persist_story(story, db)
 
     try:
