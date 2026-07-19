@@ -206,6 +206,14 @@ class Run(SQLModel, table=True):
     duration_s: float | None = None
     story_id: int | None = None
     model_tier: str | None = None
+    # D003 — complete per-unit attribution. ``story_id`` alone undercounts
+    # per-direction / per-app rollups whenever a run predates story creation
+    # (PM/analyst) or is a scheduled app-level persona (ralph/bug_hunter/
+    # security/ux_auditor) — those legitimately have no story_id but DO have
+    # a known app. Chain-persona runs (sm/dev/reviewer/tech_writer/
+    # onboarder) are expected to carry all three.
+    direction_id: str | None = None
+    app: str | None = None
 
 
 def _engine(db_path: Path | None = None) -> Any:
@@ -238,6 +246,8 @@ def _record_run(
     duration_s: float | None = None,
     story_id: int | None = None,
     model_tier: str | None = None,
+    direction_id: str | None = None,
+    app: str | None = None,
     software_factory_root: Path | None = None,
     started_at: str | None = None,
 ) -> None:
@@ -259,6 +269,8 @@ def _record_run(
             duration_s=duration_s,
             story_id=story_id,
             model_tier=model_tier,
+            direction_id=direction_id,
+            app=app,
         )
         session.add(row)
         session.commit()
@@ -1111,6 +1123,8 @@ async def sandbox_run(
             duration_s=_elapsed(),
             story_id=story_id,
             model_tier=difficulty,
+            direction_id=direction_id,
+            app=app,
         )
         summary = (
             f"[DRY-RUN] persona={persona} model={llm_config.model} difficulty={difficulty}\n"
@@ -1154,6 +1168,8 @@ async def sandbox_run(
             duration_s=_elapsed(),
             story_id=story_id,
             model_tier=difficulty,
+            direction_id=direction_id,
+            app=app,
         )
         return RunResult(success=False, error=err, summary=err)
 
@@ -1181,6 +1197,8 @@ async def sandbox_run(
             duration_s=_elapsed(),
             story_id=story_id,
             model_tier=difficulty,
+            direction_id=direction_id,
+            app=app,
         )
         return RunResult(success=False, error=err, summary=err)
 
@@ -1340,6 +1358,8 @@ async def sandbox_run(
             duration_s=_elapsed(),
             story_id=story_id,
             model_tier=difficulty,
+            direction_id=direction_id,
+            app=app,
         )
         # test_run_passed defaults to None + zero cost/tokens → matches
         # handle_dev._is_premodel_infra_failure, so the dev circuit breaker
@@ -1369,6 +1389,8 @@ async def sandbox_run(
             duration_s=_elapsed(),
             story_id=story_id,
             model_tier=difficulty,
+            direction_id=direction_id,
+            app=app,
         )
         return RunResult(
             success=False,
@@ -1398,6 +1420,8 @@ async def sandbox_run(
         duration_s=_elapsed(),
         story_id=story_id,
         model_tier=difficulty,
+        direction_id=direction_id,
+        app=app,
     )
 
     return RunResult(
@@ -1492,6 +1516,8 @@ def text_run(
             duration_s=_elapsed(),
             story_id=story_id,
             model_tier=model_tier,
+            direction_id=direction_id,
+            app=app,
         )
         if schema is not None:
             return {"_dry_run": True, "persona": persona, "model": model_id}
@@ -1514,6 +1540,8 @@ def text_run(
             duration_s=_elapsed(),
             story_id=story_id,
             model_tier=model_tier,
+            direction_id=direction_id,
+            app=app,
         )
         raise RuntimeError(msg)
 
@@ -1671,6 +1699,8 @@ def text_run(
                         duration_s=_elapsed(),
                         story_id=story_id,
                         model_tier=model_tier,
+                        direction_id=direction_id,
+                        app=app,
                     )
                     raise RuntimeError(
                         f"JSON-mode response was not valid JSON after "
@@ -1702,6 +1732,8 @@ def text_run(
         duration_s=_elapsed(),
         story_id=story_id,
         model_tier=model_tier,
+        direction_id=direction_id,
+        app=app,
     )
 
     if schema is not None:
