@@ -11,7 +11,7 @@
 | factory/backpressure/parser.py                         |       67 |        5 |     93% |103-104, 128, 132-133 |
 | factory/backpressure/validator.py                      |       78 |        3 |     96% | 52-53, 72 |
 | factory/chain/\_\_init\_\_.py                          |        0 |        0 |    100% |           |
-| factory/chain/auto\_merge.py                           |      186 |       42 |     77% |253, 464, 487-501, 524, 602-603, 622-626, 647-655, 673-677, 706-753, 767-768, 787-788 |
+| factory/chain/auto\_merge.py                           |      216 |       48 |     78% |253, 518, 543-581, 604, 685-686, 705-709, 730-738, 756-760, 789-836, 850-851, 870-871 |
 | factory/chain/branch.py                                |       56 |        4 |     93% |   163-166 |
 | factory/chain/bug\_hunter.py                           |        8 |        8 |      0% |     13-62 |
 | factory/chain/context\_refresh.py                      |      179 |       40 |     78% |123-130, 211, 222-248, 277-290, 360-369, 411, 442, 477, 524-526, 541-543, 545-548, 553-556, 564-565, 567, 571-572 |
@@ -107,7 +107,7 @@
 | factory/webhook/\_\_init\_\_.py                        |        0 |        0 |    100% |           |
 | factory/webhook/github.py                              |      190 |       40 |     79% |56, 60, 63-64, 96, 126, 162-167, 191-207, 253, 308-312, 355-356, 379-391, 395 |
 | factory/webhook/openhands\_events.py                   |       36 |        7 |     81% |69, 84-123 |
-| **TOTAL**                                              | **12235** | **2752** | **78%** |           |
+| **TOTAL**                                              | **12265** | **2758** | **78%** |           |
 
 
 ## Setup coverage badge
