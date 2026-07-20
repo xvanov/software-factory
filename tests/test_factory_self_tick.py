@@ -351,6 +351,27 @@ def test_diff_unavailable_is_fail_safe(tmp_path: Path) -> None:
     assert not any("proposal_path" in c for c in rec.calls)
 
 
+def test_unparseable_diff_is_fail_safe(tmp_path: Path) -> None:
+    """A non-empty diff that parses to NO target paths must be refused — we
+    cannot rule out a self-edit/forbidden path, so we never merge it."""
+    rec = _Recorder(decision=StagingDecision(promote=True, status="staging_validated"))
+    d = _evaluate_self_edit_gate(
+        app_config=_factory_cfg(),
+        story=None,
+        pr_number=42,
+        root=tmp_path,
+        # Non-empty, but no ``diff --git`` / ``+++`` headers → zero paths.
+        patch_provider=lambda cfg, pr: "just some prose, not a real diff\nmore text\n",
+        self_edit_gate=rec.gate,
+        escalate=rec.escalate,
+    )
+    assert d.allow is False
+    assert d.status == "unparseable_diff"
+    # staging never consulted; escalated instead.
+    assert not any("proposal_path" in c for c in rec.calls)
+    assert any(c.get("classification") == "escalate_to_human" for c in rec.calls)
+
+
 def test_factory_repo_non_self_edit_allows_without_staging(tmp_path: Path) -> None:
     """A factory-repo docs/directions change is not a runtime self-edit → merge
     without staging (staging validates 'does it run', which docs can't change)."""

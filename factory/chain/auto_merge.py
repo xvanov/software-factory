@@ -338,6 +338,29 @@ def _evaluate_self_edit_gate(
 
     paths = _diff_target_paths(patch)
 
+    # Fail-safe: a NON-empty diff that parses to NO target paths is
+    # unparseable. For a factory-repo story we cannot determine what it
+    # touches, so we cannot rule out a self-edit or a forbidden path — refuse
+    # rather than fall through to the "not a self-edit → merge" branch below
+    # (which would be a fail-OPEN on an unreadable factory diff).
+    if not paths:
+        reason = (
+            f"factory self-edit PR #{pr_number}: diff is non-empty but no target "
+            f"paths could be parsed; refusing to merge a factory change whose "
+            f"scope cannot be determined."
+        )
+        _escalate_self_edit(
+            escalate,
+            story=story,
+            app_config=app_config,
+            root=root,
+            pr_number=pr_number,
+            classification="escalate_to_human",
+            detail=reason,
+            patch=patch,
+        )
+        return _SelfEditDecision(allow=False, status="unparseable_diff", logs_tail=reason)
+
     # Forbidden-path guard FIRST — the chain must never edit the safety
     # mechanism (factory/manager/**) or the grader (bench/**), regardless of
     # whether staging would pass. Reuses the exact classifier the manager
