@@ -68,7 +68,8 @@ def test_redact_multiple_patterns():
 def test_plain_text_unchanged():
     """AC3.2 / AC4.3: Text with no secret pattern is byte-for-byte unchanged."""
     plain = "something went wrong with the request: timeout after 30s"
-    assert redact_secrets(plain) is plain  # same object identity (byte-for-byte)
+    assert redact_secrets(plain) == plain
+    assert redact_secrets(plain).encode("utf-8") == plain.encode("utf-8")
 
 
 def test_short_text_not_redacted():
@@ -77,18 +78,55 @@ def test_short_text_not_redacted():
     assert redact_secrets(text) == text
 
 
+def test_already_redacted_with_new_secret_still_redacts():
+    """A string containing [REDACTED] AND a raw secret must still scrub the raw secret.
+
+    This is the regression test for the reviewer finding: the old idempotency
+    short-circuit returned early whenever [REDACTED] appeared anywhere,
+    leaving raw secrets in the same string untouched.
+    """
+    result = redact_secrets(
+        "Already redacted: [REDACTED] but here is a new sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"
+    )
+    assert result == "Already redacted: [REDACTED] but here is a new [REDACTED]"
+
+
 def test_idempotent():
     """AC3.1: Re-redacting already-redacted text is a no-op."""
     redacted = "Error: [REDACTED] and [REDACTED] happened"
     result = redact_secrets(redacted)
     assert result == redacted
-    assert result is redacted  # same object identity
+    assert result.encode("utf-8") == redacted.encode("utf-8")
 
 
-def test_none_error_handled():
-    """_record_run with error=None should not crash."""
-    # This tests the guard in _record_run itself — redacted_error should be None.
-    assert redact_secrets("") == ""
+def test_none_error_handled(tmp_path: Path):
+    """_record_run with error=None should persist None without crashing."""
+    db = tmp_path / "state" / "factory.db"
+    (tmp_path / "state").mkdir(parents=True, exist_ok=True)
+
+    _record_run(
+        persona="sm",
+        model="stub/model",
+        mode="text-dry-run",
+        tokens_in=0,
+        tokens_out=0,
+        cost_usd=0.0,
+        success=False,
+        story_path=None,
+        repo_path=None,
+        error=None,
+        db_path=db,
+        duration_s=0.5,
+        story_id=99,
+        model_tier="standard",
+        software_factory_root=tmp_path,
+    )
+
+    eng = _engine(db)
+    with Session(eng) as session:
+        rows = session.exec(select(Run)).all()
+    assert len(rows) == 1
+    assert rows[0].error is None
 
 
 # ---------------------------------------------------------------------------

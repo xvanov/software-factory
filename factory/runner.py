@@ -400,11 +400,6 @@ def redact_secrets(text: str) -> str:
     """
     import re
 
-    # Idempotency short-circuit: if text already contains the redaction token,
-    # assume it was already processed and return unchanged.
-    if _REDACTION_TOKEN in text:
-        return text
-
     patterns: list[str] = [
         # sk-ant-... (Anthropic) — must precede sk-... so the longer
         # ``sk-ant-api03-...`` form is fully consumed.
