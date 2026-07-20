@@ -164,6 +164,44 @@ def test_self_edit_paths_filters() -> None:
     assert self_edit_paths(_app_patch()) == []
 
 
+def _rename_into_factory_patch(dest: str = "factory/evil.py") -> str:
+    """A pure 100%-similarity rename INTO factory/ from OUTSIDE factory/.
+
+    Carries NO ``+++`` hunk header — the destination lives only on the
+    ``diff --git`` line. Regression for rename-into-factory evasion.
+    """
+    return (
+        f"diff --git a/apps/x.py b/{dest}\n"
+        "similarity index 100%\n"
+        "rename from apps/x.py\n"
+        f"rename to {dest}\n"
+    )
+
+
+def test_diff_target_paths_extracts_rename_destination() -> None:
+    from factory.chain.factory_improver_apply import _diff_target_paths
+
+    paths = _diff_target_paths(_rename_into_factory_patch("factory/evil.py"))
+    # BOTH the source (a/) and the rename destination (b/) must appear.
+    assert "apps/x.py" in paths
+    assert "factory/evil.py" in paths
+
+
+def test_rename_into_factory_is_detected_as_self_edit() -> None:
+    from factory.chain.factory_improver_apply import _diff_target_paths
+
+    patch = _rename_into_factory_patch("factory/evil.py")
+    assert is_self_edit(_diff_target_paths(patch)) is True
+
+
+def test_rename_into_manager_is_classified_forbidden() -> None:
+    from factory.manager.apply import _classify_manager_proposal
+
+    patch = _rename_into_factory_patch("factory/manager/evil.py")
+    proposal = _proposal(patch, target_class="prompt_edit", pid="rename-forbid")
+    assert _classify_manager_proposal(proposal, Path(".")) == "forbidden"
+
+
 # ---------------------------------------------------------------------------
 # sync_copy_from_main — git command construction
 # ---------------------------------------------------------------------------
