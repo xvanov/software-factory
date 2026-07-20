@@ -54,6 +54,41 @@ def _make_gh_runner(
     return _runner, calls
 
 
+def _make_stateful_gh_runner() -> tuple[Callable[..., Any], list[list[str]], dict[str, Any]]:
+    """A gh mock that models GitHub state: created issues persist, and
+    ``gh issue list --state open`` only returns OPEN issues whose body matches
+    the ``--search`` term. Tests can close issues via ``state["issues"]`` to
+    simulate a human resolving one. This is what makes the OPEN-state dedup
+    (and re-escalation after resolution) testable."""
+    state: dict[str, Any] = {"issues": [], "next": 800}
+    calls: list[list[str]] = []
+
+    def _runner(args: list[str], **kwargs: Any) -> Any:
+        calls.append(list(args))
+        if args[:3] == ["gh", "issue", "list"]:
+            search = args[args.index("--search") + 1] if "--search" in args else ""
+            open_matching = [
+                {"number": i["number"], "body": i["body"]}
+                for i in state["issues"]
+                if i["state"] == "open" and search in i["body"]
+            ]
+            return _Completed(returncode=0, stdout=json.dumps(open_matching))
+        if args[:3] == ["gh", "label", "create"]:
+            return _Completed(returncode=0)
+        if args[:3] == ["gh", "issue", "create"]:
+            body = args[args.index("--body") + 1] if "--body" in args else ""
+            num = state["next"]
+            state["next"] += 1
+            state["issues"].append({"number": num, "body": body, "state": "open"})
+            return _Completed(
+                returncode=0,
+                stdout=f"https://github.com/owner/repo/issues/{num}\n",
+            )
+        return _Completed(returncode=0)
+
+    return _runner, calls, state
+
+
 def _proposal(
     *,
     concern_id: str = "concern-abc",
@@ -132,10 +167,11 @@ def test_forbidden_also_escalates(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_same_id_refire_does_not_duplicate_local(tmp_path: Path) -> None:
-    """A second escalation with the same concern_id is deduped locally: no new
-    issue, no repeat alert."""
-    runner, calls = _make_gh_runner()
+def test_same_id_refire_deduped_while_issue_open(tmp_path: Path) -> None:
+    """A second escalation for the same concern is deduped while its tracking
+    issue is still OPEN on GitHub: no new issue, no repeat alert. The dedup
+    AUTHORITY is the open issue, not the local ledger."""
+    runner, calls, _state = _make_stateful_gh_runner()
     notify_escalation(
         _proposal(),
         root=tmp_path,
@@ -155,9 +191,79 @@ def test_same_id_refire_does_not_duplicate_local(tmp_path: Path) -> None:
         runner=runner,
     )
     assert outcome2["deduped"] is True
-    assert outcome2["reason"] == "already_notified_local"
-    # No second issue created, no second alert emitted.
+    assert outcome2["reason"] == "existing_open_issue"
+    # No second issue created, no second alert emitted while the issue is OPEN.
     assert len([c for c in calls if c[:3] == ["gh", "issue", "create"]]) == creates_after_first
+    assert len(_alerts(tmp_path)) == alerts_after_first
+
+
+def test_resolved_then_recurring_reescalates(tmp_path: Path) -> None:
+    """The over-dedup fix: a concern escalated once, whose issue a human CLOSES,
+    must re-escalate when it recurs — the never-expiring local ledger must NOT
+    permanently suppress it."""
+    runner, calls, state = _make_stateful_gh_runner()
+
+    # First escalation → opens an issue + one alert.
+    out1 = notify_escalation(
+        _proposal(),
+        root=tmp_path,
+        repo="owner/repo",
+        classification="escalate_to_human",
+        runner=runner,
+    )
+    assert out1["deduped"] is False
+    assert out1["issue_number"] == 800
+    assert len([c for c in calls if c[:3] == ["gh", "issue", "create"]]) == 1
+    assert len(_alerts(tmp_path)) == 1
+
+    # A human resolves/closes the issue.
+    state["issues"][0]["state"] = "closed"
+
+    # The SAME concern recurs later — it must re-escalate (new issue + alert),
+    # NOT be silently suppressed by the local ledger.
+    out2 = notify_escalation(
+        _proposal(proposal_id="prop-3"),
+        root=tmp_path,
+        repo="owner/repo",
+        classification="escalate_to_human",
+        runner=runner,
+    )
+    assert out2["deduped"] is False, "resolved-then-recurring must re-escalate"
+    assert out2["issue_number"] == 801
+    assert len([c for c in calls if c[:3] == ["gh", "issue", "create"]]) == 2
+    assert len(_alerts(tmp_path)) == 2
+
+
+def test_gh_uncertain_falls_back_to_local_ledger(tmp_path: Path) -> None:
+    """When gh cannot be consulted (list call fails → uncertain), the local
+    ledger is the fallback dedup so we don't spam while GitHub is unreachable."""
+    # First: a successful escalation that records a local-ledger entry.
+    ok_runner, _, _ = _make_stateful_gh_runner()
+    notify_escalation(
+        _proposal(),
+        root=tmp_path,
+        repo="owner/repo",
+        classification="escalate_to_human",
+        runner=ok_runner,
+    )
+    alerts_after_first = len(_alerts(tmp_path))
+
+    # Now gh is down: list returns rc=1 (uncertain), create would also fail.
+    def _down_runner(args: list[str], **kwargs: Any) -> Any:
+        if args[:3] == ["gh", "issue", "list"]:
+            return _Completed(returncode=1, stderr="gh: auth required")
+        return _Completed(returncode=1)
+
+    out = notify_escalation(
+        _proposal(proposal_id="prop-9"),
+        root=tmp_path,
+        repo="owner/repo",
+        classification="escalate_to_human",
+        runner=_down_runner,
+    )
+    assert out["deduped"] is True
+    assert out["reason"] == "already_notified_local"
+    # No repeat alert while deduped via the local fallback.
     assert len(_alerts(tmp_path)) == alerts_after_first
 
 

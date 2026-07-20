@@ -18,10 +18,14 @@ Every escalation now, best-effort:
      concern, the proposed action, why it escalated, and the failure evidence.
   2. Is **idempotent** on the proposal's stable ids (``concern_id`` /
      ``proposal_id`` from WS2.2): a re-fired escalation for the same concern
-     does NOT open a duplicate issue every cycle. Dedup is enforced two ways —
-     a local notification history (deterministic) and a best-effort search of
-     open ``fms-escalation`` issues for the id marker (survives a wiped local
-     history / a fresh checkout).
+     does NOT open a duplicate issue while one is still OPEN. The dedup
+     AUTHORITY is the OPEN-state of the tracking issue on GitHub (a best-effort
+     search of open ``fms-escalation`` issues for the id marker); the local
+     notification ledger is only a FALLBACK for when gh cannot be consulted.
+     This ordering is deliberate: a concern whose issue a human closed/resolved
+     and which then recurs MUST be able to re-escalate — so the never-expiring
+     local ledger must not permanently suppress it. Anti-spam holds because no
+     second issue is opened while one is OPEN for that id.
   3. Emits a loud ``write_alert_event`` so the escalation is visible on the
      alert stream even if ``gh`` is unavailable.
 
@@ -241,17 +245,30 @@ def _gh(
         return None
 
 
-def _find_existing_issue(
+def _open_issue_lookup(
     repo: str,
     marker_id: str,
     *,
     runner: Runner,
-) -> int | None:
-    """Best-effort: find an OPEN fms-escalation issue already carrying this id.
+) -> tuple[str, int | None]:
+    """Best-effort lookup of an OPEN fms-escalation issue carrying this id.
 
-    Returns the issue number if found, else ``None`` (not found OR the search
-    could not be performed — either way the caller falls back to the local
-    ledger and, if that is also clear, creates a fresh issue).
+    Returns one of:
+      ``("found", <number>)``  — an OPEN issue for this id exists → dedup.
+      ``("none", None)``       — gh answered AND no OPEN issue exists. This is
+                                 AUTHORITATIVE: a previously-escalated concern
+                                 whose issue was closed/resolved is allowed to
+                                 re-escalate (the ``--state open`` filter makes a
+                                 closed issue invisible here on purpose).
+      ``("uncertain", None)``  — gh could not be consulted (missing binary,
+                                 auth, rate limit, unparseable output). The
+                                 caller falls back to the local ledger; it must
+                                 NOT treat this as "no open issue".
+
+    The three-way return is the fix for over-dedup: the never-expiring local
+    ledger must not permanently suppress a genuinely-recurring concern, so the
+    OPEN-state of the issue on GitHub — not the local ledger — is the authority
+    whenever gh is reachable.
     """
     proc = _gh(
         [
@@ -266,13 +283,13 @@ def _find_existing_issue(
         runner=runner,
     )
     if proc is None or proc.returncode != 0:
-        return None
+        return ("uncertain", None)
     try:
         rows = json.loads(proc.stdout or "[]")
     except (json.JSONDecodeError, TypeError):
-        return None
+        return ("uncertain", None)
     if not isinstance(rows, list):
-        return None
+        return ("uncertain", None)
     marker = _issue_marker(marker_id)
     for row in rows:
         if not isinstance(row, dict):
@@ -280,8 +297,8 @@ def _find_existing_issue(
         if marker in str(row.get("body", "")):
             num = row.get("number")
             if isinstance(num, int):
-                return num
-    return None
+                return ("found", num)
+    return ("none", None)
 
 
 def _ensure_label(repo: str, *, runner: Runner) -> None:
@@ -372,13 +389,10 @@ def notify_escalation(
         "reason": None,
     }
 
-    # 1. Local dedup: already notified for this concern/proposal? Skip silently
-    #    (no new issue, no repeat alert) — the whole point is to not spam.
-    prior = _already_notified(root, concern_id, proposal_id)
-    if prior is not None:
+    def _emit_deduped(issue_number: int | None, reason: str) -> dict[str, Any]:
         outcome["deduped"] = True
-        outcome["issue_number"] = prior.get("issue_number")
-        outcome["reason"] = "already_notified_local"
+        outcome["issue_number"] = issue_number
+        outcome["reason"] = reason
         try:
             write_event(
                 ESCALATION_STREAM,
@@ -387,13 +401,44 @@ def notify_escalation(
                     "concern_id": concern_id,
                     "proposal_id": proposal_id,
                     "classification": classification,
-                    "issue_number": prior.get("issue_number"),
+                    "issue_number": issue_number,
+                    "reason": reason,
                 },
                 software_factory_root=root,
             )
         except Exception:  # noqa: BLE001
             pass
         return outcome
+
+    # 1. Dedup decision. GitHub OPEN-state is the AUTHORITY when reachable; the
+    #    local ledger is only a fallback for when gh cannot be consulted. This
+    #    is the anti-over-dedup fix: the never-expiring local ledger must NOT
+    #    permanently suppress a concern whose issue was closed/resolved and then
+    #    recurred. Anti-spam property preserved: while an OPEN issue exists for
+    #    this id we never open a second one (and don't re-alert).
+    gh_status = "uncertain"
+    gh_open_number: int | None = None
+    if repo:
+        gh_status, gh_open_number = _open_issue_lookup(repo, marker_id, runner=runner)
+
+    if gh_status == "found":
+        # An OPEN issue already tracks this concern → dedup (no new issue, no
+        # repeat alert), regardless of what the local ledger says.
+        return _emit_deduped(gh_open_number, "existing_open_issue")
+
+    if gh_status == "uncertain" or not repo:
+        # gh could not answer (down / no repo). Fall back to the local ledger to
+        # keep the anti-spam property when we cannot see GitHub — but note this
+        # is a FALLBACK, not the primary gate: when gh IS reachable and reports
+        # no open issue ("none"), we deliberately IGNORE the ledger and allow a
+        # resolved-then-recurring concern to re-escalate below.
+        prior = _already_notified(root, concern_id, proposal_id)
+        if prior is not None:
+            return _emit_deduped(prior.get("issue_number"), "already_notified_local")
+
+    # gh_status == "none" (authoritative: no OPEN issue — first time OR the prior
+    # issue was resolved and the concern recurred), or gh was uncertain / had no
+    # repo and the local ledger is also clear → genuinely (re-)escalate.
 
     # 2. Loud alert — guaranteed visible even if gh is down or repo is unknown.
     try:
@@ -418,38 +463,35 @@ def notify_escalation(
     if not repo:
         reason = "no_repo"
     else:
-        # 3a. gh-side dedup: an open issue for this id already exists?
-        existing = _find_existing_issue(repo, marker_id, runner=runner)
-        if existing is not None:
-            issue_number = existing
-            gh_ok = True
-            reason = "existing_open_issue"
-            outcome["deduped"] = True
-        else:
-            title = _build_issue_title(proposal, classification)
-            body = _build_issue_body(
-                proposal,
-                classification=classification,
-                result=result,
-                marker_id=marker_id,
-            )
-            issue_number = _create_issue(repo, title=title, body=body, runner=runner)
-            gh_ok = issue_number is not None
-            if not gh_ok:
-                reason = "gh_create_failed"
-                # A gh failure must be VISIBLE, not silent.
-                try:
-                    write_alert_event(
-                        "fms_escalation_gh_failed",
-                        f"could not open escalation issue for {concern_title!r} "
-                        f"on {repo}; escalation recorded on the alert stream only.",
-                        severity="error",
-                        software_factory_root=root,
-                        concern_id=concern_id,
-                        proposal_id=proposal_id,
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+        # The "found" (open issue exists) case already returned above via the
+        # dedup gate, so here we know there is no OPEN issue to reuse — create a
+        # fresh one. (A resolved-then-recurring concern lands here with
+        # gh_status == "none" and gets a NEW issue, which is the intended
+        # re-escalation.)
+        title = _build_issue_title(proposal, classification)
+        body = _build_issue_body(
+            proposal,
+            classification=classification,
+            result=result,
+            marker_id=marker_id,
+        )
+        issue_number = _create_issue(repo, title=title, body=body, runner=runner)
+        gh_ok = issue_number is not None
+        if not gh_ok:
+            reason = "gh_create_failed"
+            # A gh failure must be VISIBLE, not silent.
+            try:
+                write_alert_event(
+                    "fms_escalation_gh_failed",
+                    f"could not open escalation issue for {concern_title!r} "
+                    f"on {repo}; escalation recorded on the alert stream only.",
+                    severity="error",
+                    software_factory_root=root,
+                    concern_id=concern_id,
+                    proposal_id=proposal_id,
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
     outcome["notified"] = True
     outcome["issue_number"] = issue_number
