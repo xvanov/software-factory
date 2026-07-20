@@ -14,8 +14,13 @@ R3 — the WS1.1 per-story budget breaker decays ``total_attempts`` when a story
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
+import sys
+import time
+import types
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -33,7 +38,7 @@ from factory.chain.handlers import (
     persist_story,
 )
 from factory.chain.state_machine import StoryRecord, StoryState
-from factory.runner import RunResult
+from factory.runner import LLMConfig, RunResult, sandbox_run
 
 
 # --------------------------------------------------------------------------- #
@@ -390,3 +395,154 @@ def test_r3_progress_ordinal_error_states_are_zero() -> None:
     ):
         assert O._progress_ordinal(st.value) == 0
     assert O._progress_ordinal("not_a_real_state") == 0
+
+
+# --------------------------------------------------------------------------- #
+# R1 (runner level) — an exception/timeout AFTER model work is a real attempt,
+# but a genuine pre-model / stalled-LLM failure stays infra.
+# --------------------------------------------------------------------------- #
+def _install_fake_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    run_sleep_s: float = 0.0,
+    close_raises: bool = False,
+) -> None:
+    """Install a fake OpenHands SDK whose ``run()`` reports 1000/100 tokens and
+    $0.50. ``run_sleep_s`` sleeps INSIDE run() (before any usage is captured, to
+    model a stalled LLM); ``close_raises`` raises during teardown AFTER usage is
+    captured (to model a post-model crash)."""
+
+    class _FakeConversation:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def send_message(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def run(self) -> None:
+            if run_sleep_s:
+                time.sleep(run_sleep_s)
+
+        def close(self) -> None:
+            if close_raises:
+                raise RuntimeError("conversation teardown blew up")
+
+        @property
+        def conversation_stats(self) -> Any:
+            class _S:
+                def get_combined_metrics(self) -> Any:
+                    class _M:
+                        accumulated_token_usage = type(
+                            "U",
+                            (),
+                            {
+                                "prompt_tokens": 1000,
+                                "completion_tokens": 100,
+                                "cache_read_tokens": 0,
+                            },
+                        )()
+                        accumulated_cost = 0.5
+
+                    return _M()
+
+            return _S()
+
+    class _FakeLLM:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+    class _FakeWorkspace:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+    fake_sdk = types.ModuleType("openhands.sdk")
+    fake_sdk.LLM = _FakeLLM  # type: ignore[attr-defined]
+    fake_sdk.Conversation = _FakeConversation  # type: ignore[attr-defined]
+    fake_sdk.LocalWorkspace = _FakeWorkspace  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "openhands.sdk", fake_sdk)
+
+    fake_tools = types.ModuleType("openhands.tools.preset.default")
+    fake_tools.get_default_agent = lambda **_: object()  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "openhands.tools.preset.default", fake_tools)
+
+    fake_pydantic = types.ModuleType("pydantic")
+    fake_pydantic.SecretStr = lambda s: s  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pydantic", fake_pydantic)
+
+
+def _run_sandbox(tmp_path: Path, **kwargs: Any) -> RunResult:
+    repo = tmp_path / "repo"
+    repo.mkdir(exist_ok=True)
+    (repo / "README.md").write_text("# t\n", encoding="utf-8")
+    story = tmp_path / "story.md"
+    story.write_text("# s\n", encoding="utf-8")
+    return asyncio.run(
+        sandbox_run(
+            persona="dev",
+            story_path=story,
+            repo_path=repo,
+            llm_config=LLMConfig(model="azure/deepseek-v4-pro", api_key="x"),
+            dry_run=False,
+            db_path=tmp_path / "state" / "factory.db",
+            **kwargs,
+        )
+    )
+
+
+def test_r1_exception_after_model_work_is_real_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """run() completes (usage captured) but teardown raises → a genuine failed
+    dev attempt: real usage recorded, test_run_passed=False, NOT infra."""
+    _install_fake_sdk(monkeypatch, close_raises=True)
+    monkeypatch.setenv("AZURE_API_KEY", "test-key")
+
+    res = _run_sandbox(tmp_path)
+
+    assert res.premodel_infra is False
+    assert res.test_run_passed is False
+    assert res.tokens_out == 100
+    assert res.cost_usd == 0.5
+    assert not _is_premodel_infra_failure(res)
+
+
+def test_r1_timeout_after_model_work_is_real_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The model run completed (usage captured) but post-model teardown hit the
+    wall clock → counts as a real attempt with its spend, not a free infra
+    bounce."""
+    _install_fake_sdk(monkeypatch)
+    monkeypatch.setenv("AZURE_API_KEY", "test-key")
+    # Stall in post-model memory extraction (runs AFTER _partial_usage is set),
+    # then set a tiny wall-clock so asyncio.wait_for raises TimeoutError.
+    monkeypatch.setattr(
+        runner_module,
+        "_extract_conversation_memory",
+        lambda *_a, **_k: time.sleep(2.0) or ("", []),
+    )
+
+    res = _run_sandbox(tmp_path, wall_clock_timeout_s=0.2)
+
+    assert res.premodel_infra is False
+    assert res.test_run_passed is False
+    assert res.tokens_out == 100
+    assert res.cost_usd == 0.5
+    assert not _is_premodel_infra_failure(res)
+
+
+def test_r1_stalled_llm_timeout_stays_infra(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuinely stalled LLM (run() itself never returns before the wall
+    clock, so NO usage was captured) stays retryable infra."""
+    _install_fake_sdk(monkeypatch, run_sleep_s=2.0)
+    monkeypatch.setenv("AZURE_API_KEY", "test-key")
+
+    res = _run_sandbox(tmp_path, wall_clock_timeout_s=0.2)
+
+    assert res.premodel_infra is True
+    assert res.test_run_passed is None
+    assert res.tokens_out == 0
+    assert res.cost_usd == 0.0
+    assert _is_premodel_infra_failure(res)

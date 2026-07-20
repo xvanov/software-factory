@@ -708,11 +708,22 @@ def _story_failure_signature(story: StoryRecord) -> str:
                 raw = (last.get("test_output_tail") or "").strip()
     if not raw:
         raw = (story.error or "").strip()
+    return _failure_signature_from_tail(raw)
+
+
+def _failure_signature_from_tail(raw: str) -> str:
+    """Normalized failure signature for a raw failure/test-output tail.
+
+    The tail→normalize→hash core of ``_story_failure_signature``, exposed so the
+    dev loop can sign an attempt's own ``test_output_tail`` directly (it already
+    has the tail in-memory and must not re-read the story's serialized state).
+    Both callers therefore produce the IDENTICAL signature for the same failure.
+    Returns ``""`` when there is no failure text.
+    """
+    raw = (raw or "").strip()
     if not raw:
         return ""
-
     normalized = _normalize_failure_text(raw)
-
     # The tail carries the actual assertion/error; the head is often
     # boilerplate pytest banner/collection noise that's identical across
     # unrelated failures.

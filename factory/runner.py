@@ -1425,13 +1425,22 @@ async def sandbox_run(
             "(likely a stalled LLM call); treating as retryable infrastructure "
             "failure"
         )
+        # Same distinction as the generic-except path below: if the model run
+        # actually completed and only the post-model teardown (memory
+        # extraction / close) hit the wall clock, ``_partial_usage`` is
+        # populated — that is a genuine attempt whose spend must be recorded and
+        # which must consume a dev retry, NOT a free infra bounce. A truly
+        # stalled LLM (no partial usage) stays retryable infra.
+        _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
+        _cost = float(_partial_usage.get("cost", 0.0) or 0.0)
+        model_did_work = _t_out > 0 or _cost > 0.0
         _record(
             persona=persona,
             model=llm_config.model,
             mode="sandbox",
-            tokens_in=0,
-            tokens_out=0,
-            cost_usd=0.0,
+            tokens_in=int(_partial_usage.get("tokens_in", 0) or 0),
+            tokens_out=_t_out,
+            cost_usd=_cost,
             success=False,
             story_path=str(story_path),
             repo_path=str(repo_path),
@@ -1442,20 +1451,22 @@ async def sandbox_run(
             model_tier=difficulty,
             direction_id=direction_id,
             app=app,
+            cached_input_tokens=int(_partial_usage.get("cached", 0) or 0),
         )
-        # A wall-clock timeout means the LLM request stalled mid-flight; the
-        # run never completed, so no usage was captured. test_run_passed
-        # defaults to None + zero cost/tokens and premodel_infra is set
-        # explicitly → the dev circuit breaker re-dispatches without consuming
-        # the retry budget.
         return RunResult(
             success=False,
+            # Model completed then teardown timed out → a real red attempt;
+            # otherwise a stalled request that never produced work → infra.
+            test_run_passed=False if model_did_work else None,
+            tokens_in=int(_partial_usage.get("tokens_in", 0) or 0),
+            tokens_out=_t_out,
+            cost_usd=_cost,
             error=err,
             summary=err,
             last_assistant_message="",
             recent_tool_calls=[],
             self_summary="",
-            premodel_infra=True,
+            premodel_infra=not model_did_work,
         )
     except Exception as exc:
         err = f"sandbox run raised: {exc!r}"

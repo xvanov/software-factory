@@ -1790,17 +1790,19 @@ def _handle_dev_once(
         except (json.JSONDecodeError, TypeError):
             prior = []
         prior.append(attempt_record)
+        # R2: stamp this attempt with its normalized failure signature, reusing
+        # the SAME normalize+hash core the recovery / CI-fix loops use (via
+        # ``_story_failure_signature``) so "is this the same failure" means the
+        # same thing everywhere. Signed from the attempt's own ``test_output_tail``
+        # (already in-memory) so we serialize dev_attempts_json exactly ONCE.
         # Cap history to last 5 entries — beyond that the prompt bloat outweighs
         # the signal, and we have the full chain in the per-story event log.
-        story.dev_attempts_json = json.dumps(prior[-5:])
-        # R2: stamp this attempt with its normalized failure signature, reusing
-        # the SAME helper the recovery / CI-fix loops use so "is this the same
-        # failure" means the same thing everywhere. Computed AFTER the append so
-        # the helper reads this attempt's tail; then persisted so consecutive-
-        # identical-failure detection survives across ticks.
-        from factory.chain.orchestrator import _story_failure_signature
+        # Detection survives across ticks via the persisted field.
+        from factory.chain.orchestrator import _failure_signature_from_tail
 
-        attempt_record["failure_signature"] = _story_failure_signature(story)
+        attempt_record["failure_signature"] = _failure_signature_from_tail(
+            str(attempt_record["test_output_tail"])
+        )
         story.dev_attempts_json = json.dumps(prior[-5:])
 
     # R2: if the last _MAX_DEV_SAME_SIGNATURE red runs all failed with the
