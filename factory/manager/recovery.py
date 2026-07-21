@@ -38,8 +38,10 @@ Safety rails
 ------------
 * Every mutation is REVERSIBLE: playbooks 1/2 only move a story between
   states already reachable by the normal chain (a re-block or a fresh
-  dispatch just re-runs the existing pipeline); playbook 3 only flips a
-  boolean the operator can flip back; playbook 5 only flips the factory mode
+  dispatch just re-runs the existing pipeline); playbook 3 only sets a
+  machine ``deploy_enabled=false`` OVERRIDE in the app's runtime-state file
+  (``state/runtime/<app>.json``) that the operator can clear — the
+  operator-authored ``config.yaml`` is never touched; playbook 5 only flips the factory mode
   back to ``normal``, which the operator or the deploy-failure/rollback path
   can re-set to ``fix-only`` at any time.
 * Every action (including dry-run intents and escalations) is appended to
@@ -55,8 +57,9 @@ Safety rails
   escalate-to-human path untouched.
 * Scope discipline: no playbook here ever touches a direction's content,
   title, scope, or body — only pipeline bookkeeping fields on
-  ``StoryRecord`` (state/error/PR identifiers), the ``deploy.enabled``
-  boolean in an app's ``config.yaml``, or the global factory mode. Whatever
+  ``StoryRecord`` (state/error/PR identifiers), the machine
+  ``deploy_enabled`` override in an app's runtime-state file, or the global
+  factory mode. Whatever
   a human (operator or end-user, e.g. via the auto-intake GitHub-issue flow)
   actually asked for is defined by the direction/story content, which this
   module never edits
@@ -83,6 +86,7 @@ from sqlmodel import Session, create_engine, select
 from factory.app_config import AppConfig, load_app_config, resolve_app_repo_path
 from factory.chain.state_machine import StoryRecord, StoryState
 from factory.manager.signals import write_event
+from factory.runtime_state import effective_deploy_enabled, set_deploy_enabled_override
 from factory.settings.loader import FactorySettings
 from factory.settings.modes import get_mode, set_mode
 
@@ -547,7 +551,10 @@ def detect_premature_deploy_enabled(
             cfg = load_app_config(app, root)
         except Exception:  # noqa: BLE001
             continue
-        if not cfg.deploy.enabled:
+        # Use the EFFECTIVE value (config default merged with any machine
+        # runtime override) so an app already disabled via a prior override
+        # is skipped — no re-thrash re-writing an override that's already set.
+        if not effective_deploy_enabled(cfg, root):
             continue
         artifact = _extract_pre_deploy_artifact(cfg)
         if not artifact:
@@ -577,59 +584,49 @@ def detect_premature_deploy_enabled(
     return targets
 
 
-def _set_deploy_enabled_false(text: str) -> tuple[str, bool]:
-    """Flip ``enabled: true`` -> ``enabled: false`` inside the top-level
-    ``deploy:`` block, preserving every other line (including comments)
-    verbatim. Returns ``(new_text, changed)``; ``changed`` is False when no
-    ``deploy:`` block or no ``enabled: true`` line was found (nothing to do
-    — the caller treats this as stale/no-op, never as an error)."""
-    lines = text.splitlines(keepends=True)
-    in_deploy_block = False
-    for i, line in enumerate(lines):
-        stripped = line.rstrip("\r\n")
-        if not in_deploy_block:
-            if re.match(r"^deploy:\s*(#.*)?$", stripped):
-                in_deploy_block = True
-            continue
-        # Inside deploy:. The block ends at the first non-indented,
-        # non-blank line (a new top-level key) or EOF.
-        if stripped and not stripped[0].isspace():
-            break
-        m = re.match(r"^(\s*enabled:\s*)true(\s*(?:#.*)?)$", stripped)
-        if m:
-            newline = "\n" if line.endswith("\n") else ""
-            lines[i] = m.group(1) + "false" + m.group(2) + newline
-            return "".join(lines), True
-    return text, False
-
-
 def execute_revert_premature_deploy_enable(
-    root: Path,  # noqa: ARG001 - kept for signature symmetry with other executors
+    root: Path,
     target: RecoveryTarget,
     *,
     dry_run: bool,
 ) -> RecoveryOutcome:
-    """ACTION: set deploy.enabled: false in the app's config.yaml.
+    """ACTION: set a machine ``deploy_enabled=false`` OVERRIDE in the app's
+    runtime-state file (``state/runtime/<app>.json``) — the operator-authored
+    ``config.yaml`` is NEVER touched.
 
-    Reversible: the operator flips it back once the deploy artifacts land;
-    nothing about the app's source tree is touched.
+    This is the config/runtime split: ``config.yaml`` holds the operator
+    DEFAULT, the runtime-state file holds this machine OVERRIDE, and the
+    effective value is override-if-present else the default. So a machine flip
+    and an operator edit no longer collide over the same bytes, and a settings
+    deploy of ``config.yaml`` can't silently revert this flip.
+
+    Reversible: the operator (or a re-enable recovery path) clears the
+    override via ``factory.runtime_state.clear_deploy_enabled_override`` once
+    the deploy artifacts land; nothing about the app's source tree or its
+    config.yaml is touched.
     """
-    config_path = Path(target.extra["config_path"])
-    action_desc = f"set deploy.enabled: false in {config_path}"
+    app = target.app
+    action_desc = f"set runtime override deploy_enabled=false for app {app!r} (config.yaml untouched)"
     if dry_run:
         return RecoveryOutcome(target.playbook, target, "dry_run", action_desc)
+    if not app:
+        return RecoveryOutcome(
+            target.playbook, target, "error", action_desc, error="target.app missing"
+        )
 
     try:
-        text = config_path.read_text(encoding="utf-8")
-        new_text, changed = _set_deploy_enabled_false(text)
-        if not changed:
+        # Re-check the precondition at execute time — the effective value
+        # could have changed (an operator edit, or a prior override) between
+        # detection and execution.
+        cfg = load_app_config(app, root)
+        if not effective_deploy_enabled(cfg, root):
             return RecoveryOutcome(
                 target.playbook,
                 target,
                 "skipped_stale",
-                "deploy.enabled was no longer true (or unparseable) at execute time",
+                "deploy already disabled (config default or runtime override) at execute time",
             )
-        config_path.write_text(new_text, encoding="utf-8")
+        set_deploy_enabled_override(root, app, False)
     except Exception as exc:  # noqa: BLE001
         return RecoveryOutcome(target.playbook, target, "error", action_desc, error=repr(exc))
     return RecoveryOutcome(target.playbook, target, "recovered", action_desc)
@@ -757,15 +754,16 @@ def detect_stuck_fixonly_mode(
         app = cfg_path.parent.name
         try:
             cfg = load_app_config(app, root)
+            effective = effective_deploy_enabled(cfg, root)
         except Exception:  # noqa: BLE001
             # Can't determine this app's deploy.enabled — uncertain. A real
             # deploy could be live for it; do not guess it's safe.
             return []
-        if cfg.deploy.enabled:
+        if effective:
             # A real deploy is live for this app — fix-only may legitimately
             # be protecting it. Do not auto-recover.
             return []
-        deploy_enabled_by_app[app] = cfg.deploy.enabled
+        deploy_enabled_by_app[app] = effective
 
     return [
         RecoveryTarget(
@@ -818,6 +816,7 @@ def execute_recover_stuck_fixonly_mode(
     for app in target.extra.get("deploy_enabled_by_app", {}):
         try:
             cfg = load_app_config(app, root)
+            app_effective = effective_deploy_enabled(cfg, root)
         except Exception:  # noqa: BLE001
             return RecoveryOutcome(
                 target.playbook,
@@ -825,7 +824,7 @@ def execute_recover_stuck_fixonly_mode(
                 "skipped_stale",
                 f"could not re-verify deploy.enabled for app {app!r} at execute time",
             )
-        if cfg.deploy.enabled:
+        if app_effective:
             return RecoveryOutcome(
                 target.playbook,
                 target,
@@ -1014,6 +1013,162 @@ def _apply_playbook(
 
 
 # --------------------------------------------------------------------------- #
+# Escalate-only playbook seam (no mutation, never counts against the cap)
+# --------------------------------------------------------------------------- #
+
+
+def _apply_escalate_only_playbook(
+    root: Path,
+    targets: list[RecoveryTarget],
+    *,
+    now: datetime,
+    cooldown: timedelta,
+    summary: dict[str, Any],
+) -> None:
+    """Escalate each target once per cooldown window (never mutates, never
+    counts against the per-cycle action cap). Deduped via the SAME cooldown
+    mechanism the mutating playbooks use, so an unresolved condition is
+    escalated once per window rather than every cycle. Extracted verbatim from
+    the former inline Playbook-4 block so behavior is identical."""
+    for target in targets:
+        if _recently_escalated(root, target.playbook, target.key, now=now, cooldown=cooldown):
+            outcome = RecoveryOutcome(
+                target.playbook,
+                target,
+                "skipped_cooldown",
+                "cooldown active — this conflict was already escalated recently; "
+                "suppressing the duplicate escalation",
+            )
+            _log_recovery(root, outcome, precondition_snapshot=target.extra)
+            summary["skipped_cooldown"].append({"playbook": target.playbook, "key": target.key})
+            continue
+
+        recommendation = target.extra.get("recommendation", "manual rebase required")
+        outcome = RecoveryOutcome(target.playbook, target, "escalated", recommendation)
+        _log_recovery(root, outcome, precondition_snapshot=target.extra)
+        summary["escalated"].append(
+            {
+                "playbook": target.playbook,
+                "key": target.key,
+                "reason": "conflict_needs_human_judgment",
+                "recommendation": recommendation,
+            }
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Playbook registry — declarative descriptors so adding a playbook is additive
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class _RecoveryContext:
+    """Everything the detectors/executors need for one recovery cycle. Bundled
+    so a playbook descriptor's ``detect`` closure can be a zero-arg call."""
+
+    root: Path
+    now: datetime
+    cooldown: timedelta
+    max_actions: int
+    phantom_pr_age_threshold: timedelta
+    db_path: Path | None
+    apps: list[str] | None
+    gh_pr_view: Callable[..., dict[str, Any] | None] | None
+    gh_branch_exists: Callable[..., bool | None] | None
+    runner: CommandRunner | None
+
+
+@dataclass
+class PlaybookSpec:
+    """One recovery playbook, declared once.
+
+    ``kind`` is ``"mutating"`` (runs through ``_apply_playbook`` with the
+    cooldown + per-cycle-cap guards) or ``"escalate_only"`` (runs through
+    ``_apply_escalate_only_playbook`` — never mutates, never counts against the
+    cap). ``detect`` is a zero-arg closure bound to the cycle context;
+    ``execute`` + ``execute_kwargs`` are only used by mutating playbooks.
+    """
+
+    name: str
+    kind: str
+    detect: Callable[[], list[RecoveryTarget]]
+    execute: Callable[..., RecoveryOutcome] | None = None
+    execute_kwargs: dict[str, Any] = field(default_factory=dict)
+
+
+def build_recovery_registry(ctx: _RecoveryContext) -> list[PlaybookSpec]:
+    """Return the ordered list of recovery playbooks for this cycle.
+
+    This is the single place a playbook is registered: adding one is a new
+    ``PlaybookSpec`` entry, not a copy-paste of an inline detect+guard+execute
+    block. Order is preserved (1→5) so behavior is identical to the former
+    hand-wired sequence.
+    """
+    return [
+        # Playbook 1: retry-mergeable-blocked-story
+        PlaybookSpec(
+            name=PLAYBOOK_RETRY_MERGEABLE_BLOCKED,
+            kind="mutating",
+            detect=lambda: detect_retry_mergeable_blocked_stories(
+                ctx.root,
+                db_path=ctx.db_path,
+                apps=ctx.apps,
+                gh_pr_view=ctx.gh_pr_view,
+                runner=ctx.runner,
+            ),
+            execute=execute_retry_mergeable_blocked_story,
+            execute_kwargs={"db_path": ctx.db_path},
+        ),
+        # Playbook 2: redispatch-phantom-pr-open
+        PlaybookSpec(
+            name=PLAYBOOK_REDISPATCH_PHANTOM_PR,
+            kind="mutating",
+            detect=lambda: detect_phantom_pr_open_stories(
+                ctx.root,
+                now=ctx.now,
+                age_threshold=ctx.phantom_pr_age_threshold,
+                db_path=ctx.db_path,
+                apps=ctx.apps,
+                gh_branch_exists=ctx.gh_branch_exists,
+                runner=ctx.runner,
+            ),
+            execute=execute_redispatch_phantom_pr,
+            execute_kwargs={"db_path": ctx.db_path},
+        ),
+        # Playbook 3: revert-premature-deploy-enable
+        PlaybookSpec(
+            name=PLAYBOOK_REVERT_PREMATURE_DEPLOY,
+            kind="mutating",
+            detect=lambda: detect_premature_deploy_enabled(ctx.root, apps=ctx.apps),
+            execute=execute_revert_premature_deploy_enable,
+            execute_kwargs={},
+        ),
+        # Playbook 4: conflicting-gated-pr — escalate-only, never mutates.
+        PlaybookSpec(
+            name=PLAYBOOK_CONFLICTING_GATED_PR,
+            kind="escalate_only",
+            detect=lambda: detect_conflicting_gated_prs(
+                ctx.root,
+                db_path=ctx.db_path,
+                apps=ctx.apps,
+                gh_pr_view=ctx.gh_pr_view,
+                runner=ctx.runner,
+            ),
+        ),
+        # Playbook 5: recover-stuck-fixonly-mode
+        PlaybookSpec(
+            name=PLAYBOOK_RECOVER_STUCK_FIXONLY,
+            kind="mutating",
+            detect=lambda: detect_stuck_fixonly_mode(
+                ctx.root, db_path=ctx.db_path, apps=ctx.apps
+            ),
+            execute=execute_recover_stuck_fixonly_mode,
+            execute_kwargs={"db_path": ctx.db_path},
+        ),
+    ]
+
+
+# --------------------------------------------------------------------------- #
 # Main entry point
 # --------------------------------------------------------------------------- #
 
@@ -1057,16 +1212,28 @@ def run_recovery_cycle(
                 forced_dry_run = True
         except Exception as _halt_exc:  # noqa: BLE001
             # Fail-open (mirrors factory/chain/orchestrator.py's halt-check
-            # guard): a broken halt module must not block recovery, but a
-            # silent except here would hide that the halt module is broken.
-            import sys as _sys
+            # guard): a broken halt module must not block recovery. The
+            # dangerous corrupt-halt-FILE path fails safe inside is_halted; this
+            # only fires on a broken halt MODULE. Make it a visible CRITICAL
+            # alert rather than a stderr line the FMS cannot see.
+            try:
+                from factory.manager.signals import write_alert_event
 
-            print(
-                f"[recovery] WARNING: halt-check raised an exception: {_halt_exc!r}; "
-                "continuing without forcing dry-run (fail-open). This may "
-                "indicate a broken halt module.",
-                file=_sys.stderr,
-            )
+                write_alert_event(
+                    "halt_check_module_error",
+                    f"[recovery] halt-check raised {_halt_exc!r}; continuing "
+                    "without forcing dry-run (fail-open).",
+                    severity="critical",
+                    software_factory_root=root,
+                )
+            except Exception:  # noqa: BLE001 - alerting is best-effort
+                import sys as _sys
+
+                print(
+                    f"[recovery] CRITICAL: halt-check raised {_halt_exc!r}; "
+                    "continuing (fail-open) and alert emit failed.",
+                    file=_sys.stderr,
+                )
     effective_dry_run = dry_run or forced_dry_run
 
     summary: dict[str, Any] = {
@@ -1081,107 +1248,43 @@ def run_recovery_cycle(
 
     actions_taken = 0
 
-    # Playbook 1: retry-mergeable-blocked-story
-    targets_1 = detect_retry_mergeable_blocked_stories(
-        root, db_path=db_path, apps=apps, gh_pr_view=gh_pr_view, runner=runner
-    )
-    actions_taken = _apply_playbook(
-        root,
-        targets_1,
-        execute_retry_mergeable_blocked_story,
-        dry_run=effective_dry_run,
+    # Drive every playbook from the registry (see build_recovery_registry).
+    # Registry order == the former hand-wired order (1→5); mutating playbooks go
+    # through the shared cooldown+cap guard, escalate-only ones through their own
+    # never-mutates seam. Adding a playbook is a new registry entry, not another
+    # inline detect+guard+execute block here.
+    ctx = _RecoveryContext(
+        root=root,
         now=now,
         cooldown=cooldown,
         max_actions=max_actions,
-        actions_taken=actions_taken,
-        summary=summary,
-        execute_kwargs={"db_path": db_path},
-    )
-
-    # Playbook 2: redispatch-phantom-pr-open
-    targets_2 = detect_phantom_pr_open_stories(
-        root,
-        now=now,
-        age_threshold=phantom_pr_age_threshold,
+        phantom_pr_age_threshold=phantom_pr_age_threshold,
         db_path=db_path,
         apps=apps,
+        gh_pr_view=gh_pr_view,
         gh_branch_exists=gh_branch_exists,
         runner=runner,
     )
-    actions_taken = _apply_playbook(
-        root,
-        targets_2,
-        execute_redispatch_phantom_pr,
-        dry_run=effective_dry_run,
-        now=now,
-        cooldown=cooldown,
-        max_actions=max_actions,
-        actions_taken=actions_taken,
-        summary=summary,
-        execute_kwargs={"db_path": db_path},
-    )
-
-    # Playbook 3: revert-premature-deploy-enable
-    targets_3 = detect_premature_deploy_enabled(root, apps=apps)
-    actions_taken = _apply_playbook(
-        root,
-        targets_3,
-        execute_revert_premature_deploy_enable,
-        dry_run=effective_dry_run,
-        now=now,
-        cooldown=cooldown,
-        max_actions=max_actions,
-        actions_taken=actions_taken,
-        summary=summary,
-        execute_kwargs={},
-    )
-
-    # Playbook 4: conflicting-gated-pr — escalate-only, never mutates and
-    # never counts against the action cap (it never acts). Still deduped via
-    # the same cooldown mechanism the mutating playbooks use above: an
-    # unresolved conflict is escalated once per cooldown window, not every
-    # cycle, so it doesn't drown real signal with duplicate escalations.
-    for target in detect_conflicting_gated_prs(
-        root, db_path=db_path, apps=apps, gh_pr_view=gh_pr_view, runner=runner
-    ):
-        if _recently_escalated(root, target.playbook, target.key, now=now, cooldown=cooldown):
-            outcome = RecoveryOutcome(
-                target.playbook,
-                target,
-                "skipped_cooldown",
-                "cooldown active — this conflict was already escalated recently; "
-                "suppressing the duplicate escalation",
+    for spec in build_recovery_registry(ctx):
+        targets = spec.detect()
+        if spec.kind == "escalate_only":
+            _apply_escalate_only_playbook(
+                root, targets, now=now, cooldown=cooldown, summary=summary
             )
-            _log_recovery(root, outcome, precondition_snapshot=target.extra)
-            summary["skipped_cooldown"].append({"playbook": target.playbook, "key": target.key})
-            continue
-
-        recommendation = target.extra.get("recommendation", "manual rebase required")
-        outcome = RecoveryOutcome(target.playbook, target, "escalated", recommendation)
-        _log_recovery(root, outcome, precondition_snapshot=target.extra)
-        summary["escalated"].append(
-            {
-                "playbook": target.playbook,
-                "key": target.key,
-                "reason": "conflict_needs_human_judgment",
-                "recommendation": recommendation,
-            }
-        )
-
-    # Playbook 5: recover-stuck-fixonly-mode
-    targets_5 = detect_stuck_fixonly_mode(root, db_path=db_path, apps=apps)
-    actions_taken = _apply_playbook(
-        root,
-        targets_5,
-        execute_recover_stuck_fixonly_mode,
-        dry_run=effective_dry_run,
-        now=now,
-        cooldown=cooldown,
-        max_actions=max_actions,
-        actions_taken=actions_taken,
-        summary=summary,
-        execute_kwargs={"db_path": db_path},
-    )
+        else:
+            assert spec.execute is not None  # mutating playbooks always have one
+            actions_taken = _apply_playbook(
+                root,
+                targets,
+                spec.execute,
+                dry_run=effective_dry_run,
+                now=now,
+                cooldown=cooldown,
+                max_actions=max_actions,
+                actions_taken=actions_taken,
+                summary=summary,
+                execute_kwargs=spec.execute_kwargs,
+            )
 
     return summary
 
@@ -1189,6 +1292,8 @@ def run_recovery_cycle(
 __all__ = [
     "RecoveryTarget",
     "RecoveryOutcome",
+    "PlaybookSpec",
+    "build_recovery_registry",
     "PLAYBOOK_RETRY_MERGEABLE_BLOCKED",
     "PLAYBOOK_REDISPATCH_PHANTOM_PR",
     "PLAYBOOK_REVERT_PREMATURE_DEPLOY",

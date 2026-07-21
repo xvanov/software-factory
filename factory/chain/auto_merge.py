@@ -30,7 +30,12 @@ from typing import Any
 
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
-from factory.app_config import AppConfig, load_app_config
+from factory.app_config import (
+    FACTORY_REPO,  # noqa: F401 - re-exported for callers/tests
+    AppConfig,
+    load_app_config,
+    targets_factory_repo,
+)
 from factory.chain.gates.evaluator import (  # noqa: F401 - ALL_GATE_LABELS re-exported
     ALL_GATE_LABELS,
     LOOP4_REQUIRED_GATE_LABELS,
@@ -76,6 +81,15 @@ _MAX_CI_FIX_CYCLES = 3
 # ``chain_kind`` without re-checking the TDD list.
 _DOCS_CHAIN_GATE_LABELS: frozenset[str] = frozenset({"canonical-paths-only"})
 
+def _story_targets_factory_repo(app_config: AppConfig) -> bool:
+    """True when ``app_config`` builds the factory's own repo (a self-edit app).
+
+    Scoping guard for the chain-side staging gate: only factory-repo stories are
+    ever routed through staging. Every other app (sacrifice, ...) targets a
+    different repo and bypasses the gate entirely.
+    """
+    return targets_factory_repo(app_config.repo)
+
 
 class MergeActionRecord(SQLModel, table=True):
     """One row per auto-merge decision (merged or no-op)."""
@@ -103,6 +117,26 @@ class MergeAction:
     reason: str
     gates_passed: list[str] = field(default_factory=list)
     blocking_labels: list[str] = field(default_factory=list)
+    # Set True when a factory self-edit was refused by the chain-side staging
+    # gate (``_evaluate_self_edit_gate``): the live factory was NOT touched and
+    # the story should be sunk to a blocked/attention state by the caller.
+    staging_blocked: bool = False
+    # The staging-gate status when blocked: ``"staging_rejected"`` (a stage
+    # failed on the clone), ``"staging_infra_failed"`` (harness could not
+    # determine health), ``"forbidden"`` (touched factory/manager/** or
+    # bench/**), or ``"diff_unavailable"`` (could not fetch the diff to
+    # validate). ``None`` when the merge was not staging-blocked.
+    staging_status: str | None = None
+    # Set True when ``gh pr merge --auto`` succeeded but the PR is NOT merged
+    # yet — GitHub's auto-merge was merely ENABLED and the merge will happen
+    # asynchronously once the required checks pass. This is the critical
+    # ``merged != auto-merge-requested`` distinction: with ``merged=False`` the
+    # caller must NOT record a merged row, NOT enqueue a deploy, and NOT advance
+    # the story — it STAYS in ``_MERGEABLE_STATES`` so ``reconcile_from_github``
+    # and the CI-failure->dev loop keep watching it. If a required check later
+    # FAILS, the PR never merges and the story is still re-dispatchable instead
+    # of being stranded at ``deploy_pending``.
+    auto_merge_enabled: bool = False
 
 
 @dataclass
@@ -157,6 +191,263 @@ def _is_docs_chain(story: StoryRecord | None) -> bool:
     return story is not None and story.chain_kind == "docs"
 
 
+# ---------------------------------------------------------------------------
+# Chain-side staging gate for factory self-edits (Tier 3 — self-tick safety)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _SelfEditDecision:
+    """Outcome of the chain-side staging gate for one factory-repo story.
+
+    ``allow=True`` means the change is safe to merge (either it is not a factory
+    self-edit, or the staging clone validated it healthy). Every other outcome
+    is ``allow=False`` — the live factory is NEVER touched on uncertainty.
+    """
+
+    allow: bool
+    status: str
+    logs_tail: str = ""
+    forbidden: bool = False
+
+
+def _default_patch_provider(
+    app_config: AppConfig, pr_number: int
+) -> str | None:  # pragma: no cover - real-run gh shell-out
+    """Fetch a PR's unified diff via ``gh pr diff``. ``None`` on any failure.
+
+    A ``None`` return is treated as fail-safe by the caller (a factory self-edit
+    whose diff cannot be read is never merged).
+    """
+    import subprocess
+
+    if pr_number <= 0:
+        return None
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "diff", str(pr_number), "--repo", app_config.repo],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout or ""
+
+
+def _escalate_self_edit(
+    escalate: Any,
+    *,
+    story: StoryRecord | None,
+    app_config: AppConfig,
+    root: Path,
+    pr_number: int,
+    classification: str,
+    detail: str,
+    patch: str = "",
+) -> None:
+    """Best-effort escalation for a refused factory self-edit. Never raises.
+
+    Reuses the WS3.1 ``escalation.notify_escalation`` channel (the same one the
+    manager proposal path uses) so a chain-built self-edit that fails staging or
+    hits a forbidden path is surfaced to a human exactly like a manager-proposed
+    one.
+    """
+    proposal = {
+        "proposal_id": (
+            f"chain-selfedit-story-{getattr(story, 'id', None)}-pr-{pr_number}"
+        ),
+        "concern_title": f"chain factory self-edit PR #{pr_number}",
+        "proposal": {"suggested_patch": patch},
+        "detail": detail,
+    }
+    try:
+        escalate(
+            proposal,
+            root=root,
+            repo=app_config.repo,
+            classification=classification,
+            result={"detail": detail, "pr_number": pr_number},
+        )
+    except Exception:  # noqa: BLE001 - escalation is best-effort; never block the tick
+        pass
+
+
+def _evaluate_self_edit_gate(
+    *,
+    app_config: AppConfig,
+    story: StoryRecord | None,
+    pr_number: int,
+    root: Path | None,
+    patch_provider: Any = None,
+    self_edit_gate: Any = None,
+    escalate: Any = None,
+) -> _SelfEditDecision:
+    """Decide whether a factory-repo story is safe to merge.
+
+    This is the chain analogue of the manager proposal path's staging gate: a
+    story that modifies the factory's OWN code must be validated by ACTUALLY
+    RUNNING a cloned factory (``staging.gate_self_edit``) before it can land on
+    the live factory. The manager path had this protection; the chain
+    (pm-sync → dev → review → auto_merge) did not — this closes that gap.
+
+    Fail-safe contract (never merge an unvalidated factory self-edit):
+      * app does not target the factory repo → ``allow=True`` (app-repo stories
+        bypass staging entirely — unchanged path).
+      * diff cannot be obtained → ``allow=False`` (cannot validate → refuse).
+      * touches a forbidden path (``factory/manager/**`` or ``bench/**``) →
+        ``allow=False`` (the chain can never edit the safety mechanism or the
+        grader, staging-validated or not).
+      * not a runtime self-edit (e.g. only ``apps/factory/directions`` docs) →
+        ``allow=True`` (staging validates "does the factory run"; a non-code
+        change can't change that, so no staging is required).
+      * runtime self-edit → routed through the staging gate; ``allow`` mirrors
+        ``decision.promote`` (healthy → merge, unhealthy/infra → refuse).
+
+    Any uncertainty — a missing diff, a staging harness exception, a
+    non-promote decision — resolves to ``allow=False``.
+    """
+    if not _story_targets_factory_repo(app_config):
+        return _SelfEditDecision(allow=True, status="not_factory_repo")
+
+    root = Path(root) if root is not None else Path.cwd()
+
+    from factory.chain.factory_improver_apply import _diff_target_paths
+    from factory.manager import staging
+    from factory.manager.apply import _any_path_is_forbidden_in_patch
+
+    if patch_provider is None:
+        patch_provider = _default_patch_provider
+    if self_edit_gate is None:
+        self_edit_gate = staging.gate_self_edit
+    if escalate is None:
+        from factory.manager.escalation import notify_escalation as escalate
+
+    try:
+        patch = patch_provider(app_config, pr_number)
+    except Exception:  # noqa: BLE001 - fail-safe: cannot read diff → do not merge
+        patch = None
+
+    if not patch or not patch.strip():
+        reason = (
+            f"factory self-edit PR #{pr_number}: could not obtain the diff to "
+            f"validate; refusing to merge an unvalidated factory change."
+        )
+        _escalate_self_edit(
+            escalate,
+            story=story,
+            app_config=app_config,
+            root=root,
+            pr_number=pr_number,
+            classification="escalate_to_human",
+            detail=reason,
+        )
+        return _SelfEditDecision(allow=False, status="diff_unavailable", logs_tail=reason)
+
+    paths = _diff_target_paths(patch)
+
+    # Fail-safe: a NON-empty diff that parses to NO target paths is
+    # unparseable. For a factory-repo story we cannot determine what it
+    # touches, so we cannot rule out a self-edit or a forbidden path — refuse
+    # rather than fall through to the "not a self-edit → merge" branch below
+    # (which would be a fail-OPEN on an unreadable factory diff).
+    if not paths:
+        reason = (
+            f"factory self-edit PR #{pr_number}: diff is non-empty but no target "
+            f"paths could be parsed; refusing to merge a factory change whose "
+            f"scope cannot be determined."
+        )
+        _escalate_self_edit(
+            escalate,
+            story=story,
+            app_config=app_config,
+            root=root,
+            pr_number=pr_number,
+            classification="escalate_to_human",
+            detail=reason,
+            patch=patch,
+        )
+        return _SelfEditDecision(allow=False, status="unparseable_diff", logs_tail=reason)
+
+    # Forbidden-path guard FIRST — the chain must never edit the safety
+    # mechanism (factory/manager/**) or the grader (bench/**), regardless of
+    # whether staging would pass. Reuses the exact classifier the manager
+    # apply path uses so the two paths can never diverge.
+    if _any_path_is_forbidden_in_patch(paths, patch):
+        reason = (
+            f"factory self-edit PR #{pr_number} touches a forbidden path "
+            f"(factory/manager/** or bench/**); the chain may not edit the "
+            f"safety mechanism or the grader. Refusing to merge."
+        )
+        _escalate_self_edit(
+            escalate,
+            story=story,
+            app_config=app_config,
+            root=root,
+            pr_number=pr_number,
+            classification="forbidden",
+            detail=reason,
+            patch=patch,
+        )
+        return _SelfEditDecision(
+            allow=False, status="forbidden", forbidden=True, logs_tail=reason
+        )
+
+    # Not a runtime self-edit (touches no factory/ code) → nothing for staging
+    # to validate; safe to merge like any other content/docs change.
+    if not staging.is_self_edit(paths):
+        return _SelfEditDecision(allow=True, status="not_self_edit")
+
+    # Runtime self-edit → validate by actually running the cloned factory.
+    proposal = {
+        "proposal_id": f"chain-selfedit-story-{getattr(story, 'id', None)}-pr-{pr_number}",
+        "concern_title": (
+            getattr(story, "title", None) or f"chain factory self-edit PR #{pr_number}"
+        ),
+        "proposal": {"suggested_patch": patch},
+    }
+    proposal_path = f"chain:{app_config.repo}:pr-{pr_number}"
+    try:
+        decision = self_edit_gate(proposal, proposal_path, root=root)
+    except Exception as exc:  # noqa: BLE001 - fail-safe: harness error → do not merge
+        reason = f"factory self-edit staging harness errored: {exc!r}"
+        _escalate_self_edit(
+            escalate,
+            story=story,
+            app_config=app_config,
+            root=root,
+            pr_number=pr_number,
+            classification="escalate_to_human",
+            detail=reason,
+            patch=patch,
+        )
+        return _SelfEditDecision(
+            allow=False, status="staging_infra_failed", logs_tail=reason
+        )
+
+    if getattr(decision, "promote", False):
+        return _SelfEditDecision(allow=True, status="staging_validated")
+
+    # Not promoted (unhealthy validation or infra failure). gate_self_edit
+    # already emitted its own alert/event; add the chain escalation so the
+    # blocked story is visible on the same channel as manager escalations.
+    status = getattr(decision, "status", "staging_rejected") or "staging_rejected"
+    logs_tail = getattr(decision, "logs_tail", "") or ""
+    _escalate_self_edit(
+        escalate,
+        story=story,
+        app_config=app_config,
+        root=root,
+        pr_number=pr_number,
+        classification="escalate_to_human",
+        detail=f"factory self-edit failed staging ({status}): {logs_tail[:500]}",
+        patch=patch,
+    )
+    return _SelfEditDecision(allow=False, status=status, logs_tail=logs_tail)
+
+
 def _evaluate_one_pr(
     *,
     app: str,
@@ -167,6 +458,12 @@ def _evaluate_one_pr(
     merge_method: str = "squash",
     wait_for_ci: bool = True,
     delete_branch_after_merge: bool = True,
+    software_factory_root: Path | None = None,
+    self_edit_gate: Any = None,
+    patch_provider: Any = None,
+    escalate: Any = None,
+    merge_fn: Any = None,
+    pr_merged_query: Any = None,
 ) -> MergeAction:
     """Decide if a PR should be merged; merge it in real-run.
 
@@ -177,9 +474,43 @@ def _evaluate_one_pr(
       doesn't apply the 10 TDD labels; the canonical-paths enforcer
       runs before reaching PR_OPEN, so we only check
       mergeable-state + blocking-labels.
+
+    ``merge_fn`` / ``pr_merged_query`` are injection seams for the real-run
+    merge shell-out (``_gh_pr_merge``) and the authoritative
+    "is-this-PR-actually-merged" query (``_pr_is_merged_on_github``). Tests
+    pass fakes to drive the "auto-merge enabled but not merged yet" vs "really
+    merged" branches without touching GitHub.
     """
     story = fixture.story
     docs_chain = _is_docs_chain(story)
+    merge_fn = merge_fn or _gh_pr_merge
+    pr_merged_query = pr_merged_query or _pr_is_merged_on_github
+
+    # Real-run short-circuit: if the PR is ALREADY merged on GitHub, we are
+    # done — record the merge and let the caller enqueue the deploy + advance
+    # the story. This cheaply handles the "auto-merge completed between ticks"
+    # case (the async merge that ``--auto`` requested on a prior tick has since
+    # landed) AND avoids re-running the expensive staging gate every tick while
+    # a merge is pending. Fail-safe: an unconfirmed state returns False, so we
+    # fall through to the normal gated evaluation. Dry-run never touches GH.
+    if not dry_run and fixture.pr_number > 0:
+        try:
+            already_merged = bool(
+                pr_merged_query(
+                    app_config=app_config,
+                    pr_number=fixture.pr_number,
+                    github_client=github_client,
+                )
+            )
+        except Exception:  # noqa: BLE001 - fail-safe: cannot confirm → not merged
+            already_merged = False
+        if already_merged:
+            return MergeAction(
+                app=app,
+                pr_number=fixture.pr_number,
+                merged=True,
+                reason="already merged on GitHub",
+            )
 
     # The TDD gate evaluator is only relevant for the TDD chain; for
     # docs PRs we skip it (the enforcer already vetted the diff in the
@@ -196,6 +527,7 @@ def _evaluate_one_pr(
             labels=list(fixture.labels),
             ci_state=fixture.ci_state,
             repo_root=fixture.repo_root,
+            software_factory_root=software_factory_root,
             story=story,
             dry_run=dry_run,
         )
@@ -215,7 +547,7 @@ def _evaluate_one_pr(
         present_labels = set(fixture.labels) | set(gates_passed)
         missing_labels = [
             label
-            for label in required_gate_labels(app_config)
+            for label in required_gate_labels(app_config, story)
             if label not in present_labels
         ]
 
@@ -271,24 +603,36 @@ def _evaluate_one_pr(
             blocking_labels=blocking_present,
         )
 
-    # Gates passed + no blockers. Merge.
-    if not dry_run:
-        merge_err = _gh_pr_merge(
+    # Chain-side staging gate for factory self-edits. A story that modifies the
+    # factory's OWN code must be validated by running a cloned factory before it
+    # can land on the live factory — the same protection the manager proposal
+    # path has (WS3.5). App-repo stories (sacrifice, ...) short-circuit to
+    # allow=True inside the helper, so this is a no-op for them. Skipped in
+    # dry-run UNLESS a gate is injected (tests): a dry-run merges nothing, so
+    # there is nothing to protect, and we avoid the network/clone cost.
+    if (not dry_run) or (self_edit_gate is not None):
+        se_decision = _evaluate_self_edit_gate(
             app_config=app_config,
+            story=story,
             pr_number=fixture.pr_number,
-            merge_method=merge_method,
-            wait_for_ci=wait_for_ci,
-            delete_branch=delete_branch_after_merge,
-            github_client=github_client,
+            root=software_factory_root,
+            patch_provider=patch_provider,
+            self_edit_gate=self_edit_gate,
+            escalate=escalate,
         )
-        if merge_err is not None:  # pragma: no cover - real-run path
+        if not se_decision.allow:
             return MergeAction(
                 app=app,
                 pr_number=fixture.pr_number,
                 merged=False,
-                reason=f"gh merge failed: {merge_err}",
+                reason=(
+                    f"factory self-edit refused by chain-side staging gate "
+                    f"({se_decision.status}); live factory not touched"
+                ),
                 gates_passed=gates_passed,
                 blocking_labels=blocking_present,
+                staging_blocked=True,
+                staging_status=se_decision.status,
             )
 
     reason = (
@@ -296,6 +640,71 @@ def _evaluate_one_pr(
         if docs_chain
         else "all required gates passed; no blocking labels"
     )
+
+    # Dry-run merges nothing; the decision path still returns merged=True so
+    # tests exercise the record/deploy plumbing without touching GitHub.
+    if dry_run:
+        return MergeAction(
+            app=app,
+            pr_number=fixture.pr_number,
+            merged=True,
+            reason=reason,
+            gates_passed=gates_passed,
+            blocking_labels=blocking_present,
+        )
+
+    # Gates passed + no blockers. Merge.
+    merge_err = merge_fn(
+        app_config=app_config,
+        pr_number=fixture.pr_number,
+        merge_method=merge_method,
+        wait_for_ci=wait_for_ci,
+        delete_branch=delete_branch_after_merge,
+        github_client=github_client,
+    )
+    if merge_err is not None:
+        return MergeAction(
+            app=app,
+            pr_number=fixture.pr_number,
+            merged=False,
+            reason=f"gh merge failed: {merge_err}",
+            gates_passed=gates_passed,
+            blocking_labels=blocking_present,
+        )
+
+    # CRITICAL: ``merged`` must reflect a REAL GitHub merge, not merely that a
+    # merge was requested. With ``wait_for_ci=False`` ``gh pr merge`` (no
+    # ``--auto``) merges SYNCHRONOUSLY, so success == merged. With
+    # ``wait_for_ci=True`` the shell-out used ``--auto``, which only ENABLES
+    # auto-merge and returns 0 immediately WITHOUT merging when required checks
+    # are still pending — so we must QUERY GitHub's authoritative state and only
+    # claim a merge if the PR actually merged now (e.g. checks were already
+    # green so ``--auto`` merged immediately). If it is NOT merged yet, return a
+    # NON-merged action flagged ``auto_merge_enabled`` so the caller leaves the
+    # story in ``_MERGEABLE_STATES`` (reconcile + the CI-failure loop keep
+    # watching it) instead of stranding it at ``deploy_pending``.
+    if wait_for_ci:
+        try:
+            really_merged = bool(
+                pr_merged_query(
+                    app_config=app_config,
+                    pr_number=fixture.pr_number,
+                    github_client=github_client,
+                )
+            )
+        except Exception:  # noqa: BLE001 - fail-safe: cannot confirm → not merged
+            really_merged = False
+        if not really_merged:
+            return MergeAction(
+                app=app,
+                pr_number=fixture.pr_number,
+                merged=False,
+                reason="auto-merge enabled; awaiting required checks",
+                gates_passed=gates_passed,
+                blocking_labels=blocking_present,
+                auto_merge_enabled=True,
+            )
+
     return MergeAction(
         app=app,
         pr_number=fixture.pr_number,
@@ -364,6 +773,48 @@ def _gh_pr_merge(
         except Exception as exc:
             return f"pygithub merge failed: {exc!r}"
     return None
+
+
+def _pr_is_merged_on_github(
+    *, app_config: AppConfig, pr_number: int, github_client: Any = None
+) -> bool:  # pragma: no cover - real-run path; queries live GH state
+    """Return True iff the PR is ACTUALLY merged on GitHub right now.
+
+    ``gh pr merge --auto`` returns exit 0 the instant it ENABLES auto-merge —
+    it does NOT wait for or perform the merge. So a successful ``_gh_pr_merge``
+    is NOT evidence the PR merged; only GitHub's authoritative state is. This
+    queries ``gh pr view <n> --json state,mergedAt`` and treats the PR as merged
+    iff ``mergedAt`` is non-null (equivalently ``state == "MERGED"``).
+
+    Fail-safe: ANY failure (gh missing, timeout, non-zero exit, unparseable
+    payload, non-positive placeholder PR) returns ``False``. We NEVER claim a
+    merge we cannot positively confirm, so a story is never advanced to
+    ``deploy_pending`` on an unconfirmed merge.
+    """
+    import json as _json
+    import subprocess
+
+    if pr_number <= 0:
+        return False
+    cmd = [
+        "gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
+        "--json", "state,mergedAt",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    if proc.returncode != 0:
+        return False
+    try:
+        data = _json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    merged_at = data.get("mergedAt")
+    state = str(data.get("state", "")).upper()
+    return bool(merged_at) or state == "MERGED"
 
 
 def _pr_terminally_unmergeable(
@@ -664,10 +1115,21 @@ def _handle_ci_failure(
         "(no CI log digest could be fetched; inspect the GitHub Actions run "
         f"for PR #{pr_number} directly)"
     )
-    finding = (
-        f"Real GitHub Actions CI failed on PR #{pr_number}. Fix the exact "
-        f"failure it reported below — do not just re-run or ignore it:\n\n{digest}"
-    )
+    # Emit a well-formed finding DICT (not a bare string): every downstream
+    # consumer — runner._build_initial_message, _findings_signature,
+    # _append_reviewer_history, _render_reviewer_history_section — indexes
+    # findings with ``f.get(...)``. A string element crashed the dev
+    # re-dispatch ("'str' object has no attribute 'get'"), silently breaking
+    # this entire CI-failure feedback loop.
+    finding = {
+        "severity": "high",
+        "criterion": "ci",
+        "location": f"GitHub Actions CI (PR #{pr_number})",
+        "what": (
+            f"Real GitHub Actions CI failed on PR #{pr_number}. Fix the exact "
+            f"failure it reported below — do not just re-run or ignore it:\n\n{digest}"
+        ),
+    }
     reviewer_payload = {
         "findings": [finding],
         "source": "ci_failure",
@@ -756,8 +1218,20 @@ def auto_merge_tick(
     merge_method: str = "squash",
     wait_for_ci: bool = True,
     delete_branch_after_merge: bool = True,
+    self_edit_gate: Any = None,
+    patch_provider: Any = None,
+    escalate: Any = None,
+    merge_fn: Any = None,
+    pr_merged_query: Any = None,
 ) -> list[MergeAction]:
     """Single pass of the auto-merge worker against ``app``.
+
+    ``self_edit_gate`` / ``patch_provider`` / ``escalate`` are injection seams
+    for the chain-side factory self-edit staging gate (``_evaluate_self_edit_gate``);
+    they default to the real ``staging.gate_self_edit`` / ``gh pr diff`` /
+    ``escalation.notify_escalation`` implementations. Tests pass fakes to drive
+    the healthy / unhealthy / infra-failure / forbidden branches without cloning
+    the factory or touching GitHub.
 
     Returns a ``MergeAction`` per PR evaluated. Tests pass
     ``fixture_prs`` to drive the decision logic without GitHub.
@@ -959,8 +1433,39 @@ def auto_merge_tick(
             merge_method=merge_method,
             wait_for_ci=wait_for_ci,
             delete_branch_after_merge=delete_branch_after_merge,
+            software_factory_root=root,
+            self_edit_gate=self_edit_gate,
+            patch_provider=patch_provider,
+            escalate=escalate,
+            merge_fn=merge_fn,
+            pr_merged_query=pr_merged_query,
         )
         _record_merge_action(action, f.head_sha, db)
+        # A factory self-edit refused by the chain-side staging gate: the live
+        # factory was never touched. Sink the story to a blocked/attention state
+        # so the worker stops retrying it and an operator (or the FMS) picks it
+        # up. The escalation was already emitted inside the gate.
+        if action.staging_blocked and f.story is not None and f.story.state in _MERGEABLE_STATES:
+            from factory.chain.state_machine import EVENT_PR_UNMERGEABLE, advance
+
+            try:
+                f.story.state = advance(f.story, EVENT_PR_UNMERGEABLE).value
+                f.story.error = (
+                    f"auto-merge refused a factory self-edit: PR #{action.pr_number} "
+                    f"did not pass the chain-side staging gate "
+                    f"({action.staging_status}). The live factory was NOT touched; "
+                    f"escalated for human review."
+                )
+                eng = _engine(db)
+                with Session(eng) as session:
+                    session.add(f.story)
+                    session.commit()
+                    # Refresh while the session is open so the caller can still
+                    # read ``f.story``'s attributes afterwards (commit() expires
+                    # them → DetachedInstanceError once the session closes).
+                    session.refresh(f.story)
+            except Exception:  # noqa: BLE001 - state sink is best-effort
+                pass
         # On a successful merge, enqueue a deploy candidate for the
         # post-merge deploy worker. The deploy itself runs in a separate
         # tick so the merge step stays focused.
@@ -1140,12 +1645,17 @@ def auto_merge_tick(
             from factory.manager.signals import write_git_event as _wge_am
 
             _story_id_am: int | None = f.story.id if f.story is not None else None
+            # An auto-merge that was ENABLED but is still awaiting required
+            # checks is NOT an error — the merge is pending, not failed.
+            # Reporting it as an error every tick would spam the L1 watcher
+            # (concern-spam) for a healthy in-flight PR.
+            _ok = action.merged or action.auto_merge_enabled
             _wge_am(
                 kind="auto_merge_attempt",
                 story_id=_story_id_am,
                 pr_number=action.pr_number,
-                result="ok" if action.merged else "error",
-                error=None if action.merged else action.reason,
+                result="ok" if _ok else "error",
+                error=None if _ok else action.reason,
                 software_factory_root=root,
             )
         except Exception:  # noqa: BLE001

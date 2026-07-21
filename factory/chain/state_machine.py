@@ -76,6 +76,25 @@ class StoryState(StrEnum):
     # (no outgoing transition) so the orchestrator stops dispatching the
     # story and it surfaces for human review instead of looping indefinitely.
     BLOCKED_REVIEW_NONCONVERGENT = "blocked_review_nonconvergent"
+    # WS1.1 global per-story budget circuit breaker. The composed loops (dev
+    # retries, reviewer cycles, auto-recovery re-dispatch, CI-fix) each have
+    # their OWN counter but no aggregate per-story ceiling, so a pathological
+    # story can burn dev(6)*review(6)+recovery(2)+CI-fix(3) loops of spend.
+    # When a story's ``total_attempts`` or ``total_spend_usd`` crosses the
+    # per-story cap, the orchestrator routes it here. Terminal (no outgoing
+    # transition) so a broken story stops burning spend and surfaces for a
+    # human with the evidence event the breaker emits.
+    #
+    # OPERATOR RESET (this is a terminal sink and its worktree gets pruned):
+    # to re-run a story parked here, move it back to a live dispatch state
+    # (e.g. ``sm_done`` to replay dev→review→merge, or ``story_created`` from
+    # scratch) AND zero the accumulators (``total_attempts = 0``,
+    # ``total_spend_usd = 0.0``) — otherwise the pre-dispatch breaker re-trips
+    # immediately. To raise the ceiling globally instead, bump
+    # ``caps.per_story_attempts`` / ``caps.per_story_spend_usd`` in
+    # factory_settings.yaml. There is deliberately no auto-recovery path
+    # (this state is absent from ``_AUTO_RECOVERABLE_STATES``).
+    BLOCKED_BUDGET_EXCEEDED = "blocked_budget_exceeded"
 
 
 class StoryRecord(SQLModel, table=True):
@@ -105,8 +124,10 @@ class StoryRecord(SQLModel, table=True):
     github_pr_number: int | None = None
     story_file_path: str = ""
     sm_result_json: str | None = None  # JSON-serialized SM persona output
-    test_plan_json: str | None = None  # JSON-serialized Test-Designer output
-    test_implementer_result_json: str | None = None
+    # Retained: still rendered into the REVIEWER's prompt (handlers.handle_review)
+    # as the "## Test plan" section, even though the test_designer persona that
+    # once populated it was removed in the Loop-4 collapse (usually None now).
+    test_plan_json: str | None = None
     reviewer_result_json: str | None = None
     # JSON-serialised list of prior review cycles (capped to the last 4):
     # ``[{cycle, verdict, score, findings: [{severity, location, what,
@@ -123,26 +144,49 @@ class StoryRecord(SQLModel, table=True):
     # the next dev sandbox's initial message so the LLM sees what it tried
     # and what failed instead of re-discovering dead ends from scratch.
     dev_attempts_json: str | None = None
+    # WS4.2 resume-from-checkpoint marker. Set to a small JSON blob
+    # (``{"outcome": "green", "attempt": N, "ts": ...}``) by the dev handler the
+    # instant a sandbox returns GREEN — persisted BEFORE the state advances out
+    # of ``dev_in_progress`` and cleared the instant the advance is persisted.
+    # It therefore survives ONLY a tick that died in the tiny window between
+    # "sandbox finished green" and "state advanced". On the next dev dispatch the
+    # handler reads this marker and resumes to ``tests_green`` WITHOUT re-running
+    # the (already-complete, already-in-the-worktree) dev LLM. None in steady
+    # state. See ``handlers._try_resume_dev_from_checkpoint``.
+    dev_step_checkpoint: str | None = None
     # Hard convergence guard counter: incremented each time the reviewer
     # returns a request-changes verdict in handle_review. When it reaches
     # ``_MAX_REVIEW_CYCLES`` the story is routed to
     # ``BLOCKED_REVIEW_NONCONVERGENT`` instead of looping back to dev, so a
     # non-converging dev<->reviewer ping-pong cannot burn budget unbounded.
     reviewer_cycles: int = 0
+    # WS1.1 global per-story budget circuit breaker accumulators. Unlike the
+    # per-loop counters above (dev_retries, reviewer_cycles) these span EVERY
+    # loop the story passes through — dev retries, reviewer cycles, tech_writer,
+    # docs, auto-recovery re-dispatch, CI-fix — giving one aggregate ceiling no
+    # single loop's counter can see. ``total_attempts`` is bumped once per
+    # handler dispatch by the orchestrator; ``total_spend_usd`` is refreshed
+    # from the D003 per-run ledger (runs.cost_usd attributed to this story)
+    # after each dispatch. When either crosses the per-story cap the
+    # orchestrator advances the story to BLOCKED_BUDGET_EXCEEDED.
+    total_attempts: int = 0
+    total_spend_usd: float = 0.0
+    # WS1.1 advance-decay high-water mark: the highest happy-path progress
+    # ordinal (see orchestrator._STATE_PROGRESS_ORDINAL) this story has ever
+    # reached. When a dispatch advances the story to a state whose ordinal
+    # EXCEEDS this mark — genuine, monotonic forward progress, not a dev<->review
+    # oscillation that re-treads states already seen — the orchestrator resets
+    # ``total_attempts`` (the spend cap stays the hard ceiling). This keeps a
+    # story that is still making progress from tripping the attempt breaker on a
+    # poisoned historical count, while a stuck/oscillating story still exhausts
+    # it. Default 0 so a story's first real state always registers.
+    max_progress_ordinal: int = 0
     current_model_tier: str = "standard"  # standard | hard
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     error: str | None = None
     # Phase 3: last cap/mode rejection reason emitted by the dispatcher.
     last_rejection_reason: str | None = None
-    # Phase 8 cleanup: per-gate recorded outcomes the dev/CI handler writes
-    # after running each tool. Dry-run gates read these instead of returning
-    # an unconditional pass — None means "not run yet" and is treated as a
-    # blocking missing-signal.
-    lint_passed: bool | None = None
-    format_passed: bool | None = None
-    types_passed: bool | None = None
-    coverage_passed: bool | None = None
     # D002 Karpathy Layer-2 runtime verifier. Set True after the dev's sandbox
     # boots the product and the scripted smoke journey passes. Read by the
     # ``smoke-green`` gate in dry-run; None means "not run yet".
@@ -164,6 +208,28 @@ class StoryRecord(SQLModel, table=True):
     # before this column existed keep ``None``.
     points: int | None = None
     estimated_seconds: float | None = None
+    # WS1.2 independent acceptance oracle. Path (relative to the factory root)
+    # of the acceptance test authored from THIS story's direction acceptance
+    # criteria — the SPEC ONLY, blind to the dev's implementation and the dev's
+    # own tests. Authored EARLY (at story spawn, before dev runs) and stored in
+    # factory state UNDER ``state/acceptance/<app>/<story_id>/`` — deliberately
+    # outside the app repo and outside the per-story dev worktree, so the dev
+    # sandbox never receives it (the anti-reward-hack property: a coder that
+    # cannot see the test judging it cannot special-case it — ImpossibleBench).
+    # None means no oracle FILE is stored yet — which is NOT the same as "not
+    # required": authoring can flake (transient LLM error) for a story that DOES
+    # need an oracle. The required/blocking decision keys off
+    # ``acceptance_expected`` below, never off this ref, so a failed author
+    # cannot silently ship un-gated code.
+    acceptance_test_ref: str | None = None
+    # WS1.2 — whether this story is EXPECTED to have an acceptance oracle, set at
+    # spawn to ``bool(gates.acceptance_oracle and direction.acceptance)``,
+    # INDEPENDENT of whether authoring succeeded. This is the single source of
+    # truth for "acceptance-verified is required for this story". When True but
+    # ``acceptance_test_ref`` is missing (authoring flaked), the gate BLOCKS
+    # authoritatively and the tick self-heal re-authors from the spec on a later
+    # tick — expected-but-missing never silently passes and never blocks forever.
+    acceptance_expected: bool = False
 
 
 # Event names — strings the chain emits when a handler completes.
@@ -201,6 +267,11 @@ EVENT_DEPLOY_SKIPPED = "deploy_skipped"  # mode/cap rejection or deploy.enabled=
 # already-merged out-of-band, or CONFLICTING/DIRTY). Routes the story to the
 # terminal BLOCKED_DEPLOY_FAILED sink so it stops being retried every tick.
 EVENT_PR_UNMERGEABLE = "pr_unmergeable"
+# WS1.1 per-story budget circuit breaker fired: the story's aggregate
+# ``total_attempts`` or ``total_spend_usd`` crossed the per-story cap. Routes
+# every budget-metered dispatch state to the terminal BLOCKED_BUDGET_EXCEEDED
+# sink so the story stops burning spend across composed loops.
+EVENT_BUDGET_EXCEEDED = "budget_exceeded"
 
 
 # Lookup table: (current_state, event) -> next_state.
@@ -300,6 +371,26 @@ _TRANSITIONS: dict[tuple[StoryState, str], StoryState] = {
     (StoryState.PR_OPEN, EVENT_PR_UNMERGEABLE): StoryState.BLOCKED_DEPLOY_FAILED,
     (StoryState.CI_GREEN, EVENT_PR_UNMERGEABLE): StoryState.BLOCKED_DEPLOY_FAILED,
     (StoryState.READY_FOR_MERGE, EVENT_PR_UNMERGEABLE): StoryState.BLOCKED_DEPLOY_FAILED,
+    # ---- WS1.1 per-story budget circuit breaker ----
+    # Every budget-metered dispatch state (the LLM-persona loop states that
+    # burn spend) gets an edge to the terminal BLOCKED_BUDGET_EXCEEDED sink.
+    # The orchestrator fires EVENT_BUDGET_EXCEEDED *before* dispatching a
+    # handler when the story's aggregate attempts/spend cross the per-story
+    # cap. DEPLOY_PENDING is intentionally NOT metered: a story that reached
+    # deploy already passed every gate, and blocking it would strand merged
+    # work un-deployed without saving meaningful LLM spend.
+    (StoryState.STORY_CREATED, EVENT_BUDGET_EXCEEDED): StoryState.BLOCKED_BUDGET_EXCEEDED,
+    (StoryState.SM_DONE, EVENT_BUDGET_EXCEEDED): StoryState.BLOCKED_BUDGET_EXCEEDED,
+    (StoryState.DEV_RETRY, EVENT_BUDGET_EXCEEDED): StoryState.BLOCKED_BUDGET_EXCEEDED,
+    (
+        StoryState.REVIEWER_REQUESTED_CHANGES,
+        EVENT_BUDGET_EXCEEDED,
+    ): StoryState.BLOCKED_BUDGET_EXCEEDED,
+    (StoryState.TESTS_GREEN, EVENT_BUDGET_EXCEEDED): StoryState.BLOCKED_BUDGET_EXCEEDED,
+    (StoryState.REVIEWER_DONE, EVENT_BUDGET_EXCEEDED): StoryState.BLOCKED_BUDGET_EXCEEDED,
+    (StoryState.TECH_WRITER_DONE, EVENT_BUDGET_EXCEEDED): StoryState.BLOCKED_BUDGET_EXCEEDED,
+    (StoryState.DOCS_SM_DONE, EVENT_BUDGET_EXCEEDED): StoryState.BLOCKED_BUDGET_EXCEEDED,
+    (StoryState.DOCS_ONBOARDER_DONE, EVENT_BUDGET_EXCEEDED): StoryState.BLOCKED_BUDGET_EXCEEDED,
     (StoryState.DEPLOY_PENDING, EVENT_DEPLOY_STARTED): StoryState.DEPLOY_PENDING,
     (StoryState.DEPLOY_PENDING, EVENT_DEPLOY_SUCCEEDED): StoryState.DEPLOYED,
     (StoryState.DEPLOY_PENDING, EVENT_DEPLOY_FAILED): StoryState.BLOCKED_DEPLOY_FAILED,

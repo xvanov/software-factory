@@ -37,24 +37,47 @@ Classification rules (deterministic, no LLM)
 ---------------------------------------------
 
 ``"safe"``
-  ``target_class ∈ {prompt_edit, persona_settings, detector_tool}``
-  AND the patch passes class-specific validation:
+  A well-scoped self-edit whose patch touches ONLY factory-owned Python source
+  (``factory/**/*.py``, none forbidden) — WS3.1 broadened class. This now covers
+  ``dispatch_code`` and broader factory/ code edits that were previously forced
+  to "risky".
+  OR ``target_class ∈ {prompt_edit, persona_settings, detector_tool}`` AND the
+  patch passes class-specific validation:
   - prompt_edit: only factory/personas/*.md; no heading removal; ≤50+/≤30- lines
   - persona_settings: only routes.yaml or factory/personas/*.md; numeric clamp checks
   - detector_tool: only adds new factory/manager/detectors/*.py files or touches
     factory/manager/detectors/__init__.py; new files are valid Python
 
+  Why this is safe to broaden (WS3.1): the safety net is now RUNTIME, not this
+  static classifier. Every "safe" self-edit is routed through
+  ``factory.manager.staging.gate_self_edit`` in ``apply``, which clones the
+  factory, applies the patch, and ACTUALLY RUNS the changed code (deps + full
+  suite + import/CLI smoke + dry-run tick) before promoting it to the live
+  factory. A fatal self-edit fails on the clone and is never promoted. Static
+  classification no longer has to be narrow because a bad edit cannot reach the
+  running factory.
+
 ``"risky"``
-  ``target_class == "dispatch_code"``  (always risky)
+  ``target_class == "dispatch_code"`` whose patch is NOT a pure factory/*.py
+  self-edit (e.g. touches app code or non-Python files — no staging net applies)
   OR any safe class whose patch fails class-specific validation
+  OR an unknown target_class that isn't a pure factory/*.py self-edit
 
 ``"forbidden"``
-  patch touches factory/manager/*.py (the manager editing itself)
+  patch touches factory/manager/**/*.py (the manager editing itself)
   OR patch touches factory/chain/factory_improver_apply.py or this module
+  OR patch touches bench/** (the held-out grader — the loop must never edit the
+     bench that judges it; forbidden regardless of the staging gate)
+  OR the patch is not a valid unified diff / has no target paths
   OR escalate_to_human=true in the proposal
 
 ``"escalate_to_human"``
   proposal target_class == "escalate_to_human"
+
+Escalation is not a dead end (WS3.1): a ``forbidden`` or ``escalate_to_human``
+proposal is surfaced to a human via ``factory.manager.escalation`` — an
+idempotent GitHub issue plus a loud alert event — instead of dying silently in
+the apply-history file.
 """
 
 from __future__ import annotations
@@ -112,6 +135,12 @@ _FORBIDDEN_PATH_PATTERNS = (
     re.compile(r"^factory/manager/.+\.py$"),           # manager/**/*.py (any depth)
     re.compile(r"^factory/chain/factory_improver_apply\.py$"),  # the old apply module
     re.compile(r"^factory/manager/apply\.py$"),        # this module itself (redundant with above, explicit)
+    # WS3.1: the held-out benchmark harness that JUDGES the factory must stay
+    # forbidden — the self-improvement loop must never edit the bench that
+    # scores it (a loop that can rewrite its own grader is unfalsifiable). This
+    # is forbidden regardless of the staging gate: staging validates "does the
+    # factory run", not "is the bench still honest".
+    re.compile(r"^bench/.+$"),                         # bench/** (the grader)
 )
 
 # Sub-pattern that matches *only* manager sub-directory .py files (not the
@@ -166,11 +195,36 @@ def _append_history(
         print(f"[manager.apply] WARNING: failed to write history: {exc}", file=sys.stderr)
 
 
-def _is_already_processed(root: Path, proposal_path: Path) -> bool:
-    """Return True if this proposal_path already appears in the history."""
+def _is_already_processed(
+    root: Path,
+    proposal_path: Path,
+    proposal: dict[str, Any] | None = None,
+) -> bool:
+    """Return True if this proposal has already been processed.
+
+    Dedup keys, in priority order:
+
+      1. **proposal_id** (stable, content-derived) — when the proposal carries
+         one and a history entry records the same id. This recognises a
+         re-emitted proposal even though L3 wrote it under a fresh ts-slug
+         path, which the path-only check could never do.
+      2. **proposal_path** (exact string) — legacy fallback for history entries
+         written before proposal_id existed, and for callers that pass no
+         proposal dict. Ensures nothing already-processed silently re-fires.
+
+    A proposal with a NEW proposal_id (and a path not seen before) matches
+    neither key and is processed.
+    """
     history = _load_history(root)
     path_str = str(proposal_path)
+    proposal_id = None
+    if isinstance(proposal, dict):
+        pid = proposal.get("proposal_id")
+        if isinstance(pid, str) and pid:
+            proposal_id = pid
     for entry in history:
+        if proposal_id and entry.get("proposal_id") == proposal_id:
+            return True
         if entry.get("proposal_path") == path_str:
             return True
     return False
@@ -237,6 +291,33 @@ def _any_path_is_forbidden(paths: list[str]) -> bool:
 def _any_path_is_forbidden_in_patch(paths: list[str], patch: str) -> bool:
     """Check forbidden with patch context (supports new-detector carve-out)."""
     return any(_path_is_forbidden_in_patch(p, patch) for p in paths)
+
+
+# Matches a factory-owned Python source file (a self-edit that the staging gate
+# validates by ACTUALLY RUNNING the cloned factory before promotion).
+_FACTORY_PYTHON_PATH = re.compile(r"^factory/.+\.py$")
+
+
+def _all_paths_are_factory_python_self_edit(paths: list[str]) -> bool:
+    """True when EVERY target path is a factory-owned Python source file.
+
+    This is the gate for the WS3.1 broadened "safe" class: a well-scoped
+    self-edit that touches only ``factory/**/*.py`` can auto-apply because the
+    staging clone (``factory.manager.staging``) will run the changed code —
+    deps + full suite + import/CLI smoke + a dry-run tick — before it is ever
+    promoted to the live factory. A fatal self-edit fails on the clone and is
+    never promoted, so the safety is RUNTIME (staging), not a narrow static
+    rule here.
+
+    Deliberately NOT covered:
+      * app-repo code (``apps/**``) — staging validates "does the factory run",
+        not an app's own suite, so those stay risky.
+      * non-Python factory files (``.md``/``.yaml``) — not meaningfully
+        exercised by "does it run"; they keep their existing specific
+        validators (prompt_edit / persona_settings) or fall through to risky.
+      * anything under a forbidden path — already rejected before this runs.
+    """
+    return bool(paths) and all(_FACTORY_PYTHON_PATH.match(p) for p in paths)
 
 
 # ---------------------------------------------------------------------------
@@ -533,15 +614,34 @@ def _classify_manager_proposal(proposal: dict[str, Any], repo_root: Path) -> str
     if _any_path_is_forbidden_in_patch(paths, patch):
         return "forbidden"
 
-    # dispatch_code is always risky — operator must review any chain changes.
-    if target_class == "dispatch_code":
-        return "risky"
-
     # Phase 8: Manager persona file edits are risky (not safe), even when the
     # proposal claims a safe target_class.  The manager modifying its own persona
     # prompts is recursion bait — an operator should review these changes.
     # Pattern: factory/personas/manager_*.md
+    # Checked BEFORE the broadened self-edit rule so a manager-persona edit can
+    # never be captured as "safe" (it is a .md, so the .py rule below would miss
+    # it anyway — this is belt-and-suspenders).
     if any(re.match(r"^factory/personas/manager_[^/]+\.md$", p) for p in paths):
+        return "risky"
+
+    # WS3.1 — broadened safe class, gated by the staging validator.
+    # A well-scoped self-edit whose patch touches ONLY factory-owned Python
+    # source (``factory/**/*.py``, none forbidden — already guaranteed above) is
+    # now SAFE. This covers dispatch_code and broader factory/ code edits that
+    # were previously forced to "risky". The safety net is RUNTIME, not this
+    # static rule: every such proposal is a self-edit, so ``apply`` routes it
+    # through ``factory.manager.staging.gate_self_edit`` which clones the
+    # factory, applies the patch, and ACTUALLY RUNS it (deps + full suite +
+    # import/CLI smoke + dry-run tick) before promotion. A fatal edit fails on
+    # the clone and never reaches the live factory. Forbidden paths
+    # (factory/manager/**, bench/**, the apply modules) are rejected above and
+    # stay forbidden; app code (apps/**) is intentionally NOT covered.
+    if _all_paths_are_factory_python_self_edit(paths):
+        return "safe"
+
+    # dispatch_code that is NOT a pure factory/*.py self-edit (e.g. touches
+    # app code or non-Python files) is still risky — no staging net applies.
+    if target_class == "dispatch_code":
         return "risky"
 
     # Safe-class validation.
@@ -591,11 +691,25 @@ def _apply_one_manager_proposal(
     repo: str | None = None,
     open_prs: bool = True,
     push: bool = True,
+    stage_self_edits: bool = True,
+    staging_gate: Callable[..., Any] | None = None,
+    staging_validator: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Apply a single classified manager proposal.
 
     Returns a result dict with keys:
       proposal_path, classification, status, branch, pr_url, pr_number, error
+
+    Self-edit safety (Tier 3 WS3.5)
+    -------------------------------
+    When ``stage_self_edits`` is True (default) and the proposal's patch touches
+    the factory's OWN code (paths under ``factory/``), the change is first staged
+    and validated on a throwaway COPY repo — the cloned factory is ACTUALLY RUN
+    (deps, full suite, import/CLI smoke, dry-run tick) before we PROMOTE it to
+    the live factory. Only a healthy clone proceeds to the existing PR/auto-merge
+    path; an unhealthy clone or a staging infra failure is recorded and the real
+    factory is never touched (fail-safe). ``staging_gate`` / ``staging_validator``
+    are injectable for tests.
     """
     runner = runner or subprocess.run  # type: ignore[assignment]
     assert runner is not None
@@ -623,17 +737,77 @@ def _apply_one_manager_proposal(
         # Record but do not apply.
         result["status"] = "forbidden" if classification == "forbidden" else "escalation_acknowledged"
         result["branch"] = None
+        # WS3.1: an escalation must never die silently in the history file. Open
+        # (idempotently) a GitHub issue + emit a loud alert so a human actually
+        # sees it. Best-effort: a gh failure must NOT crash L4 (the alert still
+        # makes it visible), so the whole call is wrapped.
+        try:
+            from factory.manager.escalation import notify_escalation
+
+            result["escalation"] = notify_escalation(
+                proposal,
+                root=root,
+                repo=repo,
+                classification=classification,
+                result=result,
+                runner=runner,
+            )
+        except Exception as _esc_exc:  # noqa: BLE001 - notification is best-effort
+            import sys
+            print(
+                f"[manager.apply] WARNING: escalation notification failed: {_esc_exc!r}",
+                file=sys.stderr,
+            )
+            result["escalation"] = {"notified": False, "error": repr(_esc_exc)}
         return result
 
     # Extract patch from inner proposal.
     inner = proposal.get("proposal", {})
     patch = inner.get("suggested_patch", "") if isinstance(inner, dict) else ""
 
+    # ------------------------------------------------------------------
+    # Self-edit staging gate (Tier 3 WS3.5).
+    # ------------------------------------------------------------------
+    # If this proposal touches the factory's OWN code (paths under factory/),
+    # do NOT apply it to the live factory yet. First validate it on a throwaway
+    # COPY repo by ACTUALLY RUNNING the cloned factory there (canary/shadow
+    # deploy). A fatal self-edit fails on the clone and never touches the live
+    # self. Reuses the same target-path detection as the forbidden-path guard
+    # (``_diff_target_paths``). App-repo changes (not under factory/) bypass
+    # staging unchanged. Fail-safe: any non-healthy outcome => not promoted.
+    if stage_self_edits and isinstance(patch, str) and patch.strip():
+        from factory.manager.staging import gate_self_edit as _default_gate
+        from factory.manager.staging import is_self_edit as _is_self_edit
+
+        _paths_for_staging = _diff_target_paths(patch)
+        if _is_self_edit(_paths_for_staging):
+            _gate = staging_gate or _default_gate
+            decision = _gate(
+                proposal,
+                str(proposal_path),
+                root=root,
+                runner=runner,
+                validator=staging_validator,
+            )
+            result["staging"] = {
+                "status": getattr(decision, "status", None),
+                "stage_failed": getattr(decision, "stage_failed", None),
+                "branch": getattr(decision, "branch", None),
+            }
+            if not getattr(decision, "promote", False):
+                # Uncertainty or a real validation failure — never touch the
+                # live factory. Record the outcome and stop here.
+                result["status"] = getattr(decision, "status", "staging_rejected")
+                result["error"] = (
+                    f"staging_not_promoted:{decision.stage_failed}"
+                    if getattr(decision, "stage_failed", None)
+                    else getattr(decision, "status", "staging_rejected")
+                )
+                result["branch"] = None
+                return result
+
     # Get repo root for git operations.
-    from factory.chain.factory_improver_apply import (
-        _current_branch,
-        _diff_target_paths,
-    )
+    from factory.chain.factory_improver_apply import _current_branch
 
     starting_branch: str | None = None
     try:
@@ -859,6 +1033,9 @@ def apply_manager_proposals(
     open_prs: bool = True,
     push: bool = True,
     now: datetime | None = None,
+    stage_self_edits: bool = True,
+    staging_gate: Callable[..., Any] | None = None,
+    staging_validator: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Apply manager proposals from ``state/manager_proposals/*.json``.
 
@@ -926,6 +1103,8 @@ def apply_manager_proposals(
         "risky_opened": 0,
         "forbidden": 0,
         "escalated_human": 0,
+        "staging_rejected": 0,
+        "staging_infra_failed": 0,
         "errors": [],
         "results": [],
     }
@@ -939,18 +1118,23 @@ def apply_manager_proposals(
         paths = sorted(proposals_dir.glob("*.json"))
 
     for p in paths:
-        # Skip already-processed proposals.
-        if _is_already_processed(root, p):
-            continue
-
         try:
             proposal = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
+            # Cannot load the content, so dedup on the path alone (legacy key)
+            # to avoid reprocessing a known-bad file every cycle.
+            if _is_already_processed(root, p):
+                continue
             summary["errors"].append(f"failed_to_load:{p.name}: {exc!r}")
             continue
 
         if not isinstance(proposal, dict):
             summary["errors"].append(f"non_dict_proposal:{p.name}")
+            continue
+
+        # Skip already-processed proposals: match on the stable proposal_id
+        # first (survives a new ts-slug path), then exact path (legacy).
+        if _is_already_processed(root, p, proposal):
             continue
 
         # Classify.
@@ -968,6 +1152,9 @@ def apply_manager_proposals(
             repo=repo,
             open_prs=open_prs,
             push=push,
+            stage_self_edits=stage_self_edits,
+            staging_gate=staging_gate,
+            staging_validator=staging_validator,
         )
 
         summary["processed"] += 1
@@ -983,12 +1170,21 @@ def apply_manager_proposals(
         elif classification == "escalate_to_human":
             summary["escalated_human"] += 1
 
+        # Self-edit staging outcomes (independent of classification).
+        if result.get("status") == "staging_rejected":
+            summary["staging_rejected"] += 1
+        elif result.get("status") == "staging_infra_failed":
+            summary["staging_infra_failed"] += 1
+
         if result.get("error"):
             summary["errors"].append(f"{p.name}: {result['error']}")
 
-        # Record in history.
+        # Record in history. Persist the stable ids so future cycles dedup on
+        # content, not the ts-slug path.
         history_entry = {
             "proposal_path": str(p),
+            "proposal_id": proposal.get("proposal_id", ""),
+            "concern_id": proposal.get("concern_id", ""),
             "ts": result.get("ts", datetime.now(UTC).isoformat()),
             "branch": result.get("branch"),
             "pr_url": result.get("pr_url"),

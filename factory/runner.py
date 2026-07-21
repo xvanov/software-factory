@@ -203,6 +203,16 @@ class RunResult:
     last_assistant_message: str = ""
     recent_tool_calls: list[dict[str, Any]] = field(default_factory=list)
     self_summary: str = ""
+    # Explicit "the sandbox failed BEFORE any model work" signal. True only for
+    # genuine pre-model breakage (no API key, SDK import failure, a stalled LLM
+    # request killed by the wall-clock timeout before it produced any usage).
+    # The dev handler's ``_is_premodel_infra_failure`` prefers this flag over
+    # the older zero-cost/None heuristic: a run that DID spend model tokens and
+    # then raised (e.g. during metrics extraction or conversation teardown) is
+    # a genuine failed dev attempt — it must consume a dev retry, NOT be bounced
+    # back for free as "infra". Defaults False so every non-infra return path
+    # (including a normal red run) is correctly counted as a real attempt.
+    premodel_infra: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -289,6 +299,7 @@ def _record_run(
     started_at: str | None = None,
 ) -> None:
     ended_at = datetime.now(UTC).isoformat()
+    redacted_error = redact_secrets(error) if error is not None else None
     engine = _engine(db_path)
     with Session(engine) as session:
         row = Run(
@@ -302,7 +313,7 @@ def _record_run(
             success=success,
             story_path=story_path,
             repo_path=repo_path,
-            error=error,
+            error=redacted_error,
             duration_s=duration_s,
             story_id=story_id,
             model_tier=model_tier,
@@ -362,6 +373,51 @@ def _record_run(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+
+_REDACTION_TOKEN = "[REDACTED]"
+
+# Pattern for hex-encoded secrets (≥32 hex chars, case-insensitive), e.g.
+# ``0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef``.
+# Matched with word-boundary anchors to avoid clipping legitimate hex data
+# (git SHAs, SHA-256 digests, etc.) unless the run is absurdly long.
+_HEX_SECRET_RE = r"\b[A-Fa-f0-9]{64,}\b"
+
+# Pattern for base64-encoded secrets (≥32 base64 characters). The alphabet
+# is [A-Za-z0-9+/=]; we require the chunk to be at least 32 chars of the
+# non-padding alphabet before allowing optional trailing padding, which
+# captures real API key material like ``sk-helper-<b64>`` after the prefix.
+_B64_SECRET_RE = r"[A-Za-z0-9+/]{32,}=*"
+
+
+def redact_secrets(text: str) -> str:
+    """Return *text* with common provider-secret substrings replaced by ``[REDACTED]``.
+
+    Covers:
+    * OpenAI ``sk-...`` and Anthropic ``sk-ant-...`` tokens
+    * ``Bearer <token>`` and ``Authorization: ...`` header values
+    * Long hex and base64 runs that match known key shapes
+    * Already-redacted text is left unchanged (idempotent).
+    """
+    import re
+
+    patterns: list[str] = [
+        # sk-ant-... (Anthropic) — must precede sk-... so the longer
+        # ``sk-ant-api03-...`` form is fully consumed.
+        r"sk-ant-[A-Za-z0-9_\-]{20,}",
+        # sk-... (OpenAI project keys are sk-proj-... but many are sk-<random>)
+        r"sk-[A-Za-z0-9_\-]{20,}",
+        # Bearer <token> — captured until whitespace/end-of-string
+        r"Bearer\s+[A-Za-z0-9+\-/=]{20,}",
+        # Authorization: ... — captures the full header value up to newline
+        r"Authorization:\s*[^\n]*",
+        # Long hex runs (≥64 hex chars)
+        _HEX_SECRET_RE,
+        # Long base64 runs (≥32 base64 chars)
+        _B64_SECRET_RE,
+    ]
+
+    combined = "|".join(patterns)
+    return re.sub(combined, _REDACTION_TOKEN, text)
 
 
 def _read_persona_prompt(persona: str) -> str:
@@ -818,8 +874,22 @@ def _build_initial_message(
     # blind, the reviewer re-raises the same findings, and the loop never
     # converges. Render the findings prominently, right after the story.
     if reviewer_findings:
-        findings = reviewer_findings.get("findings") or []
-        tq_findings = reviewer_findings.get("test_quality_findings") or []
+        # Findings are expected to be dicts, but some producers (e.g. the CI-
+        # failure feedback path) historically injected a bare string. Coerce
+        # any non-dict finding into a minimal dict so the render loop's
+        # ``f.get(...)`` can never crash the tick with "'str' object has no
+        # attribute 'get'" — and the text still reaches the dev.
+        def _coerce(items: Any, text_key: str) -> list[dict[str, Any]]:
+            out: list[dict[str, Any]] = []
+            for f in items or []:
+                if isinstance(f, dict):
+                    out.append(f)
+                elif f is not None:
+                    out.append({"severity": "high", text_key: str(f)})
+            return out
+
+        findings = _coerce(reviewer_findings.get("findings"), "what")
+        tq_findings = _coerce(reviewer_findings.get("test_quality_findings"), "issue")
         summary = (reviewer_findings.get("summary") or "").strip()
         # Loop-4: the dev persona owns BOTH code and tests, so its branch frames
         # every finding (code AND test-quality) as dev's to fix. The
@@ -878,10 +948,12 @@ def _build_initial_message(
                     parts.append("\n## Code change requests (fix these in production code)")
                 for i, f in enumerate(findings, 1):
                     sev = f.get("severity", "?")
+                    crit = str(f.get("criterion") or "").strip()
+                    sev_tag = f"{sev}/{crit}" if crit else sev
                     loc = f.get("location", "")
                     what = (f.get("what") or "").strip()
                     fix = (f.get("fix_suggestion") or "").strip()
-                    parts.append(f"\n{i}. **[{sev}]** {loc}".rstrip())
+                    parts.append(f"\n{i}. **[{sev_tag}]** {loc}".rstrip())
                     if what:
                         parts.append(f"   - Problem: {what[:500]}")
                     if fix:
@@ -1209,7 +1281,7 @@ async def sandbox_run(
             direction_id=direction_id,
             app=app,
         )
-        return RunResult(success=False, error=err, summary=err)
+        return RunResult(success=False, error=err, summary=err, premodel_infra=True)
 
     try:
         # Import OpenHands lazily so test/CLI paths that never hit a real run
@@ -1238,7 +1310,7 @@ async def sandbox_run(
             direction_id=direction_id,
             app=app,
         )
-        return RunResult(success=False, error=err, summary=err)
+        return RunResult(success=False, error=err, summary=err, premodel_infra=True)
 
     # For Azure (either surface), populate base_url + api_version from env if
     # the caller didn't pass them. The two surfaces read different env vars:
@@ -1315,6 +1387,14 @@ async def sandbox_run(
 
     loop = asyncio.get_running_loop()
 
+    # Usage captured AS SOON AS the model run completes, BEFORE memory
+    # extraction / conversation teardown. If ``_do_run`` raises after this is
+    # populated (e.g. ``_extract_conversation_memory`` or ``close()`` blows up),
+    # the ``except`` handler below reads this holder to tell "the model did real
+    # work then crashed" (a genuine failed dev attempt — must burn a retry)
+    # apart from "the sandbox died before any model work" (infra — free retry).
+    _partial_usage: dict[str, float] = {}
+
     def _do_run() -> tuple[int, int, int, float, str, list[dict[str, Any]]]:
         # ``Conversation`` is a factory that returns LocalConversation/RemoteConversation
         # depending on the workspace type. Treat as Any for mypy purposes.
@@ -1336,6 +1416,11 @@ async def sandbox_run(
             # a raw litellm response here.
             t_cached = int(getattr(tok, "cache_read_tokens", 0) or 0)
             cost = float(getattr(stats, "accumulated_cost", 0.0) or 0.0)
+            # Record usage the instant it is known so a later crash in this
+            # function is still attributable to real model work.
+            _partial_usage.update(
+                tokens_in=t_in, tokens_out=t_out, cached=t_cached, cost=cost
+            )
             # Extract cross-retry memory signal from the conversation's
             # event stream BEFORE closing. ``conversation.state.events`` is
             # the canonical sequence of MessageEvent / ActionEvent /
@@ -1386,13 +1471,22 @@ async def sandbox_run(
             "(likely a stalled LLM call); treating as retryable infrastructure "
             "failure"
         )
+        # Same distinction as the generic-except path below: if the model run
+        # actually completed and only the post-model teardown (memory
+        # extraction / close) hit the wall clock, ``_partial_usage`` is
+        # populated — that is a genuine attempt whose spend must be recorded and
+        # which must consume a dev retry, NOT a free infra bounce. A truly
+        # stalled LLM (no partial usage) stays retryable infra.
+        _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
+        _cost = float(_partial_usage.get("cost", 0.0) or 0.0)
+        model_did_work = _t_out > 0 or _cost > 0.0
         _record(
             persona=persona,
             model=llm_config.model,
             mode="sandbox",
-            tokens_in=0,
-            tokens_out=0,
-            cost_usd=0.0,
+            tokens_in=int(_partial_usage.get("tokens_in", 0) or 0),
+            tokens_out=_t_out,
+            cost_usd=_cost,
             success=False,
             story_path=str(story_path),
             repo_path=str(repo_path),
@@ -1403,27 +1497,41 @@ async def sandbox_run(
             model_tier=difficulty,
             direction_id=direction_id,
             app=app,
+            cached_input_tokens=int(_partial_usage.get("cached", 0) or 0),
         )
-        # test_run_passed defaults to None + zero cost/tokens → matches
-        # handle_dev._is_premodel_infra_failure, so the dev circuit breaker
-        # re-dispatches without consuming the retry budget.
         return RunResult(
             success=False,
+            # Model completed then teardown timed out → a real red attempt;
+            # otherwise a stalled request that never produced work → infra.
+            test_run_passed=False if model_did_work else None,
+            tokens_in=int(_partial_usage.get("tokens_in", 0) or 0),
+            tokens_out=_t_out,
+            cost_usd=_cost,
             error=err,
             summary=err,
             last_assistant_message="",
             recent_tool_calls=[],
             self_summary="",
+            premodel_infra=not model_did_work,
         )
     except Exception as exc:
         err = f"sandbox run raised: {exc!r}"
+        # Distinguish "the model already did real work then something raised"
+        # (e.g. metrics extraction / conversation teardown blew up) from "the
+        # sandbox died before any model work". Only the latter is pre-model
+        # infra; the former is a genuine failed dev attempt that MUST consume a
+        # dev retry (bypassing the increment was the story-88 bug: dev_retries
+        # stuck at 1 while the story was re-dispatched for free 12 times).
+        _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
+        _cost = float(_partial_usage.get("cost", 0.0) or 0.0)
+        model_did_work = _t_out > 0 or _cost > 0.0
         _record(
             persona=persona,
             model=llm_config.model,
             mode="sandbox",
-            tokens_in=0,
-            tokens_out=0,
-            cost_usd=0.0,
+            tokens_in=int(_partial_usage.get("tokens_in", 0) or 0),
+            tokens_out=_t_out,
+            cost_usd=_cost,
             success=False,
             story_path=str(story_path),
             repo_path=str(repo_path),
@@ -1434,14 +1542,24 @@ async def sandbox_run(
             model_tier=difficulty,
             direction_id=direction_id,
             app=app,
+            cached_input_tokens=int(_partial_usage.get("cached", 0) or 0),
         )
         return RunResult(
             success=False,
+            # When the model did work the tests were NOT evaluated by the
+            # post-model gate (we never reached it), but the attempt is real:
+            # report test_run_passed=False so handle_dev counts it as a red
+            # dev run rather than pre-model infra.
+            test_run_passed=False if model_did_work else None,
+            tokens_in=int(_partial_usage.get("tokens_in", 0) or 0),
+            tokens_out=_t_out,
+            cost_usd=_cost,
             error=err,
             summary=err,
             last_assistant_message="",
             recent_tool_calls=[],
             self_summary="",
+            premodel_infra=not model_did_work,
         )
 
     files_changed = _scan_repo_for_changed_files(Path(repo_path))

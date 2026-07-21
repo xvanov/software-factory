@@ -13,6 +13,21 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field
 
+#: The factory's OWN GitHub repo. An app whose ``config.yaml::repo`` matches
+#: this is building the factory itself (``apps/factory``); its merges are
+#: self-edits gated by the chain-side staging gate, and its pm-sync is gated by
+#: the ``self_tick_enabled`` flag. Every other app targets a different repo.
+FACTORY_REPO = "xvanov/software-factory"
+
+
+def targets_factory_repo(repo: str | None) -> bool:
+    """True when ``repo`` (an app's ``config.yaml::repo``) is the factory itself.
+
+    Case-insensitive so a casing typo in the owner/name can't silently disable
+    the self-edit safety gate or the self-tick guard.
+    """
+    return (repo or "").strip().lower() == FACTORY_REPO.lower()
+
 
 class DeployConfig(BaseModel):
     """Per-app deploy block consumed by ``factory/deploy/orchestrator.py``.
@@ -86,6 +101,40 @@ class AppGatesConfig(BaseModel):
     # avoiding the PRs 110/111 "every merge blocked" regression).
     smoke_harness_ready: bool = False
 
+    # WS1.2 independent acceptance oracle. When True, the chain authors an
+    # acceptance test from each story's direction acceptance criteria (the SPEC
+    # ONLY, blind to the dev's code/tests) at spawn time, stores it in factory
+    # state OUTSIDE the dev worktree, and the ``acceptance-verified`` gate copies
+    # it into the merge-candidate checkout and runs it as a REQUIRED gate. Off by
+    # default so the rollout is per-app opt-in — an app that hasn't enabled it
+    # sees no new merge blocks (mirrors the ``smoke_harness_ready`` rollout). The
+    # gate is required only for stories that actually got an oracle authored
+    # (ACs present + this flag on); legacy / no-AC stories are never blocked.
+    acceptance_oracle: bool = False
+    # Command template the acceptance gate runs, with ``{test_file}`` substituted
+    # for the copied-in test's path (relative to the checkout root). Defaults to
+    # ``python -m pytest {test_file} -q`` when unset; apps whose suite needs a
+    # wrapper (e.g. ``uv run pytest {test_file} -q``) override it here so the
+    # oracle runs against the app's real python env.
+    acceptance_test_command: str | None = None
+
+    # Flaky-test quarantine (WS4.4). When True, the ``tests-green`` real-run gate
+    # routes a RED ``test_command`` through flake detection: any failing test is
+    # re-run in isolation; a test that flaps (fails then passes) is QUARANTINED
+    # (recorded to ``state/flake_quarantine.json`` + surfaced as an event/direction)
+    # and no longer blocks the merge, while a test that fails CONSISTENTLY is a
+    # real regression and still blocks. Off by default so the rollout is per-app
+    # opt-in and never widens what passes the gate without an explicit choice — a
+    # bug in flake classification could otherwise let a real red through, the
+    # exact false-green this whole tier fights.
+    flake_quarantine: bool = False
+    # How many times a failing test is re-run in isolation before it is declared a
+    # consistent (real) failure. A test that passes on ANY of these reruns flapped
+    # and is quarantined. This is NOT retry-until-green (which manufactures
+    # false-greens): a pass only ever DOWNGRADES a red to quarantined-non-blocking,
+    # never upgrades it to a clean pass, and the flake stays surfaced as debt.
+    flake_rerun_count: int = 3
+
 
 class AppConfig(BaseModel):
     name: str
@@ -101,6 +150,18 @@ class AppConfig(BaseModel):
     deploy: DeployConfig = Field(default_factory=DeployConfig)
     gates: AppGatesConfig = Field(default_factory=AppGatesConfig)
     models: dict[str, str] = Field(default_factory=dict)  # persona overrides
+
+    # Self-tick guard (Tier 3 — FACTORY-SELF-TICK). When this app builds the
+    # factory's OWN repo (``apps/factory``), pm-sync will NOT turn its pending
+    # directions into chain stories unless this flag is True. OFF by default so
+    # merely bootstrapping ``apps/factory`` (config + directions on disk) never
+    # silently starts the factory ticking on itself — the orchestrator enables
+    # self-tick deliberately by flipping this to True. It is inert for every
+    # non-factory app (their merges are not self-edits; see
+    # ``auto_merge._story_targets_factory_repo``). The chain-side staging gate
+    # is independent of this flag: even when self-tick is enabled, a self-edit
+    # still must pass staging before it can touch the live factory.
+    self_tick_enabled: bool = False
 
     @property
     def repo_owner(self) -> str:
@@ -146,3 +207,29 @@ def resolve_app_repo_path(cfg: AppConfig, software_factory_root: Path) -> Path:
     if p.is_absolute():
         return p
     return (Path(software_factory_root) / p).resolve()
+
+
+def list_apps(software_factory_root: Path) -> list[dict[str, object]]:
+    """Discover every ``apps/*/config.yaml`` and return one summary dict per app.
+
+    Each dict contains at least: ``name``, ``repo``, ``self_tick_enabled``,
+    ``deploy_enabled`` — reading effective values from the app's config.yaml.
+    The function is pure: it never mutates config, filesystem, or runtime state.
+    """
+    apps_dir = Path(software_factory_root) / "apps"
+    if not apps_dir.is_dir():
+        return []
+
+    result: list[dict[str, object]] = []
+    for cfg_path in sorted(apps_dir.glob("*/config.yaml")):
+        app_name = cfg_path.parent.name
+        cfg = load_app_config(app_name, software_factory_root)
+        result.append(
+            {
+                "name": cfg.name,
+                "repo": cfg.repo,
+                "self_tick_enabled": cfg.self_tick_enabled,
+                "deploy_enabled": cfg.deploy.enabled,
+            }
+        )
+    return result

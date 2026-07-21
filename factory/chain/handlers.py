@@ -58,6 +58,7 @@ from factory.context.enforcer import format_violation_comment, scan_pr_diff
 from factory.context.updater import ContextUpdate, apply_context_updates
 from factory.directions.parser import Direction, list_direction_dirs, parse_direction_dir
 from factory.model_router import max_output_tokens_for, route
+from factory.runtime_state import effective_deploy_enabled
 
 _logger = logging.getLogger(__name__)
 
@@ -190,6 +191,9 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     # Fed forward into the next dev invocation's initial message so the LLM
     # sees what it already tried and what failed.
     "dev_attempts_json": "TEXT",
+    # WS4.2 resume-from-checkpoint marker (see StoryRecord.dev_step_checkpoint).
+    # Nullable TEXT; pre-existing stories gain it as NULL and are unaffected.
+    "dev_step_checkpoint": "TEXT",
     # Item 4 — harness precheck flag. Bool, default 0 (False). SQLite
     # stores bool as 0/1 INTEGER; the SQLModel layer coerces on read.
     "harness_precheck_passed": "INTEGER NOT NULL DEFAULT 0",
@@ -199,6 +203,25 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     # Review-cycle history (last 4 cycles) — reviewer finality memory + dev's
     # "already addressed" digest. See StoryRecord.reviewer_history_json.
     "reviewer_history_json": "TEXT",
+    # WS1.2 independent acceptance oracle. ``acceptance_test_ref`` is the stored
+    # test path; ``acceptance_expected`` (INTEGER 0/1) is the required/blocking
+    # source of truth (set at spawn regardless of authoring success). Pre-WS1.2
+    # stories gain both on next visit: expected defaults 0 so they are never
+    # retroactively blocked.
+    "acceptance_test_ref": "TEXT",
+    "acceptance_expected": "INTEGER NOT NULL DEFAULT 0",
+    # WS1.1 per-story budget circuit breaker. Aggregate accumulators the
+    # pre-dispatch breaker reads; without these ALTERs an existing factory.db
+    # (predating the breaker) raises ``no such column: total_attempts`` on the
+    # first orchestrator read. Pre-existing stories start at 0 and accrue from
+    # their next dispatch, so none are retroactively tripped.
+    "total_attempts": "INTEGER NOT NULL DEFAULT 0",
+    "total_spend_usd": "REAL NOT NULL DEFAULT 0",
+    # WS1.1 advance-decay high-water mark (see StoryRecord.max_progress_ordinal).
+    # Pre-existing stories start at 0 and register their progress on next visit;
+    # a story mid-flight simply gets its first decay when it next advances to a
+    # state above its (freshly-recorded) mark — never retroactively tripped.
+    "max_progress_ordinal": "INTEGER NOT NULL DEFAULT 0",
 }
 
 
@@ -289,6 +312,43 @@ _SLUG_RE = re.compile(r"[^A-Za-z0-9]+")
 def _slug_of(text: str) -> str:
     s = _SLUG_RE.sub("-", text.strip().lower()).strip("-")
     return (s[:60] or "story").strip("-") or "story"
+
+
+def _author_acceptance_oracle(
+    story: StoryRecord,
+    direction: Direction,
+    app_config: AppConfig,
+    software_factory_root: Path,
+    *,
+    dry_run: bool,
+    db_path: Path,
+) -> None:
+    """WS1.2: author the independent acceptance oracle for a freshly-spawned
+    story (best-effort, never raises — must not fail story spawn).
+
+    Authored here (spawn time, before dev runs) from the SPEC ONLY and stored
+    outside the dev worktree — see ``factory.chain.acceptance``. author_...
+    sets ``story.acceptance_expected`` (the required/blocking flag) even when
+    authoring itself fails, so a flaked author BLOCKS rather than silently
+    ships; the tick self-heal re-authors it later.
+    """
+    try:
+        from factory.chain.acceptance import author_acceptance_test
+
+        author_acceptance_test(
+            story,
+            direction,
+            app_config,
+            software_factory_root,
+            dry_run=dry_run,
+            db_path=db_path,
+        )
+    except Exception as exc:  # noqa: BLE001 - oracle authoring must never fail spawn
+        _logger.warning(
+            "acceptance oracle authoring raised for story %s (%s): %r — "
+            "acceptance_expected governs blocking; tick self-heal will retry",
+            getattr(story, "id", None), story.slug, exc,
+        )
 
 
 def handle_stories_spawned(
@@ -396,7 +456,17 @@ def handle_stories_spawned(
                 points=dd_points,
                 estimated_seconds=dd_estimated_seconds,
             )
-            persist_story(story, db)
+            # Dry-run is a pure preview: build the would-be StoryRecord for
+            # the returned list but never persist it or author its oracle —
+            # a persisted dry-run story is a live dispatchable artifact (the
+            # 2026-07-20 self-tick incident: a "safe" preview spawned rebuild
+            # stories that the tick then executed).
+            if not dry_run:
+                persist_story(story, db)
+                _author_acceptance_oracle(
+                    story, direction, app_config, software_factory_root,
+                    dry_run=dry_run, db_path=db,
+                )
             out.append(story)
 
         # Post the comparison comment on the tracker (real-run only).
@@ -472,7 +542,14 @@ def handle_stories_spawned(
             points=points,
             estimated_seconds=estimated_seconds,
         )
-        persist_story(story, db)
+        # Dry-run is a pure preview: never persist the story or author its
+        # oracle (see the dual-draft branch above and the 2026-07-20 incident).
+        if not dry_run:
+            persist_story(story, db)
+            _author_acceptance_oracle(
+                story, direction, app_config, software_factory_root,
+                dry_run=dry_run, db_path=db,
+            )
         out.append(story)
     return out
 
@@ -876,13 +953,127 @@ def _finding_location_file(f: dict[str, Any]) -> str:
     return loc.split(":", 1)[0].strip()
 
 
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    """Best-effort parse of a JSON object from an LLM text response.
+
+    The reviewer is dispatched with ``schema=None`` (its output is large and we
+    don't want the runner's json_object mode / doubling ladder here), so the
+    raw model text can arrive fenced in ```json ... ``` or with a stray
+    sentence before/after the object. A bare ``json.loads`` silently fails on
+    those and the caller would degrade to an empty ``request_changes`` — losing
+    every finding and churning the loop. This recovers the object in three
+    escalating steps: (1) parse as-is; (2) strip a Markdown code fence;
+    (3) slice from the first ``{`` to the last ``}``. Returns ``None`` only
+    when no JSON object can be recovered — the caller MUST treat that as
+    ``request_changes`` (never a silent approve).
+    """
+    if not isinstance(text, str):
+        return text if isinstance(text, dict) else None
+
+    def _as_obj(s: str) -> dict[str, Any] | None:
+        try:
+            parsed = json.loads(s)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    candidate = text.strip()
+    obj = _as_obj(candidate)
+    if obj is not None:
+        return obj
+
+    # Strip a fenced block: ```json\n{...}\n``` (or plain ```), keeping body.
+    if candidate.startswith("```"):
+        body = candidate[3:]
+        if body[:4].lower() == "json":
+            body = body[4:]
+        body = body.strip()
+        if body.endswith("```"):
+            body = body[:-3].strip()
+        obj = _as_obj(body)
+        if obj is not None:
+            return obj
+
+    # Last resort: slice the outermost brace span.
+    start = candidate.find("{")
+    end = candidate.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        obj = _as_obj(candidate[start : end + 1])
+        if obj is not None:
+            return obj
+    return None
+
+
+def _parse_reviewer_result(result_any: Any) -> dict[str, Any]:
+    """Normalize the reviewer's raw output into a review result dict.
+
+    The reviewer runs schema-free, so the raw text may be fenced or
+    prose-wrapped; ``_extract_json_object`` recovers the object (fence-strip /
+    brace-slice) before we give up. A genuine parse failure degrades to
+    ``request_changes`` WITH a synthetic rubric finding — never a silent
+    approve, and never an empty ``request_changes`` the dev can't act on. The
+    synthetic finding carries a rubric ``criterion`` so it flows through the
+    same signature / history / dev-findings plumbing as a real one.
+    """
+    result = result_any if isinstance(result_any, dict) else _extract_json_object(result_any)
+    if isinstance(result, dict) and "verdict" in result:
+        return result
+    return {
+        "verdict": "request_changes",
+        "test_quality_score": 0.0,
+        "findings": [
+            {
+                "severity": "high",
+                "criterion": "contract",
+                "location": "(reviewer output):0",
+                "what": (
+                    "Reviewer response was not valid rubric JSON; re-review "
+                    "required (safe fallback — not an approval)."
+                ),
+                "fix_suggestion": (
+                    "No actionable code change parsed; the reviewer will "
+                    "re-run. If this recurs, the reviewer model is not "
+                    "emitting the JSON contract."
+                ),
+            }
+        ],
+        "test_quality_findings": [],
+        "summary": "reviewer JSON parse failed",
+    }
+
+
+# Fixed rubric axes the reviewer grades against. ``scope``/``style`` are
+# non-blocking by construction (the persona clamps them to ``low``); the rest
+# may be blocking. Kept here so the parse-fallback and the signature agree on
+# the vocabulary. An unknown/absent criterion normalizes to "" — it still
+# participates in the signature (via location + text) but carries no rubric
+# axis, which is the correct backward-compatible behavior for pre-rubric output.
+_RUBRIC_CRITERIA = frozenset(
+    {"correctness", "contract", "security", "tests", "scope", "style"}
+)
+
+
+def _finding_criterion(f: dict[str, Any]) -> str:
+    """Normalized rubric criterion for a finding ("" when absent/unknown)."""
+    crit = str(f.get("criterion") or "").strip().lower()
+    return crit if crit in _RUBRIC_CRITERIA else ""
+
+
 def _findings_signature(result: dict[str, Any]) -> str:
     """Stable hash of a review's actionable findings (order-independent).
 
-    Keys on normalized location FILE + ``what``/``issue`` text: two cycles
-    flagging the same site count as "same" even when the reviewer rewords the
-    complaint (rewording defeated the text-only signature — benchmark t3,
-    2026-07-17, six cycles with consecutive_same=1 throughout).
+    Keys on a NORMALIZED structured signature per finding: location FILE +
+    rubric ``criterion`` + ``what``/``issue`` text. Two cycles flagging the
+    same site on the same rubric axis count as "same" even when the reviewer
+    rewords the complaint (rewording defeated the text-only signature —
+    benchmark t3, 2026-07-17, six cycles with consecutive_same=1 throughout).
+    The criterion is part of the key so a genuinely different rubric objection
+    at the same file (e.g. a NEW ``security`` finding where cycle-1 raised
+    ``style``) reads as PROGRESS, not a stuck repeat. Line number is
+    deliberately excluded — it shifts as the dev edits, and file-grain identity
+    is what the 2026-07-17 fix established. Pre-rubric findings (no criterion)
+    normalize to "" and hash exactly as before, so the guard is unchanged for
+    legacy output.
     """
     import hashlib
 
@@ -890,8 +1081,10 @@ def _findings_signature(result: dict[str, Any]) -> str:
     for f in (result.get("findings") or []) + (result.get("test_quality_findings") or []):
         if isinstance(f, dict):
             loc = _finding_location_file(f)
+            crit = _finding_criterion(f)
             what = (f.get("what") or f.get("issue") or "").strip().lower()[:160]
-            parts.append(f"{loc}|{what}" if loc else what)
+            key = "|".join(p for p in (loc, crit, what) if p)
+            parts.append(key)
     digest = hashlib.sha256(" ".join(sorted(parts)).encode("utf-8", "replace"))
     return digest.hexdigest()[:16]
 
@@ -914,6 +1107,7 @@ def _append_reviewer_history(story: StoryRecord, result: dict[str, Any]) -> None
             out.append(
                 {
                     "severity": f.get("severity", "medium" if not is_test else "low"),
+                    "criterion": _finding_criterion(f) or ("tests" if is_test else ""),
                     "location": str(f.get("location") or f.get("test_name") or "")[:160],
                     "what": str(f.get("what") or f.get("issue") or "")[:200],
                     "regression": bool(f.get("regression")),
@@ -967,9 +1161,17 @@ def _render_reviewer_history_section(story: StoryRecord) -> str:
             f"### Cycle {entry.get('cycle')} — verdict: {entry.get('verdict')}"
         )
         for f in (entry.get("findings") or []) + (entry.get("test_quality_findings") or []):
+            # Legacy history (written before _digest's isinstance guard) can
+            # contain a bare-string finding; skip it rather than crash the
+            # whole tick with "'str' object has no attribute 'get'". Mirrors
+            # the guards in _findings_signature and _append_reviewer_history.
+            if not isinstance(f, dict):
+                continue
             reg = " (regression)" if f.get("regression") else ""
+            crit = f.get("criterion")
+            crit_tag = f"/{crit}" if crit else ""
             lines.append(
-                f"- [{f.get('severity')}] {f.get('location')}: {f.get('what')}{reg}"
+                f"- [{f.get('severity')}{crit_tag}] {f.get('location')}: {f.get('what')}{reg}"
             )
         lines.append("")
     return "\n".join(lines)
@@ -995,6 +1197,43 @@ _MAX_DEV_SANDBOX_INFRA_RETRIES = 3
 # history + reviewer findings) materially improve convergence on harder stories.
 _MAX_DEV_RETRIES = 6
 
+# Same-failure-signature fast-escalation cap. When consecutive dev runs fail
+# with the IDENTICAL normalized failure signature (the same assertions/errors,
+# volatile bits stripped) the model is stuck on something more attempts won't
+# fix — every retry re-discovers the same dead end while burning spend. Rather
+# than march to ``_MAX_DEV_RETRIES`` (+ the aggregate budget breaker) on no new
+# signal, block after this many identical failures. 3 per the "nothing loops
+# unproductively >3" operator rule. A CHANGING signature means the model IS
+# making progress and keeps its full retry budget.
+_MAX_DEV_SAME_SIGNATURE = 3
+
+
+def _consecutive_same_dev_signature(
+    prior_attempts: list[Any], current_sig: str
+) -> int:
+    """Count trailing dev attempts sharing ``current_sig`` (newest-first).
+
+    Walks ``prior_attempts`` (the ``dev_attempts_json`` list) from the end and
+    counts the unbroken run of red attempts whose ``failure_signature`` equals
+    ``current_sig``. A green attempt (``test_run_passed is True``) or a
+    different/absent signature breaks the run — a green in between or a changed
+    failure both mean genuine progress, so the stall counter resets. Returns 0
+    for an empty signature (no comparable evidence yet).
+    """
+    if not current_sig:
+        return 0
+    count = 0
+    for a in reversed(prior_attempts):
+        if not isinstance(a, dict):
+            break
+        if a.get("test_run_passed") is True:
+            break
+        if a.get("failure_signature") == current_sig:
+            count += 1
+        else:
+            break
+    return count
+
 # Review convergence guard. Judged by finding STABILITY, not raw cycle count: a
 # cycle that surfaces DIFFERENT findings is making progress. We block only when
 # the reviewer returns the SAME findings _MAX_REVIEW_STUCK times in a row
@@ -1016,7 +1255,28 @@ def _is_premodel_infra_failure(run_res: Any) -> bool:
     set and zero tokens/cost. Distinguishing the two is what keeps an
     environment blip from masquerading as a code failure and burning the dev
     retry budget.
+
+    The runner now sets an EXPLICIT ``premodel_infra`` flag (True only for
+    genuine pre-model breakage; False when the model spent tokens and then
+    raised). Prefer it when present: the old zero-cost/None heuristic
+    misclassified a run that DID real model work but crashed afterwards (e.g.
+    during metrics extraction) as "infra", so the dev handler bounced it back
+    for free and NEVER incremented ``dev_retries`` — the story-88 loop where a
+    story was re-dispatched 12 times with ``dev_retries`` stuck at 1. A run
+    that actually evaluated tests (``test_run_passed is not None``) is a real
+    dev attempt and is NEVER infra, regardless of the flag.
     """
+    if run_res.test_run_passed is not None:
+        # The post-model gate ran (tests passed OR failed, including collection
+        # errors that exit pytest non-zero) — this is a genuine dev attempt,
+        # never infra. Also covers the runner's "model did real work then
+        # raised" path, which now reports test_run_passed=False.
+        return False
+    if getattr(run_res, "premodel_infra", False):
+        # Runner explicitly flagged genuine pre-model breakage.
+        return True
+    # Backward-compat heuristic for RunResults built without the explicit flag
+    # (e.g. legacy fixtures): no success, tests never ran, zero cost/tokens.
     return bool(
         not run_res.success
         and run_res.test_run_passed is None
@@ -1070,6 +1330,69 @@ def _dry_run_dev(story: StoryRecord) -> tuple[bool, dict[str, Any]]:
     }
 
 
+def _try_resume_dev_from_checkpoint(
+    story: StoryRecord,
+    software_factory_root: Path,
+    *,
+    db_path: Path | None = None,
+) -> HandlerResult | None:
+    """WS4.2 resume-from-checkpoint: skip re-running the dev LLM when a prior
+    sandbox already completed GREEN but the tick died before the DB advanced
+    out of ``dev_in_progress``.
+
+    Returns a ``HandlerResult`` (advanced to ``tests_green``) when a valid
+    green checkpoint is present, otherwise ``None`` (the caller proceeds with a
+    normal dev run). Correctness rests on two facts: (1) the dev sandbox writes
+    its changes into the per-story worktree, which is REUSED across ticks — so
+    the green code survives the interruption and re-running the LLM would only
+    reproduce it; (2) the checkpoint is written green then cleared within a
+    single ``handle_dev`` call, so a lingering one is unambiguous evidence of an
+    interruption (never the review-feedback re-entry path, which reaches dev
+    only after the checkpoint was already cleared). Idempotent: a second call
+    finds no checkpoint and returns ``None``.
+    """
+    cp_raw = story.dev_step_checkpoint
+    if not cp_raw:
+        return None
+    db = db_path or (software_factory_root / "state" / "factory.db")
+    try:
+        cp = json.loads(cp_raw)
+    except (json.JSONDecodeError, TypeError):
+        cp = None
+    if not isinstance(cp, dict) or cp.get("outcome") != "green":
+        # Malformed / non-green marker — clear it and fall through to a normal
+        # dev run. Never skip the LLM on an ambiguous checkpoint.
+        story.dev_step_checkpoint = None
+        persist_story(story, db)
+        return None
+
+    from_state = story.state
+    # Drive the pure state machine exactly as a real green run would:
+    # dispatch-state -> DEV_IN_PROGRESS -> TESTS_GREEN. ``advance`` is pure and
+    # validates the transition, so an unexpected dispatch state raises loudly
+    # rather than silently skipping into an illegal state.
+    story.state = advance(story, EVENT_DEV_STARTED).value
+    story.state = advance(story, EVENT_DEV_TESTS_GREEN).value
+    story.dev_step_checkpoint = None
+    persist_story(story, db)
+    log_story_event(
+        story.id,
+        "dev_resume_from_checkpoint",
+        {
+            "from_state": from_state,
+            "to_state": story.state,
+            "checkpoint_attempt": cp.get("attempt"),
+            "checkpoint_ts": cp.get("ts"),
+        },
+        software_factory_root=software_factory_root,
+        slug_hint=story.slug,
+    )
+    return HandlerResult(
+        next_state=StoryState(story.state),
+        payload={"resumed_from_checkpoint": True, "test_run_passed": True},
+    )
+
+
 def handle_dev(
     story: StoryRecord,
     app_config: AppConfig,
@@ -1100,6 +1423,22 @@ def handle_dev(
 
     from factory.settings.loader import load_settings
 
+    _settings = load_settings(software_factory_root)
+
+    # WS4.2 resume-from-checkpoint. Before spending anything, check whether a
+    # prior dev sandbox already completed GREEN and only the state advance was
+    # lost to an interruption. If so, resume from the persisted result WITHOUT
+    # re-running the expensive dev LLM (the green code already lives in the
+    # reused per-story worktree). Real-run only and gated by a default-on flag.
+    if not dry_run and getattr(
+        _settings.dev_convergence, "resume_from_checkpoint", True
+    ):
+        _resumed = _try_resume_dev_from_checkpoint(
+            story, software_factory_root, db_path=db_path
+        )
+        if _resumed is not None:
+            return _resumed
+
     result = _handle_dev_once(
         story,
         app_config,
@@ -1108,7 +1447,7 @@ def handle_dev(
         db_path=db_path,
         force_red=force_red,
     )
-    conv = load_settings(software_factory_root).dev_convergence
+    conv = _settings.dev_convergence
     if dry_run or not conv.enabled:
         return result
 
@@ -1505,7 +1844,22 @@ def _handle_dev_once(
                 prior_green = []
             prior_green.append(green_record)
             story.dev_attempts_json = json.dumps(prior_green[-5:])
+            # WS4.2 resume checkpoint: persist the completed green artifact +
+            # marker BEFORE the state advance. If the tick dies between here and
+            # the advance below, the next dev dispatch reads this marker and
+            # resumes to TESTS_GREEN without re-running the dev LLM (the green
+            # code already lives in the reused worktree). The advance below
+            # clears it, so it survives only a genuine interruption.
+            story.dev_step_checkpoint = json.dumps(
+                {
+                    "outcome": "green",
+                    "attempt": story.dev_retries,
+                    "ts": datetime.now(UTC).isoformat(),
+                }
+            )
+            persist_story(story, db)
         story.state = advance(story, EVENT_DEV_TESTS_GREEN).value
+        story.dev_step_checkpoint = None
         persist_story(story, db)
         return HandlerResult(next_state=StoryState(story.state), payload=payload)
 
@@ -1543,10 +1897,36 @@ def _handle_dev_once(
         except (json.JSONDecodeError, TypeError):
             prior = []
         prior.append(attempt_record)
+        # R2: stamp this attempt with its normalized failure signature, reusing
+        # the SAME normalize+hash core the recovery / CI-fix loops use (via
+        # ``_story_failure_signature``) so "is this the same failure" means the
+        # same thing everywhere. Signed from the attempt's own ``test_output_tail``
+        # (already in-memory) so we serialize dev_attempts_json exactly ONCE.
         # Cap history to last 5 entries — beyond that the prompt bloat outweighs
         # the signal, and we have the full chain in the per-story event log.
+        # Detection survives across ticks via the persisted field.
+        from factory.chain.orchestrator import _failure_signature_from_tail
+
+        attempt_record["failure_signature"] = _failure_signature_from_tail(
+            str(attempt_record["test_output_tail"])
+        )
         story.dev_attempts_json = json.dumps(prior[-5:])
-    if story.dev_retries >= _MAX_DEV_RETRIES:
+
+    # R2: if the last _MAX_DEV_SAME_SIGNATURE red runs all failed with the
+    # identical signature, the loop is unproductive — escalate now instead of
+    # burning the rest of the retry + per-story budget re-discovering the same
+    # dead end. Dry-run records no attempts, so this never fires there.
+    same_sig_count = 0
+    if not dry_run:
+        try:
+            _attempts_now = json.loads(story.dev_attempts_json or "[]")
+        except (json.JSONDecodeError, TypeError):
+            _attempts_now = []
+        _cur_sig = str(attempt_record.get("failure_signature", "") or "")
+        same_sig_count = _consecutive_same_dev_signature(_attempts_now, _cur_sig)
+    same_sig_stall = same_sig_count >= _MAX_DEV_SAME_SIGNATURE
+
+    if story.dev_retries >= _MAX_DEV_RETRIES or same_sig_stall:
         # Preserve whatever dev produced so the work doesn't evaporate
         # into a stash when the next story takes the working tree. Commit
         # any uncommitted changes, push the branch to origin, and surface
@@ -1620,13 +2000,21 @@ def _handle_dev_once(
                 payload["dev_exhausted_commit_error"] = repr(commit_exc)
 
         story.state = advance(story, EVENT_DEV_EXHAUSTED).value
+        _stall_note = (
+            f"same failure signature {same_sig_count}x (>= "
+            f"{_MAX_DEV_SAME_SIGNATURE}); "
+            if same_sig_stall
+            else ""
+        )
         story.error = (
-            f"dev exhausted retries ({story.dev_retries}); "
+            f"dev exhausted retries ({story.dev_retries}); {_stall_note}"
             f"partial work {'pushed to origin' if commit_pushed else 'committed locally'}"
             f"{f' as {commit_sha[:12]}' if commit_sha else ''}"
         )
         payload["dev_exhausted_commit_sha"] = commit_sha
         payload["dev_exhausted_pushed"] = commit_pushed
+        if same_sig_stall:
+            payload["dev_same_signature_stall"] = same_sig_count
         persist_story(story, db)
         log_story_event(
             story.id,
@@ -1636,6 +2024,10 @@ def _handle_dev_once(
                 "commit_sha": commit_sha,
                 "pushed": commit_pushed,
                 "files_changed": payload.get("files_changed", []),
+                # R2: distinguish "ran out of retry budget" from "same failure
+                # N times — escalated early on no new signal".
+                "reason": "same_failure_signature" if same_sig_stall else "max_retries",
+                "same_signature_count": same_sig_count if same_sig_stall else None,
             },
             software_factory_root=software_factory_root,
             slug_hint=story.slug,
@@ -1693,8 +2085,10 @@ def _handle_dev_once(
             story.id,
             "factory_needs_redesign",
             {
+                "kind": "dev_same_signature_stall" if same_sig_stall else "dev_exhausted",
                 "retries_used": story.dev_retries,
                 "max_retries": _MAX_DEV_RETRIES,
+                "same_signature_count": same_sig_count if same_sig_stall else None,
                 "last_test_output_tail": last_tail[-600:],
                 "suggestions": suggestions,
                 "branch": story.github_branch,
@@ -2318,10 +2712,7 @@ def handle_review(
             direction_id=story.direction_id,
             db_path=db,
         )
-        try:
-            result = json.loads(result_any) if isinstance(result_any, str) else result_any
-        except (TypeError, json.JSONDecodeError):
-            result = {"verdict": "request_changes", "summary": "reviewer JSON parse failed"}
+        result = _parse_reviewer_result(result_any)
 
     story.reviewer_result_json = json.dumps(result)
 
@@ -3097,6 +3488,129 @@ def _post_factory_needs_redesign_comment(
     )
 
 
+def _autoformat_changed_py_before_pr(target_repo: Path, base: str) -> None:
+    """Best-effort: run ``ruff check --fix --select I`` (import-sort only) +
+    ``ruff format`` on the story's own changed ``.py`` files and commit the
+    result before the PR is opened.
+
+    Rationale (2026-07-21): a factory self-edit (PR #57) shipped with a trivial
+    ``I001`` unsorted-import + missing-trailing-newline. The chain's pre-merge
+    gates (tests-green / smoke / staging-clone) do NOT run ``ruff``, so the nit
+    only surfaced at GitHub's required lint check — which blocked the merge and,
+    because auto-merge had already been enabled, left the story stranded at
+    ``deploy_pending``. Making the pushed branch ruff-clean removes that class
+    of false-block.
+
+    Scoped and safe: only the files this branch changed vs ``origin/<base>`` are
+    touched (never a whole-repo reformat of unrelated code), the whole thing is
+    a no-op when the repo has no ruff config or ``ruff`` is unavailable, and it
+    NEVER raises — a formatting hiccup must not block PR creation.
+    """
+    import subprocess
+
+    # Only for repos that actually use ruff (config present) — otherwise a
+    # ``ruff format`` would be meaningless / could touch code the repo's own CI
+    # does not lint.
+    has_ruff = (target_repo / "ruff.toml").exists() or (
+        target_repo / ".ruff.toml"
+    ).exists()
+    if not has_ruff:
+        pyproject = target_repo / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                # Matches ``[tool.ruff]`` and any sub-table (``[tool.ruff.lint]``,
+                # ``[tool.ruff.format]``) — a repo may configure only a sub-table.
+                has_ruff = "[tool.ruff" in pyproject.read_text(encoding="utf-8")
+            except OSError:
+                has_ruff = False
+    if not has_ruff:
+        return
+
+    try:
+        diff = subprocess.run(
+            ["git", "diff", "--name-only", f"origin/{base}...HEAD"],
+            cwd=str(target_repo),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return
+    if diff.returncode != 0:
+        return
+    py_files = [
+        f
+        for f in diff.stdout.split()
+        if f.endswith(".py") and (target_repo / f).is_file()
+    ]
+    if not py_files:
+        return
+
+    try:
+        # Deliberately NARROW: only import-sorting (``--select I``) plus
+        # ``ruff format``. These are the NON-SEMANTIC nits that spuriously fail
+        # a required lint check (I001 unsorted imports, missing trailing
+        # newline, whitespace) — exactly PR #57's failure. A blanket
+        # ``ruff check --fix`` under the factory's full ruleset (E/F/I/W/UP/B)
+        # would also apply SEMANTIC "safe" fixes — e.g. delete an unused
+        # side-effect import (F401) or rewrite typing (UP) — and since the code
+        # is NOT re-tested after this step, such a mutation could break CI and
+        # re-create the very strand we're removing. A real E/F/UP/B error should
+        # surface at CI and be fixed by the dev loop, not silently auto-mutated.
+        subprocess.run(
+            ["uv", "run", "ruff", "check", "--fix", "--select", "I", *py_files],
+            cwd=str(target_repo),
+            check=False,
+            capture_output=True,
+            timeout=180,
+        )
+        subprocess.run(
+            ["uv", "run", "ruff", "format", *py_files],
+            cwd=str(target_repo),
+            check=False,
+            capture_output=True,
+            timeout=180,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return
+
+    # Commit only if ruff actually changed something.
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain", *py_files],
+            cwd=str(target_repo),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if status.returncode == 0 and status.stdout.strip():
+            # Pathspec-scoped add+commit: only the story's own py files are
+            # committed, even if some earlier step left unrelated staged content
+            # in the index. The trailing ``-- <files>`` keeps the commit tight.
+            subprocess.run(
+                ["git", "add", "--", *py_files],
+                cwd=str(target_repo),
+                check=False,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                [
+                    "git", "commit",
+                    "-m", "style: ruff isort + format (pre-PR autoformat)",
+                    "--", *py_files,
+                ],
+                cwd=str(target_repo),
+                check=False,
+                capture_output=True,
+                timeout=60,
+            )
+    except (subprocess.TimeoutExpired, OSError):
+        return
+
+
 def _open_pr_for_story(
     story: StoryRecord, app_config: AppConfig, software_factory_root: Path
 ) -> int | None:
@@ -3183,6 +3697,16 @@ def _open_pr_for_story(
             capture_output=True,
             timeout=120,
         )
+        # Auto-format the story's own changed .py files (ruff --fix + format)
+        # and commit any fixes BEFORE pushing. Trivial lint/format nits (import
+        # sort, missing trailing newline) that the dev persona leaves would
+        # otherwise fail GitHub's required lint check — which the chain's
+        # pre-merge gates (tests-green / smoke / staging) do NOT cover — and,
+        # via the auto-merge-enabled path, strand the story at deploy_pending
+        # (found 2026-07-21 on the first factory self-edit, PR #57). Best-effort
+        # and scoped to changed files, so it never reformats unrelated code and
+        # never blocks PR creation.
+        _autoformat_changed_py_before_pr(target_repo, base)
         # Push the branch; gh pr create needs an upstream ref.
         # --force-with-lease: story branches are factory-owned and single-
         # writer, and origin may hold STALE commits from abandoned earlier
@@ -3450,7 +3974,7 @@ def handle_deploy(
     # orchestrator's deploy_post_merge already records the action row with
     # status="skipped"; we just observe the result here and short-circuit
     # the state.
-    if not app_config.deploy.enabled:
+    if not effective_deploy_enabled(app_config, software_factory_root):
         story.state = advance(story, EVENT_DEPLOY_SKIPPED).value
         persist_story(story, db)
         # This early-return short-circuits before the ``deploy_post_merge``

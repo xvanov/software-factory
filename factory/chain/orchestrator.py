@@ -20,6 +20,7 @@ import json
 import os
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,7 +33,13 @@ from factory.chain import handlers as H
 from factory.chain.auto_merge import MergeAction, auto_merge_tick
 from factory.chain.ci_health import CiHealthResult, main_ci_health_tick
 from factory.chain.event_log import log_story_event
-from factory.chain.state_machine import StoryRecord, StoryState
+from factory.chain.state_machine import (
+    EVENT_BUDGET_EXCEEDED,
+    StoryRecord,
+    StoryState,
+    advance,
+)
+from factory.chain.step_events import emit_chain_step
 from factory.directions.parser import Direction
 from factory.settings.enforcer import can_dispatch
 from factory.settings.loader import load_settings
@@ -135,6 +142,154 @@ _DISPATCH = {
 }
 
 
+# WS1.1 per-story budget circuit breaker — the dispatch states that burn LLM
+# spend. Membership gates the breaker: only a story ABOUT to enter one of these
+# (via _dispatch_for_story) is checked. DERIVED from the single source of truth
+# (``_DISPATCH``) rather than hand-listed, so a future dispatch state can't
+# silently escape the breaker. DEPLOY_PENDING is the one deliberate exclusion:
+# it is a dispatch state too, but a merged story must still be allowed to
+# deploy — see the EVENT_BUDGET_EXCEEDED transition comment in state_machine.py
+# (blocking deploy strands merged work without saving meaningful spend). Every
+# state in this set MUST have an EVENT_BUDGET_EXCEEDED edge to
+# BLOCKED_BUDGET_EXCEEDED in the transition table; both invariants (the derived
+# set and full transition coverage) are asserted in
+# tests/chain/test_per_story_budget.py so a new dispatch state fails a test
+# rather than crashing a live tick.
+_BUDGET_METERED_STATES: frozenset[StoryState] = frozenset(_DISPATCH) - {
+    StoryState.DEPLOY_PENDING
+}
+
+
+def _story_ledger_spend_usd(db_path: Path, story_id: int | None) -> float | None:
+    """Total ``runs.cost_usd`` attributed to ``story_id`` (D003 per-run ledger).
+
+    This is the authoritative per-story spend: the run rows already carry the
+    real cost of every LLM round-trip, so the breaker's ``total_spend_usd``
+    accumulator is *derived* from the ledger rather than re-summed by hand
+    (no double-counting on retries, self-healing after a crash).
+
+    Returns 0.0 for an unsaved story (no id yet, no runs). Returns ``None`` on
+    a read failure — the caller then KEEPS the prior accumulator instead of
+    overwriting it. The manager daemon reads this same sqlite file
+    concurrently, so a transient "database is locked" is expected and must
+    NOT poison ``total_spend_usd``: writing a sentinel (an earlier version
+    wrote ``inf``) persisted and then tripped the terminal breaker on a
+    perfectly healthy story the next tick — and serialised as non-standard
+    ``Infinity`` in the evidence ndjson. We retry a few times to ride out a
+    lock, then give up for this cycle; the attempts cap remains the backstop
+    while spend is briefly unreadable, so the breaker never spends blind.
+    """
+    if story_id is None:
+        return 0.0
+    import time
+
+    from factory.runner import Run
+
+    for attempt in range(3):
+        try:
+            eng = create_engine(f"sqlite:///{db_path}", echo=False)
+            total = 0.0
+            with Session(eng) as session:
+                for r in session.exec(select(Run).where(Run.story_id == story_id)).all():
+                    total += float(r.cost_usd or 0.0)
+            return total
+        except Exception:  # noqa: BLE001 — transient lock/contention; retry then skip.
+            time.sleep(0.05 * (attempt + 1))
+    return None
+
+
+# WS1.1 advance-decay: a canonical monotonic ranking of the happy-path states.
+# "Genuine forward progress" == entering a state whose ordinal EXCEEDS the
+# highest the story has ever reached (``story.max_progress_ordinal``). The
+# ranking is deliberately COARSE around the dev<->review loop: DEV_IN_PROGRESS,
+# DEV_RETRY, and REVIEWER_REQUESTED_CHANGES all sit at/below the reviewer tier,
+# so a dev<->reviewer ping-pong (tests_green -> reviewer -> requested_changes ->
+# dev -> tests_green -> ...) re-treads states already at the high-water mark and
+# NEVER counts as progress — exactly the oscillation the breaker must still be
+# able to trip. Only crossing a genuine NEW milestone (first tests_green, first
+# reviewer pass, an APPROVED review, tech-writer, docs, PR, deploy) decays the
+# attempt counter. Error/blocked/*_in_progress-only states are absent -> ordinal
+# 0 (never progress). Stored as an int on the story, so the map's VALUES must
+# stay stable across versions even if states are added.
+_STATE_PROGRESS_ORDINAL: dict[StoryState, int] = {
+    StoryState.STORY_CREATED: 1,
+    StoryState.SM_IN_PROGRESS: 2,
+    StoryState.DOCS_SM_IN_PROGRESS: 2,
+    StoryState.SM_DONE: 3,
+    StoryState.DOCS_SM_DONE: 3,
+    StoryState.DEV_IN_PROGRESS: 4,
+    StoryState.DEV_RETRY: 4,  # a retry is NOT progress — same tier as dev
+    StoryState.DOCS_ONBOARDER_IN_PROGRESS: 4,
+    StoryState.TESTS_GREEN: 5,
+    StoryState.REVIEWER_IN_PROGRESS: 6,
+    # request-changes bounces back to dev; keep it AT the reviewer tier so the
+    # oscillation stays flat (never re-decays once the reviewer tier is reached).
+    StoryState.REVIEWER_REQUESTED_CHANGES: 6,
+    StoryState.REVIEWER_DONE: 7,  # approved — a genuine milestone
+    StoryState.TECH_WRITER_IN_PROGRESS: 8,
+    StoryState.TECH_WRITER_DONE: 9,
+    StoryState.DOCS_ONBOARDER_DONE: 9,
+    StoryState.DOCS_ENFORCER_CHECK: 10,
+    StoryState.PR_OPEN: 11,
+    StoryState.CI_PENDING: 12,
+    StoryState.CI_GREEN: 13,
+    StoryState.READY_FOR_MERGE: 14,
+    StoryState.DEPLOY_PENDING: 15,
+    StoryState.DEPLOYED: 16,
+}
+
+
+def _progress_ordinal(state_value: str) -> int:
+    """Happy-path progress ordinal for a state value (0 for error/blocked/unknown)."""
+    try:
+        return _STATE_PROGRESS_ORDINAL.get(StoryState(state_value), 0)
+    except ValueError:
+        return 0
+
+
+def _apply_advance_decay(story: StoryRecord) -> bool:
+    """Reset ``total_attempts`` iff ``story`` just made genuine forward progress.
+
+    Genuine progress == the story's CURRENT state ranks strictly higher than any
+    state it has previously reached (``max_progress_ordinal``). This is
+    monotonic, so each milestone decays the attempt counter AT MOST once and a
+    dev<->review oscillation (which never exceeds the high-water mark) never
+    decays — so an oscillating/stuck story still exhausts the attempt budget
+    while an advancing one is never tripped on attempts. ``total_spend_usd`` is
+    deliberately untouched: spend is the absolute cost ceiling.
+
+    Returns True when a decay was applied (caller logs an evidence event).
+    """
+    ordinal = _progress_ordinal(story.state)
+    if ordinal > story.max_progress_ordinal:
+        story.max_progress_ordinal = ordinal
+        story.total_attempts = 0
+        return True
+    return False
+
+
+def _story_budget_breaker_reason(story: StoryRecord, caps: Any) -> str | None:
+    """Return a human-readable reason iff the per-story breaker has tripped.
+
+    Pure: reads only the accumulator fields on ``story`` and the caps. The
+    caller is responsible for the state transition + evidence event. Only
+    budget-metered states are checked so a story that reached DEPLOY_PENDING
+    (or a terminal state) is never budget-blocked.
+    """
+    if StoryState(story.state) not in _BUDGET_METERED_STATES:
+        return None
+    per_story_attempts = int(getattr(caps, "per_story_attempts", 0) or 0)
+    per_story_spend = float(getattr(caps, "per_story_spend_usd", 0.0) or 0.0)
+    if per_story_attempts > 0 and story.total_attempts >= per_story_attempts:
+        return f"total_attempts={story.total_attempts} >= per_story_attempts={per_story_attempts}"
+    if per_story_spend > 0 and story.total_spend_usd >= per_story_spend:
+        return (
+            f"total_spend_usd={story.total_spend_usd:.4f} >= "
+            f"per_story_spend_usd={per_story_spend}"
+        )
+    return None
+
+
 def _dispatch_for_story(story: StoryRecord) -> str | None:
     """Pick the handler name for ``story`` given its current state.
 
@@ -212,6 +367,9 @@ _NON_CAP_COUNTING_STATES = {
     StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
     StoryState.BLOCKED_DEPLOY_FAILED.value,
     StoryState.BLOCKED_REVIEW_NONCONVERGENT.value,
+    # WS1.1 terminal budget sink — the story is done burning spend; it must
+    # not count against concurrency caps.
+    StoryState.BLOCKED_BUDGET_EXCEEDED.value,
     # Passive transition states — no agent is actively running; the story
     # is simply waiting for the orchestrator to dispatch the next handler
     # on the next tick. Counting these against the cap deadlocks any
@@ -552,11 +710,22 @@ def _story_failure_signature(story: StoryRecord) -> str:
                 raw = (last.get("test_output_tail") or "").strip()
     if not raw:
         raw = (story.error or "").strip()
+    return _failure_signature_from_tail(raw)
+
+
+def _failure_signature_from_tail(raw: str) -> str:
+    """Normalized failure signature for a raw failure/test-output tail.
+
+    The tail→normalize→hash core of ``_story_failure_signature``, exposed so the
+    dev loop can sign an attempt's own ``test_output_tail`` directly (it already
+    has the tail in-memory and must not re-read the story's serialized state).
+    Both callers therefore produce the IDENTICAL signature for the same failure.
+    Returns ``""`` when there is no failure text.
+    """
+    raw = (raw or "").strip()
     if not raw:
         return ""
-
     normalized = _normalize_failure_text(raw)
-
     # The tail carries the actual assertion/error; the head is often
     # boilerplate pytest banner/collection noise that's identical across
     # unrelated failures.
@@ -689,6 +858,303 @@ def _recover_blocked_stories(
     return recovered
 
 
+# Bound on how many stories ``reconcile_from_github`` will query GitHub for in a
+# single tick. Each candidate costs one read-only ``gh pr view`` shell-out;
+# capping keeps a large PR backlog from turning every tick into a burst of API
+# calls. Candidates beyond the cap are simply reconciled on a LATER tick (they
+# are never lost — they stay in a mergeable state and remain candidates).
+_MAX_RECONCILE_PER_TICK = 25
+
+
+def _query_pr_state(*, app_config: AppConfig, pr_number: int) -> str | None:
+    """Authoritative GitHub state for ``pr_number``.
+
+    Returns ``"OPEN"``, ``"CLOSED"``, ``"MERGED"``, or ``None`` when the state
+    cannot be determined. Read-only ``gh pr view --json state`` shell-out — the
+    SAME plumbing ``auto_merge._pr_terminally_unmergeable`` uses (gh's ``state``
+    field returns exactly those three literals; ``MERGED`` is distinct from a
+    plain ``CLOSED``).
+
+    ``None`` is the fail-safe sentinel: a non-positive placeholder PR number, gh
+    missing, a timeout, a non-zero exit (PR deleted / wrong repo / auth), or an
+    unparseable payload all map to ``None`` so the caller NEVER reconciles a
+    story on an uncertain answer.
+    """
+    import subprocess
+
+    if pr_number <= 0:  # synthesized placeholder — nothing to query
+        return None
+    cmd = [
+        "gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
+        "--json", "state",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        # gh could not resolve the PR (deleted / wrong repo / auth). Unknown —
+        # do not reconcile on uncertainty.
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    state = str(data.get("state", "")).upper()
+    if state in ("OPEN", "CLOSED", "MERGED"):
+        return state
+    return None
+
+
+def _write_drift_event(
+    *,
+    root: Path,
+    story: StoryRecord,
+    from_state: str,
+    pr_state: str,
+    action: str,
+) -> None:
+    """Emit a first-class ``state_drift_reconciled`` anomaly (best-effort).
+
+    Written to the ``git`` signal stream (one of the L1 watcher's ``_RAW_STREAMS``
+    — so drift is SEEN by the FMS, not silent) AND to the per-story event log for
+    the story timeline. Telemetry only: never raises, so a logging failure cannot
+    crash the tick.
+    """
+    try:
+        from factory.manager.signals import write_event
+
+        write_event(
+            "git",
+            {
+                "event": "state_drift_reconciled",
+                "app": story.app,
+                "story_id": story.id,
+                "slug": story.slug,
+                "pr_number": story.github_pr_number,
+                "local_state_before": from_state,
+                "authoritative_pr_state": pr_state,
+                "action": action,
+            },
+            software_factory_root=root,
+        )
+    except Exception:  # noqa: BLE001 - telemetry, never crash the tick
+        pass
+    try:
+        from factory.chain.event_log import log_story_event
+
+        log_story_event(
+            story.id,
+            "state_drift_reconciled",
+            {
+                "local_state_before": from_state,
+                "authoritative_pr_state": pr_state,
+                "action": action,
+                "pr_number": story.github_pr_number,
+            },
+            software_factory_root=root,
+            slug_hint=story.slug,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _record_reconciled_merge_and_enqueue_deploy(
+    *, app: str, story: StoryRecord, pr_number: int, db: Path, root: Path
+) -> None:
+    """Record a ``merged=True`` merge-action row + enqueue a deploy for a merge
+    that ``reconcile_from_github`` detected on GitHub (best-effort, idempotent).
+
+    Since the auto-merge worker now only claims ``merged=True`` on a REALLY
+    merged PR (``--auto`` merely ENABLES async auto-merge — it does not merge
+    now), ``reconcile_from_github`` becomes the PRIMARY detector of the real,
+    asynchronous merge. So it must trigger the deploy exactly like auto-merge's
+    own merged path does — otherwise a merge that lands between ticks advances
+    the story to ``deploy_pending`` but nothing ever deploys it.
+
+    ``head_sha`` uses the SAME ``local-<story.id>`` scheme the auto-merge
+    worker's synthesized production path uses (StoryRecord carries no real head
+    sha, and the deploy sha is only a dedup/label key — the deploy pulls the
+    merged branch, it does not check out this sha). Sharing the scheme makes the
+    two merge detectors DEDUPE against each other: at most one row per story.
+
+    Idempotent + fail-safe: only records/enqueues when no ``merged=True`` row
+    for this ``head_sha`` already exists, and never raises (a recorder/enqueue
+    hiccup must not break reconcile). A story leaves ``_MERGEABLE_STATES`` the
+    moment it is reconciled, so it is no longer a candidate on later ticks — the
+    dedupe check is belt-and-suspenders against a same-tick race with the
+    auto-merge worker.
+    """
+    from factory.chain.auto_merge import (
+        MergeAction,
+        MergeActionRecord,
+        _record_merge_action,
+    )
+
+    head_sha = f"local-{story.id}"
+    try:
+        eng = create_engine(f"sqlite:///{db}", echo=False)
+        with Session(eng) as session:
+            existing = session.exec(
+                select(MergeActionRecord).where(
+                    MergeActionRecord.app == app,
+                    MergeActionRecord.head_sha == head_sha,
+                    MergeActionRecord.merged == True,  # noqa: E712
+                )
+            ).first()
+        if existing is not None:
+            return  # already recorded (and deploy already enqueued) — no-op
+        action = MergeAction(
+            app=app,
+            pr_number=pr_number,
+            merged=True,
+            reason="reconcile: PR merged on GitHub",
+        )
+        _record_merge_action(action, head_sha, db)
+    except Exception:  # noqa: BLE001 - fail-safe: never break reconcile
+        return
+
+    try:
+        from factory.deploy.orchestrator import enqueue_deploy
+
+        enqueue_deploy(
+            app=app,
+            sha=head_sha,
+            merged_pr_number=pr_number,
+            software_factory_root=root,
+            db_path=db,
+        )
+    except Exception:  # noqa: BLE001 - deploy-enqueue hiccup must not break reconcile
+        pass
+
+
+def reconcile_from_github(
+    db: Path,
+    app: str,
+    *,
+    cfg: AppConfig,
+    root: Path,
+    max_reconcile: int = _MAX_RECONCILE_PER_TICK,
+    query_pr_state: Callable[..., str | None] = _query_pr_state,
+) -> list[tuple[str, str, str]]:
+    """Pull authoritative GitHub PR state into the local DB at the top of a tick.
+
+    Local ``factory.db`` state is a PROJECTION; GitHub is the system of record
+    for whether a PR merged, closed, or is still open. That projection drifts: a
+    PR merged (or completed out-of-band) while the local story still says
+    ``pr_open``; a PR closed while the story keeps looping on a dead branch. This
+    pass reconciles each non-terminal story that has a real PR against GitHub
+    BEFORE any dispatch decision, using the SAME state-machine transitions
+    auto-merge uses, and logs every reconciliation as a first-class
+    ``state_drift_reconciled`` anomaly so drift is never silent.
+
+    Candidates are stories in ``auto_merge._MERGEABLE_STATES``
+    (``pr_open`` / ``ci_green`` / ``ready_for_merge``) with a positive
+    ``github_pr_number`` — exactly the states that hold an open PR and for which
+    the ``EVENT_MERGED`` / ``EVENT_PR_UNMERGEABLE`` transitions are defined.
+
+    Drift cases handled:
+
+    * PR **MERGED** on GitHub, local state still pre-merge → ``advance(story,
+      EVENT_MERGED)`` → ``DEPLOY_PENDING`` (identical to the auto-merge success
+      path) so the missed merge flows into deploy instead of being re-attempted
+      forever. Because auto-merge now only claims ``merged=True`` on a REAL
+      merge (``--auto`` merely enables async auto-merge), reconcile is the
+      PRIMARY detector of the async merge and ALSO records a ``merged=True``
+      merge-action row + enqueues the deploy (see
+      ``_record_reconciled_merge_and_enqueue_deploy``) so the app actually ships.
+    * PR **CLOSED** (not merged) on GitHub, local state still in-flight →
+      ``advance(story, EVENT_PR_UNMERGEABLE)`` → ``BLOCKED_DEPLOY_FAILED`` so the
+      story stops looping on a dead PR and surfaces for attention.
+    * PR **OPEN** → local projection already matches GitHub → no-op.
+    * **Unknown** query result (``None``) → no-op. Fail-safe: never advance a
+      story on an ambiguous or failed GitHub query.
+
+    Idempotent: once reconciled the story leaves ``_MERGEABLE_STATES`` and is no
+    longer a candidate, so a consistent DB produces zero mutations and zero
+    events on re-run. Bounded: at most ``max_reconcile`` GitHub calls per tick.
+    Pure DB rewrite + read-only gh queries — no LLM / git-write work, mirroring
+    ``_recover_blocked_stories``. Returns ``(slug, from_state, to_state)`` tuples
+    for the TickSummary.
+    """
+    from factory.chain.auto_merge import _MERGEABLE_STATES
+    from factory.chain.handlers import persist_story
+    from factory.chain.state_machine import (
+        EVENT_MERGED,
+        EVENT_PR_UNMERGEABLE,
+        IllegalTransitionError,
+    )
+
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+    with Session(eng) as session:
+        candidates = session.exec(
+            select(StoryRecord).where(
+                StoryRecord.app == app,
+                StoryRecord.state.in_(list(_MERGEABLE_STATES)),  # type: ignore[attr-defined]
+            )
+        ).all()
+
+    reconciled: list[tuple[str, str, str]] = []
+    checked = 0
+    for story in candidates:
+        pr_number = story.github_pr_number
+        if pr_number is None or pr_number <= 0:
+            continue
+        if checked >= max_reconcile:
+            break
+        checked += 1
+
+        pr_state = query_pr_state(app_config=cfg, pr_number=pr_number)
+        if pr_state is None or pr_state == "OPEN":
+            # Unknown → fail-safe no-op (never advance on uncertainty).
+            # OPEN → local projection already matches GitHub → no-op.
+            continue
+
+        from_state = story.state
+        event = EVENT_MERGED if pr_state == "MERGED" else EVENT_PR_UNMERGEABLE
+        try:
+            new_state = advance(story, event)
+        except IllegalTransitionError:
+            # No transition for this (state, event) pair — surface the observed
+            # drift but do NOT force an illegal mutation.
+            _write_drift_event(
+                root=root,
+                story=story,
+                from_state=from_state,
+                pr_state=pr_state,
+                action="observed_no_transition",
+            )
+            continue
+
+        story.state = new_state.value
+        if event == EVENT_PR_UNMERGEABLE:
+            story.error = (
+                f"reconcile: PR #{pr_number} is CLOSED on GitHub (not merged) "
+                f"while local state was {from_state!r}; routed to "
+                f"{new_state.value} for attention."
+            )
+        persist_story(story, db)
+        if event == EVENT_MERGED:
+            # Reconcile is the PRIMARY detector of the real (async) merge now
+            # that auto-merge no longer claims merged=True on mere
+            # auto-merge-enable. Trigger the deploy exactly like auto-merge's
+            # merged path so ``_latest_undeployed_sha`` picks it up and the app
+            # actually deploys. Best-effort + idempotent; never crashes reconcile.
+            _record_reconciled_merge_and_enqueue_deploy(
+                app=app, story=story, pr_number=pr_number, db=db, root=root
+            )
+        reconciled.append((story.slug, from_state, new_state.value))
+        _write_drift_event(
+            root=root,
+            story=story,
+            from_state=from_state,
+            pr_state=pr_state,
+            action=f"advanced_to:{new_state.value}",
+        )
+
+    return reconciled
+
+
 def _build_current_state(
     *,
     root: Path,
@@ -788,15 +1254,30 @@ def tick(
                 halt_reason=_halt_reason,
             )
     except Exception as _halt_exc:  # noqa: BLE001
-        # Phase 8 (Phase 7 reviewer note): log the exception to stderr so an
-        # operator notices the broken halt module.  Continue with halt=False
-        # (fail-open: a broken halt module must not silently prevent all ticks).
-        import sys as _sys
-        print(
-            f"[orchestrator] WARNING: halt-check raised an exception: {_halt_exc!r}; "
-            "continuing with tick (fail-open). This may indicate a broken halt module.",
-            file=_sys.stderr,
-        )
+        # The dangerous data path (a corrupt/unreadable halt FILE) now fails
+        # SAFE inside halt.is_halted itself. This guard only fires when the halt
+        # MODULE is broken (e.g. ImportError). We keep fail-open here — halting
+        # all ticks on an import error would wedge the factory with no recovery
+        # path — but we make it a CRITICAL, visible alert (not a stderr line the
+        # FMS can't see) so the broken module gets fixed.
+        try:
+            from factory.manager.signals import write_alert_event
+
+            write_alert_event(
+                "halt_check_module_error",
+                f"halt-check raised {_halt_exc!r}; continuing with tick "
+                "(fail-open). Indicates a broken halt module, not a corrupt "
+                "halt file (that path fails safe).",
+                severity="critical",
+                software_factory_root=root,
+            )
+        except Exception:  # noqa: BLE001 - alerting is best-effort
+            import sys as _sys
+            print(
+                f"[orchestrator] CRITICAL: halt-check raised {_halt_exc!r} "
+                "(fail-open) and alert emit failed.",
+                file=_sys.stderr,
+            )
 
     settings = load_settings(root)
     summary = TickSummary(app=app, dry_run=dry_run)
@@ -825,6 +1306,22 @@ def tick(
         # mid-attempt). Pure DB rewrite — no LLM / git work. See the function
         # docstring for the recovery mapping.
         if not dry_run:
+            # Reconcile-from-authoritative FIRST: local factory.db state is a
+            # PROJECTION; GitHub is the system of record for PR merge/close truth.
+            # Pull authoritative PR state into the DB BEFORE any recovery or
+            # dispatch decision, so a merge that happened out-of-band flows into
+            # deploy (and a dead/closed PR sinks to attention) instead of the
+            # recovery/dispatch logic acting on stale local state. Read-only gh
+            # queries + pure DB rewrite; a gh failure is a fail-safe no-op.
+            try:
+                drifted = reconcile_from_github(db, app, cfg=cfg, root=root)
+                for slug, from_state, to_state in drifted:
+                    summary.handler_runs.append((slug, f"{from_state}(drift)", to_state))
+            except Exception as exc:
+                summary.errors.append(
+                    (app, f"github reconcile failed (non-fatal): {exc!r}")
+                )
+
             try:
                 recovered = _prune_stale_in_progress(db, app, settings=settings, root=root)
                 for slug, from_state, to_state in recovered:
@@ -1012,6 +1509,52 @@ def tick(
                     # webhook) or terminal. Stop driving.
                     break
 
+                # ---- WS1.1 GLOBAL per-story budget circuit breaker ----------
+                # BEFORE dispatching the handler, check the aggregate per-story
+                # ceiling. The composed loops (dev retries, reviewer cycles,
+                # auto-recovery re-dispatch, CI-fix) each have their own counter
+                # but no shared ceiling; a pathological story can burn the
+                # product of all of them. If the story's total attempts or total
+                # spend has crossed the per-story cap, route it to the terminal
+                # BLOCKED_BUDGET_EXCEEDED sink and emit an EVIDENCE event — never
+                # silently drop. Terminal (no auto-recovery back into the loop)
+                # so a broken story stops burning spend.
+                _budget_reason = _story_budget_breaker_reason(story, settings.caps)
+                if _budget_reason is not None:
+                    from_state = story.state
+                    story.state = advance(story, EVENT_BUDGET_EXCEEDED).value
+                    story.last_rejection_reason = _budget_reason
+                    H.persist_story(story, db)
+                    _last_signature = story.error or story.last_rejection_reason
+                    log_story_event(
+                        story.id,
+                        "budget_exceeded",
+                        {
+                            "story_id": story.id,
+                            "slug": story.slug,
+                            "handler": handler_name,
+                            "from_state": from_state,
+                            "to_state": story.state,
+                            "reason": _budget_reason,
+                            "total_attempts": story.total_attempts,
+                            "total_spend_usd": round(story.total_spend_usd, 4),
+                            "per_story_attempts": getattr(
+                                settings.caps, "per_story_attempts", None
+                            ),
+                            "per_story_spend_usd": getattr(
+                                settings.caps, "per_story_spend_usd", None
+                            ),
+                            "dev_retries": story.dev_retries,
+                            "reviewer_cycles": story.reviewer_cycles,
+                            "last_failure_signature": _last_signature,
+                        },
+                        software_factory_root=root,
+                        slug_hint=story.slug,
+                    )
+                    summary.handler_runs.append((story.slug, from_state, story.state))
+                    summary.stories_blocked += 1
+                    break
+
                 # Dependency-ordering gate. A story does not build until every
                 # lower-id story in its own direction is deployed (id order ==
                 # SM build order: foundations first). This stops a dependent
@@ -1120,6 +1663,10 @@ def tick(
                     software_factory_root=root,
                     slug_hint=story.slug,
                 )
+                # WS1.1 breaker accumulator: count this dispatch. Bumped BEFORE
+                # invoking so a handler that crashes still counts as a burned
+                # attempt (the pre-dispatch check above reads this next tick).
+                story.total_attempts += 1
                 try:
                     result = _invoke_handler(
                         handler_name,
@@ -1140,6 +1687,13 @@ def tick(
                     # next tick will dispatch the same handler again.
                     story.state = from_state
                     story.error = repr(exc)
+                    # Refresh the breaker's spend accumulator from the ledger:
+                    # a crashed handler may still have recorded partial run cost.
+                    # None == transient read failure → keep the prior value
+                    # (never poison the accumulator with a sentinel).
+                    _spend = _story_ledger_spend_usd(db, story.id)
+                    if _spend is not None:
+                        story.total_spend_usd = _spend
                     H.persist_story(story, db)
                     summary.errors.append((story.slug, repr(exc)))
                     log_story_event(
@@ -1153,7 +1707,50 @@ def tick(
                         software_factory_root=root,
                         slug_hint=story.slug,
                     )
+                    # WS4.2: record the failed dispatch as a chain_step too, so
+                    # the replayable stream captures crashes, not just advances.
+                    emit_chain_step(
+                        story,
+                        handler=handler_name,
+                        from_state=from_state,
+                        to_state=story.state,
+                        outcome="exception",
+                        software_factory_root=root,
+                        extra={"exception": repr(exc)},
+                    )
                     break
+                # WS1.1 breaker accumulator: refresh this story's aggregate
+                # spend from the D003 per-run ledger (authoritative — no
+                # double-count on retries). None == a transient read failure
+                # (e.g. sqlite lock from the concurrent manager daemon): keep
+                # the prior accumulator rather than overwriting it, so a glitch
+                # can't trip the terminal breaker on a healthy story. The
+                # handler persisted its own state transition; persist again so
+                # total_attempts/total_spend_usd survive to the next tick's
+                # pre-dispatch breaker check.
+                _spend = _story_ledger_spend_usd(db, story.id)
+                if _spend is not None:
+                    story.total_spend_usd = _spend
+                # WS1.1 advance-decay: if this dispatch moved the story to a NEW
+                # happy-path milestone (strictly beyond its high-water mark, so
+                # NOT a dev<->review oscillation), reset the attempt counter so a
+                # poisoned historical count (e.g. attempts burned by an earlier
+                # infra bug) can't false-trip the breaker on a story that IS
+                # progressing. Spend stays the hard ceiling. Persist happens
+                # below so the decayed counter survives to the next tick.
+                if _apply_advance_decay(story):
+                    log_story_event(
+                        story.id,
+                        "budget_attempts_decayed",
+                        {
+                            "to_state": story.state,
+                            "progress_ordinal": story.max_progress_ordinal,
+                            "total_spend_usd": round(story.total_spend_usd, 4),
+                        },
+                        software_factory_root=root,
+                        slug_hint=story.slug,
+                    )
+                H.persist_story(story, db)
                 summary.handler_runs.append((story.slug, from_state, story.state))
                 summary.stories_advanced += 1
                 log_story_event(
@@ -1168,6 +1765,17 @@ def tick(
                     },
                     software_factory_root=root,
                     slug_hint=story.slug,
+                )
+                # WS4.2: append a typed, replayable chain_step record for this
+                # dispatch (append-only per-app stream; content hash/ref of the
+                # step's persisted artifact). Best-effort — never crashes a tick.
+                emit_chain_step(
+                    story,
+                    handler=handler_name,
+                    from_state=from_state,
+                    to_state=story.state,
+                    outcome="error" if result.error else "advanced",
+                    software_factory_root=root,
                 )
                 if result.error or story.state == StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value:
                     summary.stories_blocked += 1

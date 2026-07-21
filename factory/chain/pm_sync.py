@@ -12,10 +12,15 @@ For each pending direction in ``apps/<app>/directions/``:
 7. Status → ``pm-validated`` (Phase 2 spawns child story issues from
    ``pm_result.child_stories``).
 
-``dry_run=True`` skips both the LLM call and the GitHub call; useful for CI
-and the acceptance script. In dry-run, ``pm_result`` is computed from a
-deterministic fixture based on the parsed direction so the downstream state
-shape is exercised.
+``dry_run=True`` is a PURE PREVIEW — it skips the LLM and GitHub calls AND
+makes no persistent mutation: no ``state.yaml`` write (status/pm_result stay
+as-is), no ``runs`` row, no StoryRecord persisted, no GC close on disk. It
+only computes what the real run WOULD decide and returns it in the summary
+(``pm_result`` from a deterministic fixture, ``gc_closed`` as the would-close
+list). This makes dry-run repeatable and, crucially, incapable of spawning
+live dispatchable work: a "safe" preview that flipped a direction to
+``pm-validated`` and persisted rebuild-stories once caused the 2026-07-20
+self-tick incident. The real (non-dry) run is the only writer.
 """
 
 from __future__ import annotations
@@ -25,7 +30,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from factory.app_config import AppConfig, load_app_config, resolve_app_repo_path
+from factory.app_config import (
+    AppConfig,
+    load_app_config,
+    resolve_app_repo_path,
+    targets_factory_repo,
+)
 from factory.backpressure.validator import ValidationResult, validate_direction
 from factory.context.loader import compose_context_prelude
 from factory.directions.parser import Direction, MissingDirection, resolve_direction_chain
@@ -39,7 +49,6 @@ from factory.directions.watcher import (
     pending_directions,
 )
 from factory.model_router import route
-from factory.runner import _record_run
 
 _PM_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -498,6 +507,22 @@ def pm_sync(
             "github_client is required for real pm-sync; pass --dry-run for offline use"
         )
 
+    # Self-tick guard (Tier 3 — FACTORY-SELF-TICK). The factory building its OWN
+    # repo (apps/factory) is OFF by default: while ``self_tick_enabled`` is
+    # False we do NOT turn apps/factory directions into chain stories, so merely
+    # bootstrapping apps/factory (config + directions on disk) never silently
+    # starts the factory ticking on itself. The orchestrator flips the flag to
+    # enable self-improvement deliberately. Non-factory apps are unaffected
+    # (the guard only triggers for the factory's own repo). The chain-side
+    # staging gate is a SEPARATE, always-on protection — this guard only decides
+    # whether self-improvement work enters the chain at all.
+    if (
+        app_config is not None
+        and targets_factory_repo(app_config.repo)
+        and not app_config.self_tick_enabled
+    ):
+        return PMSyncSummary()
+
     summary = PMSyncSummary()
     pending = [
         d for d in pending_directions(app, root, db_path) if d.status in pending_statuses
@@ -524,34 +549,16 @@ def pm_sync(
             validation = validate_direction(direction)
 
             if not validation.is_valid:
-                if dry_run:
-                    pm_result = _dry_run_pm_result(direction, validation)
-                    _record_run(
-                        persona="pm",
-                        model=route("pm"),
-                        mode="pm-sync-dry-run",
-                        tokens_in=0,
-                        tokens_out=0,
-                        cost_usd=0.0,
-                        success=True,
-                        story_path=str(direction.dir_path),
-                        repo_path="<n/a>",
-                        error=None,
-                        db_path=db_path,
-                    )
-                    merge_state(
-                        direction,
-                        {"pm_result": pm_result, "validation_issues": validation.issues},
-                    )
-                    mark_direction_status(
-                        direction,
-                        "needs-direction",
-                        by="factory.chain.pm_sync(dry-run)",
-                        details={"missing": validation.missing},
-                    )
-                else:
+                # Dry-run is a PURE PREVIEW: it must not mutate any persistent
+                # state (no state.yaml write, no runs row, no GitHub call). A
+                # dry-run that flips a direction's status or records a pm row
+                # is the proxy!=real footgun that once let a "safe" preview
+                # spawn live rebuild-stories (2026-07-20 self-tick incident).
+                # We still compute pm_result so the returned summary reflects
+                # exactly what the real run would decide.
+                pm_result = _dry_run_pm_result(direction, validation)
+                if not dry_run:
                     assert app_config is not None and github_client is not None
-                    pm_result = _dry_run_pm_result(direction, validation)
                     record_needs_direction(
                         direction,
                         validation.missing,
@@ -573,27 +580,14 @@ def pm_sync(
                 continue
 
             # Backpressure is sufficient — invoke PM persona (or fixture).
+            # Dry-run stays a pure preview: no PM LLM call, no state.yaml
+            # write, no runs row, no GitHub issue — it only computes what the
+            # real run WOULD do and surfaces it in the returned summary.
             if dry_run:
                 pm_result = _dry_run_pm_result(direction, validation)
-                _record_run(
-                    persona="pm",
-                    model=route("pm"),
-                    mode="pm-sync-dry-run",
-                    tokens_in=0,
-                    tokens_out=0,
-                    cost_usd=0.0,
-                    success=True,
-                    story_path=str(direction.dir_path),
-                    repo_path="<n/a>",
-                    error=None,
-                    db_path=db_path,
-                )
             else:
                 pm_result = _call_pm_persona(direction, app_repo_path, root)
-
-            merge_state(direction, {"pm_result": pm_result})
-
-            if not dry_run:
+                merge_state(direction, {"pm_result": pm_result})
                 assert app_config is not None and github_client is not None
                 open_or_update_tracker_issue(
                     direction,
@@ -602,13 +596,12 @@ def pm_sync(
                     pm_result=pm_result,
                     software_factory_root=root,
                 )
-
-            mark_direction_status(
-                direction,
-                "pm-validated",
-                by="factory.chain.pm_sync" + ("(dry-run)" if dry_run else ""),
-                details={"confidence": pm_result.get("confidence")},
-            )
+                mark_direction_status(
+                    direction,
+                    "pm-validated",
+                    by="factory.chain.pm_sync",
+                    details={"confidence": pm_result.get("confidence")},
+                )
             summary.validated += 1
 
             # Spawn StoryRecord rows for each child_story in pm_result.

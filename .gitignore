@@ -37,12 +37,23 @@ state/concerns/
 state/manager_proposals/
 # Post-merge context-refresh scratch worktrees.
 state/context-refresh/
+# WS1.2 independent acceptance oracles — spec-derived acceptance tests authored
+# at story spawn and stored per-story under state/acceptance/<app>/<id>/. Runtime
+# artifacts kept OUT of the app repo AND the dev worktree so the dev never sees
+# them; the durable record is the merge gate result, not git.
+state/acceptance/
+# Per-app machine-writable runtime overrides (factory.runtime_state). Holds
+# machine flips like deploy_enabled that used to be written into config.yaml
+# in-place — split out so operator-authored config.yaml is never machine-
+# mutated and the two never drift. Runtime-only; config.yaml is the durable
+# operator default.
+state/runtime/
 # Halt/apply audit trails — runtime bookkeeping mutated by every
 # halt/resume/apply cycle; ``factory resume`` archives into them.
 state/.halt_history.json
 state/.manager_apply_history.json
 state/.improver_backoff.json
 state/*.log
-# pytest-cov data file, written into the repo root by coverage runs.
+
+# coverage.py data file (never commit)
 .coverage
-.coverage.*

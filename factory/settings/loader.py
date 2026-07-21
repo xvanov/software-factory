@@ -23,6 +23,15 @@ class CapsConfig(BaseModel):
     per_repo_concurrent_agents: int = 2
     daily_spend_usd: float = 10.0
     hourly_spend_usd: float = 2.0
+    # WS1.1 GLOBAL per-story circuit breaker. The daily/hourly caps above are
+    # factory-wide; these bound a SINGLE story's aggregate cost across every
+    # composed loop it passes through (dev retries, reviewer cycles, tech_writer,
+    # docs, auto-recovery re-dispatch, CI-fix). Crossing either advances the
+    # story to the terminal BLOCKED_BUDGET_EXCEEDED sink so one pathological
+    # story can't burn the product of all the per-loop counters. Configurable
+    # from the same ``caps:`` block in ``factory_settings.yaml``.
+    per_story_spend_usd: float = 5.0
+    per_story_attempts: int = 20
 
 
 class QueuesConfig(BaseModel):
@@ -122,6 +131,16 @@ class DevConvergenceConfig(BaseModel):
     # Per-sandbox wall-clock passed to ``sandbox_run`` for dev; the module
     # default (1800s) stays in force when this matches it.
     dev_sandbox_timeout_s: int = 1800
+    # WS4.2 resume-from-checkpoint. When True (default), a dev dispatch that
+    # finds a persisted GREEN checkpoint (a prior sandbox completed green but
+    # the tick died before the DB advanced out of ``dev_in_progress``) resumes
+    # to ``tests_green`` from the persisted result INSTEAD of re-running the
+    # (already-complete, already-in-the-worktree) dev LLM. Default-on is safe:
+    # the skip fires ONLY when an unambiguous green checkpoint is present, which
+    # is written and then cleared within a single normal ``handle_dev`` call, so
+    # it survives only a genuine interruption. Set False to force the historical
+    # always-re-run behaviour.
+    resume_from_checkpoint: bool = True
 
 
 class AutoPMSyncConfig(BaseModel):
