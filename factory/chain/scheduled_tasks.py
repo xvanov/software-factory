@@ -771,7 +771,7 @@ def _build_ux_auditor_context(app: str, software_factory_root: Path) -> str:
         "- The **flow filename** exactly as shown under Flow Artifacts "
         "(e.g. `001-checkout-flow/flow.md`).\n"
         "- The **step number** within that flow file "
-        "(e.g. `Step 2` for \"2. Choose plan\").\n"
+        '(e.g. `Step 2` for "2. Choose plan").\n'
         "Include the `flow` and `step` fields in every finding JSON object.\n"
     )
 

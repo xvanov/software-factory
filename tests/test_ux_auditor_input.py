@@ -238,7 +238,11 @@ def _write_app_with_multiple_flows(tmp_path: Path) -> Path:
     directions.mkdir(parents=True, exist_ok=True)
 
     for did, flow_title, flow_steps in [
-        ("001-checkout-flow", "Checkout flow", ["1. Open app", "2. Choose plan", "3. Confirm purchase"]),
+        (
+            "001-checkout-flow",
+            "Checkout flow",
+            ["1. Open app", "2. Choose plan", "3. Confirm purchase"],
+        ),
         ("002-onboard-flow", "Onboard flow", ["1. Sign up", "2. Verify email", "3. Set profile"]),
     ]:
         flow_dir = directions / did
@@ -252,7 +256,8 @@ def _write_app_with_multiple_flows(tmp_path: Path) -> Path:
             encoding="utf-8",
         )
         (flow_dir / "state.yaml").write_text(
-            yaml.safe_dump({"status": "created", "source": "cli"}), encoding="utf-8",
+            yaml.safe_dump({"status": "created", "source": "cli"}),
+            encoding="utf-8",
         )
 
     (tmp_path / "state").mkdir(parents=True, exist_ok=True)
