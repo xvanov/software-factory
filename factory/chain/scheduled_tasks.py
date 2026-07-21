@@ -728,36 +728,42 @@ def _collect_flow_artifacts(app: str, software_factory_root: Path) -> list[tuple
     return artifacts
 
 
-def _build_ux_auditor_context(app: str, software_factory_root: Path) -> str:
-    """Build the UX-auditor-specific context section with flow artifacts,
-    app URL context, and runtime context.
+def _extract_http_urls(text: str) -> list[str]:
+    """Return distinct HTTP(S) URLs found in arbitrary shell text."""
+    import re
 
-    Returns a markdown string intended to be appended to the persona prompt
-    before the context prelude.
+    matches = re.findall(r"https?://[^\s`\"')]+", text)
+    return sorted({m.rstrip(".,;:") for m in matches})
+
+
+def _build_ux_auditor_context(app: str, software_factory_root: Path) -> str:
+    """Build UX-auditor runtime input context for scheduled dispatch.
+
+    The scheduled UX run MUST carry at least one concrete ``flow.md`` artifact;
+    if none are available, the scheduler refuses dispatch instead of sending a
+    guess-based prompt.
     """
     from datetime import UTC, datetime
 
     from factory.app_config import load_app_config
 
-    parts: list[str] = []
-    parts.append("## Scheduled UX Audit Runtime Inputs\n")
+    parts: list[str] = ["## Scheduled UX Audit Runtime Inputs\n"]
 
     # -- Flow artifacts (AC1.1) --
     flow_artifacts = _collect_flow_artifacts(app, software_factory_root)
+    if not flow_artifacts:
+        raise ValueError(
+            f"scheduled ux_auditor input for app '{app}' requires at least one flow.md artifact"
+        )
+
     parts.append("\n### Flow Artifacts\n")
-    if flow_artifacts:
-        parts.append(
-            f"_The factory collected {len(flow_artifacts)} flow.md file(s) from past "
-            f"directions. Use these to drive your audit._\n"
-        )
-        for label, content in flow_artifacts:
-            parts.append(f"\n#### {label}\n")
-            parts.append(content + "\n")
-    else:
-        parts.append(
-            "_No flow.md files found in existing directions. "
-            "Run a manual UX audit or file a direction with a flow.md first._\n"
-        )
+    parts.append(
+        f"_Collected {len(flow_artifacts)} flow.md file(s) from prior directions. "
+        "Use these concrete filenames and numbered steps during the audit._\n"
+    )
+    for label, content in flow_artifacts:
+        parts.append(f"\n#### {label}\n")
+        parts.append(content + "\n")
 
     # -- App URL context (AC1.2) --
     parts.append("\n### App URL Context\n")
@@ -765,12 +771,24 @@ def _build_ux_auditor_context(app: str, software_factory_root: Path) -> str:
         cfg = load_app_config(app, software_factory_root)
         parts.append(f"- App name: `{cfg.name}`\n")
         parts.append(f"- Repo: `{cfg.repo}`\n")
+
+        url_candidates: list[str] = []
+        if cfg.deploy.health_check_command:
+            url_candidates.extend(_extract_http_urls(cfg.deploy.health_check_command))
+        if cfg.deploy.smoke_test_command:
+            url_candidates.extend(_extract_http_urls(cfg.deploy.smoke_test_command))
+
         if cfg.deploy.enabled:
             parts.append("- Deploy: **enabled**\n")
             if cfg.deploy.health_check_command:
-                parts.append(f"  - Health check: `{cfg.deploy.health_check_command}`\n")
+                parts.append(f"  - Health check command: `{cfg.deploy.health_check_command}`\n")
+            if url_candidates:
+                for url in sorted(set(url_candidates)):
+                    parts.append(f"  - App URL candidate: `{url}`\n")
+            else:
+                parts.append("  - App URL candidate: not declared in deploy commands\n")
         else:
-            parts.append("- Deploy: **disabled** (no live URL available)\n")
+            parts.append("- Deploy: **disabled** (no live URL configured)\n")
     except Exception:  # noqa: BLE001 - best-effort
         parts.append("- (could not load app config)\n")
 
@@ -779,6 +797,7 @@ def _build_ux_auditor_context(app: str, software_factory_root: Path) -> str:
     parts.append(f"- Timestamp (UTC): `{datetime.now(UTC).isoformat()}`\n")
     parts.append(f"- Software factory root: `{software_factory_root}`\n")
     parts.append(f"- Target app: `{app}`\n")
+    parts.append("- Scheduler transport: `text_run`\n")
 
     return "".join(parts)
 
