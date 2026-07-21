@@ -141,6 +141,22 @@ def test_incomplete_when_nothing_shipped() -> None:
     )
 
 
+def test_incomplete_when_sibling_ci_pending() -> None:
+    # Adversarial-review HIGH: CI_PENDING is "terminal-by-omission" in the state
+    # machine (no outgoing _TRANSITIONS edge), so an is_terminal-based check
+    # wrongly treated a sibling mid-CI as resolved and closed the tracker while
+    # work was in flight. The allowlist must reject it.
+    assert not _direction_is_complete(
+        [_story(StoryState.DEPLOYED.value), _story(StoryState.CI_PENDING.value)]
+    )
+
+
+def test_incomplete_when_sibling_ready_for_merge() -> None:
+    assert not _direction_is_complete(
+        [_story(StoryState.DEPLOYED.value), _story(StoryState.READY_FOR_MERGE.value)]
+    )
+
+
 def test_incomplete_when_empty() -> None:
     assert not _direction_is_complete([])
 
@@ -318,3 +334,17 @@ def test_reconcile_swallows_bad_issue_and_continues(tmp_path: Path) -> None:
     assert any(num == 88 for _, num, _ in report["errors"])
     assert issues[54].state == "closed"
     assert issues[55].state == "closed"
+
+
+def test_reconcile_bad_db_returns_error_not_raise(tmp_path: Path) -> None:
+    # Adversarial-review MEDIUM: the DB read was outside try/except, so a
+    # missing/locked/corrupt factory.db raised instead of returning an error
+    # row — would break a tick if ever wired onto the tick path.
+    client = _Client(_Repo({}))
+    bogus = tmp_path / "factory.db"
+    bogus.write_bytes(b"this is not a sqlite database")  # corrupt -> read raises
+    report = reconcile_completed_issues(
+        _app_config(), client, software_factory_root=tmp_path, db_path=bogus
+    )
+    assert report["errors"] and report["errors"][0][0] == "db"
+    assert report["trackers_closed"] == [] and report["stories_closed"] == []

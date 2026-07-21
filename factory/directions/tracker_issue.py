@@ -228,46 +228,39 @@ def close_story_issue(
         return False
 
 
-# Story states that resolve a direction. A tracker may close once at least one
-# child story DEPLOYED and every child is resolved. DEPLOYED = shipped;
-# SUPERSEDED_BY_SIBLING = the dual-draft loser (never ships, by design);
-# "closed" = a regime-invalidated / abandoned row (NOT a StoryState enum
-# member — the orchestrator writes the literal). BLOCKED_* states are terminal
-# for the chain but *unresolved* (a human must act), so they deliberately keep
-# the tracker OPEN.
-_INVALIDATED_STORY_STATE = "closed"
+# Story states that RESOLVE a child story for the purpose of closing a
+# direction tracker. Deliberately an explicit allowlist (not ``is_terminal``):
+#   DEPLOYED             = shipped;
+#   SUPERSEDED_BY_SIBLING = the dual-draft loser (never ships, by design);
+#   "closed"             = a regime-invalidated / abandoned story row.
+# Everything else keeps the tracker OPEN — including ``BLOCKED_*`` (needs a
+# human) AND states like ``CI_PENDING`` that are "terminal-by-omission" in the
+# state machine (the auto-merge poller drives ``ci_pending -> ci_green`` by
+# direct assignment, not a ``_TRANSITIONS`` edge, so ``is_terminal(ci_pending)``
+# is wrongly True). Using an allowlist means a story mid-CI can never be
+# mistaken for resolved — the fail-safe direction.
+_RESOLVED_STORY_STATES = frozenset({"deployed", "superseded_by_sibling", "closed"})
 
 
 def _direction_is_complete(rows: list[Any]) -> bool:
-    """True when a direction's winner shipped and no child work is active/blocked.
+    """True when a direction's winner shipped and no child work is unresolved.
 
     Fixes the historical bug where the check required *every* story to be
     ``DEPLOYED``: a dual-draft direction can never satisfy that because its
     losing sibling lands in ``SUPERSEDED_BY_SIBLING``, so the tracker issue
     leaked open forever. We instead require (a) at least one DEPLOYED story
-    (a real deliverable shipped) and (b) no child story that is still active
-    (non-terminal) or ``BLOCKED_*`` (terminal but needs a human).
+    (a real deliverable shipped) and (b) every child story in an explicitly
+    *resolved* state (:data:`_RESOLVED_STORY_STATES`). Any other state —
+    in-flight (``pr_open``/``ci_pending``/…) or ``BLOCKED_*`` — keeps the
+    tracker open.
     """
-    from factory.chain.state_machine import StoryState, is_terminal
+    from factory.chain.state_machine import StoryState
 
     if not rows:
         return False
     if not any(r.state == StoryState.DEPLOYED.value for r in rows):
         return False  # nothing has shipped yet — keep the tracker open
-    for r in rows:
-        state = r.state or ""
-        if state.startswith("blocked_"):
-            return False  # unresolved blocked work — a human must act
-        try:
-            if not is_terminal(StoryState(state)):
-                return False  # still in flight
-        except ValueError:
-            # Not a StoryState enum member. The only such value the chain
-            # persists is the invalidated "closed" sink, which is resolved;
-            # anything else unknown is treated as unresolved (fail safe).
-            if state != _INVALIDATED_STORY_STATE:
-                return False
-    return True
+    return all((r.state or "") in _RESOLVED_STORY_STATES for r in rows)
 
 
 def maybe_close_tracker_issue(
@@ -359,25 +352,33 @@ def reconcile_completed_issues(
     """
     from collections import defaultdict
 
-    from sqlmodel import Session, select
-
-    from factory.chain.state_machine import StoryRecord, StoryState
-    from factory.directions.parser import parse_direction_dir
-    from factory.runner import _engine
-
     report: dict[str, Any] = {
         "trackers_closed": [],
         "stories_closed": [],
         "would_close": [],
         "errors": [],
     }
-    root = Path(software_factory_root)
-    db = db_path or (root / "state" / "factory.db")
 
-    with Session(_engine(db)) as session:
-        story_rows = list(
-            session.exec(select(StoryRecord).where(StoryRecord.app == app_config.name)).all()
-        )
+    # Load story rows for this app. The DB read (missing / locked / corrupt
+    # ``factory.db``) must NOT raise — this function's contract is fail-safe so
+    # it can be run on a schedule / on the tick path without breaking it.
+    try:
+        from sqlmodel import Session, select
+
+        from factory.chain.state_machine import StoryRecord, StoryState
+        from factory.directions.parser import parse_direction_dir
+        from factory.runner import _engine
+
+        root = Path(software_factory_root)
+        db = db_path or (root / "state" / "factory.db")
+        with Session(_engine(db)) as session:
+            story_rows = list(
+                session.exec(select(StoryRecord).where(StoryRecord.app == app_config.name)).all()
+            )
+    except Exception as exc:  # noqa: BLE001 - a bad DB must not break the sweep
+        report["errors"].append(("db", str(db_path or "state/factory.db"), str(exc)))
+        return report
+
     by_direction: dict[str, list[Any]] = defaultdict(list)
     for r in story_rows:
         by_direction[r.direction_id].append(r)
