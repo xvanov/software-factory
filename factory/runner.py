@@ -300,6 +300,7 @@ def _record_run(
 ) -> None:
     ended_at = datetime.now(UTC).isoformat()
     redacted_error = redact_secrets(error) if error is not None else None
+    bounded_error = truncate_error(redacted_error) if redacted_error is not None else None
     engine = _engine(db_path)
     with Session(engine) as session:
         row = Run(
@@ -313,7 +314,7 @@ def _record_run(
             success=success,
             story_path=story_path,
             repo_path=repo_path,
-            error=redacted_error,
+            error=bounded_error,
             duration_s=duration_s,
             story_id=story_id,
             model_tier=model_tier,
@@ -418,6 +419,31 @@ def redact_secrets(text: str) -> str:
 
     combined = "|".join(patterns)
     return re.sub(combined, _REDACTION_TOKEN, text)
+
+
+_DEFAULT_ERROR_MAX_LENGTH = 4000
+
+
+def truncate_error(text: str, max_length: int = _DEFAULT_ERROR_MAX_LENGTH) -> str:
+    """Return *text* truncated to fit within *max_length* with a ``...[truncated N chars]`` marker.
+
+    Text at or under *max_length* is returned unchanged.  The total output
+    (including marker) never exceeds *max_length*, making the helper naturally
+    idempotent.
+    """
+    if len(text) <= max_length:
+        return text
+
+    marker_placeholder = "...[truncated NNNNN chars]"
+    keep_len = max_length - len(marker_placeholder)
+    if keep_len < 0:
+        keep_len = 0
+
+    truncated = text[:keep_len]
+    removed = len(text) - len(truncated)
+    marker = f"...[truncated {removed} chars]"
+
+    return truncated + marker
 
 
 def _read_persona_prompt(persona: str) -> str:
