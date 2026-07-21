@@ -56,15 +56,16 @@ AC1.1: WHEN replay-based UX auditing is about to run, GIVEN zero `flow.md` files
 ## Dev Agent Record
 - Status: Implemented
 - Agent: Amelia (dev)
-- Branch: factory-89-gate-ux-audits-on-available-flow-artifacts-narrow-read-alt-a
+- Branch: factory/story-89-gate-ux-audits-on-available-flow-artifacts-narrow-read-alt-a
 - Notes:
-  - Added flow-artifact gate in `run_scheduled_persona` (`factory/chain/scheduled_tasks.py`): when `persona == "ux_auditor"` and `_collect_flow_artifacts` returns empty, the run is rejected with status `"rejected"` and error `"ux_auditor_no_flow_artifacts"` before any LLM call.
-  - Gate runs only on live (non-dry-run) paths; dry-run uses fixtures and is not gated.
-  - Existing `_build_ux_auditor_context` ValueError remains as a belt-and-suspenders safety net inside `_live_run`.
-  - Updated test `test_run_scheduled_persona_skips_when_ux_live_run_has_no_flow_artifact` to expect `"rejected"` status with `"ux_auditor_no_flow_artifacts"` error.
-  - Added `test_live_run_is_not_blocked_when_flow_md_is_available` proving normal path is preserved.
-  - Added `test_dry_run_does_not_require_flow_md_artifacts` proving dry-run is not gated.
-  - No payload-enrichment changes introduced.
+  - Added flow-artifact gate in `run_scheduled_persona` (`factory/chain/scheduled_tasks.py`): when `persona == "ux_auditor"` and `_collect_flow_artifacts` returns empty, the run is recorded through `_record_and_return` as `status="rejected"` with `error="ux_auditor_no_flow_artifacts"` before `_live_run` executes.
+  - Preserved existing behavior when one or more `flow.md` artifacts are available; UX auditor live runs still reach normal execution and record successful completion.
+  - Added/updated coverage in `tests/test_ux_auditor_input.py`:
+    - `test_run_scheduled_persona_skips_when_ux_live_run_has_no_flow_artifact`
+    - `test_live_run_is_not_blocked_when_flow_md_is_available`
+    - `test_dry_run_does_not_require_flow_md_artifacts`
+  - Verified no payload-enrichment code was introduced in this story slice.
+  - Validation run: `uv run pytest -q` (green).
 
 ## Senior Developer Review
 - Status: Pending
