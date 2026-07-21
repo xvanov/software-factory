@@ -219,3 +219,157 @@ def test_file_finding_creates_flow_md_for_ux_finding(tmp_path: Path) -> None:
     flow_text = flow_md.read_text(encoding="utf-8")
     assert "Flow: checkout-flow.md" in flow_text
     assert "Step: 2" in flow_text
+
+
+# --------------------------------------------------------------------------- #
+# Broad-read tests: filename + step-number metadata transport survival
+# --------------------------------------------------------------------------- #
+
+
+def _write_app_with_multiple_flows(tmp_path: Path) -> Path:
+    """Create an app with two flow-artifact-bearing direction dirs."""
+    apps = tmp_path / "apps" / "sacrifice"
+    apps.mkdir(parents=True)
+    (apps / "config.yaml").write_text(
+        yaml.safe_dump({"name": "sacrifice", "repo": "o/r"}), encoding="utf-8"
+    )
+
+    directions = apps / "directions"
+    directions.mkdir(parents=True, exist_ok=True)
+
+    for did, flow_title, flow_steps in [
+        ("001-checkout-flow", "Checkout flow", ["1. Open app", "2. Choose plan", "3. Confirm purchase"]),
+        ("002-onboard-flow", "Onboard flow", ["1. Sign up", "2. Verify email", "3. Set profile"]),
+    ]:
+        flow_dir = directions / did
+        flow_dir.mkdir(parents=True)
+        (flow_dir / "direction.md").write_text(
+            f"---\ntitle: {flow_title}\ntype: ux\nexplore: false\n---\n# {flow_title}\n",
+            encoding="utf-8",
+        )
+        (flow_dir / "flow.md").write_text(
+            f"# {flow_title.lower().replace(' ', '-')}.md\n\n" + "\n".join(flow_steps) + "\n",
+            encoding="utf-8",
+        )
+        (flow_dir / "state.yaml").write_text(
+            yaml.safe_dump({"status": "created", "source": "cli"}), encoding="utf-8",
+        )
+
+    (tmp_path / "state").mkdir(parents=True, exist_ok=True)
+    return tmp_path
+
+
+def test_multiple_flow_artifact_filenames_all_survive_in_context(tmp_path: Path) -> None:
+    """Each collected flow.md filename label appears in the built context."""
+    root = _write_app_with_multiple_flows(tmp_path)
+    context = _build_ux_auditor_context("sacrifice", root)
+
+    assert "001-checkout-flow/flow.md" in context
+    assert "002-onboard-flow/flow.md" in context
+
+
+def test_step_numbers_from_flow_artifact_survive_in_context(tmp_path: Path) -> None:
+    """Individual step numbers from flow.md content are preserved in the context."""
+    root = _write_app_with_multiple_flows(tmp_path)
+    context = _build_ux_auditor_context("sacrifice", root)
+
+    # Checkout flow steps
+    assert "1. Open app" in context
+    assert "2. Choose plan" in context
+    assert "3. Confirm purchase" in context
+
+    # Onboard flow steps
+    assert "1. Sign up" in context
+    assert "2. Verify email" in context
+    assert "3. Set profile" in context
+
+
+def test_built_context_instructs_ux_auditor_to_cite_filenames_and_steps(
+    tmp_path: Path,
+) -> None:
+    """The context explicitly requires the UX auditor to cite flow filenames and step numbers."""
+    root = _write_app(tmp_path)
+    context = _build_ux_auditor_context("sacrifice", root)
+
+    assert "### Citation Requirements" in context
+    assert "flow filename" in context.lower()
+    assert "step number" in context.lower()
+    assert "`flow`" in context
+    assert "`step`" in context
+
+
+def test_filename_and_step_metadata_survive_full_live_run_transport(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Filename labels and step numbers survive the full _live_run → prompt path."""
+    root = _write_app_with_multiple_flows(tmp_path)
+    captured: dict[str, Any] = {}
+
+    def _fake_prelude(*_args: Any, **_kwargs: Any) -> str:
+        return "PRELUDE"
+
+    def _fake_text_run(
+        _persona: str,
+        prompt: str,
+        _model: str,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        captured["prompt"] = prompt
+        return {"findings": [], "duration_s": 0.2}
+
+    monkeypatch.setattr("factory.context.loader.compose_context_prelude", _fake_prelude)
+    monkeypatch.setattr("factory.runner.text_run", _fake_text_run)
+    monkeypatch.setattr("factory.chain.scheduled_tasks.route", lambda _persona: "fake-model")
+
+    _live_run("ux_auditor", "sacrifice", root)
+
+    prompt = str(captured["prompt"])
+    # Filename metadata
+    assert "001-checkout-flow/flow.md" in prompt
+    assert "002-onboard-flow/flow.md" in prompt
+    # Step-number metadata
+    assert "1. Open app" in prompt
+    assert "2. Choose plan" in prompt
+    assert "1. Sign up" in prompt
+    assert "2. Verify email" in prompt
+    # Citation instructions
+    assert "### Citation Requirements" in prompt
+
+
+def test_file_finding_preserves_filename_and_step_for_downstream_citation(
+    tmp_path: Path,
+) -> None:
+    """The flow.md written for a UX finding carries filename + step for downstream slices."""
+    root = _write_app(tmp_path, with_flow=False)
+
+    finding = {
+        "flow": "onboard-flow.md",
+        "step": 3,
+        "kind": "friction",
+        "evidence": "Email verification times out",
+        "suggestion": "Add a resend button after 30s",
+        "suggested_direction": {
+            "title": "add resend to email verification",
+            "type": "ux",
+            "why": "Email verification timeout with no recovery path.",
+            "acceptance": ["User can resend verification email after 30s timeout"],
+        },
+    }
+
+    direction = _file_finding_as_direction(
+        persona="ux_auditor",
+        app="sacrifice",
+        finding=finding,
+        software_factory_root=root,
+        dry_run=False,
+    )
+
+    assert direction is not None
+    flow_md = direction.dir_path / "flow.md"
+    assert flow_md.exists()
+    flow_text = flow_md.read_text(encoding="utf-8")
+    # Filename survives in the filed direction's flow.md
+    assert "Flow: onboard-flow.md" in flow_text
+    # Step number survives in the filed direction's flow.md
+    assert "Step: 3" in flow_text

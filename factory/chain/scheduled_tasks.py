@@ -765,6 +765,16 @@ def _build_ux_auditor_context(app: str, software_factory_root: Path) -> str:
         parts.append(f"\n#### {label}\n")
         parts.append(content + "\n")
 
+    parts.append("\n### Citation Requirements\n")
+    parts.append(
+        "When reporting findings you MUST cite:\n"
+        "- The **flow filename** exactly as shown under Flow Artifacts "
+        "(e.g. `001-checkout-flow/flow.md`).\n"
+        "- The **step number** within that flow file "
+        "(e.g. `Step 2` for \"2. Choose plan\").\n"
+        "Include the `flow` and `step` fields in every finding JSON object.\n"
+    )
+
     # -- App URL context (AC1.2) --
     parts.append("\n### App URL Context\n")
     try:
