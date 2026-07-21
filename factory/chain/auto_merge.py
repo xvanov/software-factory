@@ -81,6 +81,7 @@ _MAX_CI_FIX_CYCLES = 3
 # ``chain_kind`` without re-checking the TDD list.
 _DOCS_CHAIN_GATE_LABELS: frozenset[str] = frozenset({"canonical-paths-only"})
 
+
 def _story_targets_factory_repo(app_config: AppConfig) -> bool:
     """True when ``app_config`` builds the factory's own repo (a self-edit app).
 
@@ -263,9 +264,7 @@ def _escalate_self_edit(
     one.
     """
     proposal = {
-        "proposal_id": (
-            f"chain-selfedit-story-{getattr(story, 'id', None)}-pr-{pr_number}"
-        ),
+        "proposal_id": (f"chain-selfedit-story-{getattr(story, 'id', None)}-pr-{pr_number}"),
         "concern_title": f"chain factory self-edit PR #{pr_number}",
         "proposal": {"suggested_patch": patch},
         "detail": detail,
@@ -398,9 +397,7 @@ def _evaluate_self_edit_gate(
             detail=reason,
             patch=patch,
         )
-        return _SelfEditDecision(
-            allow=False, status="forbidden", forbidden=True, logs_tail=reason
-        )
+        return _SelfEditDecision(allow=False, status="forbidden", forbidden=True, logs_tail=reason)
 
     # Not a runtime self-edit (touches no factory/ code) → nothing for staging
     # to validate; safe to merge like any other content/docs change.
@@ -430,9 +427,7 @@ def _evaluate_self_edit_gate(
             detail=reason,
             patch=patch,
         )
-        return _SelfEditDecision(
-            allow=False, status="staging_infra_failed", logs_tail=reason
-        )
+        return _SelfEditDecision(allow=False, status="staging_infra_failed", logs_tail=reason)
 
     if getattr(decision, "promote", False):
         return _SelfEditDecision(allow=True, status="staging_validated")
@@ -475,9 +470,7 @@ _SIBLING_SHIPPED_STATES: frozenset[str] = frozenset(
 )
 
 
-def _default_sibling_rows(
-    *, direction_id: str, app: str, db_path: Path
-) -> list[StoryRecord]:
+def _default_sibling_rows(*, direction_id: str, app: str, db_path: Path) -> list[StoryRecord]:
     """All StoryRecords sharing ``direction_id`` + ``app`` (the sibling set)."""
     eng = _engine(db_path)
     with Session(eng) as session:
@@ -550,9 +543,7 @@ def _sibling_already_shipped(
 
         rows_fn = sibling_rows or _default_sibling_rows
         merged_fn = merged_pr_exists or _default_merged_pr_exists
-        rows = rows_fn(
-            direction_id=story.direction_id, app=story.app, db_path=db_path
-        )
+        rows = rows_fn(direction_id=story.direction_id, app=story.app, db_path=db_path)
         for sib in rows:
             if getattr(sib, "id", None) == getattr(story, "id", None):
                 continue  # never compare a story to itself
@@ -905,8 +896,7 @@ def _gh_pr_merge(
         # mergeable — merge it directly instead of reporting failure
         # (PR 111, 2026-06-11; also the May-29/30 docs-chain merge errors).
         if wait_for_ci and (
-            "clean status" in stderr
-            or "Protected branch rules not configured" in stderr
+            "clean status" in stderr or "Protected branch rules not configured" in stderr
         ):
             direct_cmd = [c for c in cmd if c != "--auto"]
             try:
@@ -950,8 +940,14 @@ def _pr_is_merged_on_github(
     if pr_number <= 0:
         return False
     cmd = [
-        "gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
-        "--json", "state,mergedAt",
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "state,mergedAt",
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -986,8 +982,14 @@ def _pr_terminally_unmergeable(
     import subprocess
 
     cmd = [
-        "gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
-        "--json", "state,mergeable,mergeStateStatus",
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "state,mergeable,mergeStateStatus",
     ]
     try:
         out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
@@ -1034,7 +1036,13 @@ def _query_ci_state(*, app_config: AppConfig, pr_number: int) -> str | None:
     if pr_number <= 0:  # synthesized placeholder (dry-run docs) — nothing to query
         return None
     cmd = [
-        "gh", "pr", "checks", str(pr_number), "--repo", app_config.repo, "--required",
+        "gh",
+        "pr",
+        "checks",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--required",
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -1105,10 +1113,18 @@ def _fetch_ci_failure_logs(*, app_config: AppConfig, pr_number: int) -> str:
     try:
         view = subprocess.run(
             [
-                "gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
-                "--json", "headRefName,statusCheckRollup",
+                "gh",
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                app_config.repo,
+                "--json",
+                "headRefName,statusCheckRollup",
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return ""
@@ -1140,11 +1156,21 @@ def _fetch_ci_failure_logs(*, app_config: AppConfig, pr_number: int) -> str:
         try:
             listed = subprocess.run(
                 [
-                    "gh", "run", "list", "--repo", app_config.repo,
-                    "--branch", head_ref, "--limit", "5",
-                    "--json", "databaseId,conclusion,status",
+                    "gh",
+                    "run",
+                    "list",
+                    "--repo",
+                    app_config.repo,
+                    "--branch",
+                    head_ref,
+                    "--limit",
+                    "5",
+                    "--json",
+                    "databaseId,conclusion,status",
                 ],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return ""
@@ -1168,7 +1194,9 @@ def _fetch_ci_failure_logs(*, app_config: AppConfig, pr_number: int) -> str:
     try:
         log_proc = subprocess.run(
             ["gh", "run", "view", run_id, "--repo", app_config.repo, "--log-failed"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return ""
@@ -1245,8 +1273,24 @@ def _handle_ci_failure(
         except Exception:  # noqa: BLE001
             pass
 
+    def _park_and_escalate(reason: str) -> None:
+        """Give up on the CI-fix loop: log (deduped) AND park the story terminal.
+
+        Parking is UNCONDITIONAL (independent of the escalation-log dedup) so a
+        story that was escalated by an earlier build — but left stuck in
+        ``PR_OPEN`` because parking didn't exist yet — still gets moved out of
+        the mergeable set on the next tick, freeing its concurrency slot.
+        """
+        _escalate(reason)
+        if story.state != StoryState.BLOCKED_CI_UNRESOLVED.value:
+            story.state = StoryState.BLOCKED_CI_UNRESOLVED.value
+            try:
+                persist_story(story, db)
+            except Exception:  # noqa: BLE001 - a bookkeeping park must not raise
+                pass
+
     if len(prior_redispatches) >= _MAX_CI_FIX_CYCLES:
-        _escalate("cap_reached")
+        _park_and_escalate("cap_reached")
         return False
 
     try:
@@ -1261,7 +1305,7 @@ def _handle_ci_failure(
             # The last redispatch's CI failure recurred verbatim — the dev
             # didn't actually fix it. Recovering again would just grind
             # through another full dev cycle for no new signal.
-            _escalate("identical_failure_signature")
+            _park_and_escalate("identical_failure_signature")
             return False
 
     digest = logs.strip() or (
@@ -1399,6 +1443,7 @@ def auto_merge_tick(
     cfg = load_app_config(app, root)
 
     fixtures: list[FixturePR] = list(fixture_prs or [])
+
     def _story_worktree(root: Path, app: str, db_story: StoryRecord | None) -> Path | None:
         """The story's chain worktree, RECREATED on demand — command gates
         (smoke-green boots the PR's OWN code) need a local tree to run in.
@@ -1444,12 +1489,18 @@ def auto_merge_tick(
             if feat:
                 fetched = subprocess.run(
                     ["git", "fetch", "origin", feat],
-                    cwd=str(wt), check=False, capture_output=True, timeout=60,
+                    cwd=str(wt),
+                    check=False,
+                    capture_output=True,
+                    timeout=60,
                 )
                 if fetched.returncode == 0:
                     subprocess.run(
                         ["git", "reset", "--hard", f"origin/{feat}"],
-                        cwd=str(wt), check=False, capture_output=True, timeout=60,
+                        cwd=str(wt),
+                        check=False,
+                        capture_output=True,
+                        timeout=60,
                     )
             # Refresh the branch with the CURRENT base before gates run. A
             # PR that lingered through review cycles goes stale as siblings
@@ -1461,16 +1512,24 @@ def auto_merge_tick(
             base = cfg.default_branch or "main"
             subprocess.run(
                 ["git", "fetch", "origin", base],
-                cwd=str(wt), check=False, capture_output=True, timeout=60,
+                cwd=str(wt),
+                check=False,
+                capture_output=True,
+                timeout=60,
             )
             merged = subprocess.run(
                 ["git", "merge", "--no-edit", f"origin/{base}"],
-                cwd=str(wt), capture_output=True, timeout=120,
+                cwd=str(wt),
+                capture_output=True,
+                timeout=120,
             )
             if merged.returncode != 0:
                 subprocess.run(
                     ["git", "merge", "--abort"],
-                    cwd=str(wt), check=False, capture_output=True, timeout=60,
+                    cwd=str(wt),
+                    check=False,
+                    capture_output=True,
+                    timeout=60,
                 )
             return wt
         except Exception:
@@ -1727,9 +1786,7 @@ def auto_merge_tick(
                     # forever). Best-effort/idempotent; never raises.
                     from factory.chain.dual_draft import close_abandoned_draft_sibling
 
-                    close_abandoned_draft_sibling(
-                        story, cfg, root, db, github_client, dry_run
-                    )
+                    close_abandoned_draft_sibling(story, cfg, root, db, github_client, dry_run)
         elif (
             not dry_run
             and not action.merged
@@ -1755,8 +1812,10 @@ def auto_merge_tick(
                     f.story.id, software_factory_root=root, slug_hint=f.story.slug
                 )
             )
-            if not _already_tried and not dry_run and _attempt_pr_reconcile(
-                app_config=cfg, pr_number=action.pr_number
+            if (
+                not _already_tried
+                and not dry_run
+                and _attempt_pr_reconcile(app_config=cfg, pr_number=action.pr_number)
             ):
                 # Branch advanced — skip sinking; re-evaluate mergeability on the
                 # next tick instead of blocking.
@@ -1838,11 +1897,7 @@ def auto_merge_tick(
             # checks is NOT an error — the merge is pending, not failed.
             # Reporting it as an error every tick would spam the L1 watcher
             # (concern-spam) for a healthy in-flight PR.
-            _ok = (
-                action.merged
-                or action.auto_merge_enabled
-                or action.superseded_by_sibling
-            )
+            _ok = action.merged or action.auto_merge_enabled or action.superseded_by_sibling
             _wge_am(
                 kind="auto_merge_attempt",
                 story_id=_story_id_am,

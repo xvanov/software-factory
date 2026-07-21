@@ -252,7 +252,9 @@ def test_identical_failure_signature_does_not_redispatch_again(
 
     with Session(create_engine(f"sqlite:///{db}")) as ses:
         r = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
-    assert r.state == StoryState.PR_OPEN.value  # untouched — not re-dispatched
+    # The CI-fix loop gave up → the story is PARKED terminal (freeing its slot),
+    # not left stuck in PR_OPEN forever.
+    assert r.state == StoryState.BLOCKED_CI_UNRESOLVED.value
 
     events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
     assert len([e for e in events if e.get("event") == "ci_fix_redispatch"]) == 1
@@ -286,9 +288,7 @@ def test_different_failure_signature_redispatches_again(
     events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
     redispatch_events = [e for e in events if e.get("event") == "ci_fix_redispatch"]
     assert len(redispatch_events) == 2
-    assert (
-        redispatch_events[0]["failure_signature"] != redispatch_events[1]["failure_signature"]
-    )
+    assert redispatch_events[0]["failure_signature"] != redispatch_events[1]["failure_signature"]
     assert not [e for e in events if e.get("event") == "ci_fix_exhausted"]
 
     with Session(create_engine(f"sqlite:///{db}")) as ses:
@@ -296,9 +296,7 @@ def test_different_failure_signature_redispatches_again(
     assert r.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
 
 
-def test_cap_reached_does_not_redispatch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cap_reached_does_not_redispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = _seed(tmp_path)
     story = _pr_open_story(db)
     monkeypatch.setattr(am, "_fetch_ci_failure_logs", lambda **kw: "irrelevant")
@@ -322,14 +320,65 @@ def test_cap_reached_does_not_redispatch(
 
     with Session(create_engine(f"sqlite:///{db}")) as ses:
         r = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
-    assert r.state == StoryState.PR_OPEN.value  # untouched
+    # Cap reached → parked terminal (frees the concurrency slot), not stuck open.
+    assert r.state == StoryState.BLOCKED_CI_UNRESOLVED.value
 
     events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
     exhausted = [e for e in events if e.get("event") == "ci_fix_exhausted"]
     assert len(exhausted) == 1
     assert exhausted[0]["reason"] == "cap_reached"
     # No NEW redispatch was recorded beyond the simulated prior ones.
-    assert len([e for e in events if e.get("event") == "ci_fix_redispatch"]) == am._MAX_CI_FIX_CYCLES
+    assert (
+        len([e for e in events if e.get("event") == "ci_fix_redispatch"]) == am._MAX_CI_FIX_CYCLES
+    )
+
+
+def test_already_escalated_but_stuck_story_is_parked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A story escalated by an EARLIER build (has a ci_fix_exhausted event) but
+    left stuck in PR_OPEN because parking didn't exist yet must still be parked
+    on the next tick — otherwise it holds a slot forever. Parking is
+    independent of the (deduped) escalation log."""
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+    monkeypatch.setattr(am, "_fetch_ci_failure_logs", lambda **kw: "irrelevant")
+    for i in range(am._MAX_CI_FIX_CYCLES):
+        log_story_event(
+            story.id,
+            "ci_fix_redispatch",
+            {"pr_number": 77, "attempt": i + 1, "failure_signature": f"sig-{i}"},
+            software_factory_root=tmp_path,
+            slug_hint=story.slug,
+        )
+    # Simulate a prior build having already logged the escalation (dedup guard).
+    log_story_event(
+        story.id,
+        "ci_fix_exhausted",
+        {"pr_number": 77, "reason": "cap_reached"},
+        software_factory_root=tmp_path,
+        slug_hint=story.slug,
+    )
+
+    am._handle_ci_failure(story=story, app_config=_cfg(), pr_number=77, db=db, root=tmp_path)
+
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        r = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
+    assert r.state == StoryState.BLOCKED_CI_UNRESOLVED.value  # parked despite prior escalation
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    # No DUPLICATE escalation event (dedup preserved).
+    assert len([e for e in events if e.get("event") == "ci_fix_exhausted"]) == 1
+
+
+def test_parked_ci_story_frees_concurrency_slot() -> None:
+    """The parked state is terminal and excluded from cap-counting so it stops
+    starving new work."""
+    from factory.chain.orchestrator import _NON_CAP_COUNTING_STATES
+    from factory.chain.state_machine import is_terminal
+
+    assert is_terminal(StoryState.BLOCKED_CI_UNRESOLVED)
+    assert StoryState.BLOCKED_CI_UNRESOLVED.value in _NON_CAP_COUNTING_STATES
+    assert StoryState.BLOCKED_CI_UNRESOLVED.value not in am._MERGEABLE_STATES
 
 
 def test_ci_fix_exhausted_is_deduped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -359,8 +408,12 @@ def test_does_not_redispatch_story_not_in_mergeable_state(tmp_path: Path) -> Non
     db = _seed(tmp_path)
     story = persist_story(
         StoryRecord(
-            direction_id="042", app="sacrifice", title="t", slug="dev",
-            scope="backend", state=StoryState.DEV_IN_PROGRESS.value,
+            direction_id="042",
+            app="sacrifice",
+            title="t",
+            slug="dev",
+            scope="backend",
+            state=StoryState.DEV_IN_PROGRESS.value,
             github_pr_number=77,
         ),
         db,
@@ -400,7 +453,11 @@ def test_auto_merge_tick_redispatches_on_real_ci_failure(
         story=story,
     )
     actions = am.auto_merge_tick(
-        tmp_path, "sacrifice", dry_run=False, fixture_prs=[fixture], db_path=db,
+        tmp_path,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
     )
     assert len(actions) == 1
     assert actions[0].merged is False
@@ -430,7 +487,11 @@ def test_auto_merge_tick_dry_run_unaffected_by_ci_failure(tmp_path: Path) -> Non
         story=story,
     )
     actions = am.auto_merge_tick(
-        tmp_path, "sacrifice", dry_run=True, fixture_prs=[fixture], db_path=db,
+        tmp_path,
+        "sacrifice",
+        dry_run=True,
+        fixture_prs=[fixture],
+        db_path=db,
     )
     assert len(actions) == 1
     assert actions[0].merged is False
@@ -450,8 +511,12 @@ def test_auto_merge_tick_placeholder_pr_unaffected_by_ci_failure(tmp_path: Path)
     db = _seed(tmp_path)
     story = persist_story(
         StoryRecord(
-            direction_id="042", app="sacrifice", title="t", slug="ph",
-            scope="backend", state=StoryState.PR_OPEN.value,
+            direction_id="042",
+            app="sacrifice",
+            title="t",
+            slug="ph",
+            scope="backend",
+            state=StoryState.PR_OPEN.value,
         ),
         db,
     )
@@ -465,7 +530,11 @@ def test_auto_merge_tick_placeholder_pr_unaffected_by_ci_failure(tmp_path: Path)
         story=story,
     )
     actions = am.auto_merge_tick(
-        tmp_path, "sacrifice", dry_run=False, fixture_prs=[fixture], db_path=db,
+        tmp_path,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
     )
     assert len(actions) == 1
     assert "re-dispatched" not in actions[0].reason

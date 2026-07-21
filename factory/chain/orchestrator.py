@@ -155,9 +155,7 @@ _DISPATCH = {
 # set and full transition coverage) are asserted in
 # tests/chain/test_per_story_budget.py so a new dispatch state fails a test
 # rather than crashing a live tick.
-_BUDGET_METERED_STATES: frozenset[StoryState] = frozenset(_DISPATCH) - {
-    StoryState.DEPLOY_PENDING
-}
+_BUDGET_METERED_STATES: frozenset[StoryState] = frozenset(_DISPATCH) - {StoryState.DEPLOY_PENDING}
 
 
 def _story_ledger_spend_usd(db_path: Path, story_id: int | None) -> float | None:
@@ -284,8 +282,7 @@ def _story_budget_breaker_reason(story: StoryRecord, caps: Any) -> str | None:
         return f"total_attempts={story.total_attempts} >= per_story_attempts={per_story_attempts}"
     if per_story_spend > 0 and story.total_spend_usd >= per_story_spend:
         return (
-            f"total_spend_usd={story.total_spend_usd:.4f} >= "
-            f"per_story_spend_usd={per_story_spend}"
+            f"total_spend_usd={story.total_spend_usd:.4f} >= per_story_spend_usd={per_story_spend}"
         )
     return None
 
@@ -370,6 +367,8 @@ _NON_CAP_COUNTING_STATES = {
     # WS1.1 terminal budget sink — the story is done burning spend; it must
     # not count against concurrency caps.
     StoryState.BLOCKED_BUDGET_EXCEEDED.value,
+    # CI-fix loop exhausted (terminal) — parked for a human; must not hold a slot.
+    StoryState.BLOCKED_CI_UNRESOLVED.value,
     # Dual-draft loser sink (terminal). A superseded sibling is abandoned; it
     # must not consume a concurrency slot.
     StoryState.SUPERSEDED_BY_SIBLING.value,
@@ -502,9 +501,7 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
     return sorted(
         s.id
         for s in siblings
-        if s.id is not None
-        and s.id < story.id
-        and s.state != StoryState.DEPLOYED.value
+        if s.id is not None and s.id < story.id and s.state != StoryState.DEPLOYED.value
     )
 
 
@@ -735,9 +732,7 @@ def _failure_signature_from_tail(raw: str) -> str:
     return hashlib.sha256(normalized[-500:].encode("utf-8")).hexdigest()
 
 
-def _recover_blocked_stories(
-    db: Path, app: str, *, root: Path
-) -> list[tuple[str, str, str]]:
+def _recover_blocked_stories(db: Path, app: str, *, root: Path) -> list[tuple[str, str, str]]:
     """Re-dispatch blocked stories so since-shipped chain fixes reach them.
 
     For each story in an auto-recoverable blocked state, reset it to the
@@ -888,8 +883,14 @@ def _query_pr_state(*, app_config: AppConfig, pr_number: int) -> str | None:
     if pr_number <= 0:  # synthesized placeholder — nothing to query
         return None
     cmd = [
-        "gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
-        "--json", "state",
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "state",
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -1041,9 +1042,7 @@ def _current_story_state(db: Path, story_id: int | None) -> str | None:
     try:
         eng = create_engine(f"sqlite:///{db}", echo=False)
         with Session(eng) as session:
-            row = session.exec(
-                select(StoryRecord).where(StoryRecord.id == story_id)
-            ).first()
+            row = session.exec(select(StoryRecord).where(StoryRecord.id == story_id)).first()
             return row.state if row is not None else None
     except Exception:  # noqa: BLE001 - a read hiccup must never break reconcile
         return None
@@ -1099,9 +1098,7 @@ def _close_dual_draft_sibling_on_reconcile(
             # No token / client available — cleanup is best-effort; the Part 2
             # self-check in auto-merge still blocks the loser from merging.
             return
-        close_abandoned_draft_sibling(
-            winner, cfg, root, db, gh, False, runner=runner
-        )
+        close_abandoned_draft_sibling(winner, cfg, root, db, gh, False, runner=runner)
     except Exception:  # noqa: BLE001 - cleanup must never break reconcile
         pass
 
@@ -1381,6 +1378,7 @@ def tick(
             )
         except Exception:  # noqa: BLE001 - alerting is best-effort
             import sys as _sys
+
             print(
                 f"[orchestrator] CRITICAL: halt-check raised {_halt_exc!r} "
                 "(fail-open) and alert emit failed.",
@@ -1426,9 +1424,7 @@ def tick(
                 for slug, from_state, to_state in drifted:
                     summary.handler_runs.append((slug, f"{from_state}(drift)", to_state))
             except Exception as exc:
-                summary.errors.append(
-                    (app, f"github reconcile failed (non-fatal): {exc!r}")
-                )
+                summary.errors.append((app, f"github reconcile failed (non-fatal): {exc!r}"))
 
             try:
                 recovered = _prune_stale_in_progress(db, app, settings=settings, root=root)
@@ -1445,9 +1441,7 @@ def tick(
                 for slug, from_state, to_state in re_dispatched:
                     summary.handler_runs.append((slug, f"{from_state}(recovered)", to_state))
             except Exception as exc:
-                summary.errors.append(
-                    (app, f"blocked-story recovery failed (non-fatal): {exc!r}")
-                )
+                summary.errors.append((app, f"blocked-story recovery failed (non-fatal): {exc!r}"))
 
         stories = H.stories_in_flight(app, db)
 

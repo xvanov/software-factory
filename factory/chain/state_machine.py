@@ -95,6 +95,17 @@ class StoryState(StrEnum):
     # factory_settings.yaml. There is deliberately no auto-recovery path
     # (this state is absent from ``_AUTO_RECOVERABLE_STATES``).
     BLOCKED_BUDGET_EXCEEDED = "blocked_budget_exceeded"
+    # CI-fix loop exhausted. When ``auto_merge._handle_ci_failure`` has
+    # re-dispatched a PR-open story to dev ``_MAX_CI_FIX_CYCLES`` times (or the
+    # same CI failure recurred verbatim), the dev cannot fix the failing CI on
+    # its own. Previously the story was left in ``PR_OPEN`` forever — it kept
+    # failing the merge gate AND held a ``per_repo_concurrent_agents`` slot,
+    # saturating the cap and starving new work (7 sacrifice PRs sat here,
+    # 2026-07-21). It is now parked here: TERMINAL (no outgoing transition, so
+    # ``is_terminal`` is True, absent from ``_MERGEABLE_STATES`` so it stops
+    # holding the cap, and absent from ``_AUTO_RECOVERABLE_STATES`` — it needs a
+    # human to fix the PR then re-open the story). Set via DIRECT assignment.
+    BLOCKED_CI_UNRESOLVED = "blocked_ci_unresolved"
     # Phase 7 dual-draft loser sink. An ambiguous/(explore) direction spawns
     # TWO ``draft-alternative`` siblings (slugs ``…-alt-a`` / ``…-alt-b``); only
     # ONE should ship. When the winner's PR merges, the loser is parked here by
