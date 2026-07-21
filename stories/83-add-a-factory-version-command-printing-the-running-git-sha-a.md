@@ -14,10 +14,10 @@ Add a new `factory version` CLI command backed by a pure git-inspection helper t
 
 # Acceptance Criteria
 
-- [ ] A new `factory version` CLI command prints the factory repo's current git commit SHA (short) and branch name to stdout.
-- [ ] It also indicates whether the working tree is dirty (has uncommitted changes).
-- [ ] The command is read-only (no writes, no network) and exits 0 in a valid git repo.
-- [ ] A unit test invokes the underlying pure helper against a temp git repo and asserts the reported SHA/branch/dirty flag match the repo state.
+- [x] A new `factory version` CLI command prints the factory repo's current git commit SHA (short) and branch name to stdout.
+- [x] It also indicates whether the working tree is dirty (has uncommitted changes).
+- [x] The command is read-only (no writes, no network) and exits 0 in a valid git repo.
+- [x] A unit test invokes the underlying pure helper against a temp git repo and asserts the reported SHA/branch/dirty flag match the repo state.
 
 ### Testable Claims (EARS)
 AC1.1: WHEN the operator runs `factory version` in a valid factory git repo, THE CLI SHALL print the repo's current short git commit SHA to stdout.
@@ -32,26 +32,26 @@ AC4.3: WHEN the unit test invokes the underlying pure helper against a temp git 
 
 # Tasks / Subtasks
 
-- [ ] Locate existing CLI command registration and output conventions.
-- [ ] Add `factory version` command entrypoint.
-- [ ] Implement pure git-inspection helper returning short SHA, branch, and dirty flag.
-- [ ] Ensure helper reads repo state without writes or network.
-- [ ] Wire command output to helper result on stdout.
-- [ ] Return exit code 0 in a valid git repo path.
-- [ ] Add unit test creating a temp git repo fixture.
-- [ ] In test, create committed state and assert short SHA + branch + clean state.
-- [ ] In test, introduce uncommitted change and assert dirty state.
-- [ ] Keep test isolated from ambient repo state.
-- [ ] Run relevant test target for the CLI/helper module.
+- [x] Locate existing CLI command registration and output conventions.
+- [x] Add `factory version` command entrypoint.
+- [x] Implement pure git-inspection helper returning short SHA, branch, and dirty flag.
+- [x] Ensure helper reads repo state without writes or network.
+- [x] Wire command output to helper result on stdout.
+- [x] Return exit code 0 in a valid git repo path.
+- [x] Add unit test creating a temp git repo fixture.
+- [x] In test, create committed state and assert short SHA + branch + clean state.
+- [x] In test, introduce uncommitted change and assert dirty state.
+- [x] Keep test isolated from ambient repo state.
+- [x] Run relevant test target for the CLI/helper module.
 
 # Dev Notes
 
 ## Direction acceptance criteria (verbatim)
 
-- [ ] A new `factory version` CLI command prints the factory repo's current git commit SHA (short) and branch name to stdout.
-- [ ] It also indicates whether the working tree is dirty (has uncommitted changes).
-- [ ] The command is read-only (no writes, no network) and exits 0 in a valid git repo.
-- [ ] A unit test invokes the underlying pure helper against a temp git repo and asserts the reported SHA/branch/dirty flag match the repo state.
+- [x] A new `factory version` CLI command prints the factory repo's current git commit SHA (short) and branch name to stdout.
+- [x] It also indicates whether the working tree is dirty (has uncommitted changes).
+- [x] The command is read-only (no writes, no network) and exits 0 in a valid git repo.
+- [x] A unit test invokes the underlying pure helper against a temp git repo and asserts the reported SHA/branch/dirty flag match the repo state.
 
 ## flow.md
 
@@ -82,22 +82,20 @@ No canonical context files were provided in this invocation. Derive implementati
 # Dev Agent Record
 
 ## Implementation Log
-- Enhanced `GitState` dataclass with granular dirty counts: `staged`, `unstaged`, `untracked` (integers). The `dirty` boolean is now a convenience property — True when any count > 0.
-- Updated `get_git_state()` to parse `git status --porcelain` output and count staged/unstaged/untracked changes independently using the XY porcelain status codes.
-- Updated `version_cmd` CLI output to show breakdown: `{sha} {branch} (dirty: N staged, M unstaged, K untracked)` instead of just `(dirty)`.
-- Created `tests/test_git_state.py` with 8 helper-level tests: SHA match, branch match, clean state (all zeros), unstaged modification, staged addition, untracked file, mixed state, and read-only idempotency.
-- Updated `tests/test_cli_version.py`: fixed dirty output assertions for new format, added staged-change and unstaged-change CLI smoke tests. Now 13 CLI tests total.
-- Combined test count: 21 tests (8 helper + 13 CLI), all passing.
+- Added/updated pure git inspection in `factory/git_state.py` so `get_git_state(repo_root)` returns short `sha`, `branch`, and `dirty`, with read-only parsing of local `git status --porcelain` for deterministic dirty-state reporting.
+- Added `factory version` command in `factory/cli.py` that reads the factory checkout state and prints SHA + branch, plus an operator-facing dirty-state suffix when uncommitted changes exist.
+- Kept behavior local/read-only: only `git rev-parse` and `git status` subprocess reads; no writes and no remote/network git operations.
+- Added helper-focused temp-repo coverage in `tests/test_git_state.py` and CLI smoke coverage in `tests/test_cli_version.py`, including clean and dirty repo states.
 
 ## Files Touched
-- `factory/git_state.py` — enhanced: `GitState` now has `staged`, `unstaged`, `untracked` fields; `get_git_state()` parses porcelain for granular counts
-- `factory/cli.py` — `version_cmd` updated for granular dirty output
-- `tests/test_git_state.py` — new: 8 helper-level tests
-- `tests/test_cli_version.py` — updated dirty assertions + 2 new granular-state tests (13 tests total)
+- `factory/git_state.py`
+- `factory/cli.py`
+- `tests/test_git_state.py`
+- `tests/test_cli_version.py`
 
 ## Test Evidence
-- 21 tests pass (8 in test_git_state.py, 13 in test_cli_version.py)
-- Coverage: SHA match, branch match, clean/dirty boolean, staged count, unstaged count, untracked count, mixed state, read-only idempotency, CLI exit 0, CLI output format (SHA/branch/dirty present/absent/staged/unstaged)
+- `uv run python -m pytest tests/test_git_state.py tests/test_cli_version.py -q` → pass (21 tests).
+- `uv run python -m pytest -q` → pass (full suite green; 3 skipped).
 
 # Senior Developer Review
 
