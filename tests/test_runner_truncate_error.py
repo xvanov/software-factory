@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
-from factory.runner import Run, _DEFAULT_ERROR_MAX_LENGTH, _engine, _record_run, truncate_error
+from factory.runner import _DEFAULT_ERROR_MAX_LENGTH, Run, _engine, _record_run, truncate_error
 
 # ---------------------------------------------------------------------------
 # Pure helper tests (no DB)
