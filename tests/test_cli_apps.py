@@ -8,7 +8,9 @@ import yaml
 from typer.testing import CliRunner
 
 
-def _write_app_config(apps_root: Path, name: str, repo: str, self_tick: bool, deploy_enabled: bool) -> Path:
+def _write_app_config(
+    apps_root: Path, name: str, repo: str, self_tick: bool, deploy_enabled: bool
+) -> Path:
     """Write a minimal ``apps/<name>/config.yaml`` and return the app dir."""
     app_dir = apps_root / name
     app_dir.mkdir(parents=True)
