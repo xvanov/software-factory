@@ -251,3 +251,117 @@ def test_dry_run_does_not_require_flow_md_artifacts(tmp_path: Path) -> None:
 
     assert out.status == "dry_run"
     assert out.findings_count == 1
+
+
+def test_collect_flow_artifacts_returns_multiple_flow_files(tmp_path: Path) -> None:
+    """Multiple flow.md files across direction dirs are all collected."""
+    root = _write_app(tmp_path)
+    # Add a second direction with its own flow.md
+    dir2 = root / "apps" / "sacrifice" / "directions" / "002-pledge-flow"
+    dir2.mkdir(parents=True)
+    (dir2 / "direction.md").write_text(
+        "---\ntitle: Pledge flow\ntype: ux\nexplore: false\n---\n# Pledge\n",
+        encoding="utf-8",
+    )
+    (dir2 / "flow.md").write_text(
+        "# pledge-flow.md\n\n1. View goal\n2. Enter amount\n3. Confirm pledge\n",
+        encoding="utf-8",
+    )
+
+    artifacts = _collect_flow_artifacts("sacrifice", root)
+
+    assert len(artifacts) == 2
+    assert artifacts[0] == (
+        "001-checkout-flow/flow.md",
+        "# checkout-flow.md\n\n1. Open app\n2. Choose plan\n3. Confirm purchase",
+    )
+    assert artifacts[1] == (
+        "002-pledge-flow/flow.md",
+        "# pledge-flow.md\n\n1. View goal\n2. Enter amount\n3. Confirm pledge",
+    )
+
+
+def test_build_context_includes_multiple_flow_artifacts(tmp_path: Path) -> None:
+    """When multiple flow.md files exist, all paths and contents appear in context."""
+    root = _write_app(tmp_path)
+    dir2 = root / "apps" / "sacrifice" / "directions" / "002-pledge-flow"
+    dir2.mkdir(parents=True)
+    (dir2 / "direction.md").write_text(
+        "---\ntitle: Pledge flow\ntype: ux\nexplore: false\n---\n# Pledge\n",
+        encoding="utf-8",
+    )
+    (dir2 / "flow.md").write_text(
+        "# pledge-flow.md\n\n1. View goal\n2. Enter amount\n3. Confirm pledge\n",
+        encoding="utf-8",
+    )
+
+    context = _build_ux_auditor_context("sacrifice", root)
+
+    assert "001-checkout-flow/flow.md" in context
+    assert "1. Open app\n2. Choose plan\n3. Confirm purchase" in context
+    assert "002-pledge-flow/flow.md" in context
+    assert "1. View goal\n2. Enter amount\n3. Confirm pledge" in context
+    assert "_Collected 2 flow.md file(s)" in context
+
+
+def test_run_scheduled_persona_payload_includes_flow_path_and_contents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the public entry point, the UX auditor prompt carries flow.md
+    path AND contents before replay-based auditing runs (AC2.1 + AC2.2)."""
+    root = _write_app(
+        tmp_path,
+        health_check_command="curl -fsS https://app.example.test/healthz",
+    )
+    captured: dict[str, Any] = {}
+
+    def _fake_prelude(*_args: Any, **_kwargs: Any) -> str:
+        return "PRELUDE"
+
+    def _fake_text_run(
+        _persona: str,
+        prompt: str,
+        _model: str,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        captured["prompt"] = prompt
+        return {"findings": [], "duration_s": 0.1}
+
+    monkeypatch.setattr("factory.context.loader.compose_context_prelude", _fake_prelude)
+    monkeypatch.setattr("factory.runner.text_run", _fake_text_run)
+    monkeypatch.setattr("factory.chain.scheduled_tasks.route", lambda _persona: "fake-model")
+
+    out = run_scheduled_persona("ux_auditor", "sacrifice", root, dry_run=False)
+
+    assert out.status == "ok"
+    prompt = str(captured["prompt"])
+    # AC2.1: at least one flow.md path
+    assert "001-checkout-flow/flow.md" in prompt
+    # AC2.2: at least one flow.md contents
+    assert "1. Open app\n2. Choose plan\n3. Confirm purchase" in prompt
+    assert "## Scheduled UX Audit Runtime Inputs" in prompt
+
+
+def test_run_scheduled_persona_no_flow_triggers_no_text_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Zero flow.md path SHALL NOT execute any replay-based UX audit (AC1.1)."""
+    root = _write_app(tmp_path, with_flow=False)
+
+    monkeypatch.setattr("factory.chain.scheduled_tasks.route", lambda _persona: "fake-model")
+    monkeypatch.setattr(
+        "factory.context.loader.compose_context_prelude",
+        lambda *_args, **_kwargs: "PRELUDE",
+    )
+    monkeypatch.setattr(
+        "factory.runner.text_run",
+        lambda *_args, **_kwargs: pytest.fail("text_run must not execute without flow.md"),
+    )
+
+    out = run_scheduled_persona("ux_auditor", "sacrifice", root, dry_run=False)
+
+    assert out.status == "rejected"
+    assert out.error == "ux_auditor_no_flow_artifacts"
+    assert out.findings_count == 0
