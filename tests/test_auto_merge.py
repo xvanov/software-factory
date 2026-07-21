@@ -58,15 +58,8 @@ def _good_story(*, state: str = StoryState.PR_OPEN.value) -> StoryRecord:
                 ]
             }
         ),
-        test_implementer_result_json=json.dumps({"exit_code": 1, "slop_detected": False}),
         tech_writer_result_json=json.dumps({"context_updates": [{"path": "context/project.md"}]}),
         github_pr_number=42,
-        # Phase 8 cleanup: dry-run lint/format/types/coverage gates now require
-        # an explicit recorded outcome.
-        lint_passed=True,
-        format_passed=True,
-        types_passed=True,
-        coverage_passed=True,
     )
 
 
@@ -312,7 +305,6 @@ def test_loop4_story_merges_on_surviving_gates(tmp_path) -> None:
             direction_id="007", app="sacrifice", title="t", slug="loop4",
             scope="frontend", state=StoryState.PR_OPEN.value, chain_kind="tdd",
             github_pr_number=110,
-            test_implementer_result_json=json.dumps({"exit_code": 0}),
             tech_writer_result_json=json.dumps(
                 {"context_updates": ["context/modules/frontend.md"], "rationale": "updated"}
             ),
@@ -438,6 +430,10 @@ def test_auto_merge_closes_sibling_draft_alternative_on_merge(
         fixture_prs=[fixture],
         github_client=client,
         db_path=db,
+        # Real-run now CONFIRMS the merge on GitHub before claiming merged=True
+        # (``--auto`` only enables async auto-merge). This PR's checks were
+        # already green, so the confirmation query reports it merged.
+        pr_merged_query=lambda **_kwargs: True,
     )
 
     assert actions[0].merged, actions[0].reason
@@ -494,3 +490,466 @@ def test_auto_merge_does_not_close_sibling_when_dry_run(
     assert actions[0].merged, actions[0].reason
     # No github_client was even provided in dry-run; nothing to assert on
     # the (nonexistent) sibling issue beyond "no exception raised".
+
+
+# --------------------------------------------------------------------------- #
+# merged != auto-merge-enabled: ``gh pr merge --auto`` only ENABLES GitHub
+# auto-merge; it does NOT merge now. ``merged=True`` must reflect a REAL merge.
+# --------------------------------------------------------------------------- #
+
+
+def _docs_pr_story(*, pr_number: int, state: str = StoryState.PR_OPEN.value) -> StoryRecord:
+    """A docs-chain story so real-run gate evaluation is hermetic (the docs
+    chain synthesizes ``canonical-paths-only`` — no gate command shell-outs)."""
+    return StoryRecord(
+        direction_id="030",
+        app="sacrifice",
+        title="t",
+        slug=f"amerge-{pr_number}",
+        scope="docs",
+        state=state,
+        chain_kind="docs",
+        github_issue_number=pr_number,
+        github_pr_number=pr_number,
+    )
+
+
+def _merged_rows(db: Path) -> list[MergeActionRecord]:
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        return list(
+            ses.exec(select(MergeActionRecord).where(MergeActionRecord.merged == True))  # noqa: E712
+        )
+
+
+def _reload_story(db: Path, story_id: int | None) -> StoryRecord:
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        return ses.exec(select(StoryRecord).where(StoryRecord.id == story_id)).one()
+
+
+def test_auto_merge_enabled_but_not_merged_does_not_advance_or_record(
+    factory_root: Path,
+) -> None:
+    """The strand root cause: ``gh pr merge --auto`` succeeded (auto-merge
+    ENABLED) but the PR is not merged yet (required checks pending). The worker
+    must NOT claim merged=True, NOT record a merged merge-action, and NOT
+    advance the story — it stays in a mergeable state so reconcile + the
+    CI-failure loop keep watching it."""
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_docs_pr_story(pr_number=801), db)
+
+    # Fake gh merge: "enables auto-merge" — returns success (None) WITHOUT
+    # merging. Records that it was invoked.
+    called: list[bool] = []
+
+    def _fake_merge(**_kwargs: object) -> str | None:
+        called.append(True)
+        return None
+
+    # PR state query: the PR is still OPEN / not merged.
+    def _not_merged(**_kwargs: object) -> bool:
+        return False
+
+    fixture = FixturePR(
+        pr_number=801,
+        head_sha="pending-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=story,
+    )
+
+    actions = auto_merge_tick(
+        factory_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
+        merge_fn=_fake_merge,
+        pr_merged_query=_not_merged,
+    )
+
+    assert called  # the merge (auto-merge enable) was actually attempted
+    assert len(actions) == 1
+    act = actions[0]
+    assert act.merged is False
+    assert act.auto_merge_enabled is True
+    assert "awaiting required checks" in act.reason
+    # No merged=True row → _latest_undeployed_sha never picks it up (no deploy).
+    assert _merged_rows(db) == []
+    # Story is NOT advanced — stays in a mergeable state (reconcile + CI-failure
+    # loop keep watching it); it is NOT stranded at deploy_pending.
+    assert _reload_story(db, story.id).state == StoryState.PR_OPEN.value
+
+
+def test_auto_merge_confirmed_merge_advances_and_enqueues_deploy(
+    factory_root: Path,
+) -> None:
+    """When the post-merge GitHub query confirms the PR ACTUALLY merged (e.g.
+    ``--auto`` merged immediately because checks were already green), the worker
+    claims merged=True, records a merged merge-action, advances the story to
+    DEPLOY_PENDING, and enqueues a deploy — exactly as before."""
+    from factory.chain.handlers import persist_story
+    from factory.deploy.models import DeployQueueEntry
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_docs_pr_story(pr_number=802), db)
+
+    # Start query returns False (not yet merged at the top of _evaluate_one_pr),
+    # post-merge query returns True (the --auto merge landed). Stateful by count.
+    calls: list[int] = []
+
+    def _merged_after_merge(**_kwargs: object) -> bool:
+        calls.append(1)
+        return len(calls) >= 2  # 1st call (start short-circuit) False, 2nd True
+
+    def _fake_merge(**_kwargs: object) -> str | None:
+        return None  # success (merge requested/performed)
+
+    fixture = FixturePR(
+        pr_number=802,
+        head_sha="merged-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=story,
+    )
+
+    actions = auto_merge_tick(
+        factory_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
+        merge_fn=_fake_merge,
+        pr_merged_query=_merged_after_merge,
+    )
+
+    assert actions[0].merged is True
+    assert actions[0].auto_merge_enabled is False
+    # Merged row recorded for the head sha → deploy pipeline can pick it up.
+    merged = _merged_rows(db)
+    assert [r.head_sha for r in merged] == ["merged-sha"]
+    # Story advanced to DEPLOY_PENDING.
+    assert _reload_story(db, story.id).state == StoryState.DEPLOY_PENDING.value
+    # Deploy enqueued for the merged sha.
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        q = list(ses.exec(select(DeployQueueEntry).where(DeployQueueEntry.sha == "merged-sha")))
+    assert len(q) == 1
+
+
+def test_auto_merge_already_merged_short_circuits(factory_root: Path) -> None:
+    """If the PR is ALREADY merged on GitHub at the top of the tick (the async
+    ``--auto`` merge landed between ticks), the worker short-circuits to
+    merged=True without re-running gates/staging, and drives deploy."""
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_docs_pr_story(pr_number=803), db)
+
+    def _already(**_kwargs: object) -> bool:
+        return True
+
+    def _fake_merge(**_kwargs: object) -> str | None:  # must NOT be called
+        raise AssertionError("merge should be short-circuited when already merged")
+
+    fixture = FixturePR(
+        pr_number=803,
+        head_sha="landed-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=story,
+    )
+
+    actions = auto_merge_tick(
+        factory_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
+        merge_fn=_fake_merge,
+        pr_merged_query=_already,
+    )
+
+    assert actions[0].merged is True
+    assert actions[0].reason == "already merged on GitHub"
+    assert _reload_story(db, story.id).state == StoryState.DEPLOY_PENDING.value
+
+
+def test_auto_merge_enabled_then_failing_check_leaves_story_redispatchable(
+    factory_root: Path,
+) -> None:
+    """Regression for the exact strand (factory story 102 / PR #57): auto-merge
+    was ENABLED, then a required check (ruff lint) FAILED, so the PR never
+    merges. The story must remain in ``_MERGEABLE_STATES`` so a later tick's
+    CI-failure path (``_handle_ci_failure``, guarded to those states) can
+    re-dispatch dev — NOT stranded at deploy_pending where nothing watches it."""
+    from factory.chain.auto_merge import _MERGEABLE_STATES
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_docs_pr_story(pr_number=804), db)
+
+    # Tick 1: auto-merge enabled, PR not merged yet.
+    fixture = FixturePR(
+        pr_number=804,
+        head_sha="strand-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=story,
+    )
+    auto_merge_tick(
+        factory_root, "sacrifice", dry_run=False, fixture_prs=[fixture], db_path=db,
+        merge_fn=lambda **_k: None,
+        pr_merged_query=lambda **_k: False,
+    )
+
+    reloaded = _reload_story(db, story.id)
+    # The story is still in a mergeable state — reachable by _handle_ci_failure.
+    assert reloaded.state in _MERGEABLE_STATES
+    assert reloaded.state == StoryState.PR_OPEN.value
+    assert _merged_rows(db) == []
+
+
+# --------------------------------------------------------------------------- #
+# Part 2 — dual-draft loser self-check: a story must REFUSE to merge if a
+# sibling already shipped. This is the defense-in-depth backstop that composes
+# with the reconcile-detected ``--auto`` merge path: Part 1 supersedes losers
+# the winner's cleanup can reach; this catches a loser whose OWN PR reaches the
+# merge worker in the SAME window the winner merged.
+# --------------------------------------------------------------------------- #
+
+
+def _seed_dual_pair(
+    db: Path,
+    *,
+    winner_state: str,
+    loser_state: str = StoryState.PR_OPEN.value,
+    loser_pr: int = 556,
+) -> tuple[StoryRecord, StoryRecord]:
+    """Docs-chain dual-draft pair (hermetic gates): winner ``-alt-a`` in
+    ``winner_state``, loser ``-alt-b`` in ``loser_state`` with PR ``loser_pr``."""
+    from factory.chain.handlers import persist_story
+
+    winner = persist_story(
+        StoryRecord(
+            direction_id="042", app="sacrifice", title="w",
+            slug="picker-refactor-alt-a", scope="docs", state=winner_state,
+            chain_kind="docs", github_issue_number=209, github_pr_number=555,
+        ),
+        db,
+    )
+    loser = persist_story(
+        StoryRecord(
+            direction_id="042", app="sacrifice", title="l",
+            slug="picker-refactor-alt-b", scope="docs", state=loser_state,
+            chain_kind="docs", github_issue_number=210, github_pr_number=loser_pr,
+        ),
+        db,
+    )
+    return winner, loser
+
+
+def _cfg() -> object:
+    from factory.app_config import AppConfig
+
+    return AppConfig(name="sacrifice", repo="o/r", default_branch="main")
+
+
+def test_sibling_already_shipped_true_for_each_shipped_state(factory_root: Path) -> None:
+    """A dual-draft loser is 'superseded' when its sibling is in ANY shipped
+    state: deployed, deploy_pending, or superseded_by_sibling."""
+    from factory.chain.auto_merge import _sibling_already_shipped
+
+    for st in (
+        StoryState.DEPLOYED.value,
+        StoryState.DEPLOY_PENDING.value,
+        StoryState.SUPERSEDED_BY_SIBLING.value,
+    ):
+        db = factory_root / "state" / f"dd-{st}.db"
+        _winner, loser = _seed_dual_pair(db, winner_state=st)
+        assert _sibling_already_shipped(story=loser, db_path=db) is True, st
+
+
+def test_sibling_already_shipped_true_when_sibling_has_merged_pr(factory_root: Path) -> None:
+    """Even before the winner's StoryRecord advances to a shipped state, a
+    merged=True merge-action row for its PR marks the loser as superseded."""
+    from factory.chain.auto_merge import (
+        MergeAction,
+        _record_merge_action,
+        _sibling_already_shipped,
+    )
+
+    db = factory_root / "state" / "merged-pr.db"
+    # Winner still in a mergeable state, but its PR (555) recorded a merge.
+    winner, loser = _seed_dual_pair(db, winner_state=StoryState.PR_OPEN.value)
+    _record_merge_action(
+        MergeAction(app="sacrifice", pr_number=555, merged=True, reason="merged"),
+        "sha-win",
+        db,
+    )
+    assert _sibling_already_shipped(story=loser, db_path=db) is True
+
+
+def test_sibling_already_shipped_false_when_no_sibling_shipped(factory_root: Path) -> None:
+    """Both siblings still in-flight → neither is superseded (the first to merge
+    wins normally)."""
+    from factory.chain.auto_merge import _sibling_already_shipped
+
+    db = factory_root / "state" / "both-open.db"
+    winner, loser = _seed_dual_pair(db, winner_state=StoryState.PR_OPEN.value)
+    assert _sibling_already_shipped(story=loser, db_path=db) is False
+    assert _sibling_already_shipped(story=winner, db_path=db) is False
+
+
+def test_sibling_already_shipped_false_for_non_dual_draft(factory_root: Path) -> None:
+    """A story without an ``-alt-*`` suffix is never superseded, even if a
+    same-direction sibling shipped."""
+    from factory.chain.auto_merge import _sibling_already_shipped
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "non-dd.db"
+    persist_story(
+        StoryRecord(
+            direction_id="043", app="sacrifice", title="s", slug="plain-shipped",
+            scope="docs", state=StoryState.DEPLOYED.value, github_pr_number=1,
+        ),
+        db,
+    )
+    normal = persist_story(
+        StoryRecord(
+            direction_id="043", app="sacrifice", title="n", slug="plain-other",
+            scope="docs", state=StoryState.PR_OPEN.value, github_pr_number=2,
+        ),
+        db,
+    )
+    assert _sibling_already_shipped(story=normal, db_path=db) is False
+
+
+def test_sibling_already_shipped_failsafe_on_query_error(factory_root: Path) -> None:
+    """A query blowup must fail-safe to False — NEVER wrongly supersede a
+    legitimate story on a DB hiccup."""
+    from factory.chain.auto_merge import _sibling_already_shipped
+
+    db = factory_root / "state" / "boom.db"
+    _winner, loser = _seed_dual_pair(db, winner_state=StoryState.DEPLOYED.value)
+
+    def _boom(**_kwargs):
+        raise RuntimeError("db exploded")
+
+    # Even though the real query WOULD supersede (sibling deployed), the raising
+    # injected query is swallowed → False.
+    assert _sibling_already_shipped(story=loser, db_path=db, sibling_rows=_boom) is False
+
+
+def test_evaluate_one_pr_refuses_loser_when_sibling_shipped(factory_root: Path) -> None:
+    """``_evaluate_one_pr`` returns a non-merged, ``superseded_by_sibling`` action
+    for a loser whose sibling already shipped — before any merge is attempted."""
+    from factory.chain.auto_merge import FixturePR, _evaluate_one_pr
+
+    db = factory_root / "state" / "eval.db"
+    _winner, loser = _seed_dual_pair(db, winner_state=StoryState.DEPLOYED.value)
+
+    fixture = FixturePR(
+        pr_number=556, head_sha="loser-sha", base_branch="main", labels=[],
+        files_changed=["context/project.md"], ci_state="success", story=loser,
+    )
+    action = _evaluate_one_pr(
+        app="sacrifice", fixture=fixture, app_config=_cfg(), dry_run=True,
+        github_client=None, db_path=db,
+    )
+    assert action.merged is False
+    assert action.superseded_by_sibling is True
+    assert action.reason == "superseded: sibling already shipped"
+
+
+def test_evaluate_one_pr_failsafe_merges_on_query_error(factory_root: Path) -> None:
+    """A raising ``sibling_shipped_query`` must NOT block a legitimate merge — the
+    self-check fails safe and evaluation proceeds to a normal (merged) decision."""
+    from factory.chain.auto_merge import FixturePR, _evaluate_one_pr
+
+    db = factory_root / "state" / "eval-safe.db"
+    _winner, loser = _seed_dual_pair(db, winner_state=StoryState.DEPLOYED.value)
+
+    def _boom(**_kwargs):
+        raise RuntimeError("query exploded")
+
+    fixture = FixturePR(
+        pr_number=556, head_sha="loser-sha", base_branch="main", labels=[],
+        files_changed=["context/project.md"], ci_state="success", story=loser,
+    )
+    action = _evaluate_one_pr(
+        app="sacrifice", fixture=fixture, app_config=_cfg(), dry_run=True,
+        github_client=None, db_path=db, sibling_shipped_query=_boom,
+    )
+    # Despite the deployed sibling, the raising query fails safe → the docs-chain
+    # loser merges normally (dry-run merged=True), never wrongly superseded.
+    assert action.superseded_by_sibling is False
+    assert action.merged is True
+
+
+def test_auto_merge_tick_supersedes_loser_and_closes_pr(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: the merge worker refuses the loser, parks it terminally in
+    SUPERSEDED_BY_SIBLING, and closes its PR via gh (defense-in-depth for the
+    same-window race the reconcile path can miss)."""
+    import subprocess
+
+    db = factory_root / "state" / "factory.db"
+    _winner, loser = _seed_dual_pair(db, winner_state=StoryState.DEPLOYED.value)
+
+    closed: list[list] = []
+
+    def _fake_run(cmd: list, **kwargs: object) -> subprocess.CompletedProcess:
+        closed.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run, raising=True)
+
+    fixture = FixturePR(
+        pr_number=556, head_sha="loser-sha", base_branch="main", labels=[],
+        files_changed=["context/project.md"], ci_state="success", story=loser,
+    )
+    actions = auto_merge_tick(
+        factory_root, "sacrifice", dry_run=False, fixture_prs=[fixture],
+        github_client=None, db_path=db,
+    )
+
+    assert actions[0].merged is False
+    assert actions[0].superseded_by_sibling is True
+    assert _reload_story(db, loser.id).state == StoryState.SUPERSEDED_BY_SIBLING.value
+    # The loser's PR (556) was closed so it can never auto-merge.
+    assert any(
+        c[:3] == ["gh", "pr", "close"] and "556" in c and "--delete-branch" in c
+        for c in closed
+    )
+    # No merge row recorded for the loser.
+    assert _merged_rows(db) == []
+
+
+def test_auto_merge_tick_does_not_supersede_when_no_sibling_shipped(
+    factory_root: Path,
+) -> None:
+    """Both dual-draft siblings still in-flight → the evaluated one merges
+    normally; neither is superseded (the winner must never be blocked)."""
+    db = factory_root / "state" / "factory.db"
+    winner, _loser = _seed_dual_pair(db, winner_state=StoryState.PR_OPEN.value)
+
+    fixture = FixturePR(
+        pr_number=555, head_sha="win-sha", base_branch="main", labels=[],
+        files_changed=["context/project.md"], ci_state="success", story=winner,
+    )
+    actions = auto_merge_tick(
+        factory_root, "sacrifice", dry_run=True, fixture_prs=[fixture], db_path=db,
+    )
+    assert actions[0].superseded_by_sibling is False
+    assert actions[0].merged is True
+    assert _reload_story(db, winner.id).state == StoryState.DEPLOY_PENDING.value

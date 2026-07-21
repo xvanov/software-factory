@@ -295,6 +295,9 @@ def stories_in_flight(app: str, db_path: Path) -> list[StoryRecord]:
         StoryState.DEPLOYED.value,
         StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
         StoryState.BLOCKED_DEPLOY_FAILED.value,
+        # Dual-draft loser: terminal, so its worktree is prunable and it never
+        # counts as in-flight.
+        StoryState.SUPERSEDED_BY_SIBLING.value,
     }
     # DEPLOY_PENDING is INTENTIONALLY in-flight so the orchestrator's
     # _DISPATCH picks it up for handle_deploy.
@@ -405,9 +408,17 @@ def handle_stories_spawned(
 
         for interp in interpretations:
             slug_base = _slug_of(interp.title or direction.title or "story")
-            # Force interpretation_id into the slug so two draft PRs
-            # don't collide on branch names.
-            slug = f"{slug_base}-{interp.interpretation_id}"[:60].strip("-") or "story"
+            # ALWAYS preserve the dual-draft interpretation suffix (``-alt-a`` /
+            # ``-alt-b``). The entire loser-cleanup mechanism identifies siblings
+            # via a trailing ``-alt-*`` (``dual_draft._DRAFT_ALT_SLUG_RE``). The
+            # old ``f"{base}-{id}"[:60]`` truncated the SUFFIX off for long
+            # titles — both siblings collapsed to the same 60-char slug with NO
+            # ``-alt-*``, so ``_draft_alt_suffix`` returned None, sibling
+            # detection failed silently, and BOTH interpretations merged (the
+            # dir 010 over-fire, 2026-07-21). Reserve room for the suffix by
+            # truncating the BASE, so ``-alt-a``/``-alt-b`` always survives.
+            _alt = f"-{interp.interpretation_id}"
+            slug = (slug_base[: max(1, 60 - len(_alt))].strip("-") + _alt) or "story"
             title = f"{interp.title}"[:200]
             issue_number: int | None = None
             story_file_path = f"stories/0-{slug}.md"
@@ -1330,10 +1341,34 @@ def _dry_run_dev(story: StoryRecord) -> tuple[bool, dict[str, Any]]:
     }
 
 
+def _commit_green_dev_work(
+    story: StoryRecord, app_config: AppConfig, software_factory_root: Path
+) -> None:
+    """Deterministically ``git add -A && commit`` the dev's uncommitted worktree
+    changes on a GREEN outcome, so the reviewer's ``origin/base...HEAD`` diff is
+    never empty. The dev persona is only *asked* to self-commit; when it forgets
+    (story 106, 2026-07-21) the branch has no committed diff and dev<->review
+    churns on already-correct code. Idempotent (a clean tree — the agent already
+    committed — is a no-op) and best-effort (a git hiccup must never fail the
+    green advance; the work still lives in the reused worktree and PR-open
+    re-commits). Mirrors the dev-exhausted path's WIP-preservation commit.
+    """
+    try:
+        from factory.chain.branch import _run_git as _git
+
+        repo = _writing_worktree(app_config, software_factory_root, story)
+        _git(repo, "add", "-A")
+        if _git(repo, "status", "--porcelain").stdout.strip():
+            _git(repo, "commit", "-m", f"dev: implement story {story.id} ({story.slug})")
+    except Exception:  # noqa: BLE001 - commit is best-effort; never fail the green advance
+        pass
+
+
 def _try_resume_dev_from_checkpoint(
     story: StoryRecord,
     software_factory_root: Path,
     *,
+    app_config: AppConfig,
     db_path: Path | None = None,
 ) -> HandlerResult | None:
     """WS4.2 resume-from-checkpoint: skip re-running the dev LLM when a prior
@@ -1372,6 +1407,10 @@ def _try_resume_dev_from_checkpoint(
     # validates the transition, so an unexpected dispatch state raises loudly
     # rather than silently skipping into an illegal state.
     story.state = advance(story, EVENT_DEV_STARTED).value
+    # Same deterministic commit as the live green path: a crash could have
+    # interrupted the original run BEFORE it committed, leaving the resumed
+    # green work uncommitted → empty-diff churn. Idempotent + best-effort.
+    _commit_green_dev_work(story, app_config, software_factory_root)
     story.state = advance(story, EVENT_DEV_TESTS_GREEN).value
     story.dev_step_checkpoint = None
     persist_story(story, db)
@@ -1434,7 +1473,7 @@ def handle_dev(
         _settings.dev_convergence, "resume_from_checkpoint", True
     ):
         _resumed = _try_resume_dev_from_checkpoint(
-            story, software_factory_root, db_path=db_path
+            story, software_factory_root, app_config=app_config, db_path=db_path
         )
         if _resumed is not None:
             return _resumed
@@ -1858,6 +1897,11 @@ def _handle_dev_once(
                 }
             )
             persist_story(story, db)
+            # Deterministically COMMIT the dev's green work before review so the
+            # reviewer's origin/base...HEAD diff is never empty (see
+            # ``_commit_green_dev_work``). Fixes the dev<->review empty-diff
+            # churn observed on story 106 (2026-07-21).
+            _commit_green_dev_work(story, app_config, software_factory_root)
         story.state = advance(story, EVENT_DEV_TESTS_GREEN).value
         story.dev_step_checkpoint = None
         persist_story(story, db)

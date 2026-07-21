@@ -15,6 +15,8 @@ from pathlib import Path
 import pytest
 from sqlmodel import Session, create_engine
 
+from factory import runtime_state
+from factory.app_config import load_app_config
 from factory.chain.state_machine import StoryRecord, StoryState
 from factory.manager import recovery
 from factory.settings.modes import get_mode, set_mode
@@ -348,9 +350,12 @@ class TestRedispatchPhantomPr:
 
 
 class TestRevertPrematureDeployEnable:
-    def test_precondition_matches_and_action_taken(self, root: Path) -> None:
-        _write_app_config(root, "sacrifice", deploy_enabled=True)
+    def test_precondition_matches_and_writes_runtime_override_not_config(
+        self, root: Path
+    ) -> None:
+        cfg_path = _write_app_config(root, "sacrifice", deploy_enabled=True)
         # app_repo/docker-compose.prod.yml deliberately absent.
+        config_bytes_before = cfg_path.read_bytes()
         targets = recovery.detect_premature_deploy_enabled(root)
         assert len(targets) == 1
         target = targets[0]
@@ -360,10 +365,16 @@ class TestRevertPrematureDeployEnable:
         outcome = recovery.execute_revert_premature_deploy_enable(root, target, dry_run=False)
         assert outcome.status == "recovered"
 
-        text = (root / "apps" / "sacrifice" / "config.yaml").read_text()
-        assert "enabled: false" in text
-        # pre_deploy_commands untouched.
-        assert "docker-compose.prod.yml" in text
+        # config.yaml (operator-authored) is byte-for-byte untouched.
+        assert cfg_path.read_bytes() == config_bytes_before
+        assert "enabled: true" in cfg_path.read_text()
+
+        # The machine override lives in the gitignored runtime-state file, and
+        # the EFFECTIVE value is now False.
+        assert runtime_state.get_deploy_enabled_override(root, "sacrifice") is False
+        cfg = load_app_config("sacrifice", root)
+        assert cfg.deploy.enabled is True  # config default unchanged
+        assert runtime_state.effective_deploy_enabled(cfg, root) is False
 
     def test_precondition_fails_when_artifact_present(self, root: Path) -> None:
         _write_app_config(root, "sacrifice", deploy_enabled=True)
@@ -376,6 +387,14 @@ class TestRevertPrematureDeployEnable:
 
     def test_precondition_fails_when_already_disabled(self, root: Path) -> None:
         _write_app_config(root, "sacrifice", deploy_enabled=False)
+        targets = recovery.detect_premature_deploy_enabled(root)
+        assert targets == []
+
+    def test_precondition_fails_when_override_already_disabled(self, root: Path) -> None:
+        """If a prior machine override already disabled deploy, the detector
+        must skip (effective value False) rather than re-thrashing."""
+        _write_app_config(root, "sacrifice", deploy_enabled=True)
+        runtime_state.set_deploy_enabled_override(root, "sacrifice", False)
         targets = recovery.detect_premature_deploy_enabled(root)
         assert targets == []
 
@@ -402,7 +421,7 @@ class TestRevertPrematureDeployEnable:
 
     def test_dry_run_makes_no_mutation(self, root: Path) -> None:
         cfg_path = _write_app_config(root, "sacrifice", deploy_enabled=True)
-        original = cfg_path.read_text()
+        original = cfg_path.read_bytes()
         target = recovery.RecoveryTarget(
             playbook=recovery.PLAYBOOK_REVERT_PREMATURE_DEPLOY,
             key="app:sacrifice",
@@ -412,32 +431,25 @@ class TestRevertPrematureDeployEnable:
         )
         outcome = recovery.execute_revert_premature_deploy_enable(root, target, dry_run=True)
         assert outcome.status == "dry_run"
-        assert cfg_path.read_text() == original
+        # Neither config.yaml nor the runtime-state file is written.
+        assert cfg_path.read_bytes() == original
+        assert not runtime_state.runtime_state_path(root, "sacrifice").exists()
 
-    def test_preserves_comments_and_other_keys(self, root: Path) -> None:
-        cfg_path = root / "apps" / "myapp" / "config.yaml"
-        cfg_path.parent.mkdir(parents=True)
-        cfg_path.write_text(
-            "name: myapp\n"
-            "repo: o/r\n"
-            "app_repo_path: \"app_repo\"\n"
-            "# Phase 5 deploy block, hand-written comment.\n"
-            "deploy:\n"
-            "  enabled: true\n"
-            "  pre_deploy_commands:\n"
-            '    - "docker compose -f docker-compose.prod.yml build"\n'
-            "  deploy_command: \"docker compose -f docker-compose.prod.yml up -d\"\n"
-            "gates:\n"
-            "  lint_command: \"ruff check .\"\n",
-            encoding="utf-8",
+    def test_execute_skipped_stale_when_effective_already_false(self, root: Path) -> None:
+        """Re-check at execute time: if the effective value is already False
+        (e.g. an operator edit disabled it between detect and execute), the
+        executor is a no-op, not an error."""
+        _write_app_config(root, "sacrifice", deploy_enabled=False)
+        target = recovery.RecoveryTarget(
+            playbook=recovery.PLAYBOOK_REVERT_PREMATURE_DEPLOY,
+            key="app:sacrifice",
+            description="x",
+            app="sacrifice",
+            extra={},
         )
-        text = cfg_path.read_text(encoding="utf-8")
-        new_text, changed = recovery._set_deploy_enabled_false(text)
-        assert changed
-        assert "# Phase 5 deploy block, hand-written comment." in new_text
-        assert "enabled: false" in new_text
-        assert "deploy_command:" in new_text
-        assert "lint_command:" in new_text
+        outcome = recovery.execute_revert_premature_deploy_enable(root, target, dry_run=False)
+        assert outcome.status == "skipped_stale"
+        assert not runtime_state.runtime_state_path(root, "sacrifice").exists()
 
 
 # --------------------------------------------------------------------------- #
@@ -483,6 +495,46 @@ class TestConflictingGatedPr:
 
         story = _get_story(root, story_id)
         assert story.state == StoryState.CI_GREEN.value  # untouched
+
+    def test_repeat_escalation_suppressed_within_cooldown(self, root: Path) -> None:
+        """The same conflicting-PR key must escalate at most once per
+        cooldown window — without this, an unresolved conflict re-escalates
+        every recovery cycle (observed: 9 escalations in 9 minutes)."""
+        _write_app_config(root, "sacrifice")
+        _add_story(root, state=StoryState.CI_GREEN.value, github_pr_number=99)
+        now = datetime.now(UTC)
+        gh = lambda **_: {"state": "OPEN", "mergeable": "CONFLICTING"}  # noqa: E731
+
+        # First cycle: escalates.
+        summary1 = recovery.run_recovery_cycle(root, dry_run=False, now=now, gh_pr_view=gh)
+        assert len(summary1["escalated"]) == 1
+        assert summary1["escalated"][0]["playbook"] == recovery.PLAYBOOK_CONFLICTING_GATED_PR
+
+        # Second cycle, 5 minutes later (well within the 30-minute cooldown):
+        # the same conflict must NOT escalate again.
+        summary2 = recovery.run_recovery_cycle(
+            root, dry_run=False, now=now + timedelta(minutes=5), gh_pr_view=gh
+        )
+        assert summary2["escalated"] == []
+        assert len(summary2["skipped_cooldown"]) == 1
+        assert summary2["skipped_cooldown"][0]["playbook"] == recovery.PLAYBOOK_CONFLICTING_GATED_PR
+
+    def test_escalation_resumes_after_cooldown_expires(self, root: Path) -> None:
+        """Once the cooldown window elapses, the still-unresolved conflict
+        escalates again — it isn't suppressed forever, just throttled."""
+        _write_app_config(root, "sacrifice")
+        _add_story(root, state=StoryState.CI_GREEN.value, github_pr_number=99)
+        now = datetime.now(UTC)
+        gh = lambda **_: {"state": "OPEN", "mergeable": "CONFLICTING"}  # noqa: E731
+
+        summary1 = recovery.run_recovery_cycle(root, dry_run=False, now=now, gh_pr_view=gh)
+        assert len(summary1["escalated"]) == 1
+
+        summary2 = recovery.run_recovery_cycle(
+            root, dry_run=False, now=now + timedelta(minutes=45), gh_pr_view=gh
+        )
+        assert len(summary2["escalated"]) == 1
+        assert summary2["escalated"][0]["playbook"] == recovery.PLAYBOOK_CONFLICTING_GATED_PR
 
 
 # --------------------------------------------------------------------------- #
@@ -829,3 +881,80 @@ def test_gh_branch_exists_returns_none_on_uncertain_error() -> None:
         repo="o/r", branch="b", runner=lambda *a, **k: _Proc()
     )
     assert result is None
+
+
+# --------------------------------------------------------------------------- #
+# Playbook registry (WS3.1 refactor — behavior must be identical)
+# --------------------------------------------------------------------------- #
+
+
+class TestPlaybookRegistry:
+    """The hand-wired playbook seam was refactored into a declarative registry.
+    These tests pin the registry SHAPE so adding a playbook stays additive and
+    the 1→5 ordering / kinds are preserved."""
+
+    def _ctx(self, root: Path) -> recovery._RecoveryContext:
+        return recovery._RecoveryContext(
+            root=root,
+            now=datetime.now(UTC),
+            cooldown=recovery.DEFAULT_COOLDOWN,
+            max_actions=recovery.DEFAULT_MAX_ACTIONS_PER_CYCLE,
+            phantom_pr_age_threshold=recovery.DEFAULT_PHANTOM_PR_AGE_THRESHOLD,
+            db_path=None,
+            apps=None,
+            gh_pr_view=None,
+            gh_branch_exists=None,
+            runner=None,
+        )
+
+    def test_registry_has_all_five_playbooks_in_order(self, root: Path) -> None:
+        specs = recovery.build_recovery_registry(self._ctx(root))
+        assert [s.name for s in specs] == [
+            recovery.PLAYBOOK_RETRY_MERGEABLE_BLOCKED,
+            recovery.PLAYBOOK_REDISPATCH_PHANTOM_PR,
+            recovery.PLAYBOOK_REVERT_PREMATURE_DEPLOY,
+            recovery.PLAYBOOK_CONFLICTING_GATED_PR,
+            recovery.PLAYBOOK_RECOVER_STUCK_FIXONLY,
+        ]
+
+    def test_registry_kinds_match_playbook_semantics(self, root: Path) -> None:
+        specs = {s.name: s for s in recovery.build_recovery_registry(self._ctx(root))}
+        # Playbook 4 is the only escalate-only (never mutates, no executor).
+        p4 = specs[recovery.PLAYBOOK_CONFLICTING_GATED_PR]
+        assert p4.kind == "escalate_only"
+        assert p4.execute is None
+        # Every other playbook is mutating and carries an executor.
+        for name, spec in specs.items():
+            if name == recovery.PLAYBOOK_CONFLICTING_GATED_PR:
+                continue
+            assert spec.kind == "mutating"
+            assert spec.execute is not None
+
+    def test_registry_detect_closures_are_callable(self, root: Path) -> None:
+        _write_app_config(root, "sacrifice", deploy_enabled=False)
+        _engine(root)  # create the stories schema the DB-backed detectors query
+        # Each detect() is a zero-arg closure bound to the context; on an empty
+        # world it returns an empty list (no match) without raising.
+        for spec in recovery.build_recovery_registry(self._ctx(root)):
+            targets = spec.detect()
+            assert isinstance(targets, list)
+
+    def test_adding_a_playbook_is_additive(self, root: Path) -> None:
+        """A new PlaybookSpec can be appended without touching run_recovery_cycle
+        — proves the seam is a registry, not inline blocks."""
+        specs = recovery.build_recovery_registry(self._ctx(root))
+        extra = recovery.PlaybookSpec(
+            name="new-playbook",
+            kind="mutating",
+            detect=lambda: [],
+            execute=lambda *a, **k: recovery.RecoveryOutcome(
+                "new-playbook",
+                recovery.RecoveryTarget(playbook="new-playbook", key="k", description="d"),
+                "recovered",
+                "did-a-thing",
+            ),
+            execute_kwargs={},
+        )
+        combined = [*specs, extra]
+        assert combined[-1].name == "new-playbook"
+        assert len(combined) == len(specs) + 1

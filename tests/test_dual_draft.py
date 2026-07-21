@@ -167,9 +167,39 @@ def test_handle_stories_spawned_explore_spawns_two_stories(tmp_path: Path) -> No
     assert any("alt-a" in s for s in slugs), f"alt-a missing in slugs={slugs}"
     assert any("alt-b" in s for s in slugs), f"alt-b missing in slugs={slugs}"
 
-    # DB persistence: both rows present.
+    # Dry-run is a pure preview: the two dual-draft stories are RETURNED for
+    # inspection but never persisted to the DB (a persisted dry-run story is a
+    # live dispatchable artifact — the 2026-07-20 self-tick incident).
     persisted = _stories_for("sacrifice", root / "state" / "factory.db")
-    assert len(persisted) == 2
+    assert len(persisted) == 0
+
+
+def test_long_title_preserves_distinct_alt_suffixes(tmp_path: Path) -> None:
+    """Regression (dir 010 over-fire, 2026-07-21): for a LONG-titled direction
+    the ``base-alt-a`` slug used to exceed the 60-char cap and the ``-alt-*``
+    suffix was truncated OFF — both siblings collapsed to the SAME suffix-less
+    slug, so ``_draft_alt_suffix`` returned None, sibling detection failed, and
+    BOTH interpretations merged. The two slugs must stay <=60 chars, DISTINCT,
+    and each carry a recognizable trailing ``-alt-*``."""
+    from factory.chain.dual_draft import _draft_alt_suffix
+
+    root, cfg = _setup_dry_run_root(tmp_path)
+    long_title = "Add a factory version command printing the running git SHA and branch"
+    direction = _mk_direction(explore=True, title=long_title)
+    pm_result = {
+        "child_stories": [{"title": long_title, "scope": "backend"}],
+        "confidence": 0.9,
+    }
+    stories = handle_stories_spawned(
+        direction=direction, pm_result=pm_result, app_config=cfg,
+        software_factory_root=root, dry_run=True,
+    )
+    assert len(stories) == 2
+    slugs = [s.slug for s in stories]
+    assert all(len(s) <= 60 for s in slugs), f"slug over 60 chars: {slugs}"
+    assert slugs[0] != slugs[1], f"siblings collapsed to identical slug: {slugs}"
+    suffixes = sorted(_draft_alt_suffix(s) for s in slugs)
+    assert suffixes == ["alt-a", "alt-b"], f"alt suffix lost/garbled: {slugs} -> {suffixes}"
 
 
 def test_handle_stories_spawned_low_confidence_spawns_two_stories(tmp_path: Path) -> None:

@@ -1049,6 +1049,7 @@ def queue_cmd(
         StoryState.CI_GREEN.value,
         StoryState.READY_FOR_MERGE.value,
         StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
+        StoryState.SUPERSEDED_BY_SIBLING.value,
     }
     eng = create_engine(f"sqlite:///{db}", echo=False)
     table = Table(title="queue (in-flight stories)")
@@ -1487,7 +1488,7 @@ def _story_progress_rows(app_name: str | None) -> list[dict[str, Any]]:
         "SELECT id, app, slug, state, chain_kind, dev_retries, reviewer_cycles, "
         "github_issue_number, updated_at FROM stories WHERE state NOT IN "
         "('deployed','blocked_tests_need_clarification','blocked_deploy_failed',"
-        "'blocked_review_nonconvergent','story_created')"
+        "'blocked_review_nonconvergent','superseded_by_sibling','story_created')"
     )
     params: list[Any] = []
     if app_name:
@@ -3174,14 +3175,24 @@ def refresh_context_cmd(
 
 
 @app.command("apps")
-def apps_cmd() -> None:
+def apps_cmd(
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit a JSON array to stdout instead of the table."
+    ),
+) -> None:
     """List every configured app (apps/*/config.yaml) with key operator fields.
 
     Read-only: never mutates config, filesystem, or runtime state.
     """
+    import json
+
     from factory.app_config import list_apps
 
     rows = list_apps(_FACTORY_ROOT)
+
+    if json_output:
+        typer.echo(json.dumps(rows, default=str))
+        raise typer.Exit(code=0)
 
     if not rows:
         console.print("[dim]No configured apps found (no apps/*/config.yaml).[/dim]")
@@ -3202,3 +3213,32 @@ def apps_cmd() -> None:
         )
 
     console.print(table)
+
+
+# --------------------------------------------------------------------------- #
+# Phase 10 commands: factory version (git-state reporting)
+# --------------------------------------------------------------------------- #
+
+
+@app.command("version")
+def version_cmd() -> None:
+    """Print the factory repo's git SHA (short), branch name, and dirty flag.
+
+    Read-only: no writes, no network — only local git metadata reads.
+    """
+    from factory.git_state import get_git_state
+
+    state = get_git_state(_FACTORY_ROOT)
+    if state.dirty:
+        parts = []
+        if state.staged:
+            parts.append(f"{state.staged} staged")
+        if state.unstaged:
+            parts.append(f"{state.unstaged} unstaged")
+        if state.untracked:
+            parts.append(f"{state.untracked} untracked")
+        dirty_flag = " (dirty: " + ", ".join(parts) + ")"
+    else:
+        dirty_flag = ""
+    typer.echo(f"{state.sha} {state.branch}{dirty_flag}")
+    raise typer.Exit(code=0)
