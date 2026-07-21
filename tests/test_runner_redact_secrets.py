@@ -8,7 +8,6 @@ from sqlmodel import Session, select
 
 from factory.runner import Run, _engine, _record_run, redact_secrets
 
-
 # ---------------------------------------------------------------------------
 # Pure helper tests (no DB)
 # ---------------------------------------------------------------------------
