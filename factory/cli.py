@@ -3144,3 +3144,39 @@ def refresh_context_cmd(
     console.print(f"refreshed={refreshed} failed={failed}")
     if failed:
         raise typer.Exit(code=1)
+
+
+# --------------------------------------------------------------------------- #
+# Phase 10 commands: factory apps (configured-app discovery)
+# --------------------------------------------------------------------------- #
+
+
+@app.command("apps")
+def apps_cmd() -> None:
+    """List every configured app (apps/*/config.yaml) with key operator fields.
+
+    Read-only: never mutates config, filesystem, or runtime state.
+    """
+    from factory.app_config import list_apps
+
+    rows = list_apps(_FACTORY_ROOT)
+
+    if not rows:
+        console.print("[dim]No configured apps found (no apps/*/config.yaml).[/dim]")
+        raise typer.Exit(code=0)
+
+    table = Table(title="Configured Apps")
+    table.add_column("name")
+    table.add_column("repo")
+    table.add_column("self_tick_enabled")
+    table.add_column("deploy.enabled")
+
+    for r in rows:
+        table.add_row(
+            str(r["name"]),
+            str(r["repo"]),
+            str(r["self_tick_enabled"]),
+            str(r["deploy_enabled"]),
+        )
+
+    console.print(table)
