@@ -3529,16 +3529,17 @@ def _autoformat_changed_py_before_pr(
     # Detection: a ruff config file, ``[tool.ruff*]`` in pyproject, OR the app's
     # configured lint/format gate command invokes ruff (sacrifice runs
     # default-config ``ruff check .`` with NO ``[tool.ruff]`` table).
-    has_ruff = (target_repo / "ruff.toml").exists() or (target_repo / ".ruff.toml").exists()
-    if not has_ruff:
+    local_config = (target_repo / "ruff.toml").exists() or (target_repo / ".ruff.toml").exists()
+    if not local_config:
         pyproject = target_repo / "pyproject.toml"
         if pyproject.exists():
             try:
                 # Matches ``[tool.ruff]`` and any sub-table (``[tool.ruff.lint]``,
                 # ``[tool.ruff.format]``) — a repo may configure only a sub-table.
-                has_ruff = "[tool.ruff" in pyproject.read_text(encoding="utf-8")
+                local_config = "[tool.ruff" in pyproject.read_text(encoding="utf-8")
             except OSError:
-                has_ruff = False
+                local_config = False
+    has_ruff = local_config
     if not has_ruff and app_config is not None:
         gate_cmds = " ".join(
             c
@@ -3551,6 +3552,15 @@ def _autoformat_changed_py_before_pr(
         has_ruff = "ruff" in gate_cmds
     if not has_ruff:
         return
+
+    # When the app uses ruff but has NO local config table (sacrifice: default
+    # config via ``ruff check .``), the per-story worktree is physically nested
+    # under the factory repo, so ruff would otherwise walk up and pick the
+    # FACTORY's ``[tool.ruff]`` (line-length 100, double-quote) — reformatting
+    # the app's files to a style its OWN default-config CI (``ruff format
+    # --check`` at line-length 88) then REJECTS. ``--isolated`` pins ruff to its
+    # built-in defaults, matching exactly what the app's CI runs.
+    iso = ["--isolated"] if not local_config else []
 
     try:
         diff = subprocess.run(
@@ -3573,25 +3583,25 @@ def _autoformat_changed_py_before_pr(
     # imports. A blanket ``ruff check --fix`` under the full ruleset (E/F/I/W/
     # UP/B) could delete a PRE-EXISTING side-effect import or rewrite typing and,
     # since the code is NOT re-tested after this step, break CI and re-create the
-    # strand. So we only ever delete an import line THIS branch added: run the
-    # F401 fix, then revert any file where the fix removed a line that was not in
-    # the branch's own additions. A pre-existing unused import is left for the
-    # dev loop / CI to handle, never silently mutated here.
-    _strip_own_added_unused_imports(target_repo, base, py_files)
+    # strand. So a file is F401-fixed ONLY when every F401 violation in it sits
+    # on a line THIS branch added (decided from ruff's line numbers vs the diff
+    # hunks BEFORE fixing). A pre-existing unused import is left for the dev loop
+    # / CI, never silently mutated here.
+    _strip_own_added_unused_imports(target_repo, base, py_files, iso)
 
     try:
         # Pass 2 — NON-SEMANTIC nits: import-sorting (``--select I``) plus
         # ``ruff format`` (I001 unsorted imports, missing trailing newline,
         # whitespace) — exactly PR #57's failure. These never change behavior.
         subprocess.run(
-            ["uv", "run", "ruff", "check", "--fix", "--select", "I", *py_files],
+            ["uv", "run", "ruff", "check", "--fix", "--select", "I", *iso, *py_files],
             cwd=str(target_repo),
             check=False,
             capture_output=True,
             timeout=180,
         )
         subprocess.run(
-            ["uv", "run", "ruff", "format", *py_files],
+            ["uv", "run", "ruff", "format", *iso, *py_files],
             cwd=str(target_repo),
             check=False,
             capture_output=True,
@@ -3639,16 +3649,50 @@ def _autoformat_changed_py_before_pr(
         return
 
 
-def _strip_own_added_unused_imports(target_repo: Path, base: str, py_files: list[str]) -> None:
-    """Apply ``ruff check --fix --select F401`` to ``py_files``, but keep the fix
-    only where it deletes an import THIS branch added.
+def _added_line_numbers(diff_text: str) -> set[int]:
+    """New-file line numbers of the lines a unified diff ADDS.
 
-    For each file: snapshot the branch's own added lines (``origin/<base>...
-    HEAD``), run the F401 fix, then inspect the working-tree change. If every
-    line the fix removed matches one of the branch's added lines, keep it;
-    otherwise ``git checkout -- <file>`` reverts the file so a pre-existing
-    (possibly side-effect) import is never deleted. Best-effort; never raises.
+    Walks hunk headers (``@@ -a,b +c,d @@``) and counts ``+``/context lines in
+    the new-file coordinate system, so we can ask "was line N added by this
+    branch?" positionally — content matching alone is unsafe (a pre-existing
+    import can share text with an unrelated branch-added line).
     """
+    import re
+
+    added: set[int] = set()
+    new_ln = 0
+    for line in diff_text.splitlines():
+        if line.startswith("@@"):
+            m = re.search(r"\+(\d+)", line)
+            new_ln = int(m.group(1)) if m else 0
+            continue
+        if line.startswith(("+++", "---")):
+            continue
+        if line.startswith("+"):
+            added.add(new_ln)
+            new_ln += 1
+        elif line.startswith("-"):
+            continue  # old-only line — does not advance the new-file counter
+        else:
+            new_ln += 1  # context line
+    return added
+
+
+def _strip_own_added_unused_imports(
+    target_repo: Path, base: str, py_files: list[str], iso: list[str]
+) -> None:
+    """Remove F401 unused imports, but ONLY from files where every F401 sits on a
+    line THIS branch added — decided by line number, not text.
+
+    Per file: compute the branch's added new-file line numbers (diff hunks vs
+    ``origin/<base>...HEAD``); ask ruff for the F401 violations as JSON (their
+    row numbers, WITHOUT fixing); if — and only if — every F401 row is a
+    branch-added line, run ``ruff --fix --select F401``. If any F401 is on a
+    pre-existing line the file is left untouched (a possibly load-bearing
+    side-effect import is never deleted; the dev loop / CI handles it).
+    Best-effort; never raises.
+    """
+    import json
     import subprocess
 
     def _run(args: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str] | None:
@@ -3665,36 +3709,31 @@ def _strip_own_added_unused_imports(target_repo: Path, base: str, py_files: list
             return None
 
     for f in py_files:
-        # Lines this branch ADDED to the file (diff body lines starting with a
-        # single '+', minus the '+' marker). A removed import must be in here to
-        # be considered the branch's own.
         diff = _run(["git", "diff", f"origin/{base}...HEAD", "--", f])
         if diff is None or diff.returncode != 0:
             continue
-        added = {
-            ln[1:].strip()
-            for ln in diff.stdout.splitlines()
-            if ln.startswith("+") and not ln.startswith("+++")
-        }
-        # Apply the F401 fix in place.
-        if (
-            _run(["uv", "run", "ruff", "check", "--fix", "--select", "F401", f], timeout=180)
-            is None
-        ):
+        added = _added_line_numbers(diff.stdout)
+        # F401 violations (line numbers) in the CURRENT (committed) file — no fix yet.
+        probe = _run(
+            ["uv", "run", "ruff", "check", "--select", "F401", "--output-format", "json", *iso, f],
+            timeout=120,
+        )
+        if probe is None or not probe.stdout.strip():
             continue
-        # What did the fix change vs the committed file?
-        post = _run(["git", "diff", "--", f])
-        if post is None or not post.stdout.strip():
-            continue  # nothing removed (already clean or no unused-import fix)
-        removed = [
-            ln[1:].strip()
-            for ln in post.stdout.splitlines()
-            if ln.startswith("-") and not ln.startswith("---")
-        ]
-        # If the fix removed any line the branch did NOT add, it touched
-        # pre-existing code → revert this file entirely (fail safe).
-        if any(r and r not in added for r in removed):
-            _run(["git", "checkout", "--", f])
+        try:
+            violations = json.loads(probe.stdout)
+        except (ValueError, TypeError):
+            continue
+        rows = {
+            int(v["location"]["row"])
+            for v in violations
+            if isinstance(v, dict) and v.get("location", {}).get("row") is not None
+        }
+        if not rows:
+            continue
+        # Fix ONLY if every unused-import violation is on a branch-added line.
+        if rows <= added:
+            _run(["uv", "run", "ruff", "check", "--fix", "--select", "F401", *iso, f], timeout=180)
 
 
 def _open_pr_for_story(

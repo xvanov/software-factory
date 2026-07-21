@@ -215,6 +215,61 @@ def test_autoformat_keeps_preexisting_unused_import(tmp_path: Path) -> None:
     assert "Q = 2" in body
 
 
+def test_autoformat_keeps_shadowed_preexisting_import_collision(tmp_path: Path) -> None:
+    """Adversarial-review HIGH: the guard must be line-number based, not text.
+    Base has a load-bearing top-level ``import os``; the branch adds a function
+    with a *local* ``import os`` (same text). F401 flags the now-shadowed
+    top-level import — but it's PRE-EXISTING, so it must NOT be deleted even
+    though a branch-added line has identical stripped text."""
+    repo = tmp_path / "app"
+    origin = repo.parent / f"{repo.name}-origin.git"
+    _run(["git", "init", "-q", "--bare", "--initial-branch=main", str(origin)], cwd=tmp_path)
+    repo.mkdir(parents=True, exist_ok=True)
+    _run(["git", "init", "-q", "--initial-branch=main"], cwd=repo)
+    _run(["git", "config", "user.email", "t@e.x"], cwd=repo)
+    _run(["git", "config", "user.name", "T E"], cwd=repo)
+    (repo / "pyproject.toml").write_text(
+        '[tool.ruff.lint]\nselect = ["E", "F", "I"]\n', encoding="utf-8"
+    )
+    (repo / "m.py").write_text(
+        '"""M."""\n\nimport os\n\n\ndef existing():\n    return 1\n', encoding="utf-8"
+    )
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-q", "-m", "init"], cwd=repo)
+    _run(["git", "remote", "add", "origin", str(origin)], cwd=repo)
+    _run(["git", "push", "-u", "-q", "origin", "main"], cwd=repo)
+
+    # Branch adds a function with a local ``import os`` (used) — same text as the
+    # pre-existing top-level import, which is now shadowed/unused (F401).
+    _run(["git", "checkout", "-q", "-b", "story/1-x"], cwd=repo)
+    (repo / "m.py").write_text(
+        '"""M."""\n\nimport os\n\n\ndef existing():\n    return 1\n\n\n'
+        "def new_feature():\n    import os\n\n    return os.getcwd()\n",
+        encoding="utf-8",
+    )
+    _run(["git", "commit", "-q", "-am", "add feature"], cwd=repo)
+
+    _autoformat_changed_py_before_pr(repo, "main")
+
+    body = (repo / "m.py").read_text(encoding="utf-8")
+    # The pre-existing top-level import must survive (F401 was on a pre-existing
+    # line → the whole file is left for CI/dev, never auto-deleted here).
+    assert body.count("import os") == 2, body
+
+
+def test_added_line_numbers_parses_hunks() -> None:
+    from factory.chain.handlers import _added_line_numbers
+
+    diff = (
+        "diff --git a/m.py b/m.py\n"
+        "--- a/m.py\n+++ b/m.py\n"
+        "@@ -1,3 +1,5 @@\n"
+        " line1\n line2\n+added3\n+added4\n line5\n"
+    )
+    # new-file: 1,2 context; 3,4 added; 5 context
+    assert _added_line_numbers(diff) == {3, 4}
+
+
 def test_autoformat_runs_for_app_with_ruff_lint_command_no_tool_ruff(tmp_path: Path) -> None:
     """sacrifice-shape: no ``[tool.ruff]`` table, but the app's lint gate runs
     ``ruff check .`` — detection must fire via app_config.gates.lint_command."""
