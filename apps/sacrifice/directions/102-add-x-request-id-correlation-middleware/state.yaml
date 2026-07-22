@@ -1,0 +1,9 @@
+status: created
+source: operator-loop3-loop2-demo
+created_at: '2026-07-22T23:34:18.650458+00:00'
+audit:
+- ts: '2026-07-22T23:34:18.650461+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: operator-loop3-loop2-demo
