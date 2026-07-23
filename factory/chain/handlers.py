@@ -3661,15 +3661,18 @@ def _autoformat_changed_py_before_pr(
     if not py_files:
         return
 
-    # Pass 1 — F401 unused-import removal, restricted to the branch's OWN added
-    # imports. A blanket ``ruff check --fix`` under the full ruleset (E/F/I/W/
-    # UP/B) could delete a PRE-EXISTING side-effect import or rewrite typing and,
-    # since the code is NOT re-tested after this step, break CI and re-create the
-    # strand. So a file is F401-fixed ONLY when every F401 violation in it sits
+    # Pass 1 — remove the auto-fixable pyflakes nits the dev leaves in its OWN
+    # new code, restricted to the branch's OWN added lines. A blanket ``ruff
+    # check --fix`` under the full ruleset (E/F/I/W/UP/B) could delete a
+    # PRE-EXISTING side-effect import or rewrite typing and, since the code is
+    # NOT re-tested after this step, break CI and re-create the strand. So a
+    # given rule is fixed in a file ONLY when EVERY violation of that rule sits
     # on a line THIS branch added (decided from ruff's line numbers vs the diff
-    # hunks BEFORE fixing). A pre-existing unused import is left for the dev loop
-    # / CI, never silently mutated here.
-    _strip_own_added_unused_imports(target_repo, base, py_files, iso)
+    # hunks BEFORE fixing). Codes handled: F401 (unused import), F541 (f-string
+    # without placeholders), F841 (unused local variable) — exactly the F-class
+    # nits a human hand-fixed on #349/#351. A pre-existing violation of any of
+    # these is left for the dev loop / CI, never silently mutated here.
+    _strip_own_added_fixable_lint(target_repo, base, py_files, iso)
 
     try:
         # Pass 2 — NON-SEMANTIC nits: import-sorting (``--select I``) plus
@@ -3718,7 +3721,7 @@ def _autoformat_changed_py_before_pr(
                     "git",
                     "commit",
                     "-m",
-                    "style: ruff F401 (own imports) + isort + format (pre-PR autoformat)",
+                    "style: ruff F401/F541/F841 (own added lines) + isort + format (pre-PR autoformat)",
                     "--",
                     *py_files,
                 ],
@@ -3760,19 +3763,77 @@ def _added_line_numbers(diff_text: str) -> set[int]:
     return added
 
 
-def _strip_own_added_unused_imports(
+# The auto-fixable pyflakes nits stripped from the story's OWN added lines,
+# mapped to whether ruff classifies the fix as "unsafe" (needs ``--unsafe-fixes``).
+#   F401 unused import          — safe fix: delete the import.
+#   F541 f-string, no placeholder — safe fix: drop the ``f`` prefix.
+#   F841 unused local variable   — UNSAFE fix: ruff rewrites ``x = call()`` to a
+#        bare ``call()`` (the binding goes, the side-effecting RHS stays), so it
+#        is behaviorally safe but ruff still gates it behind ``--unsafe-fixes``.
+# (E402 module-import-not-at-top is intentionally absent: ruff ships no autofix
+# for it, so nothing to do here — the dev loop / CI reorders those.)
+_OWN_LINE_FIXABLE_CODES: dict[str, bool] = {"F401": False, "F541": False, "F841": True}
+
+
+def _removed_line_numbers(diff_text: str) -> set[int]:
+    """OLD-file line numbers of the lines a unified diff REMOVES or ALTERS.
+
+    The mirror of :func:`_added_line_numbers`: walks hunk headers
+    (``@@ -a,b +c,d @@``) counting ``-``/context lines in the OLD-file
+    coordinate system, so we can ask "which lines of the pre-fix file did this
+    change touch?". Used to verify a ``ruff --fix`` only removed/altered lines
+    the branch itself added (``git diff HEAD`` old-side == HEAD coordinates,
+    the same coordinates :func:`_added_line_numbers` yields for
+    ``origin/<base>...HEAD``).
+    """
+    import re
+
+    removed: set[int] = set()
+    old_ln = 0
+    for line in diff_text.splitlines():
+        if line.startswith("@@"):
+            m = re.search(r"-(\d+)", line)
+            old_ln = int(m.group(1)) if m else 0
+            continue
+        if line.startswith(("+++", "---")):
+            continue
+        if line.startswith("-"):
+            removed.add(old_ln)
+            old_ln += 1
+        elif line.startswith("+"):
+            continue  # new-only line — does not advance the old-file counter
+        else:
+            old_ln += 1  # context line
+    return removed
+
+
+def _strip_own_added_fixable_lint(
     target_repo: Path, base: str, py_files: list[str], iso: list[str]
 ) -> None:
-    """Remove F401 unused imports, but ONLY from files where every F401 sits on a
-    line THIS branch added — decided by line number, not text.
+    """Auto-fix the F-class nits in :data:`_OWN_LINE_FIXABLE_CODES`, but ONLY the
+    ones whose EVERY violation sits on a line THIS branch added — decided by line
+    number, not text.
 
     Per file: compute the branch's added new-file line numbers (diff hunks vs
-    ``origin/<base>...HEAD``); ask ruff for the F401 violations as JSON (their
-    row numbers, WITHOUT fixing); if — and only if — every F401 row is a
-    branch-added line, run ``ruff --fix --select F401``. If any F401 is on a
-    pre-existing line the file is left untouched (a possibly load-bearing
-    side-effect import is never deleted; the dev loop / CI handles it).
-    Best-effort; never raises.
+    ``origin/<base>...HEAD``); ask ruff for the violations as JSON (their row
+    numbers, WITHOUT fixing) in ONE probe while the working tree still equals
+    HEAD (so probe rows and diff rows share a coordinate system); then, for each
+    candidate code independently, fix it ONLY IF every violation of that code is
+    a branch-added row. A code with even one violation on a pre-existing line is
+    dropped for this file (a possibly load-bearing side-effect import / a var the
+    dev didn't add is never silently mutated; the dev loop / CI handles it).
+
+    Codes are gated INDEPENDENTLY — a pre-existing F841 must not block removing
+    the dev's own newly-added F401. Fixes are then applied in a single
+    ``ruff --fix`` pass over just the cleared codes. ``--unsafe-fixes`` is added
+    only when a code needing it (F841) survives the gate.
+
+    Because a single ``ruff --fix`` pass is ITERATIVE (fixing one violation can
+    expose another and fix it too, on a line the input gate never evaluated), a
+    RESULT CHECK follows every fix: the applied change is diffed against HEAD and
+    the file is reverted whole if the fix removed/altered any line the branch did
+    NOT add. The input gate is thus an optimisation; the result check is the
+    load-bearing safety guarantee. Best-effort; never raises.
     """
     import json
     import subprocess
@@ -3790,14 +3851,27 @@ def _strip_own_added_unused_imports(
         except (subprocess.TimeoutExpired, OSError):
             return None
 
+    select_all = ",".join(_OWN_LINE_FIXABLE_CODES)
     for f in py_files:
         diff = _run(["git", "diff", f"origin/{base}...HEAD", "--", f])
         if diff is None or diff.returncode != 0:
             continue
         added = _added_line_numbers(diff.stdout)
-        # F401 violations (line numbers) in the CURRENT (committed) file — no fix yet.
+        # All candidate violations (code + line number) in the CURRENT (committed)
+        # file — one probe, no fix yet, so every row is in HEAD's coordinates.
         probe = _run(
-            ["uv", "run", "ruff", "check", "--select", "F401", "--output-format", "json", *iso, f],
+            [
+                "uv",
+                "run",
+                "ruff",
+                "check",
+                "--select",
+                select_all,
+                "--output-format",
+                "json",
+                *iso,
+                f,
+            ],
             timeout=120,
         )
         if probe is None or not probe.stdout.strip():
@@ -3806,16 +3880,43 @@ def _strip_own_added_unused_imports(
             violations = json.loads(probe.stdout)
         except (ValueError, TypeError):
             continue
-        rows = {
-            int(v["location"]["row"])
-            for v in violations
-            if isinstance(v, dict) and v.get("location", {}).get("row") is not None
-        }
-        if not rows:
+        # rows_by_code[code] = {row numbers of that code's violations in this file}
+        rows_by_code: dict[str, set[int]] = {}
+        for v in violations:
+            if not isinstance(v, dict):
+                continue
+            code = v.get("code")
+            row = v.get("location", {}).get("row")
+            if code in _OWN_LINE_FIXABLE_CODES and row is not None:
+                rows_by_code.setdefault(code, set()).add(int(row))
+        # A code is clearable iff it HAS violations here and every one is on a
+        # branch-added line. Codes are independent — one dropped code never
+        # blocks another.
+        clearable = [c for c, rows in rows_by_code.items() if rows and rows <= added]
+        if not clearable:
             continue
-        # Fix ONLY if every unused-import violation is on a branch-added line.
-        if rows <= added:
-            _run(["uv", "run", "ruff", "check", "--fix", "--select", "F401", *iso, f], timeout=180)
+        fix_args = ["uv", "run", "ruff", "check", "--fix"]
+        if any(_OWN_LINE_FIXABLE_CODES[c] for c in clearable):
+            fix_args.append("--unsafe-fixes")
+        fix_args += ["--select", ",".join(sorted(clearable)), *iso, f]
+        _run(fix_args, timeout=180)
+
+        # RESULT CHECK (not just an input gate): a single ``ruff --fix`` pass is
+        # ITERATIVE — resolving one violation can create/expose another and fix
+        # THAT too within the same invocation, on a line the per-code gate never
+        # evaluated. E.g. removing a branch-added unused local (``x = os``, F841)
+        # orphans a PRE-EXISTING ``import os``, and with F401 co-selected ruff
+        # then deletes that pre-existing import (adversarial review, PR #105).
+        # So verify the APPLIED change touched ONLY branch-added lines: diff the
+        # fixed tree against HEAD and require every HEAD line it removed/altered
+        # to be a branch-added line. If the fix reached a pre-existing line,
+        # revert the whole file — the dev loop / CI handles it, we never ship a
+        # silent mutation of code the branch didn't author.
+        post = _run(["git", "diff", "HEAD", "--", f])
+        if post is not None and post.returncode == 0 and post.stdout.strip():
+            touched_head_lines = _removed_line_numbers(post.stdout)
+            if not (touched_head_lines <= added):
+                _run(["git", "checkout", "HEAD", "--", f])
 
 
 def _open_pr_for_story(
