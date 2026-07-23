@@ -419,11 +419,14 @@ def close_abandoned_draft_sibling(
                 # Not a dual-draft sibling, or the same interpretation
                 # (shouldn't happen, but never self-close).
                 continue
-            if _is_terminal_state(sib.state):
-                # Already retired on a prior run (SUPERSEDED_BY_SIBLING), already
-                # SHIPPED (DEPLOYED — must NOT be downgraded), or parked in a
-                # BLOCKED_* sink — any terminal sibling is done and is skipped
-                # idempotently. Only an in-flight loser is retired.
+            if _is_terminal_state(sib.state) or sib.state == StoryState.DEPLOY_PENDING.value:
+                # Skip any sibling that is done or has itself SHIPPED/merged:
+                # already retired (SUPERSEDED_BY_SIBLING), already DEPLOYED, parked
+                # in a BLOCKED_* sink (all terminal), OR at DEPLOY_PENDING — a
+                # merged-but-not-yet-deployed sibling (the transient both-merged
+                # race) must NEVER be downgraded to ``superseded``, since its own
+                # PR landed and its deploy is already enqueued. Only a still-
+                # in-flight loser is retired.
                 continue
 
             winner_ref = (

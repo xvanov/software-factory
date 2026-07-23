@@ -1442,6 +1442,7 @@ def reconcile_dual_draft_winners(
             for m in members
             if m.id != winner.id
             and not _terminal(m.state)
+            and (m.state or "") not in _SHIPPED
             and _draft_alt_suffix(m.slug or "") != _draft_alt_suffix(winner.slug or "")
         ]
         if not losers:
@@ -1684,26 +1685,11 @@ def tick(
                     (app, f"dual-draft winner reconcile failed (non-fatal): {exc!r}")
                 )
 
-            # Issue-lifecycle backfill: close GitHub issues left open for
-            # completed directions / shipped-or-superseded stories. The
-            # event-driven close on deploy/supersede can no-op (async merge, no
-            # token in that scope), and nothing else runs the sweep, so wire the
-            # existing idempotent, fail-safe reconciler into the tick with a real
-            # client (G3). Best-effort; a GitHub/API hiccup never breaks the tick.
-            try:
-                from factory.directions.tracker_issue import reconcile_completed_issues
-                from factory.providers.github import build_github_client
-
-                _issue_gh = build_github_client()
-                if _issue_gh is not None:
-                    _rep = reconcile_completed_issues(
-                        cfg, _issue_gh, software_factory_root=root, db_path=db
-                    )
-                    _n = len(_rep.get("trackers_closed", [])) + len(_rep.get("stories_closed", []))
-                    if _n:
-                        summary.handler_runs.append(("issue-reconcile", "open", f"closed:{_n}"))
-            except Exception as exc:
-                summary.errors.append((app, f"issue reconcile failed (non-fatal): {exc!r}"))
+            # NOTE: GitHub issue-lifecycle hygiene (close trackers/story-issues
+            # for completed/superseded work) is handled later in this tick by the
+            # existing rate-gated, mode-guarded ``_should_run_issue_hygiene`` +
+            # ``reconcile_completed_issues`` block — the dual-draft supersede
+            # above just moves losers into the resolved state that sweep closes.
 
             try:
                 recovered = _prune_stale_in_progress(db, app, settings=settings, root=root)

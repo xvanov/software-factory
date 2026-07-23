@@ -145,6 +145,24 @@ def test_both_deployed_not_downgraded(tmp_path: Path) -> None:
     assert _reload(db, b.id).state == StoryState.DEPLOYED.value
 
 
+def test_both_deploy_pending_not_downgraded(tmp_path: Path) -> None:
+    """The transient BOTH-merged race: both siblings at DEPLOY_PENDING (each PR
+    landed, deploy enqueued). Neither must be downgraded to superseded — that
+    would mislabel a merged story and delete its branch. DEPLOY_PENDING counts as
+    shipped for BOTH winner-selection and loser-exclusion."""
+    db = _seed(tmp_path)
+    a = _story(db, direction_id="140", slug="race-alt-a", state=StoryState.DEPLOY_PENDING.value)
+    b = _story(db, direction_id="140", slug="race-alt-b", state=StoryState.DEPLOY_PENDING.value)
+
+    out = reconcile_dual_draft_winners(
+        db, "sacrifice", cfg=_CFG, root=tmp_path, github_client_factory=_no_client
+    )
+
+    assert out == []
+    assert _reload(db, a.id).state == StoryState.DEPLOY_PENDING.value
+    assert _reload(db, b.id).state == StoryState.DEPLOY_PENDING.value
+
+
 def test_non_dualdraft_stories_ignored(tmp_path: Path) -> None:
     """A direction with no ``-alt-*`` siblings is never touched."""
     db = _seed(tmp_path)

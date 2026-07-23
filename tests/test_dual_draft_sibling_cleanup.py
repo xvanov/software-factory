@@ -420,6 +420,23 @@ def test_never_downgrades_a_shipped_sibling(tmp_path: Path) -> None:
     assert get_story(loser.id, db).state == StoryState.DEPLOYED.value  # NOT downgraded
 
 
+def test_never_downgrades_a_deploy_pending_sibling(tmp_path: Path) -> None:
+    """A sibling at DEPLOY_PENDING (its own PR merged, deploy enqueued) must NOT
+    be superseded — it is shipping, not a loser. Guards the transient
+    both-merged race even though DEPLOY_PENDING is non-terminal."""
+    db = tmp_path / "state" / "factory.db"
+    winner, loser = _mk_pair(db)
+    loser.state = StoryState.DEPLOY_PENDING.value  # loser's PR also merged
+    persist_story(loser, db)
+
+    result = close_abandoned_draft_sibling(
+        winner, _AppConfig(), tmp_path, db, None, False, runner=_Runner()
+    )
+
+    assert result is False
+    assert get_story(loser.id, db).state == StoryState.DEPLOY_PENDING.value  # not downgraded
+
+
 def test_dry_run_suppresses_all_effects(tmp_path: Path) -> None:
     """``dry_run=True`` still short-circuits everything (no DB write, no gh)."""
     db = tmp_path / "state" / "factory.db"
