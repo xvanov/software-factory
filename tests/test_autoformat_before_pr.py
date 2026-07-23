@@ -257,6 +257,94 @@ def test_autoformat_keeps_shadowed_preexisting_import_collision(tmp_path: Path) 
     assert body.count("import os") == 2, body
 
 
+def test_autoformat_strips_branch_added_f541(tmp_path: Path) -> None:
+    """An f-string with no placeholders (F541) the BRANCH added is de-prefixed —
+    a safe, behavior-preserving fix on the story's own new line."""
+    repo = _init_repo_with_origin(tmp_path / "app")
+    dirty = '"""Has F541."""\n\nMSG = f"no placeholder here"\n'
+    _new_branch_with_dirty_file(repo, "story/1-x", "feat.py", dirty)
+
+    _autoformat_changed_py_before_pr(repo, "main")
+
+    body = (repo / "feat.py").read_text(encoding="utf-8")
+    assert 'MSG = "no placeholder here"' in body  # f-prefix dropped
+    assert 'f"' not in body
+    clean = subprocess.run(
+        ["uv", "run", "ruff", "check", str(repo / "feat.py")],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+
+
+def test_autoformat_strips_branch_added_unused_variable(tmp_path: Path) -> None:
+    """An unused local variable (F841) the BRANCH added is removed via ruff's
+    ``--unsafe-fixes`` — the binding goes, the side-effecting RHS call stays."""
+    repo = _init_repo_with_origin(tmp_path / "app")
+    dirty = (
+        '"""Has F841."""\n\n\n'
+        "def feature():\n    unused = compute()\n    return 1\n\n\n"
+        "def compute():\n    return 2\n"
+    )
+    _new_branch_with_dirty_file(repo, "story/1-x", "feat.py", dirty)
+
+    _autoformat_changed_py_before_pr(repo, "main")
+
+    body = (repo / "feat.py").read_text(encoding="utf-8")
+    assert "unused =" not in body  # unused binding removed
+    assert "compute()" in body  # side-effecting call preserved
+    clean = subprocess.run(
+        ["uv", "run", "ruff", "check", str(repo / "feat.py")],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+
+
+def test_autoformat_preexisting_f841_does_not_block_own_f401(tmp_path: Path) -> None:
+    """Per-code independence: a PRE-EXISTING unused variable (F841 on a base
+    line) must NOT be mutated, and must NOT stop the branch's OWN newly-added
+    unused import (F401) from being removed. The two codes are gated
+    independently, by line number."""
+    repo = tmp_path / "app"
+    origin = repo.parent / f"{repo.name}-origin.git"
+    _run(["git", "init", "-q", "--bare", "--initial-branch=main", str(origin)], cwd=tmp_path)
+    repo.mkdir(parents=True, exist_ok=True)
+    _run(["git", "init", "-q", "--initial-branch=main"], cwd=repo)
+    _run(["git", "config", "user.email", "t@e.x"], cwd=repo)
+    _run(["git", "config", "user.name", "T E"], cwd=repo)
+    (repo / "pyproject.toml").write_text(
+        '[tool.ruff.lint]\nselect = ["E", "F", "I"]\n', encoding="utf-8"
+    )
+    # Base has a pre-existing unused local (F841) inside a function.
+    (repo / "feat.py").write_text(
+        '"""M."""\n\n\ndef existing():\n    leftover = 5\n    return 1\n',
+        encoding="utf-8",
+    )
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-q", "-m", "init"], cwd=repo)
+    _run(["git", "remote", "add", "origin", str(origin)], cwd=repo)
+    _run(["git", "push", "-u", "-q", "origin", "main"], cwd=repo)
+
+    # Branch ADDS an unused import at the top (F401 on a branch-added line).
+    _run(["git", "checkout", "-q", "-b", "story/1-x"], cwd=repo)
+    (repo / "feat.py").write_text(
+        '"""M."""\n\nimport os\n\n\ndef existing():\n    leftover = 5\n    return 1\n',
+        encoding="utf-8",
+    )
+    _run(["git", "commit", "-q", "-am", "add unused import"], cwd=repo)
+
+    _autoformat_changed_py_before_pr(repo, "main")
+
+    body = (repo / "feat.py").read_text(encoding="utf-8")
+    assert "import os" not in body  # branch-added F401 removed...
+    assert "leftover = 5" in body  # ...pre-existing F841 preserved (not on an added line)
+
+
 def test_added_line_numbers_parses_hunks() -> None:
     from factory.chain.handlers import _added_line_numbers
 
