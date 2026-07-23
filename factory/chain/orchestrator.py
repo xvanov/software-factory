@@ -171,9 +171,7 @@ _DISPATCH = {
 # set and full transition coverage) are asserted in
 # tests/chain/test_per_story_budget.py so a new dispatch state fails a test
 # rather than crashing a live tick.
-_BUDGET_METERED_STATES: frozenset[StoryState] = frozenset(_DISPATCH) - {
-    StoryState.DEPLOY_PENDING
-}
+_BUDGET_METERED_STATES: frozenset[StoryState] = frozenset(_DISPATCH) - {StoryState.DEPLOY_PENDING}
 
 
 def _story_ledger_spend_usd(db_path: Path, story_id: int | None) -> float | None:
@@ -300,8 +298,7 @@ def _story_budget_breaker_reason(story: StoryRecord, caps: Any) -> str | None:
         return f"total_attempts={story.total_attempts} >= per_story_attempts={per_story_attempts}"
     if per_story_spend > 0 and story.total_spend_usd >= per_story_spend:
         return (
-            f"total_spend_usd={story.total_spend_usd:.4f} >= "
-            f"per_story_spend_usd={per_story_spend}"
+            f"total_spend_usd={story.total_spend_usd:.4f} >= per_story_spend_usd={per_story_spend}"
         )
     return None
 
@@ -525,9 +522,7 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
     return sorted(
         s.id
         for s in siblings
-        if s.id is not None
-        and s.id < story.id
-        and s.state != StoryState.DEPLOYED.value
+        if s.id is not None and s.id < story.id and s.state != StoryState.DEPLOYED.value
     )
 
 
@@ -807,9 +802,7 @@ def _failure_signature_from_tail(raw: str) -> str:
     return hashlib.sha256(normalized[-500:].encode("utf-8")).hexdigest()
 
 
-def _recover_blocked_stories(
-    db: Path, app: str, *, root: Path
-) -> list[tuple[str, str, str]]:
+def _recover_blocked_stories(db: Path, app: str, *, root: Path) -> list[tuple[str, str, str]]:
     """Re-dispatch blocked stories so since-shipped chain fixes reach them.
 
     For each story in an auto-recoverable blocked state, reset it to the
@@ -960,8 +953,14 @@ def _query_pr_state(*, app_config: AppConfig, pr_number: int) -> str | None:
     if pr_number <= 0:  # synthesized placeholder — nothing to query
         return None
     cmd = [
-        "gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
-        "--json", "state",
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "state",
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -1113,9 +1112,7 @@ def _current_story_state(db: Path, story_id: int | None) -> str | None:
     try:
         eng = create_engine(f"sqlite:///{db}", echo=False)
         with Session(eng) as session:
-            row = session.exec(
-                select(StoryRecord).where(StoryRecord.id == story_id)
-            ).first()
+            row = session.exec(select(StoryRecord).where(StoryRecord.id == story_id)).first()
             return row.state if row is not None else None
     except Exception:  # noqa: BLE001 - a read hiccup must never break reconcile
         return None
@@ -1171,9 +1168,7 @@ def _close_dual_draft_sibling_on_reconcile(
             # No token / client available — cleanup is best-effort; the Part 2
             # self-check in auto-merge still blocks the loser from merging.
             return
-        close_abandoned_draft_sibling(
-            winner, cfg, root, db, gh, False, runner=runner
-        )
+        close_abandoned_draft_sibling(winner, cfg, root, db, gh, False, runner=runner)
     except Exception:  # noqa: BLE001 - cleanup must never break reconcile
         pass
 
@@ -1235,16 +1230,39 @@ def reconcile_from_github(
         EVENT_MERGED,
         EVENT_PR_UNMERGEABLE,
         IllegalTransitionError,
+        StoryState,
+        is_terminal,
     )
 
+    def _terminal(state_value: str | None) -> bool:
+        try:
+            return is_terminal(StoryState(state_value))
+        except ValueError:
+            return False
+
+    def _settled(state_value: str | None) -> bool:
+        # A story reconcile should no longer act on: already TERMINAL, or already
+        # at the post-merge DEPLOY_PENDING target (its merge is recorded and its
+        # deploy enqueued — re-forcing it every tick would spam drift events and
+        # re-run the sibling cleanup; this preserves reconcile's idempotency).
+        return _terminal(state_value) or state_value == StoryState.DEPLOY_PENDING.value
+
+    # Candidates: EVERY non-terminal story that carries a real PR — NOT just the
+    # ``_MERGEABLE_STATES`` (pr_open / ci_green / ready_for_merge). A PR merged
+    # out-of-band while the story had bounced back to REVIEWER_REQUESTED_CHANGES
+    # or DEV_IN_PROGRESS (e.g. after a CI-failure re-dispatch) is invisible to a
+    # mergeable-states-only query, so the merge is never detected, the story
+    # loops forever on an already-merged branch, and its dual-draft sibling is
+    # never superseded (G2: stories 132/136). Detecting ANY merged PR regardless
+    # of the story's current state is exactly what closes that gap.
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
-        candidates = session.exec(
-            select(StoryRecord).where(
-                StoryRecord.app == app,
-                StoryRecord.state.in_(list(_MERGEABLE_STATES)),  # type: ignore[attr-defined]
-            )
-        ).all()
+        all_rows = session.exec(select(StoryRecord).where(StoryRecord.app == app)).all()
+    candidates = [
+        s
+        for s in all_rows
+        if s.github_pr_number and s.github_pr_number > 0 and not _settled(s.state)
+    ]
 
     reconciled: list[tuple[str, str, str]] = []
     checked = 0
@@ -1258,13 +1276,13 @@ def reconcile_from_github(
         # The ``candidates`` snapshot is taken ONCE, but a winner processed
         # earlier in THIS same loop may have run the dual-draft cleanup, which
         # closes a losing sibling's PR and sets it to SUPERSEDED_BY_SIBLING.
-        # Re-read the live state and skip any candidate that has already left
-        # _MERGEABLE_STATES — otherwise we'd query its just-closed PR, see
-        # CLOSED, apply EVENT_PR_UNMERGEABLE, and clobber the intended
-        # SUPERSEDED_BY_SIBLING with a false BLOCKED_DEPLOY_FAILED "attention"
-        # signal (adversarial review, 2026-07-21).
+        # Re-read the live state and skip any candidate that has already become
+        # TERMINAL — otherwise we'd query its just-closed PR, see CLOSED, apply
+        # EVENT_PR_UNMERGEABLE, and clobber the intended SUPERSEDED_BY_SIBLING
+        # with a false BLOCKED_DEPLOY_FAILED "attention" signal (adversarial
+        # review, 2026-07-21).
         live_state = _current_story_state(db, story.id)
-        if live_state is not None and live_state not in _MERGEABLE_STATES:
+        if live_state is not None and _settled(live_state):
             continue
         if live_state is not None:
             story.state = live_state
@@ -1277,20 +1295,40 @@ def reconcile_from_github(
             continue
 
         from_state = story.state
-        event = EVENT_MERGED if pr_state == "MERGED" else EVENT_PR_UNMERGEABLE
-        try:
-            new_state = advance(story, event)
-        except IllegalTransitionError:
-            # No transition for this (state, event) pair — surface the observed
-            # drift but do NOT force an illegal mutation.
-            _write_drift_event(
-                root=root,
-                story=story,
-                from_state=from_state,
-                pr_state=pr_state,
-                action="observed_no_transition",
-            )
-            continue
+        if pr_state == "MERGED":
+            # A merged PR is GROUND TRUTH: the story shipped. Route it to
+            # DEPLOY_PENDING from ANY non-terminal state. The ordinary edges
+            # cover pr_open/ci_green/ready_for_merge; a story bounced back to
+            # reviewer_requested_changes / dev_in_progress after its PR merged
+            # (G2: 132/136) has NO EVENT_MERGED edge, so force the terminal-safe
+            # DEPLOY_PENDING directly rather than leave it looping on an
+            # already-merged branch forever.
+            event = EVENT_MERGED
+            try:
+                new_state = advance(story, EVENT_MERGED)
+            except IllegalTransitionError:
+                new_state = StoryState.DEPLOY_PENDING
+        else:
+            # CLOSED (not merged). Only sink to the attention state from a
+            # MERGEABLE state (a story whose OPEN PR was closed). A CLOSED PR on
+            # an in-dev / in-review story is NORMAL churn — the story will open a
+            # fresh PR — so never sink those; leave them to the chain.
+            event = EVENT_PR_UNMERGEABLE
+            if from_state not in _MERGEABLE_STATES:
+                continue
+            try:
+                new_state = advance(story, EVENT_PR_UNMERGEABLE)
+            except IllegalTransitionError:
+                # No transition for this (state, event) pair — surface the
+                # observed drift but do NOT force an illegal mutation.
+                _write_drift_event(
+                    root=root,
+                    story=story,
+                    from_state=from_state,
+                    pr_state=pr_state,
+                    action="observed_no_transition",
+                )
+                continue
 
         story.state = new_state.value
         if event == EVENT_PR_UNMERGEABLE:
@@ -1333,6 +1371,100 @@ def reconcile_from_github(
         )
 
     return reconciled
+
+
+def reconcile_dual_draft_winners(
+    db: Path,
+    app: str,
+    *,
+    cfg: AppConfig,
+    root: Path,
+    github_client_factory: Callable[[], Any] | None = None,
+    sibling_cleanup_runner: Any = None,
+) -> list[tuple[str, str, str]]:
+    """Standing, idempotent supersede of dual-draft LOSERS whose sibling shipped.
+
+    ``close_abandoned_draft_sibling`` only fires the SINGLE tick a winner's merge
+    is first detected. If the losing sibling was mid-dispatch that exact tick (or
+    the winner shipped via a path that skipped the cleanup), the loser is
+    stranded — and once the winner is TERMINAL (``deployed``) it leaves
+    ``reconcile_from_github``'s candidate set, so no later tick ever retries the
+    supersede. Result (G2, stories 133/137): a redundant second interpretation
+    keeps running toward its own merge.
+
+    This pass re-derives the cleanup from GROUND TRUTH every tick: for each
+    dual-draft group (same ``direction_id`` + app, ``-alt-*`` slug suffixes) that
+    has a SHIPPED sibling (``DEPLOYED`` or ``DEPLOY_PENDING``), it supersedes
+    every still-in-flight sibling via the same ``close_abandoned_draft_sibling``
+    used by the merge/reconcile paths. Idempotent (that function skips any
+    terminal sibling, so a settled group is a no-op) and fail-safe (never raises
+    out of the tick). The DB supersede runs even without a GitHub token; the
+    PR/issue close is best-effort. Returns ``(slug, from_state, to_state)`` for
+    the TickSummary.
+    """
+    from factory.chain.dual_draft import _draft_alt_suffix, close_abandoned_draft_sibling
+    from factory.chain.state_machine import StoryRecord, StoryState, is_terminal
+
+    _SHIPPED = {StoryState.DEPLOYED.value, StoryState.DEPLOY_PENDING.value}
+
+    def _terminal(state_value: str | None) -> bool:
+        try:
+            return is_terminal(StoryState(state_value))
+        except ValueError:
+            return False
+
+    try:
+        eng = create_engine(f"sqlite:///{db}", echo=False)
+        with Session(eng) as session:
+            rows = session.exec(select(StoryRecord).where(StoryRecord.app == app)).all()
+    except Exception:  # noqa: BLE001 - a bad DB must never break the tick
+        return []
+
+    # Group dual-draft stories (those carrying an ``-alt-*`` suffix) by direction.
+    groups: dict[str, list[StoryRecord]] = {}
+    for r in rows:
+        if _draft_alt_suffix(r.slug or "") is not None:
+            groups.setdefault(r.direction_id, []).append(r)
+
+    factory = github_client_factory
+    if factory is None:
+        from factory.providers.github import build_github_client
+
+        factory = build_github_client
+
+    superseded: list[tuple[str, str, str]] = []
+    for members in groups.values():
+        winner = next((m for m in members if (m.state or "") in _SHIPPED), None)
+        if winner is None:
+            continue
+        losers = [
+            m
+            for m in members
+            if m.id != winner.id
+            and not _terminal(m.state)
+            and (m.state or "") not in _SHIPPED
+            and _draft_alt_suffix(m.slug or "") != _draft_alt_suffix(winner.slug or "")
+        ]
+        if not losers:
+            continue
+        # Build a client best-effort (supersede still runs if it is None). One
+        # winner drives the shared cleanup, which retires ALL its in-flight
+        # siblings; capture from-states first so the summary is accurate.
+        loser_from = [(m.slug, m.state or "") for m in losers]
+        try:
+            gh = factory()
+        except Exception:  # noqa: BLE001
+            gh = None
+        try:
+            close_abandoned_draft_sibling(
+                winner, cfg, root, db, gh, False, runner=sibling_cleanup_runner
+            )
+        except Exception:  # noqa: BLE001 - cleanup must never break the tick
+            continue
+        for slug, from_state in loser_from:
+            superseded.append((slug, from_state, StoryState.SUPERSEDED_BY_SIBLING.value))
+
+    return superseded
 
 
 def _build_current_state(
@@ -1491,6 +1623,7 @@ def tick(
             )
         except Exception:  # noqa: BLE001 - alerting is best-effort
             import sys as _sys
+
             print(
                 f"[orchestrator] CRITICAL: halt-check raised {_halt_exc!r} "
                 "(fail-open) and alert emit failed.",
@@ -1536,9 +1669,27 @@ def tick(
                 for slug, from_state, to_state in drifted:
                     summary.handler_runs.append((slug, f"{from_state}(drift)", to_state))
             except Exception as exc:
+                summary.errors.append((app, f"github reconcile failed (non-fatal): {exc!r}"))
+
+            # Standing dual-draft supersede: retire any loser whose sibling has
+            # SHIPPED, re-derived from ground truth every tick so a loser that
+            # was mid-dispatch when the winner merged (and is now unreachable by
+            # reconcile_from_github because the winner is terminal) still gets
+            # superseded instead of racing toward a redundant second merge (G2).
+            try:
+                dd_superseded = reconcile_dual_draft_winners(db, app, cfg=cfg, root=root)
+                for slug, from_state, to_state in dd_superseded:
+                    summary.handler_runs.append((slug, f"{from_state}(dual-draft)", to_state))
+            except Exception as exc:
                 summary.errors.append(
-                    (app, f"github reconcile failed (non-fatal): {exc!r}")
+                    (app, f"dual-draft winner reconcile failed (non-fatal): {exc!r}")
                 )
+
+            # NOTE: GitHub issue-lifecycle hygiene (close trackers/story-issues
+            # for completed/superseded work) is handled later in this tick by the
+            # existing rate-gated, mode-guarded ``_should_run_issue_hygiene`` +
+            # ``reconcile_completed_issues`` block — the dual-draft supersede
+            # above just moves losers into the resolved state that sweep closes.
 
             try:
                 recovered = _prune_stale_in_progress(db, app, settings=settings, root=root)
@@ -1555,9 +1706,7 @@ def tick(
                 for slug, from_state, to_state in re_dispatched:
                     summary.handler_runs.append((slug, f"{from_state}(recovered)", to_state))
             except Exception as exc:
-                summary.errors.append(
-                    (app, f"blocked-story recovery failed (non-fatal): {exc!r}")
-                )
+                summary.errors.append((app, f"blocked-story recovery failed (non-fatal): {exc!r}"))
 
         stories = H.stories_in_flight(app, db)
 
@@ -1719,12 +1868,9 @@ def tick(
                 if story.id is not None:
                     from factory.chain.event_log import read_story_events as _rse
 
-                    _prior = _rse(
-                        story.id, software_factory_root=root, slug_hint=story.slug
-                    )
+                    _prior = _rse(story.id, software_factory_root=root, slug_hint=story.slug)
                     _already = any(
-                        e.get("event") == "invalid_state_skipped"
-                        and e.get("state") == story.state
+                        e.get("event") == "invalid_state_skipped" and e.get("state") == story.state
                         for e in _prior
                     )
                     if not _already:
