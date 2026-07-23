@@ -106,6 +106,10 @@ class TickSummary:
     # Post-merge main-branch CI-health monitor result (D004). ``None`` when
     # ``ci_health.enabled=false`` or the factory mode suppresses it.
     ci_health: CiHealthResult | None = None
+    # Autonomous issue-hygiene reconcile result (counts of trackers/story issues
+    # auto-closed this tick). ``None`` when the ~hourly gate didn't fire, the
+    # mode suppressed it, or no GitHub client was available.
+    issue_hygiene: dict[str, int] | None = None
     # Phase 7: set to True when tick exits early due to factory halt.
     halted: bool = False
     halt_reason: str | None = None
@@ -385,6 +389,13 @@ _NON_CAP_COUNTING_STATES = {
     # Dual-draft loser sink (terminal). A superseded sibling is abandoned; it
     # must not consume a concurrency slot.
     StoryState.SUPERSEDED_BY_SIBLING.value,
+    # CI-recovery-exhausted sink (terminal, PR closed). Like every sibling sink,
+    # it must not count against concurrency caps — otherwise parked stories
+    # accumulate and silently saturate the caps, stalling all new dispatch.
+    StoryState.BLOCKED_CI_UNRESOLVED.value,
+    # Dependency-deadlock sink (terminal). Same rationale — a story that can never
+    # build must not consume a concurrency slot.
+    StoryState.BLOCKED_DEPENDENCY_UNMET.value,
     # Passive transition states — no agent is actively running; the story
     # is simply waiting for the orchestrator to dispatch the next handler
     # on the next tick. Counting these against the cap deadlocks any
@@ -518,6 +529,55 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
         and s.id < story.id
         and s.state != StoryState.DEPLOYED.value
     )
+
+
+# Definitively-abandoned terminal sinks: a story here will NEVER reach
+# ``deployed`` in the normal course (no factory-driven path back, no routine
+# revival). Used to detect dependency-deadlock. Deliberately an EXPLICIT
+# allowlist, NOT ``is_terminal`` — several ACTIVE states are "terminal-by-
+# omission" (``ci_pending`` has no ``_TRANSITIONS`` edge because the auto-merge
+# poller drives it by direct assignment, so ``is_terminal(ci_pending)`` is
+# wrongly True). Using ``is_terminal`` here would falsely treat a sibling that is
+# mid-CI/mid-merge as dead and destroy a live dependent — the same
+# ``is_terminal`` trap the tracker-issue resolved-states allowlist calls out.
+# The recoverable-pending-human sinks (``blocked_tests_need_clarification`` /
+# ``blocked_deploy_failed`` / ``blocked_review_nonconvergent`` /
+# ``blocked_budget_exceeded``) are EXCLUDED: a human may revive them, so a
+# dependent behind one keeps deferring (the safe direction) rather than being
+# abandoned.
+_DEAD_END_DEP_STATES = frozenset(
+    {
+        StoryState.SUPERSEDED_BY_SIBLING.value,
+        StoryState.BLOCKED_CI_UNRESOLVED.value,
+        StoryState.BLOCKED_DEPENDENCY_UNMET.value,
+    }
+)
+
+
+def _deps_permanently_dead(db: Path, dep_ids: list[int]) -> bool:
+    """True iff EVERY pending dependency is in a definitively-abandoned sink
+    (``_DEAD_END_DEP_STATES``) — none will ever deploy, so the dependent can never
+    build (a dependency-deadlock).
+
+    If ANY pending dep is in any other state — actively progressing
+    (``story_created`` / ``*_in_progress`` / ``pr_open`` / ``ci_pending`` /
+    ``ci_green`` / ``ready_for_merge`` / ``deploy_pending``) OR a
+    recoverable-pending-human block — this returns False and the dependent keeps
+    waiting (never terminalized on a still-live or possibly-revivable foundation).
+    Empty ``dep_ids`` → False. Fail-safe: a missing row or an invalid-enum dep
+    state is treated as NOT-dead (a dep not in the explicit allowlist is never
+    dead), so a dependent is never terminalized on ambiguous evidence.
+    """
+    if not dep_ids:
+        return False
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+    with Session(eng) as session:
+        rows = session.exec(
+            select(StoryRecord).where(StoryRecord.id.in_(dep_ids))  # type: ignore[attr-defined]
+        ).all()
+    if len(rows) != len(set(dep_ids)):
+        return False  # a dep row is missing → can't prove dead → treat as live
+    return all(row.state in _DEAD_END_DEP_STATES for row in rows)
 
 
 # Mapping from a stranded ``*_in_progress`` state back to its
@@ -1302,6 +1362,44 @@ def _build_current_state(
     }
 
 
+_ISSUE_HYGIENE_INTERVAL_S = 3600  # autonomous issue-reconcile: at most once/hour/app
+
+
+def _issue_hygiene_marker(root: Path, app: str) -> Path:
+    return root / "state" / "issue_hygiene" / f"{app}.last"
+
+
+def _should_run_issue_hygiene(root: Path, app: str, *, now: float | None = None) -> bool:
+    """Rate-gate the autonomous issue-reconcile to at most once/hour/app.
+
+    The reconcile scans stories + makes GH-API calls; running the idempotent
+    sweep every 5-minute tick is wasteful, but skipping it entirely (today's
+    state) leaks completed/abandoned trackers open until a human runs
+    ``factory reconcile-issues``. FAIL-SAFE: any stat problem → True (err toward
+    running the safe, idempotent sweep — a spurious extra run is harmless).
+    """
+    import time as _time
+
+    marker = _issue_hygiene_marker(root, app)
+    try:
+        if not marker.exists():
+            return True
+        age = (now if now is not None else _time.time()) - marker.stat().st_mtime
+        return age >= _ISSUE_HYGIENE_INTERVAL_S
+    except OSError:
+        return True
+
+
+def _mark_issue_hygiene_ran(root: Path, app: str) -> None:
+    """Stamp the hygiene marker (mtime = now). Best-effort."""
+    try:
+        marker = _issue_hygiene_marker(root, app)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def tick(
     software_factory_root: Path,
     app: str,
@@ -1702,6 +1800,30 @@ def tick(
                 # waits in its current state until its foundations deploy.
                 _deps_pending = _direction_deps_pending(db, story)
                 if _deps_pending:
+                    # Dependency-deadlock guard: if EVERY pending dependency is
+                    # terminally parked (a never-to-deploy sink), this story can
+                    # never build — deferring it forever silently strands it (and
+                    # blocks its direction from ever completing / its tracker
+                    # issue from ever closing). Park it to the terminal
+                    # BLOCKED_DEPENDENCY_UNMET sink instead. Recoverable: reviving
+                    # the blocking sibling + this story re-enters the chain.
+                    if _deps_permanently_dead(db, _deps_pending):
+                        _dl_from = story.state
+                        story.state = StoryState.BLOCKED_DEPENDENCY_UNMET.value
+                        H.persist_story(story, db)
+                        log_story_event(
+                            story.id,
+                            "dependency_deadlocked",
+                            {
+                                "direction": story.direction_id,
+                                "dead_dependency_story_ids": _deps_pending[:10],
+                                "from_state": _dl_from,
+                            },
+                            software_factory_root=root,
+                            slug_hint=story.slug,
+                        )
+                        summary.handler_runs.append((story.slug, _dl_from, story.state))
+                        break
                     log_story_event(
                         story.id,
                         "dependency_deferred",
@@ -1972,6 +2094,36 @@ def tick(
                     # break the tick.
                     summary.errors.append(("ci-health", repr(exc)))
 
+        # Autonomous issue hygiene. Close GitHub trackers/story-issues for
+        # directions/stories that are COMPLETE or terminally ABANDONED, so the
+        # repo's issues stay clean WITHOUT a manual ``factory reconcile-issues``.
+        # The event-driven close fires only on DEPLOY; a direction abandoned
+        # without a deploy (all children in terminal sinks) would otherwise leak
+        # its tracker open forever. Rate-gated (~hourly/app), suppressed in
+        # paused/drain modes, and FULLY FAIL-SAFE: reconcile never raises and a
+        # hygiene hiccup must never fail the tick, so it is NOT recorded in
+        # ``summary.errors`` — only surfaced (counts) in ``summary.issue_hygiene``.
+        if not dry_run and _should_run_issue_hygiene(root, app):
+            _hyg_mode = get_mode(root, db_path=db)
+            if _hyg_mode not in {"paused", "drain-reviews"}:
+                try:
+                    from factory.directions.tracker_issue import reconcile_completed_issues
+                    from factory.providers.github import build_github_client
+
+                    _gh = build_github_client()
+                    if _gh is not None:
+                        _rep = reconcile_completed_issues(
+                            cfg, _gh, software_factory_root=root, db_path=db
+                        )
+                        _mark_issue_hygiene_ran(root, app)
+                        summary.issue_hygiene = {
+                            "trackers_closed": len(_rep.get("trackers_closed", [])),
+                            "stories_closed": len(_rep.get("stories_closed", [])),
+                            "errors": len(_rep.get("errors", [])),
+                        }
+                except Exception:  # noqa: BLE001 - hygiene must NEVER break the tick
+                    pass
+
         _tick_succeeded = True
     except Exception as _exc:  # noqa: BLE001
         _tick_exception = repr(_exc)
@@ -2039,4 +2191,5 @@ def tick_summary_as_dict(summary: TickSummary) -> dict[str, Any]:
                 "advisory_failing": list(summary.ci_health.advisory_failing),
             }
         ),
+        "issue_hygiene": summary.issue_hygiene,
     }

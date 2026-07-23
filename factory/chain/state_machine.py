@@ -108,6 +108,45 @@ class StoryState(StrEnum):
     # state-machine ``advance()`` edge — deliberately NOT wired as an EVENT_*
     # transition from every source state.
     SUPERSEDED_BY_SIBLING = "superseded_by_sibling"
+    # CI-recovery exhausted sink. When ``auto_merge._handle_ci_failure`` gives up
+    # on a red PR (``_MAX_CI_FIX_CYCLES`` re-dispatches reached, or the dev's fix
+    # reproduced the IDENTICAL failure signature), the failure is app-blocked in a
+    # way the isolated dev sandbox cannot resolve (e.g. a pre-existing lint error
+    # in an unowned file, or a product-level smoke conflict). Before this sink such
+    # a story sat in ``PR_OPEN`` forever, re-evaluated + failing the merge gate on
+    # every tick (a hamster-wheel: ~30 min of git work per tick to reach the same
+    # "blocked" conclusion). On give-up the auto-merge worker now CLOSES the PR with
+    # an explanatory comment and parks the story here. TERMINAL (no outgoing
+    # transition → ``is_terminal`` True, ``_dispatch_for_story`` returns None) and
+    # absent from ``auto_merge._MERGEABLE_STATES`` so the chain stops re-driving it.
+    # Because the PR is CLOSED (not merely parked-while-open), there is nothing left
+    # for ``reconcile_from_github`` to record — this deliberately AVOIDS the
+    # reconciliation regression that sank the earlier open-PR park attempt (#95).
+    # RECOVERABLE: the direction remains on disk and can be re-filed once the
+    # app-side blocker is fixed; an operator may also re-open the PR and move the
+    # story back to a live dispatch state. Set via DIRECT state assignment (like
+    # ``SUPERSEDED_BY_SIBLING``), not an EVENT_* edge. Classified as resolved for
+    # tracker-issue closing (``tracker_issue._RESOLVED_STORY_STATES``) and surfaced
+    # to the FMS (``factory_improver._terminally_blocked_stories``).
+    BLOCKED_CI_UNRESOLVED = "blocked_ci_unresolved"
+    # Dependency-deadlock sink. The dependency-ordering gate defers a story until
+    # every lower-id sibling in its direction reaches ``deployed`` (id order == SM
+    # build order). If one of those required siblings is instead TERMINALLY parked
+    # in a never-to-deploy state (``blocked_*`` / ``superseded_by_sibling`` /
+    # ``blocked_ci_unresolved``), the dependent can NEVER build — its foundation
+    # will never land on main. Before this sink it sat in its pre-build state
+    # (e.g. ``story_created``) FOREVER: never dispatched (so not a spend/tick
+    # wheel) but never resolved either, so its direction never completes and its
+    # tracker issue never closes (observed 2026-07-23: 6 dual-draft ``alt-b``
+    # siblings stranded behind ``alt-b``'s abandoned ``alt-a`` pair). The
+    # orchestrator now parks such a story here instead of deferring indefinitely.
+    # TERMINAL (no outgoing transition), absent from ``_MERGEABLE_STATES`` and
+    # ``_AUTO_RECOVERABLE_STATES``, in ``_NON_CAP_COUNTING_STATES``, classified
+    # resolved for tracker-issue closing, and surfaced to the FMS. RECOVERY IS
+    # MANUAL (deliberately absent from ``_AUTO_RECOVERABLE_STATES``): reviving the
+    # blocking sibling does NOT by itself re-enter this story — an operator must
+    # ALSO move this story back to a live dispatch state (e.g. ``story_created``).
+    BLOCKED_DEPENDENCY_UNMET = "blocked_dependency_unmet"
 
 
 class StoryRecord(SQLModel, table=True):

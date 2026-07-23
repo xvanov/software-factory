@@ -239,27 +239,52 @@ def close_story_issue(
 # direct assignment, not a ``_TRANSITIONS`` edge, so ``is_terminal(ci_pending)``
 # is wrongly True). Using an allowlist means a story mid-CI can never be
 # mistaken for resolved — the fail-safe direction.
-_RESOLVED_STORY_STATES = frozenset({"deployed", "superseded_by_sibling", "closed"})
+# ``blocked_ci_unresolved`` is the one BLOCKED_* state that IS resolved for
+# issue-closing: the auto-merge worker only parks a story there AFTER closing its
+# PR (CI-recovery exhausted, app-blocked). The work is terminally done for this
+# attempt — the tracker issue should close, not linger. Every OTHER BLOCKED_*
+# state stays absent (it may still be fixed and merged), preserving the fail-safe.
+_RESOLVED_STORY_STATES = frozenset(
+    {
+        "deployed",
+        "superseded_by_sibling",
+        "closed",
+        "blocked_ci_unresolved",
+        # A dependency-deadlocked story is terminally abandoned (its foundation
+        # will never deploy), so its tracker issue should close rather than
+        # linger — same resolved-terminal rationale as blocked_ci_unresolved.
+        "blocked_dependency_unmet",
+    }
+)
 
 
 def _direction_is_complete(rows: list[Any]) -> bool:
-    """True when a direction's winner shipped and no child work is unresolved.
+    """True when EVERY child story is in a resolved state — nothing is left to do
+    on this direction, whether it SHIPPED or was fully ABANDONED.
 
-    Fixes the historical bug where the check required *every* story to be
-    ``DEPLOYED``: a dual-draft direction can never satisfy that because its
-    losing sibling lands in ``SUPERSEDED_BY_SIBLING``, so the tracker issue
-    leaked open forever. We instead require (a) at least one DEPLOYED story
-    (a real deliverable shipped) and (b) every child story in an explicitly
-    *resolved* state (:data:`_RESOLVED_STORY_STATES`). Any other state —
-    in-flight (``pr_open``/``ci_pending``/…) or ``BLOCKED_*`` — keeps the
-    tracker open.
+    Closes on two shapes:
+      * **shipped** — a winner ``DEPLOYED`` (+ any dual-draft loser
+        ``SUPERSEDED_BY_SIBLING``); the historical case.
+      * **abandoned** — no child deployed, but every child reached a definitively
+        terminal sink (``blocked_ci_unresolved`` / ``blocked_dependency_unmet`` /
+        ``superseded_by_sibling`` / ``closed``). The direction produced nothing
+        and never will, so its tracker should close rather than leak open forever
+        (the stories are surfaced to the FMS via ``_terminally_blocked_stories``
+        for a bounded recency window and remain in the DB/event log after; closing
+        the tracker is reversible — reopen if a total failure warrants a look).
+
+    The predicate is ``all children ∈ _RESOLVED_STORY_STATES``. It deliberately
+    does NOT require a ``DEPLOYED`` child anymore — that requirement kept
+    all-abandoned directions' trackers open indefinitely (observed 2026-07-23:
+    the app-blocked D093/D096/D097/D099 cluster). Mid-flight protection is intact:
+    ``_RESOLVED_STORY_STATES`` excludes every in-flight state (``pr_open`` /
+    ``ci_pending`` / ``ready_for_merge`` / …) AND the recoverable-pending-human
+    blocks (``blocked_deploy_failed`` / ``blocked_tests_need_clarification`` /
+    ``blocked_budget_exceeded``), so any of those keeps the tracker open — a
+    direction still doing (or revivable) work is never closed.
     """
-    from factory.chain.state_machine import StoryState
-
     if not rows:
         return False
-    if not any(r.state == StoryState.DEPLOYED.value for r in rows):
-        return False  # nothing has shipped yet — keep the tracker open
     return all((r.state or "") in _RESOLVED_STORY_STATES for r in rows)
 
 
@@ -427,16 +452,32 @@ def reconcile_completed_issues(
         if _close_if_open("tracker", tracker, comment, direction_id) and not dry_run:
             report["trackers_closed"].append((direction_id, int(tracker)))
 
-    # Pass 2 — story issues for resolved-shipped stories.
-    shipped = {StoryState.DEPLOYED.value, StoryState.SUPERSEDED_BY_SIBLING.value}
+    # Pass 2 — story issues for RESOLVED stories: shipped (deployed / superseded)
+    # OR terminally abandoned (blocked_ci_unresolved / blocked_dependency_unmet).
+    # Uses the same _RESOLVED_STORY_STATES allowlist as _direction_is_complete, so
+    # an abandoned story's own tracker closes rather than lingering after its
+    # PR/direction is already gone (the 8 orphaned per-story sub-issues observed
+    # 2026-07-23). A story in ANY non-resolved state — in-flight or a
+    # recoverable-pending-human block — keeps its issue open.
+    _abandoned = {
+        StoryState.BLOCKED_CI_UNRESOLVED.value,
+        StoryState.BLOCKED_DEPENDENCY_UNMET.value,
+    }
     for r in story_rows:
         num = getattr(r, "github_issue_number", None)
-        if not num or r.state not in shipped:
+        if not num or (r.state or "") not in _RESOLVED_STORY_STATES:
             continue
         if r.state == StoryState.DEPLOYED.value:
             comment = "✅ Deployed — closing automatically (reconcile: story reached DEPLOYED)."
-        else:
+        elif r.state == StoryState.SUPERSEDED_BY_SIBLING.value:
             comment = "🔁 Superseded by a sibling draft — closing automatically (reconcile)."
+        elif r.state in _abandoned:
+            comment = (
+                "🛑 Terminally abandoned (CI-recovery exhausted / dependency-deadlocked) "
+                "— closing the story issue (reconcile). Re-file the direction to retry."
+            )
+        else:  # "closed" / invalidated
+            comment = "Closing resolved story issue (reconcile)."
         if _close_if_open("story", num, comment, r.slug or str(r.id)) and not dry_run:
             report["stories_closed"].append((r.id, int(num)))
 
