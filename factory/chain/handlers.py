@@ -2511,6 +2511,44 @@ def _fetch_pr_diff_for_review(
     return diff_text
 
 
+def _changed_files_for_story(
+    story: StoryRecord,
+    app_config: AppConfig,
+    software_factory_root: Path,
+) -> list[str] | None:
+    """Return the branch's REAL changed-file list, or ``None`` if it cannot be
+    computed (worktree GC'd, git error, timeout).
+
+    Uses ``git diff --name-only origin/<base>...HEAD`` inside the per-story
+    worktree — the exact merge-base semantics ``_fetch_pr_diff_for_review``
+    uses for the reviewer's pre-PR diff — so the docs-enforcer's vacuous-diff
+    guard and the reviewer agree on what the branch actually changed. Returning
+    ``None`` (never ``[]``) on failure lets the caller distinguish "no diff
+    available, fall back" from "the branch genuinely changed nothing".
+    """
+    import subprocess
+
+    try:
+        worktree = _writing_worktree(app_config, software_factory_root, story)
+    except Exception:  # noqa: BLE001 - any worktree resolution failure → fall back
+        return None
+    base = app_config.default_branch or "main"
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--name-only", f"origin/{base}...HEAD"],
+            cwd=str(worktree),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
 def _assert_no_broken_prompt_markers(full_prompt: str, *, where: str) -> None:
     """Sanity guard — raise if a literal placeholder leaked into the prompt.
 
@@ -3364,15 +3402,36 @@ def handle_docs_enforcer(
 
     files = pr_files
     if files is None:
-        # Derive from the tech_writer result, if present.
-        files = []
-        tw_raw = story.tech_writer_result_json or "{}"
-        try:
-            tw = json.loads(tw_raw)
-            for u in tw.get("context_updates") or []:
-                files.append(str(u.get("path")))
-        except json.JSONDecodeError:
-            pass
+        # Real runs: the authoritative file list is the branch's ACTUAL diff
+        # against base — the SAME source the reviewer approves on (see
+        # ``_fetch_pr_diff_for_review``) — NOT the tech_writer's self-declared
+        # ``context_updates``. A tech_writer that declares only a story-file
+        # "update" (story 130 / D109, 2026-07-23) otherwise makes the
+        # vacuous-diff guard below misfire on a branch that genuinely contains
+        # the code fix: the reviewer approves the real diff, the enforcer sees
+        # only ``stories/*.md`` in the declared list, bounces the story to
+        # reviewer_requested_changes, and the dev<->enforcer loop churns every
+        # cycle until the per-story budget dies. Dry-run has no worktree to
+        # diff, so it keeps deriving from the tech_writer result (the enforcer
+        # still sees the paths the writer claimed).
+        real_files = (
+            _changed_files_for_story(story, app_config, software_factory_root)
+            if not dry_run
+            else None
+        )
+        if real_files is not None:
+            files = real_files
+        else:
+            # Fallback (dry-run, or the git diff could not be computed — e.g.
+            # the worktree was GC'd): derive from the tech_writer result.
+            files = []
+            tw_raw = story.tech_writer_result_json or "{}"
+            try:
+                tw = json.loads(tw_raw)
+                for u in tw.get("context_updates") or []:
+                    files.append(str(u.get("path")))
+            except json.JSONDecodeError:
+                pass
 
     violations = scan_pr_diff(files)
     payload: dict[str, Any] = {"violations": [v._asdict() for v in violations], "files": files}

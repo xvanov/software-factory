@@ -125,3 +125,82 @@ def test_story_file_plus_context_change_is_not_vacuous(
     )
     assert result.next_state == StoryState.PR_OPEN
     assert "vacuous_diff" not in result.payload
+
+
+def test_realrun_uses_git_diff_not_tech_writer_declared(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (story 130 / D109, 2026-07-23): on a REAL run with no
+    ``pr_files``, the enforcer must key the vacuous-diff guard off the branch's
+    ACTUAL diff, not the tech_writer's self-declared ``context_updates``.
+
+    The tech_writer here declared only a story-file "update"; the real branch
+    diff contains the code fix (auth.py). Before the fix the guard saw only the
+    declared story file and bounced to REVIEWER_REQUESTED_CHANGES every cycle
+    until the story's budget died. It must now reach PR_OPEN.
+    """
+    from factory.chain import handlers as H
+
+    s = _story_at_tech_writer_done(temp_root)
+    s.github_branch = "factory/story-1-x"
+    # The persona declared ONLY the story file — the exact misbehaviour that
+    # tripped the guard live.
+    s.tech_writer_result_json = (
+        '{"context_updates": [{"path": "stories/310-x.md", "action": "rewrite", '
+        '"content": "..."}]}'
+    )
+    db = temp_root / "state" / "factory.db"
+    persist_story(s, db)
+
+    real_diff = ["backend/app/routes/auth.py", "stories/310-x.md"]
+    monkeypatch.setattr(H, "_changed_files_for_story", lambda *a, **k: real_diff)
+    # Don't touch git/gh — PR opening is exercised elsewhere.
+    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: None)
+
+    result = handle_docs_enforcer(s, app_config, temp_root, dry_run=False, db_path=db)
+    assert result.next_state == StoryState.PR_OPEN
+    assert "vacuous_diff" not in result.payload
+    # The file list came from the real diff, not the declared story-only list.
+    assert "backend/app/routes/auth.py" in result.payload["files"]
+
+
+def test_realrun_git_diff_only_story_files_still_vacuous(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard's real purpose is preserved: when the branch's ACTUAL diff is
+    only story files, the deliverable is genuinely vacuous."""
+    from factory.chain import handlers as H
+
+    s = _story_at_tech_writer_done(temp_root)
+    s.github_branch = "factory/story-1-x"
+    db = temp_root / "state" / "factory.db"
+    persist_story(s, db)
+
+    monkeypatch.setattr(H, "_changed_files_for_story", lambda *a, **k: ["stories/310-x.md"])
+    result = handle_docs_enforcer(s, app_config, temp_root, dry_run=False, db_path=db)
+    assert result.next_state == StoryState.REVIEWER_REQUESTED_CHANGES
+    assert result.payload["vacuous_diff"] is True
+
+
+def test_realrun_falls_back_to_tech_writer_when_git_diff_unavailable(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the real diff can't be computed (worktree GC'd → helper returns
+    ``None``), the enforcer falls back to the tech_writer-declared paths so it
+    still has something to scan rather than crashing."""
+    from factory.chain import handlers as H
+
+    s = _story_at_tech_writer_done(temp_root)
+    s.github_branch = "factory/story-1-x"
+    s.tech_writer_result_json = (
+        '{"context_updates": [{"path": "context/modules/auth.md", "action": "rewrite", '
+        '"content": "..."}]}'
+    )
+    db = temp_root / "state" / "factory.db"
+    persist_story(s, db)
+
+    monkeypatch.setattr(H, "_changed_files_for_story", lambda *a, **k: None)
+    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: None)
+    result = handle_docs_enforcer(s, app_config, temp_root, dry_run=False, db_path=db)
+    assert result.next_state == StoryState.PR_OPEN
+    assert "context/modules/auth.md" in result.payload["files"]
