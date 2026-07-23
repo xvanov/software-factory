@@ -8,34 +8,36 @@
 # for the sacrifice APP): the live factory tree runs on a long-lived
 # DEPLOY branch that carries local-only commits + uncommitted runtime
 # state (state/**, apps/*/state.yaml). A ff/reset would discard that
-# state or fail. So this does a SURGICAL, per-file
-# `git checkout origin/main -- <file>` of only the changed factory/**
-# source files, committing just those paths.
+# state or fail. So this does a SURGICAL, per-file sync of only the
+# changed factory/** source files, committing just those paths.
 #
 # SAFETY INVARIANTS
 #   * Only ever touches files under factory/ (source). Never state/**,
 #     apps/**, tests/**, docs, or the working tree at large.
-#   * NEVER deploys factory/manager/** or bench/** — those are
-#     forbidden to self-edit (DGM anti-gaming); an operator PR + manual
-#     deploy is the only path for them. A change there is reported and
-#     SKIPPED, never applied.
-#   * Import-gates before committing: the candidate tree is imported in
-#     a subprocess; on any ImportError/SyntaxError the checkout is
-#     reverted and nothing is committed (a broken module must never
-#     reach the running factory).
-#   * Restarts factory-manager only AFTER a successful, import-clean
-#     commit, then verifies it comes back active (chain code is picked
-#     up by the next tick process regardless; the restart is for shared
-#     modules the long-lived manager already imported).
-#   * Idempotent: a tree already equal to origin/main is a clean no-op.
-#   * A single lock prevents concurrent runs.
+#   * NEVER deploys factory/manager/** or bench/** — those are forbidden
+#     to self-edit (DGM anti-gaming); operator PR + manual deploy only.
+#     A change there is reported and SKIPPED, never applied.
+#   * Handles add / modify / DELETE on main correctly, PER FILE, so one
+#     bad path can never wedge the rest.
+#   * Import-gates the ACTUAL deployed files (py_compile + import their
+#     dotted module paths) before committing; on ANY failure every
+#     applied change is reverted to HEAD (added files removed, modified
+#     files restored, deleted files restored) and nothing is committed —
+#     the tree is verified clean afterwards, so a broken module never
+#     reaches the running factory.
+#   * Restarts factory-manager only AFTER a clean commit, then verifies
+#     it stays active across two checks (chain code is picked up by the
+#     next tick regardless; the restart is for shared modules the
+#     long-lived manager already imported).
+#   * Idempotent (in-sync tree = clean no-op), locked, --dry-run preview.
 #
 # USAGE
 #   deploy-factory-from-main.sh            # apply
 #   deploy-factory-from-main.sh --dry-run  # report only, mutate nothing
 #
-# Intended trigger: factory-self-deploy.timer (see the unit shipped
-# alongside this script under scripts/systemd/).
+# TEST SEAMS (env): IMPORT_GATE_CMD overrides the import gate;
+#   SKIP_MANAGER_RESTART=1 skips the systemctl restart. Used only by
+#   tests/test_factory_self_deploy.py — never set in production.
 # ──────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -55,37 +57,51 @@ alert() {
   logger -t factory-self-deploy -p daemon.err "ALERT: $*" 2>/dev/null || true
 }
 
-# ── Locking ────────────────────────────────────────────────────────
-if [ -f "$LOCK_FILE" ]; then
-  if [ -n "$(find "$LOCK_FILE" -mmin +"$LOCK_STALE_MINUTES" 2>/dev/null)" ]; then
-    log "breaking stale lock $LOCK_FILE"
-    rm -f "$LOCK_FILE"
+REMOTE_REF="$GIT_REMOTE/$GIT_BRANCH"
+
+# Does path $1 exist in tree-ish $2?  (git cat-file -e <ref>:<path>)
+_in_tree() { git cat-file -e "$2:$1" 2>/dev/null; }
+
+# Revert one applied path back to its HEAD state (added→remove, else restore).
+_revert_one() {
+  local f="$1"
+  if _in_tree "$f" HEAD; then
+    git checkout HEAD -- "$f" 2>/dev/null || true
   else
-    log "another run holds $LOCK_FILE — exiting"
-    exit 0
+    # Was newly added on main (absent at HEAD) → remove entirely.
+    git rm -f --quiet -- "$f" 2>/dev/null || rm -f "$f"
+    git reset --quiet -- "$f" 2>/dev/null || true
   fi
+}
+
+# ── --dry-run mutates NOTHING (no lock write, no stale-lock rm) ──────
+if [ "$DRY_RUN" -eq 0 ]; then
+  if [ -f "$LOCK_FILE" ]; then
+    if [ -n "$(find "$LOCK_FILE" -mmin +"$LOCK_STALE_MINUTES" 2>/dev/null)" ]; then
+      log "breaking stale lock $LOCK_FILE"
+      rm -f "$LOCK_FILE"
+    else
+      log "another run holds $LOCK_FILE — exiting"
+      exit 0
+    fi
+  fi
+  echo "$$" > "$LOCK_FILE"
+  trap 'rm -f "$LOCK_FILE"' EXIT
 fi
-[ "$DRY_RUN" -eq 0 ] && { echo "$$" > "$LOCK_FILE"; trap 'rm -f "$LOCK_FILE"' EXIT; }
 
 cd "$FACTORY_DIR"
 
-# ── Fetch authoritative main ───────────────────────────────────────
 git fetch --quiet "$GIT_REMOTE" "$GIT_BRANCH" || { alert "git fetch failed"; exit 1; }
-REMOTE_REF="$GIT_REMOTE/$GIT_BRANCH"
 
-# ── Compute changed factory/** source files (working tree vs main) ──
-# `git diff --name-only <ref> -- factory/` lists every factory source
-# file whose live content differs from main (added/modified/deleted).
+# ── Changed factory/** source files (working tree vs main) ──────────
 mapfile -t ALL_CHANGED < <(git diff --name-only "$REMOTE_REF" -- factory/ | grep -E '\.py$' || true)
 
 APPLY=()
 SKIPPED_FORBIDDEN=()
 for f in "${ALL_CHANGED[@]}"; do
   case "$f" in
-    factory/manager/*|bench/*)
-      SKIPPED_FORBIDDEN+=("$f") ;;
-    *)
-      APPLY+=("$f") ;;
+    factory/manager/*|bench/*) SKIPPED_FORBIDDEN+=("$f") ;;
+    *) APPLY+=("$f") ;;
   esac
 done
 
@@ -106,34 +122,100 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
-# ── Surgical checkout of just those files ──────────────────────────
-git checkout "$REMOTE_REF" -- "${APPLY[@]}"
+# ── Apply per file (add/modify via checkout; delete-on-main via rm) ──
+# Per-file so a single bad path never wedges the rest, and so a file
+# removed on main propagates as a deletion instead of aborting.
+for f in "${APPLY[@]}"; do
+  if _in_tree "$f" "$REMOTE_REF"; then
+    if ! git checkout "$REMOTE_REF" -- "$f"; then
+      alert "checkout of $f from $REMOTE_REF failed — reverting all, nothing committed"
+      for g in "${APPLY[@]}"; do _revert_one "$g"; done
+      exit 1
+    fi
+  else
+    # Deleted on main → delete locally (stage the removal).
+    git rm -f --quiet -- "$f" 2>/dev/null || rm -f "$f"
+  fi
+done
 
-# ── Import-gate BEFORE committing: a broken module must never ship ──
-if ! uv run python -c "import importlib, factory; import factory.chain.orchestrator, factory.chain.handlers, factory.chain.auto_merge, factory.chain.dual_draft, factory.cli" >/tmp/factory-self-deploy-import.log 2>&1; then
-  alert "import check FAILED after checkout — reverting, nothing committed. See /tmp/factory-self-deploy-import.log"
-  git checkout HEAD -- "${APPLY[@]}"
+# ── Import-gate the ACTUAL deployed files, before committing ────────
+# py_compile catches SyntaxError in every deployed file; importing each
+# deployed module's dotted path catches import-time errors (bad names,
+# broken imports) — far broader than a fixed module whitelist.
+if [ -n "${IMPORT_GATE_CMD:-}" ]; then
+  GATE_OK=0
+  eval "$IMPORT_GATE_CMD" >/tmp/factory-self-deploy-import.log 2>&1 && GATE_OK=1 || GATE_OK=0
+else
+  # Dotted module paths for the deployed files that still EXIST (skip
+  # deletions and __init__.py package markers, which import via parent).
+  GATE_MODS=()
+  GATE_FILES=()
+  for f in "${APPLY[@]}"; do
+    [ -f "$f" ] || continue
+    GATE_FILES+=("$f")
+    case "$f" in
+      */__init__.py) : ;;  # imported via its package; skip explicit import
+      *) GATE_MODS+=("${f%.py}") ;;
+    esac
+  done
+  GATE_OK=1
+  if [ "${#GATE_FILES[@]}" -gt 0 ]; then
+    if ! uv run python -m py_compile "${GATE_FILES[@]}" >/tmp/factory-self-deploy-import.log 2>&1; then
+      GATE_OK=0
+    fi
+  fi
+  if [ "$GATE_OK" -eq 1 ] && [ "${#GATE_MODS[@]}" -gt 0 ]; then
+    # e.g. factory/chain/foo -> factory.chain.foo ; plus a broad import of
+    # the main entrypoints to catch integration breakage.
+    PYIMPORT="import importlib; [importlib.import_module(m.replace('/', '.')) for m in __import__('sys').argv[1:]]; import factory.cli"
+    if ! uv run python -c "$PYIMPORT" "${GATE_MODS[@]}" >>/tmp/factory-self-deploy-import.log 2>&1; then
+      GATE_OK=0
+    fi
+  fi
+fi
+
+if [ "$GATE_OK" -ne 1 ]; then
+  alert "import gate FAILED — reverting all applied paths, nothing committed. See /tmp/factory-self-deploy-import.log"
+  for f in "${APPLY[@]}"; do _revert_one "$f"; done
+  # Verify the tree is genuinely clean for the touched paths (fail loud if not).
+  if [ -n "$(git status --porcelain -- "${APPLY[@]}")" ]; then
+    alert "post-revert tree is NOT clean for: $(git status --porcelain -- "${APPLY[@]}" | tr '\n' ' ') — operator attention needed"
+  fi
   exit 1
 fi
 
-# ── Commit ONLY the deployed paths (never `git add -A`: runtime state) ─
-git commit --quiet -- "${APPLY[@]}" \
+# ── Commit ONLY the deployed paths (never `git add -A`: runtime state).
+# The checkout/`git rm` above already staged each path (modify/add via
+# `git checkout <ref> -- f` updates the index; deletion via `git rm`), so a
+# pathspec-scoped commit needs no extra `git add` (which would error on a
+# now-deleted path). ─────────────────────────────────────────────────
+git commit --quiet \
   -m "deploy: auto-sync factory/** from $REMOTE_REF (factory self-deploy)" \
-  -m "Files: ${APPLY[*]}"
+  -m "Files: ${APPLY[*]}" \
+  -- "${APPLY[@]}"
 log "committed $(git rev-parse --short HEAD)"
 
 # ── Restart the long-lived manager (chain code is picked up next tick;
 #    restart is for shared modules the manager already imported) ──────
-if systemctl --user restart "$MANAGER_UNIT" 2>/dev/null; then
-  sleep 2
-  if [ "$(systemctl --user is-active "$MANAGER_UNIT" 2>/dev/null)" = "active" ]; then
-    log "restarted $MANAGER_UNIT (active)"
-  else
-    alert "$MANAGER_UNIT is NOT active after restart — operator attention needed"
-    exit 1
-  fi
+if [ "${SKIP_MANAGER_RESTART:-0}" = "1" ]; then
+  log "SKIP_MANAGER_RESTART=1 — skipping restart (test mode)"
+  log "self-deploy complete"
+  exit 0
+fi
+
+if ! systemctl --user restart "$MANAGER_UNIT" 2>/dev/null; then
+  alert "failed to restart $MANAGER_UNIT after committing $(git rev-parse --short HEAD). The code IS canonical (== origin/main); recover with: systemctl --user restart $MANAGER_UNIT"
+  exit 1
+fi
+# Confirm it stays active across two checks (catch a delayed crash).
+sleep 2
+_active1="$(systemctl --user is-active "$MANAGER_UNIT" 2>/dev/null || true)"
+sleep 4
+_active2="$(systemctl --user is-active "$MANAGER_UNIT" 2>/dev/null || true)"
+if [ "$_active1" = "active" ] && [ "$_active2" = "active" ]; then
+  log "restarted $MANAGER_UNIT (active)"
 else
-  alert "failed to restart $MANAGER_UNIT — operator attention needed"
+  alert "$MANAGER_UNIT not stably active after restart (t+2s=$_active1 t+6s=$_active2) on $(git rev-parse --short HEAD) — operator attention needed"
   exit 1
 fi
 
