@@ -3775,6 +3775,38 @@ def _added_line_numbers(diff_text: str) -> set[int]:
 _OWN_LINE_FIXABLE_CODES: dict[str, bool] = {"F401": False, "F541": False, "F841": True}
 
 
+def _removed_line_numbers(diff_text: str) -> set[int]:
+    """OLD-file line numbers of the lines a unified diff REMOVES or ALTERS.
+
+    The mirror of :func:`_added_line_numbers`: walks hunk headers
+    (``@@ -a,b +c,d @@``) counting ``-``/context lines in the OLD-file
+    coordinate system, so we can ask "which lines of the pre-fix file did this
+    change touch?". Used to verify a ``ruff --fix`` only removed/altered lines
+    the branch itself added (``git diff HEAD`` old-side == HEAD coordinates,
+    the same coordinates :func:`_added_line_numbers` yields for
+    ``origin/<base>...HEAD``).
+    """
+    import re
+
+    removed: set[int] = set()
+    old_ln = 0
+    for line in diff_text.splitlines():
+        if line.startswith("@@"):
+            m = re.search(r"-(\d+)", line)
+            old_ln = int(m.group(1)) if m else 0
+            continue
+        if line.startswith(("+++", "---")):
+            continue
+        if line.startswith("-"):
+            removed.add(old_ln)
+            old_ln += 1
+        elif line.startswith("+"):
+            continue  # new-only line — does not advance the old-file counter
+        else:
+            old_ln += 1  # context line
+    return removed
+
+
 def _strip_own_added_fixable_lint(
     target_repo: Path, base: str, py_files: list[str], iso: list[str]
 ) -> None:
@@ -3793,9 +3825,15 @@ def _strip_own_added_fixable_lint(
 
     Codes are gated INDEPENDENTLY — a pre-existing F841 must not block removing
     the dev's own newly-added F401. Fixes are then applied in a single
-    ``ruff --fix`` pass over just the cleared codes, so all rows are resolved
-    against the same on-disk file. ``--unsafe-fixes`` is added only when a code
-    needing it (F841) survives the gate. Best-effort; never raises.
+    ``ruff --fix`` pass over just the cleared codes. ``--unsafe-fixes`` is added
+    only when a code needing it (F841) survives the gate.
+
+    Because a single ``ruff --fix`` pass is ITERATIVE (fixing one violation can
+    expose another and fix it too, on a line the input gate never evaluated), a
+    RESULT CHECK follows every fix: the applied change is diffed against HEAD and
+    the file is reverted whole if the fix removed/altered any line the branch did
+    NOT add. The input gate is thus an optimisation; the result check is the
+    load-bearing safety guarantee. Best-effort; never raises.
     """
     import json
     import subprocess
@@ -3862,6 +3900,23 @@ def _strip_own_added_fixable_lint(
             fix_args.append("--unsafe-fixes")
         fix_args += ["--select", ",".join(sorted(clearable)), *iso, f]
         _run(fix_args, timeout=180)
+
+        # RESULT CHECK (not just an input gate): a single ``ruff --fix`` pass is
+        # ITERATIVE — resolving one violation can create/expose another and fix
+        # THAT too within the same invocation, on a line the per-code gate never
+        # evaluated. E.g. removing a branch-added unused local (``x = os``, F841)
+        # orphans a PRE-EXISTING ``import os``, and with F401 co-selected ruff
+        # then deletes that pre-existing import (adversarial review, PR #105).
+        # So verify the APPLIED change touched ONLY branch-added lines: diff the
+        # fixed tree against HEAD and require every HEAD line it removed/altered
+        # to be a branch-added line. If the fix reached a pre-existing line,
+        # revert the whole file — the dev loop / CI handles it, we never ship a
+        # silent mutation of code the branch didn't author.
+        post = _run(["git", "diff", "HEAD", "--", f])
+        if post is not None and post.returncode == 0 and post.stdout.strip():
+            touched_head_lines = _removed_line_numbers(post.stdout)
+            if not (touched_head_lines <= added):
+                _run(["git", "checkout", "HEAD", "--", f])
 
 
 def _open_pr_for_story(

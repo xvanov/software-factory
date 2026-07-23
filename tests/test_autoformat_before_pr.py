@@ -345,6 +345,53 @@ def test_autoformat_preexisting_f841_does_not_block_own_f401(tmp_path: Path) -> 
     assert "leftover = 5" in body  # ...pre-existing F841 preserved (not on an added line)
 
 
+def test_autoformat_fix_cascade_never_deletes_preexisting_import(tmp_path: Path) -> None:
+    """RESULT-CHECK regression (adversarial review, PR #105): a single
+    ``ruff --fix`` pass is iterative — removing a branch-added unused local
+    (F841) can orphan a PRE-EXISTING import and, with F401 co-selected, ruff
+    deletes that pre-existing import in the SAME invocation, on a line the
+    per-code input gate never evaluated. The file must be reverted whole rather
+    than ship a silent deletion of code the branch did not author."""
+    repo = tmp_path / "app"
+    origin = repo.parent / f"{repo.name}-origin.git"
+    _run(["git", "init", "-q", "--bare", "--initial-branch=main", str(origin)], cwd=tmp_path)
+    repo.mkdir(parents=True, exist_ok=True)
+    _run(["git", "init", "-q", "--initial-branch=main"], cwd=repo)
+    _run(["git", "config", "user.email", "t@e.x"], cwd=repo)
+    _run(["git", "config", "user.name", "T E"], cwd=repo)
+    (repo / "pyproject.toml").write_text(
+        '[tool.ruff.lint]\nselect = ["E", "F", "I"]\n', encoding="utf-8"
+    )
+    # Base: a load-bearing top-level ``import os`` used only via ``feature``.
+    (repo / "feat.py").write_text(
+        '"""M."""\n\nimport os\n\n\ndef feature():\n    return os\n',
+        encoding="utf-8",
+    )
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-q", "-m", "init"], cwd=repo)
+    _run(["git", "remote", "add", "origin", str(origin)], cwd=repo)
+    _run(["git", "push", "-u", "-q", "origin", "main"], cwd=repo)
+
+    # Branch ADDS: an unused import (F401 row) AND, inside feature, an unused
+    # local ``x = os`` (F841 row) that is the sole remaining reference to the
+    # top-level ``import os`` once removed. Both violations are on branch-added
+    # lines, so both codes pass the input gate — but the combined fix cascades.
+    _run(["git", "checkout", "-q", "-b", "story/1-x"], cwd=repo)
+    (repo / "feat.py").write_text(
+        '"""M."""\n\nimport os\nimport sys\n\n\ndef feature():\n    x = os\n    return 1\n',
+        encoding="utf-8",
+    )
+    _run(["git", "commit", "-q", "-am", "add feature"], cwd=repo)
+
+    _autoformat_changed_py_before_pr(repo, "main")
+
+    body = (repo / "feat.py").read_text(encoding="utf-8")
+    # The pre-existing top-level ``import os`` MUST survive (the cascade was
+    # caught and the file reverted). It's fine that the added ``import sys``
+    # (also unused) survives too — reverting whole is safe; CI/dev handles it.
+    assert "import os" in body, body
+
+
 def test_added_line_numbers_parses_hunks() -> None:
     from factory.chain.handlers import _added_line_numbers
 
