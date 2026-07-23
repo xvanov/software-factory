@@ -1,0 +1,10 @@
+[Unit]
+Description=Factory self-deploy — surgically sync the running factory tree to its own origin/main
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/k/software-factory
+ExecStart=/home/k/software-factory/scripts/deploy-factory-from-main.sh
+TimeoutStartSec=10m
+Nice=10
