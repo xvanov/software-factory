@@ -2520,11 +2520,17 @@ def _changed_files_for_story(
     computed (worktree GC'd, git error, timeout).
 
     Uses ``git diff --name-only origin/<base>...HEAD`` inside the per-story
-    worktree — the exact merge-base semantics ``_fetch_pr_diff_for_review``
-    uses for the reviewer's pre-PR diff — so the docs-enforcer's vacuous-diff
-    guard and the reviewer agree on what the branch actually changed. Returning
-    ``None`` (never ``[]``) on failure lets the caller distinguish "no diff
-    available, fall back" from "the branch genuinely changed nothing".
+    worktree — the SAME merge-base semantics ``_fetch_pr_diff_for_review`` uses
+    on its pre-PR path (``git diff origin/<base>...HEAD`` when the story has no
+    PR yet) — so the docs-enforcer's vacuous-diff guard and the reviewer agree
+    on what the branch changed. The enforcer runs before PR creation in the
+    normal chain (pr_number is None), so they match in practice; once a PR
+    exists the reviewer switches to ``gh pr diff`` (the remote PR), which can
+    differ from the local worktree HEAD.
+
+    Returning ``None`` (never ``[]``) on failure lets the caller distinguish
+    "no diff available, fall back to declared paths" from "the branch genuinely
+    changed nothing" (``[]``, which the vacuous-diff guard blocks).
     """
     import subprocess
 
@@ -3436,22 +3442,39 @@ def handle_docs_enforcer(
     violations = scan_pr_diff(files)
     payload: dict[str, Any] = {"violations": [v._asdict() for v in violations], "files": files}
 
-    # Vacuous-diff guard. A deliverable whose entire diff is story files —
-    # nothing under context/, no prd.md, no code — delivered nothing: the
-    # story file is the WORK ORDER, not the work. scan_pr_diff can't catch
-    # this (stories/*.md is a canonical path, so a story-file-only diff scans
-    # clean — exactly how benchmark t7 "passed" 2026-07-17 with a diff that
-    # only added the seeded story file).
+    # Vacuous-diff guard. A deliverable with no substantive file — no code, no
+    # context/, no prd.md — delivered nothing. Two shapes, both blocked back to
+    # the dev loop rather than opened as a PR:
+    #
+    #  * only ``stories/*.md`` — the story file is the WORK ORDER, not the work.
+    #    scan_pr_diff can't catch it (stories/*.md is a canonical path, so a
+    #    story-file-only diff scans clean — exactly how benchmark t7 "passed"
+    #    2026-07-17 with a diff that only added the seeded story file).
+    #  * empty (``files == []``) — the branch changed nothing at all. Now
+    #    reachable since we key off the REAL diff: an in-handler base re-merge
+    #    (``_writing_worktree``) can absorb a sibling's identical fix, leaving
+    #    an empty ``origin/base...HEAD``. Opening a PR on an empty branch fails
+    #    ``gh pr create`` and would strand the story at PR_OPEN with
+    #    pr_number=None (auto-merge matches PRs by number → silent limbo), so
+    #    bounce instead. NOTE the condition is ``not substantive`` (not the old
+    #    ``files and not substantive``): with real-diff semantics the empty
+    #    case is a genuine no-op, not the old story-only misfire.
     substantive = [f for f in files if f and not str(f).startswith("stories/")]
-    if files and not substantive:
+    if not substantive:
         story.state = advance(story, EVENT_DOCS_ENFORCER_FAIL).value
-        story.error = "vacuous diff: only story files changed — no deliverable content"
+        empty = not files
+        story.error = (
+            "vacuous diff: branch changed nothing — no deliverable content"
+            if empty
+            else "vacuous diff: only story files changed — no deliverable content"
+        )
         payload["vacuous_diff"] = True
+        payload["empty_diff"] = empty
         persist_story(story, db)
         log_story_event(
             story.id,
             "vacuous_diff",
-            {"files": files[:20]},
+            {"files": files[:20], "empty_diff": empty},
             software_factory_root=software_factory_root,
             slug_hint=story.slug,
         )

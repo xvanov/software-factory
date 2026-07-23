@@ -180,6 +180,37 @@ def test_realrun_git_diff_only_story_files_still_vacuous(
     result = handle_docs_enforcer(s, app_config, temp_root, dry_run=False, db_path=db)
     assert result.next_state == StoryState.REVIEWER_REQUESTED_CHANGES
     assert result.payload["vacuous_diff"] is True
+    assert result.payload.get("empty_diff") is False
+
+
+def test_realrun_empty_git_diff_is_blocked_not_pr_limbo(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuinely-empty real diff (``[]`` — e.g. an in-handler base re-merge
+    absorbed a sibling's identical fix) must be BLOCKED back to the dev loop,
+    not proceed to open an empty PR (which fails ``gh pr create`` and strands
+    the story at PR_OPEN with pr_number=None, invisible to auto-merge).
+
+    Regression for the guard-semantics gap: the old ``if files and not
+    substantive`` skipped on ``[]``; the real-diff source makes ``[]`` reachable.
+    """
+    from factory.chain import handlers as H
+
+    s = _story_at_tech_writer_done(temp_root)
+    s.github_branch = "factory/story-1-x"
+    db = temp_root / "state" / "factory.db"
+    persist_story(s, db)
+
+    monkeypatch.setattr(H, "_changed_files_for_story", lambda *a, **k: [])
+    # If the guard wrongly passed, this is what would run — fail loudly if so.
+    def _should_not_open(*a, **k):  # pragma: no cover - asserts non-invocation
+        raise AssertionError("empty-diff story must not reach _open_pr_for_story")
+
+    monkeypatch.setattr(H, "_open_pr_for_story", _should_not_open)
+    result = handle_docs_enforcer(s, app_config, temp_root, dry_run=False, db_path=db)
+    assert result.next_state == StoryState.REVIEWER_REQUESTED_CHANGES
+    assert result.payload["vacuous_diff"] is True
+    assert result.payload["empty_diff"] is True
 
 
 def test_realrun_falls_back_to_tech_writer_when_git_diff_unavailable(
