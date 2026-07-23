@@ -73,7 +73,9 @@ class _AppConfig:
     repo = "owner/sacrifice"
 
 
-def _mk_pair(db: Path, *, winner_suffix: str = "alt-a", loser_suffix: str = "alt-b") -> tuple[StoryRecord, StoryRecord]:
+def _mk_pair(
+    db: Path, *, winner_suffix: str = "alt-a", loser_suffix: str = "alt-b"
+) -> tuple[StoryRecord, StoryRecord]:
     winner = persist_story(
         StoryRecord(
             direction_id="007",
@@ -190,9 +192,12 @@ def test_close_abandoned_draft_sibling_idempotent_second_call(tmp_path: Path) ->
 
     # First call retires the loser.
     first_runner = _Runner()
-    assert close_abandoned_draft_sibling(
-        winner, _AppConfig(), tmp_path, db, client, False, runner=first_runner
-    ) is True
+    assert (
+        close_abandoned_draft_sibling(
+            winner, _AppConfig(), tmp_path, db, client, False, runner=first_runner
+        )
+        is True
+    )
     assert get_story(loser.id, db).state == StoryState.SUPERSEDED_BY_SIBLING.value
 
     # Second call: loser already superseded → no-op, no new gh calls, no raise.
@@ -219,13 +224,22 @@ def test_close_abandoned_draft_sibling_noop_when_dry_run(tmp_path: Path) -> None
     assert sibling_issue.state == "open"
 
 
-def test_close_abandoned_draft_sibling_noop_when_no_github_client(tmp_path: Path) -> None:
+def test_close_abandoned_draft_sibling_supersedes_without_github_client(tmp_path: Path) -> None:
+    """No pygithub client → the DB supersede + PR-close STILL run (G2 decoupling);
+    only the GitHub issue-close is skipped. (Previously this was a full no-op,
+    which stranded the loser mid-dev whenever the reconcile path got a None
+    client — the bug this change fixes.)"""
     db = tmp_path / "state" / "factory.db"
-    winner, _loser = _mk_pair(db)
+    winner, loser = _mk_pair(db)
+    runner = _Runner()
 
-    result = close_abandoned_draft_sibling(winner, _AppConfig(), tmp_path, db, None, False)
+    result = close_abandoned_draft_sibling(
+        winner, _AppConfig(), tmp_path, db, None, False, runner=runner
+    )
 
-    assert result is False
+    assert result is True
+    assert get_story(loser.id, db).state == StoryState.SUPERSEDED_BY_SIBLING.value
+    assert runner.calls and "556" in runner.calls[0]  # PR still closed via gh
 
 
 def test_close_abandoned_draft_sibling_ignores_non_dual_draft_story(tmp_path: Path) -> None:
@@ -381,3 +395,41 @@ def _story(state: StoryState) -> StoryRecord:
         scope="backend",
         state=state.value,
     )
+
+
+# --------------------------------------------------------------------------- #
+# G2 hardening: supersede is a PURE DB write — never coupled to a GitHub token
+# --------------------------------------------------------------------------- #
+
+
+def test_never_downgrades_a_shipped_sibling(tmp_path: Path) -> None:
+    """A sibling that legitimately SHIPPED (DEPLOYED) must never be downgraded to
+    superseded (both-shipped residue is harmless and left alone). Any terminal
+    sibling is skipped idempotently."""
+    db = tmp_path / "state" / "factory.db"
+    winner, loser = _mk_pair(db)
+    # Both siblings deployed (pre-#87 over-fire residue shape).
+    loser.state = StoryState.DEPLOYED.value
+    persist_story(loser, db)
+
+    result = close_abandoned_draft_sibling(
+        winner, _AppConfig(), tmp_path, db, None, False, runner=_Runner()
+    )
+
+    assert result is False  # nothing retired
+    assert get_story(loser.id, db).state == StoryState.DEPLOYED.value  # NOT downgraded
+
+
+def test_dry_run_suppresses_all_effects(tmp_path: Path) -> None:
+    """``dry_run=True`` still short-circuits everything (no DB write, no gh)."""
+    db = tmp_path / "state" / "factory.db"
+    winner, loser = _mk_pair(db)
+    runner = _Runner()
+
+    result = close_abandoned_draft_sibling(
+        winner, _AppConfig(), tmp_path, db, None, True, runner=runner
+    )
+
+    assert result is False
+    assert get_story(loser.id, db).state == StoryState.PR_OPEN.value  # untouched
+    assert not runner.calls

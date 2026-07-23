@@ -361,14 +361,23 @@ def close_abandoned_draft_sibling(
          in-flight state, so this is a DIRECT state assignment, not a
          state-machine ``advance()`` edge.
 
-    Idempotent: a sibling already in ``SUPERSEDED_BY_SIBLING`` is skipped
-    entirely (no gh calls, no re-comment). Best-effort and fail-safe: neither
-    a gh failure nor a db error may raise out of this function — it must never
-    break the merge worker. ``dry_run`` / no ``github_client`` → no external
-    calls. The WINNER story is never touched. Returns True iff at least one
-    losing sibling was retired.
+    Idempotent: a sibling already in ANY terminal state (``SUPERSEDED_BY_SIBLING``,
+    ``DEPLOYED``, a ``BLOCKED_*`` sink, …) is skipped entirely (no gh calls, no
+    re-comment, and — critically — a sibling that legitimately SHIPPED is never
+    downgraded to ``superseded``). Best-effort and fail-safe: neither a gh
+    failure nor a db error may raise out of this function — it must never break
+    the merge worker.
+
+    The DB supersede (step 3) is a PURE LOCAL write and runs even when
+    ``github_client is None`` — that is the whole point of retiring a loser, and
+    it must not be coupled to token availability (the reconcile path historically
+    got a ``None`` client and then silently skipped the supersede, stranding the
+    loser mid-dev; see G2). Only ``dry_run`` suppresses all effects; a missing
+    client only skips the GitHub *issue*-close (the PR-close shells out to ``gh``
+    and needs no pygithub client). The WINNER story is never touched. Returns
+    True iff at least one losing sibling was retired.
     """
-    if dry_run or github_client is None:
+    if dry_run:
         return False
     if winner is None or not getattr(winner, "direction_id", None):
         return False
@@ -383,8 +392,14 @@ def close_abandoned_draft_sibling(
 
         from sqlmodel import Session, select
 
-        from factory.chain.state_machine import StoryRecord, StoryState
+        from factory.chain.state_machine import StoryRecord, StoryState, is_terminal
         from factory.runner import _engine
+
+        def _is_terminal_state(value: str | None) -> bool:
+            try:
+                return is_terminal(StoryState(value))
+            except ValueError:
+                return False
 
         eng = _engine(Path(db_path))
         with Session(eng) as session:
@@ -404,8 +419,11 @@ def close_abandoned_draft_sibling(
                 # Not a dual-draft sibling, or the same interpretation
                 # (shouldn't happen, but never self-close).
                 continue
-            if sib.state == StoryState.SUPERSEDED_BY_SIBLING.value:
-                # Already retired on a prior run — idempotent no-op.
+            if _is_terminal_state(sib.state):
+                # Already retired on a prior run (SUPERSEDED_BY_SIBLING), already
+                # SHIPPED (DEPLOYED — must NOT be downgraded), or parked in a
+                # BLOCKED_* sink — any terminal sibling is done and is skipped
+                # idempotently. Only an in-flight loser is retired.
                 continue
 
             winner_ref = (
@@ -424,7 +442,9 @@ def close_abandoned_draft_sibling(
                 pass
 
             # 2. Close the loser's still-open tracker issue (best-effort).
-            if sib.github_issue_number:
+            #    Needs a pygithub client; skipped when none is available (the
+            #    reconcile-issues sweep / next tick with a token closes it later).
+            if sib.github_issue_number and github_client is not None:
                 try:
                     repo = github_client.get_repo(app_config.repo)
                     issue = repo.get_issue(int(sib.github_issue_number))
