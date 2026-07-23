@@ -146,15 +146,16 @@ if [ -n "${IMPORT_GATE_CMD:-}" ]; then
   GATE_OK=0
   eval "$IMPORT_GATE_CMD" >/tmp/factory-self-deploy-import.log 2>&1 && GATE_OK=1 || GATE_OK=0
 else
-  # Dotted module paths for the deployed files that still EXIST (skip
-  # deletions and __init__.py package markers, which import via parent).
+  # Dotted module paths for the deployed files that still EXIST (deletions are
+  # skipped). An ``__init__.py`` imports as its PACKAGE dir (so a broken
+  # re-export in it is still caught), not skipped.
   GATE_MODS=()
   GATE_FILES=()
   for f in "${APPLY[@]}"; do
     [ -f "$f" ] || continue
     GATE_FILES+=("$f")
     case "$f" in
-      */__init__.py) : ;;  # imported via its package; skip explicit import
+      */__init__.py) GATE_MODS+=("$(dirname "$f")") ;;  # import the package
       *) GATE_MODS+=("${f%.py}") ;;
     esac
   done
@@ -164,10 +165,13 @@ else
       GATE_OK=0
     fi
   fi
-  if [ "$GATE_OK" -eq 1 ] && [ "${#GATE_MODS[@]}" -gt 0 ]; then
-    # e.g. factory/chain/foo -> factory.chain.foo ; plus a broad import of
-    # the main entrypoints to catch integration breakage.
-    PYIMPORT="import importlib; [importlib.import_module(m.replace('/', '.')) for m in __import__('sys').argv[1:]]; import factory.cli"
+  # Whenever ANY file was deployed, import the main entrypoint (catches
+  # integration breakage) plus each deployed module's dotted path — run
+  # UNCONDITIONALLY on GATE_FILES, not gated on GATE_MODS, so an
+  # ``__init__.py``-only deploy is still import-checked.
+  if [ "$GATE_OK" -eq 1 ] && [ "${#GATE_FILES[@]}" -gt 0 ]; then
+    # e.g. factory/chain/foo -> factory.chain.foo
+    PYIMPORT="import importlib, factory.cli; [importlib.import_module(m.replace('/', '.')) for m in __import__('sys').argv[1:]]"
     if ! uv run python -c "$PYIMPORT" "${GATE_MODS[@]}" >>/tmp/factory-self-deploy-import.log 2>&1; then
       GATE_OK=0
     fi
