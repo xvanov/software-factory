@@ -1245,9 +1245,11 @@ def test_conflict_rebuild_parks_after_cap(factory_root: Path) -> None:
     assert reloaded.github_pr_number == 401
 
 
-def test_conflict_rebuild_failsafe_on_reset_raise(factory_root: Path) -> None:
-    """Case 4 (unit): a raising reset seam is swallowed → 'failed' (caller parks)
-    and the story is left untouched; the function never propagates the error."""
+def test_conflict_rebuild_persists_before_reset_raises(factory_root: Path) -> None:
+    """PERSIST-FIRST / destroy-last: a raising reset seam is swallowed AFTER the
+    redispatch intent is already durably persisted → 'rebuild_redispatched', the
+    story is redispatched (state flipped, PR pointer cleared), and no work is
+    lost. The reset runs LAST, so its failure never reverts the redispatch."""
     from factory.app_config import AppConfig
     from factory.chain import auto_merge as am
     from factory.chain.handlers import persist_story
@@ -1267,15 +1269,18 @@ def test_conflict_rebuild_failsafe_on_reset_raise(factory_root: Path) -> None:
         root=factory_root,
         reset_fn=_boom,
     )
-    assert outcome == "failed"
+    assert outcome == "rebuild_redispatched"
     reloaded = _reload_story(db, story.id)
-    assert reloaded.state == StoryState.PR_OPEN.value
-    assert reloaded.github_pr_number == 402
-    assert "conflict_rebuild_redispatch" not in _event_types(factory_root, story)
+    assert reloaded.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
+    assert reloaded.github_pr_number is None
+    assert "conflict_rebuild_redispatch" in _event_types(factory_root, story)
 
 
-def test_conflict_rebuild_failed_when_reset_returns_false(factory_root: Path) -> None:
-    """A reset that reports it could not run (falsy) → 'failed', not redispatched."""
+def test_conflict_rebuild_persist_failure_destroys_nothing(factory_root: Path) -> None:
+    """DESTROY-LAST guarantee: if the persist of the redispatch intent fails, the
+    destructive reset must NOT run — nothing is closed/deleted — and the result
+    is 'failed' so the tick parks a fully-recoverable story (PR + branch intact,
+    retryable next tick)."""
     from factory.app_config import AppConfig
     from factory.chain import auto_merge as am
     from factory.chain.handlers import persist_story
@@ -1283,17 +1288,40 @@ def test_conflict_rebuild_failed_when_reset_returns_false(factory_root: Path) ->
     db = factory_root / "state" / "factory.db"
     story = persist_story(_conflict_story(pr_number=403, issue=53), db)
 
-    cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main")
-    outcome = am._handle_pr_conflict_rebuild(
-        story=story,
-        app_config=cfg,
-        pr_number=403,
-        db=db,
-        root=factory_root,
-        reset_fn=lambda **_k: False,
-    )
+    reset_called: list[bool] = []
+
+    def _record_reset(**_kwargs):
+        reset_called.append(True)
+        return True
+
+    def _persist_boom(*_a, **_k):
+        raise RuntimeError("db write failed")
+
+    # Make ONLY the redispatch persist fail (the one inside _handle_pr_conflict_
+    # rebuild). Patch at the handlers module where the function imports it.
+    import factory.chain.handlers as _handlers
+
+    orig_persist = _handlers.persist_story
+    _handlers.persist_story = _persist_boom
+    try:
+        cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main")
+        outcome = am._handle_pr_conflict_rebuild(
+            story=story,
+            app_config=cfg,
+            pr_number=403,
+            db=db,
+            root=factory_root,
+            reset_fn=_record_reset,
+        )
+    finally:
+        _handlers.persist_story = orig_persist
+
     assert outcome == "failed"
+    # DESTROY-LAST: the reset (which closes the PR + deletes the branch) never ran.
+    assert reset_called == []
+    # DB row is unchanged — the failed persist wrote nothing.
     assert _reload_story(db, story.id).state == StoryState.PR_OPEN.value
+    assert "conflict_rebuild_redispatch" not in _event_types(factory_root, story)
 
 
 # --- Integration through auto_merge_tick ------------------------------------
@@ -1482,11 +1510,14 @@ def test_tick_behind_pr_uses_update_branch_not_rebuild(
     assert "conflict_rebuild_redispatch" not in types
 
 
-def test_tick_conflict_rebuild_reset_failure_falls_back_to_park(
+def test_tick_conflict_rebuild_reset_failure_still_redispatches(
     factory_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Case 4 (integration / fail-safe): if the fresh-branch reset raises, the
-    tick does NOT propagate the error and falls back to parking the story."""
+    """Case 4 (integration / persist-first): if the fresh-branch reset raises, the
+    tick does NOT propagate the error AND does NOT lose the story — because the
+    redispatch intent is persisted BEFORE the (best-effort) reset, the story is
+    still redispatched to dev, not parked. A partial reset failure is bounded by
+    the rebuild cap, never irreversible work loss."""
     import subprocess
 
     from factory.chain import auto_merge as am
@@ -1525,8 +1556,124 @@ def test_tick_conflict_rebuild_reset_failure_falls_back_to_park(
         merge_fn=_conflict_merge_fn,
     )
     reloaded = _reload_story(db, sid)
-    assert reloaded.state == StoryState.BLOCKED_DEPLOY_FAILED.value
-    assert "conflict_rebuild_redispatch" not in [
+    # Persisted BEFORE the raising reset → redispatched, NOT parked, no work lost.
+    assert reloaded.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
+    assert reloaded.state != StoryState.BLOCKED_DEPLOY_FAILED.value
+    assert reloaded.github_pr_number is None
+    assert "conflict_rebuild_redispatch" in [
         e.get("event")
         for e in read_story_events(sid, software_factory_root=factory_root, slug_hint=slug)
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Real-git integration for the irreversible reset — no monkeypatched subprocess.
+# Proves _reset_branch_for_fresh_rebuild genuinely wipes the stale surfaces so
+# the NEXT ensure_worktree_for_story cuts a branch straight off CURRENT
+# origin/main (conflict-free). This is the one operation that deletes work, so
+# it is exercised against a real repo rather than mocked seams.
+# --------------------------------------------------------------------------- #
+
+
+def _git(args: list[str], cwd: Path, *, check: bool = True):
+    import subprocess
+
+    return subprocess.run(
+        args, cwd=str(cwd), capture_output=True, text=True, check=check, timeout=60
+    )
+
+
+def test_reset_branch_real_git_yields_fresh_cut_off_current_main(tmp_path: Path) -> None:
+    """A story branch cut from an OLDER main that has since advanced with a
+    CONFLICTING change is genuinely wiped by ``_reset_branch_for_fresh_rebuild``
+    (real git, no mocks): the next ``ensure_worktree_for_story`` cuts a branch
+    straight off CURRENT origin/main, conflict-free."""
+    from factory.app_config import AppConfig
+    from factory.chain import auto_merge as am
+    from factory.chain.branch import feature_branch_name
+    from factory.chain.worktree import ensure_worktree_for_story
+
+    # 1. Bare origin + source clone; origin/main starts at "v0".
+    origin = tmp_path / "origin.git"
+    _git(["git", "init", "-q", "--bare", "--initial-branch=main", str(origin)], tmp_path)
+    source = tmp_path / "src"
+    source.mkdir()
+    _git(["git", "init", "-q", "--initial-branch=main"], source)
+    _git(["git", "config", "user.email", "t@e.x"], source)
+    _git(["git", "config", "user.name", "T E"], source)
+    (source / "data.txt").write_text("v0\n", encoding="utf-8")
+    _git(["git", "add", "."], source)
+    _git(["git", "commit", "-q", "-m", "init"], source)
+    _git(["git", "remote", "add", "origin", str(origin)], source)
+    _git(["git", "push", "-u", "-q", "origin", "main"], source)
+
+    # 2. Cut the per-story worktree/branch off origin/main (v0), commit a
+    #    divergent change to data.txt.
+    root = tmp_path / "sf"
+    (root / "state").mkdir(parents=True)
+    issue, slug = 77, "conflict-rebuild"
+    branch = feature_branch_name(issue, slug)
+    wt = ensure_worktree_for_story(
+        source,
+        software_factory_root=root,
+        app="sacrifice",
+        story_id=issue,
+        slug=slug,
+        base_branch="main",
+    )
+    (Path(wt) / "data.txt").write_text("STORY VERSION\n", encoding="utf-8")
+    _git(["git", "add", "data.txt"], wt)
+    _git(["git", "commit", "-q", "-m", "story change"], wt)
+    stale_head = _git(["git", "rev-parse", "HEAD"], wt).stdout.strip()
+
+    # 3. Advance origin/main with a CONFLICTING change to the SAME file.
+    _git(["git", "checkout", "-q", "main"], source)
+    (source / "data.txt").write_text("MAIN VERSION\n", encoding="utf-8")
+    _git(["git", "add", "data.txt"], source)
+    _git(["git", "commit", "-q", "-m", "main change"], source)
+    _git(["git", "push", "-q", "origin", "main"], source)
+
+    # Sanity: the stale story branch really DOES conflict with current main.
+    _git(["git", "fetch", "-q", "origin", "main"], wt)
+    conflict = _git(["git", "merge", "--no-commit", "--no-ff", "origin/main"], wt, check=False)
+    assert conflict.returncode != 0
+    _git(["git", "merge", "--abort"], wt, check=False)
+
+    # 4. Run the ACTUAL destructive reset. pr_number=0 skips the gh pr close
+    #    (no GitHub needed) so this exercises the real worktree + local-branch
+    #    wipe — the part that irreversibly deletes work.
+    story = StoryRecord(
+        direction_id="099",
+        app="sacrifice",
+        title="t",
+        slug=slug,
+        scope="docs",
+        state=StoryState.PR_OPEN.value,
+        chain_kind="docs",
+        github_issue_number=issue,
+        github_branch=branch,
+    )
+    cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main", app_repo_path=str(source))
+    assert (
+        am._reset_branch_for_fresh_rebuild(story=story, app_config=cfg, pr_number=0, root=root)
+        is True
+    )
+    # The stale local branch was deleted by the reset.
+    assert branch not in _git(["git", "branch", "--list", branch], source).stdout
+
+    # 5. The next worktree cut is FRESH off CURRENT origin/main (conflict-free):
+    #    a freshly-cut branch with no commits sits exactly at the current main tip.
+    wt2 = ensure_worktree_for_story(
+        source,
+        software_factory_root=root,
+        app="sacrifice",
+        story_id=issue,
+        slug=slug,
+        base_branch="main",
+    )
+    fresh_head = _git(["git", "rev-parse", "HEAD"], wt2).stdout.strip()
+    origin_main = _git(["git", "rev-parse", "origin/main"], source).stdout.strip()
+    assert fresh_head == origin_main  # cut from CURRENT main
+    assert fresh_head != stale_head  # NOT the old conflicting branch
+    # Current main's content is present — no conflict markers, no stale story work.
+    assert (Path(wt2) / "data.txt").read_text(encoding="utf-8") == "MAIN VERSION\n"

@@ -1814,18 +1814,28 @@ def _handle_pr_conflict_rebuild(
     FRESH branch off current main, bounded by ``_MAX_CONFLICT_REBUILDS``.
 
     Returns:
-      * ``"rebuild_redispatched"`` — the story was reset (conflicting PR closed,
-        stale branch/worktree wiped, ``github_pr_number``/``github_branch``
-        cleared) and fed back to dev via the reviewer-findings plumbing. The
-        caller must NOT park it.
+      * ``"rebuild_redispatched"`` — the redispatch intent was durably PERSISTED
+        (``github_pr_number``/``github_branch`` cleared, state flipped to
+        REVIEWER_REQUESTED_CHANGES, merge-conflict finding fed to dev) and the
+        destructive reset was then run best-effort. The caller must NOT park it.
       * ``"exhausted"`` — the rebuild cap is reached (a deduped
         ``conflict_rebuild_exhausted`` was logged). The caller should park the
         story to ``blocked_deploy_failed`` via the existing
         ``EVENT_PR_UNMERGEABLE`` sink so it never loops forever.
-      * ``"failed"`` — the fresh-branch reset could not be completed (a seam
-        raised or returned falsy, or the re-dispatch persist failed). FAIL-SAFE:
-        the caller should park; we NEVER re-dispatch onto a branch that would
-        just re-conflict, and this function never raises.
+      * ``"failed"`` — the redispatch intent could NOT be persisted. FAIL-SAFE:
+        NOTHING was destroyed (the PR + branch are still fully intact), so the
+        caller parks and the next tick retries with no work lost. This function
+        never raises.
+
+    PERSIST-FIRST / destroy-last — this is the critical ordering. The reset
+    (``_reset_branch_for_fresh_rebuild``) closes the PR and DELETES the remote +
+    local branch: irreversible. So we commit the redispatch intent BEFORE any
+    destruction. If the persist fails, the PR/branch are untouched and the tick
+    parks a fully-recoverable story; only after a durable persist do we destroy,
+    at which point a partial reset failure merely risks the next dev cut reusing
+    a stale branch and re-conflicting — bounded by the cap, never irreversible
+    loss. (This is why a failing/​raising ``reset_fn`` does NOT yield ``"failed"``
+    — the work is already safely persisted.)
 
     Mirrors ``_handle_ci_failure``: caps via the event log (counts
     ``conflict_rebuild_redispatch`` events for THIS story) and re-dispatches to
@@ -1833,8 +1843,7 @@ def _handle_pr_conflict_rebuild(
     and feeds ``story.reviewer_result_json`` into ``handle_dev``).
 
     ``reset_fn`` is a test seam (defaults to ``_reset_branch_for_fresh_rebuild``);
-    it MUST perform the external close/wipe side effects and return truthy iff
-    the reset ran.
+    it performs the external close/wipe side effects.
     """
     from factory.chain.event_log import log_story_event, read_story_events
     from factory.chain.handlers import persist_story
@@ -1865,20 +1874,15 @@ def _handle_pr_conflict_rebuild(
                 pass
         return "exhausted"
 
-    reset = reset_fn or _reset_branch_for_fresh_rebuild
-    try:
-        did_reset = bool(reset(story=story, app_config=app_config, pr_number=pr_number, root=root))
-    except Exception:  # noqa: BLE001 - fail-safe: fall back to park
-        did_reset = False
-    if not did_reset:
-        return "failed"
+    base = app_config.default_branch or "main"
 
-    # Fresh-branch reset ran: clear the PR + branch pointers so the dev / PR-open
-    # flow cuts a NEW branch from origin/main and opens a NEW PR (the old ones
-    # were just discarded).
+    # STEP 1 — mutate the story in memory. Clear the PR + branch pointers so the
+    # dev / PR-open flow cuts a NEW branch from origin/main and opens a NEW PR.
+    # Clearing ``github_branch`` to None is safe: both the reset (STEP 3) and the
+    # next dev cut recompute the SAME deterministic ``feature_branch_name`` from
+    # the issue number + slug, so the reset still deletes the right stale branch.
     story.github_pr_number = None
     story.github_branch = None
-    base = app_config.default_branch or "main"
     # Feed the conflict back as a reviewer finding so the dev run knows WHY it is
     # rebuilding (reuse the existing reviewer-findings plumbing, same shape as
     # the CI-failure re-dispatch — a well-formed dict, never a bare string).
@@ -1911,11 +1915,25 @@ def _handle_pr_conflict_rebuild(
     # first pass and mislabel a conflict rebuild.
     story.dev_retries = 0
     story.reviewer_cycles = 0
+
+    # STEP 2 — persist the intent BEFORE any destruction. On failure NOTHING has
+    # been destroyed: the PR + branch are intact, so we park a recoverable story.
     try:
         persist_story(story, db)
-    except Exception:  # noqa: BLE001 - could not persist the re-dispatch → park
+    except Exception:  # noqa: BLE001 - could not persist → park; PR/branch intact
         return "failed"
 
+    # STEP 3 — only now run the destructive reset (close PR + delete remote/local
+    # branch + remove worktree). Best-effort: a partial failure here is bounded
+    # by the rebuild cap (the next dev cut may reuse a stale branch and
+    # re-conflict), NOT irreversible loss — the redispatch is already durable.
+    reset = reset_fn or _reset_branch_for_fresh_rebuild
+    try:
+        reset(story=story, app_config=app_config, pr_number=pr_number, root=root)
+    except Exception:  # noqa: BLE001 - reset is best-effort post-persist
+        pass
+
+    # STEP 4 — log the redispatch.
     try:
         log_story_event(
             story.id,
