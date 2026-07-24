@@ -393,6 +393,8 @@ _NON_CAP_COUNTING_STATES = {
     # Dependency-deadlock sink (terminal). Same rationale — a story that can never
     # build must not consume a concurrency slot.
     StoryState.BLOCKED_DEPENDENCY_UNMET.value,
+    # Operator-closed sink (terminal). The human ruled; it must not hold a slot.
+    StoryState.CLOSED_BY_OPERATOR.value,
     # Passive transition states — no agent is actively running; the story
     # is simply waiting for the orchestrator to dispatch the next handler
     # on the next tick. Counting these against the cap deadlocks any
@@ -561,6 +563,11 @@ _DEAD_END_DEP_STATES = frozenset(
         StoryState.SUPERSEDED_BY_SIBLING.value,
         StoryState.BLOCKED_CI_UNRESOLVED.value,
         StoryState.BLOCKED_DEPENDENCY_UNMET.value,
+        # An operator-closed foundation will never deploy — a dependent behind one
+        # must be abandoned rather than deferring forever. This is the one
+        # pending-human-derived state that IS a definitive dead end, because the
+        # human has already ruled on it.
+        StoryState.CLOSED_BY_OPERATOR.value,
     }
 )
 
@@ -994,6 +1001,154 @@ def _query_pr_state(*, app_config: AppConfig, pr_number: int) -> str | None:
     if state in ("OPEN", "CLOSED", "MERGED"):
         return state
     return None
+
+
+def _query_issue_state(*, app_config: AppConfig, issue_number: int) -> str | None:
+    """Authoritative GitHub state for a tracker ISSUE: ``"OPEN"``/``"CLOSED"``/None.
+
+    Read-only ``gh issue view --json state``, mirroring ``_query_pr_state``'s
+    fail-safe contract exactly: a non-positive number, gh missing, a timeout, a
+    non-zero exit, or an unparseable payload all map to ``None`` so the caller
+    never reconciles on an uncertain answer.
+    """
+    import subprocess
+
+    if issue_number <= 0:
+        return None
+    cmd = [
+        "gh",
+        "issue",
+        "view",
+        str(issue_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "state",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    state = str(data.get("state", "")).upper()
+    return state if state in ("OPEN", "CLOSED") else None
+
+
+# Recoverable-pending-human blocks. These are deliberately EXCLUDED from
+# ``tracker_issue._RESOLVED_STORY_STATES`` because an operator may still revive
+# them — which is exactly why a row whose operator has ALREADY ruled (by closing
+# the tracker issue) has no way to settle. ``reconcile_closed_trackers`` is that
+# way out.
+_PENDING_HUMAN_STATES: frozenset[str] = frozenset(
+    {
+        StoryState.BLOCKED_DEPLOY_FAILED.value,
+        StoryState.BLOCKED_BUDGET_EXCEEDED.value,
+        StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
+        StoryState.BLOCKED_REVIEW_NONCONVERGENT.value,
+    }
+)
+
+
+def reconcile_closed_trackers(
+    db: Path,
+    app: str,
+    *,
+    cfg: AppConfig,
+    root: Path,
+    max_reconcile: int = _MAX_RECONCILE_PER_TICK,
+    query_issue_state: Callable[..., str | None] = _query_issue_state,
+) -> list[tuple[str, str, str]]:
+    """Settle pending-human stories whose tracker ISSUE the operator has closed.
+
+    The companion to ``reconcile_from_github``. That pass makes the local DB agree
+    with GitHub about **PR** state; this one makes it agree about whether the work
+    is still *wanted*. GitHub is the system of record for both.
+
+    The gap this closes: the four ``_PENDING_HUMAN_STATES`` are excluded from the
+    resolved-states allowlist on purpose (a human might revive them), so when the
+    human instead *closes the tracker issue* the two views disagree permanently —
+    the factory keeps listing the story as awaiting a human who has already ruled.
+    Observed 2026-07-24: stories 81 and 130 sat 5.1 days and 24.8h in the operator
+    inbox with tracker issues #267/#337 closed days earlier and **zero** open PRs
+    or issues on either repo, so the operator's own "queue is clean" signal and the
+    DB flatly contradicted each other.
+
+    Only ever moves a story TOWARD terminal (``CLOSED_BY_OPERATOR``), never back,
+    which keeps it idempotent: a settled row leaves ``_PENDING_HUMAN_STATES`` and
+    is not a candidate again, so a consistent DB produces zero mutations and zero
+    events on re-run. Re-opening the issue does NOT resurrect the story — that is
+    deliberately a manual operator action (same posture as
+    ``BLOCKED_DEPENDENCY_UNMET``), because auto-resurrection would let a single
+    issue re-open silently re-enter a story the chain had already stopped driving.
+
+    Fail-safe: an ``OPEN`` or unknown (``None``) issue state is a no-op, so a gh
+    outage or auth failure can never mass-close the backlog. Bounded at
+    ``max_reconcile`` gh calls per tick. Pure DB rewrite + read-only gh queries —
+    no LLM, no git writes.
+
+    Returns ``(slug, from_state, to_state)`` tuples for the TickSummary.
+    """
+    from factory.chain.handlers import persist_story
+
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+    with Session(eng) as session:
+        rows = session.exec(select(StoryRecord).where(StoryRecord.app == app)).all()
+
+    candidates = [
+        s
+        for s in rows
+        if s.state in _PENDING_HUMAN_STATES
+        and s.github_issue_number
+        and s.github_issue_number > 0
+    ]
+
+    settled: list[tuple[str, str, str]] = []
+    checked = 0
+    for story in candidates:
+        if checked >= max_reconcile:
+            break
+        issue_number = story.github_issue_number
+        if issue_number is None or issue_number <= 0:
+            continue
+
+        # Re-read live state: an earlier pass in THIS tick (recovery, sibling
+        # cleanup) may already have moved this row.
+        live_state = _current_story_state(db, story.id)
+        if live_state is not None:
+            if live_state not in _PENDING_HUMAN_STATES:
+                continue
+            story.state = live_state
+
+        checked += 1
+        issue_state = query_issue_state(app_config=cfg, issue_number=issue_number)
+        if issue_state != "CLOSED":
+            # OPEN → the work is still wanted; None → unknown. Never settle on
+            # anything but an explicit CLOSED.
+            continue
+
+        from_state = story.state
+        story.state = StoryState.CLOSED_BY_OPERATOR.value
+        story.error = (
+            f"tracker issue #{issue_number} closed on GitHub while the story was "
+            f"in {from_state}; settled as operator-closed. Re-open the issue and "
+            f"move the story to a live dispatch state to revive it."
+        )
+        persist_story(story, db_path=db)
+        _write_drift_event(
+            root=root,
+            story=story,
+            from_state=from_state,
+            pr_state=f"ISSUE_CLOSED#{issue_number}",
+            action=f"settled -> {StoryState.CLOSED_BY_OPERATOR.value}",
+        )
+        settled.append((story.slug, from_state, StoryState.CLOSED_BY_OPERATOR.value))
+
+    return settled
 
 
 def _query_pr_merge_state(*, app_config: AppConfig, pr_number: int) -> str | None:
@@ -1807,6 +1962,22 @@ def tick(
                     summary.handler_runs.append((slug, f"{from_state}(drift)", to_state))
             except Exception as exc:
                 summary.errors.append((app, f"github reconcile failed (non-fatal): {exc!r}"))
+
+            # Same authoritative-first rationale, applied to whether the work is
+            # still WANTED rather than to PR state: a pending-human story whose
+            # tracker issue the operator has already closed is settled as
+            # operator-closed, so the DB stops contradicting GitHub (and the
+            # operator's "no open issues/PRs = queue clean" signal). Only ever
+            # advances toward terminal, so it is idempotent; an OPEN or unknown
+            # issue state is a no-op.
+            try:
+                op_closed = reconcile_closed_trackers(db, app, cfg=cfg, root=root)
+                for slug, from_state, to_state in op_closed:
+                    summary.handler_runs.append((slug, f"{from_state}(operator-closed)", to_state))
+            except Exception as exc:
+                summary.errors.append(
+                    (app, f"closed-tracker reconcile failed (non-fatal): {exc!r}")
+                )
 
             # Standing dual-draft supersede: retire any loser whose sibling has
             # SHIPPED, re-derived from ground truth every tick so a loser that

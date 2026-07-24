@@ -907,6 +907,8 @@ def inbox_cmd(
     apps = [app_name] if app_name else _list_apps()
 
     # Stories with last_rejection_reason or in BLOCKED state -> needs human.
+    from factory.directions.tracker_issue import _RESOLVED_STORY_STATES
+
     eng = create_engine(f"sqlite:///{db}", echo=False)
     needs_human_table = Table(title="Needs human action (stories)")
     needs_human_table.add_column("app")
@@ -920,6 +922,17 @@ def inbox_cmd(
             rows = session.exec(select(StoryRecord).where(StoryRecord.app == a)).all()
             for r in rows:
                 reason: str | None = None
+                # A story in a RESOLVED terminal state never needs human action,
+                # however much history it carries. This used to key off
+                # ``last_rejection_reason`` alone, so every ``deployed`` /
+                # ``superseded_by_sibling`` row that had ever been rejected stayed
+                # in the operator's inbox forever (observed 2026-07-24: deployed
+                # stories 63 and 75 listed under "Needs human action" alongside
+                # genuinely-parked ones). Reuse the same resolved-states ALLOWLIST
+                # the tracker-issue closer uses, so "the tracker closed" and "the
+                # inbox is quiet" can never disagree.
+                if r.state in _RESOLVED_STORY_STATES:
+                    continue
                 if r.last_rejection_reason:
                     reason = r.last_rejection_reason
                 elif r.state in {"blocked_tests_need_clarification", "reviewer_requested_changes"}:
@@ -1121,6 +1134,7 @@ def queue_cmd(
         StoryState.READY_FOR_MERGE.value,
         StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
         StoryState.SUPERSEDED_BY_SIBLING.value,
+        StoryState.CLOSED_BY_OPERATOR.value,
     }
     eng = create_engine(f"sqlite:///{db}", echo=False)
     table = Table(title="queue (in-flight stories)")
@@ -1211,6 +1225,136 @@ def resume_cmd(
 
         new = set_mode("normal", _FACTORY_ROOT)
         console.print(Panel.fit(f"factory mode -> [bold green]{new}[/bold green]", title="resume"))
+
+
+def _render_power_units(units: list[Any], title: str) -> None:
+    table = Table(title=title)
+    table.add_column("unit")
+    table.add_column("active")
+    table.add_column("enabled")
+    for s in units:
+        if not s.installed:
+            continue
+        colour = "green" if s.running else "dim"
+        table.add_row(s.name, f"[{colour}]{s.active}[/{colour}]", s.enabled)
+    console.print(table)
+
+
+@app.command("off")
+def off_cmd(
+    now: bool = typer.Option(
+        False,
+        "--now",
+        help="Do not wait for an in-flight tick to finish; stop immediately.",
+    ),
+    drain_timeout: int = typer.Option(
+        None,
+        "--drain-timeout",
+        help="Seconds to wait for an in-flight tick to drain (default 300).",
+    ),
+) -> None:
+    """Stop the ENTIRE factory: every tick timer, the FMS manager daemon, self-deploy.
+
+    Idempotent and safe from any starting state — active, inactive, disabled,
+    failed, or half-up. Nothing runs and nothing is billed afterwards.
+
+    Shuts down CLEANLY by default: timers are stopped first so no new work can
+    start, then any in-flight tick is allowed to finish (a tick killed
+    mid-handler leaves a story stranded in an ``*_in_progress`` state for the
+    next run to recover). Pass ``--now`` to skip the wait.
+
+    Distinct from ``factory pause``, which only sets the in-DB mode — the
+    processes keep running and the L1 watcher keeps spending. This stops the
+    processes. The mode is left untouched, so ``factory on`` restores exactly
+    the state you had.
+    """
+    from factory.power import DEFAULT_DRAIN_TIMEOUT_S, power_off
+
+    report = power_off(
+        root=_FACTORY_ROOT,
+        wait=not now,
+        drain_timeout_s=drain_timeout if drain_timeout is not None else DEFAULT_DRAIN_TIMEOUT_S,
+    )
+
+    if report["already_off"]:
+        console.print("[dim]Factory was already off; re-asserted stop on all units.[/dim]")
+    if report["drained"]:
+        console.print(f"[dim]Waited for in-flight tick(s): {', '.join(report['drained'])}[/dim]")
+    if report["drain_timed_out"]:
+        console.print(
+            "[yellow]Drain timeout expired with a tick still running — stopped it anyway. "
+            "That story may need recovery on the next start.[/yellow]"
+        )
+
+    units = report["units"]
+    still_running = [s.name for s in units if s.running]
+    _render_power_units(units, "factory OFF")
+    if still_running:
+        console.print(f"[red]Still running: {', '.join(still_running)}[/red]")
+        raise typer.Exit(code=1)
+    console.print(Panel.fit("[bold red]FACTORY OFF[/bold red] — nothing running, $0/hour", title="off"))
+
+
+@app.command("on")
+def on_cmd() -> None:
+    """Start the ENTIRE factory: FMS manager daemon, then every tick timer.
+
+    Idempotent and safe from any starting state. Sticky ``failed`` state is
+    cleared first, so a unit left failed by an earlier crash cannot block the
+    restart — that "it won't come back up" case is exactly what this exists to
+    make impossible.
+
+    Does not touch the factory mode: if you were ``paused`` before, you still
+    are. Use ``factory mode normal`` / ``factory resume`` for that.
+    """
+    from factory.power import power_on
+
+    report = power_on(root=_FACTORY_ROOT)
+
+    if report["already_on"]:
+        console.print("[dim]Factory was already on; re-asserted start on all units.[/dim]")
+    units = report["units"]
+    _render_power_units(units, "factory ON")
+
+    if report["failed"]:
+        for name, err in report["failed"]:
+            console.print(f"[red]{name} failed to start:[/red] {err}")
+        raise typer.Exit(code=1)
+
+    from factory.settings.modes import get_mode
+
+    mode = get_mode(_FACTORY_ROOT)
+    note = "" if mode == "normal" else f"\n[yellow]NOTE: factory mode is '{mode}'[/yellow]"
+    console.print(
+        Panel.fit(f"[bold green]FACTORY ON[/bold green] — {len(report['started'])} unit(s){note}", title="on")
+    )
+
+
+@app.command("power")
+def power_cmd() -> None:
+    """Show whether the factory is on, off, or half-up (read-only)."""
+    from factory.power import power_status
+
+    units = power_status(root=_FACTORY_ROOT)
+    installed = [s for s in units if s.installed]
+    _render_power_units(units, "factory power")
+
+    if not installed:
+        console.print("[yellow]No factory systemd units installed on this machine.[/yellow]")
+        return
+    running = [s for s in installed if s.running]
+    if not running:
+        console.print(Panel.fit("[bold red]OFF[/bold red]", title="power"))
+    elif len(running) == len(installed):
+        console.print(Panel.fit("[bold green]ON[/bold green]", title="power"))
+    else:
+        console.print(
+            Panel.fit(
+                f"[bold yellow]HALF-UP[/bold yellow] — {len(running)}/{len(installed)} running.\n"
+                f"Run 'factory on' or 'factory off' to make it consistent.",
+                title="power",
+            )
+        )
 
 
 @app.command("mode")
@@ -1559,7 +1703,8 @@ def _story_progress_rows(app_name: str | None) -> list[dict[str, Any]]:
         "SELECT id, app, slug, state, chain_kind, dev_retries, reviewer_cycles, "
         "github_issue_number, updated_at FROM stories WHERE state NOT IN "
         "('deployed','blocked_tests_need_clarification','blocked_deploy_failed',"
-        "'blocked_review_nonconvergent','superseded_by_sibling','story_created')"
+        "'blocked_review_nonconvergent','superseded_by_sibling','story_created',"
+        "'closed_by_operator')"
     )
     params: list[Any] = []
     if app_name:

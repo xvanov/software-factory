@@ -399,8 +399,28 @@ def apply_proposal(
     # the commit. Untracked files (e.g. ``state/improvements/*.json``,
     # which is exactly where the proposals JSON we just wrote lives)
     # are fine because ``git add <paths>`` won't pick them up.
+    #
+    # SCOPED to the patch's own target paths (2026-07-24), for the same reason as
+    # ``manager.apply`` (see its dirty-tree comment): repo-wide, this aborts EVERY
+    # apply on a live factory tree, which carries uncommitted operator work as a
+    # matter of normal practice (131 modified files when this was found). The
+    # stated risk — ``git add <paths>`` sweeping unrelated edits into the commit —
+    # cannot happen for files OUTSIDE ``paths``, which is exactly what the scope
+    # excludes. What stays refused is the case that matters: uncommitted edits to
+    # the very files this patch rewrites.
+    #
+    # Empty scope (unparseable patch → the ``git add -u`` fallback below, which
+    # WOULD sweep everything) falls back to the repo-wide check: fail closed when
+    # we cannot tell what will be committed.
+    #
+    # Read the patch straight off ``proposal`` here: this check runs BEFORE the
+    # ``patch`` local is bound further down, and it must stay that way (refusing
+    # early is the point).
+    _dirty_scope = _diff_target_paths(str(proposal.get("suggested_patch") or ""))
     diff_proc = _run(
-        ["git", "diff", "--quiet", "HEAD", "--"],
+        ["git", "diff", "--quiet", "HEAD", "--", *_dirty_scope]
+        if _dirty_scope
+        else ["git", "diff", "--quiet", "HEAD", "--"],
         cwd=repo_path,
         runner=runner,
         timeout=15,
@@ -410,7 +430,10 @@ def apply_proposal(
             proposal_index=proposal_index,
             classification=classification,
             status="abandoned",
-            error="dirty_working_tree",
+            error=(
+                "dirty_working_tree: uncommitted changes in the patch's own target "
+                f"paths ({', '.join(_dirty_scope[:5]) or 'repo-wide'})"
+            ),
             title=title,
             label=label,
         )

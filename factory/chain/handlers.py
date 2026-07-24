@@ -312,6 +312,8 @@ def stories_in_flight(app: str, db_path: Path) -> list[StoryRecord]:
         # Dual-draft loser: terminal, so its worktree is prunable and it never
         # counts as in-flight.
         StoryState.SUPERSEDED_BY_SIBLING.value,
+        # Operator-closed: terminal, worktree prunable, never in-flight.
+        StoryState.CLOSED_BY_OPERATOR.value,
     }
     # DEPLOY_PENDING is INTENTIONALLY in-flight so the orchestrator's
     # _DISPATCH picks it up for handle_deploy.

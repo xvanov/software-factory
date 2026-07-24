@@ -14,6 +14,7 @@ EXPECTED_NAMES = {
     "retry_storm",
     "review_churn",
     "cost_spike",
+    "fms_yield",
     "tick_duration_outliers",
     "state_distribution_skew",
     "worktree_orphans",

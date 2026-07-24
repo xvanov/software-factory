@@ -249,6 +249,9 @@ _RESOLVED_STORY_STATES = frozenset(
         "deployed",
         "superseded_by_sibling",
         "closed",
+        # An operator-closed story is resolved BY DEFINITION — its tracker issue
+        # is what the operator closed to put it here.
+        "closed_by_operator",
         "blocked_ci_unresolved",
         # A dependency-deadlocked story is terminally abandoned (its foundation
         # will never deploy), so its tracker issue should close rather than

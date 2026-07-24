@@ -98,15 +98,34 @@ mapfile -t ALL_CHANGED < <(git diff --name-only "$REMOTE_REF" -- factory/ | grep
 
 APPLY=()
 SKIPPED_FORBIDDEN=()
+SKIPPED_DIRTY=()
 for f in "${ALL_CHANGED[@]}"; do
   case "$f" in
     factory/manager/*|bench/*) SKIPPED_FORBIDDEN+=("$f") ;;
-    *) APPLY+=("$f") ;;
+    *)
+      # NEVER clobber uncommitted local work. ``git checkout <ref> -- <file>``
+      # below overwrites the working-tree copy with no warning and no way back,
+      # and this script assumed the live tree differs from main ONLY by deployed
+      # commits. It does not: the tree carries uncommitted operator work as a
+      # matter of normal practice (131 modified files on 2026-07-24), and this
+      # loop silently reverted an in-progress edit to factory/cli.py mid-session.
+      # A file that is dirty locally is not a deploy candidate — it is someone's
+      # work. Skip it loudly and let the operator commit or discard it.
+      if ! git diff --quiet HEAD -- "$f" 2>/dev/null; then
+        SKIPPED_DIRTY+=("$f")
+      else
+        APPLY+=("$f")
+      fi
+      ;;
   esac
 done
 
 if [ "${#SKIPPED_FORBIDDEN[@]}" -gt 0 ]; then
   alert "forbidden self-edit paths differ from main and were SKIPPED (operator PR + manual deploy required): ${SKIPPED_FORBIDDEN[*]}"
+fi
+
+if [ "${#SKIPPED_DIRTY[@]}" -gt 0 ]; then
+  alert "locally-modified paths SKIPPED to avoid destroying uncommitted work (commit or discard them to let self-deploy proceed): ${SKIPPED_DIRTY[*]}"
 fi
 
 if [ "${#APPLY[@]}" -eq 0 ]; then
