@@ -1432,6 +1432,7 @@ def freshen_behind_prs(
     cfg: AppConfig,
     root: Path,
     max_freshen: int = _MAX_BRANCH_FRESHEN_PER_TICK,
+    max_reads: int = _MAX_RECONCILE_PER_TICK,
     query_merge_state: Callable[..., str | None] = _query_pr_merge_state,
     update_branch: Callable[..., bool] | None = None,
 ) -> list[tuple[str, int]]:
@@ -1446,7 +1447,9 @@ def freshen_behind_prs(
     ONLY ``BEHIND`` PRs are touched: ``CONFLICTING`` / ``DIRTY`` PRs are left to
     the conflict-recovery path (``_attempt_pr_reconcile`` + terminal-block), and
     already-clean PRs need nothing. Bounded at ``max_freshen`` update-branch
-    calls per tick. ``update_branch`` defaults to ``auto_merge._attempt_pr_reconcile``
+    WRITES and ``max_reads`` ``gh pr view`` READS per tick (the read cap mirrors
+    reconcile's so a large PR backlog can't burst the gh API each tick).
+    ``update_branch`` defaults to ``auto_merge._attempt_pr_reconcile``
     (the existing ``gh pr update-branch`` wrapper — no duplicate gh plumbing).
     Fully fail-safe and idempotent (a freshened PR reports CLEAN next tick and
     is no longer a candidate). Returns ``(slug, pr_number)`` for each PR whose
@@ -1468,12 +1471,17 @@ def freshen_behind_prs(
 
     refreshed: list[tuple[str, int]] = []
     attempts = 0
+    reads = 0
     for story in candidates:
-        if attempts >= max_freshen:
+        if attempts >= max_freshen or reads >= max_reads:
+            # Bound WRITES (update-branch) AND READS (gh pr view) per tick, the
+            # latter mirroring reconcile's ``_MAX_RECONCILE_PER_TICK`` so a large
+            # open-PR backlog can't turn every tick into a burst of gh queries.
             break
         pr_number = story.github_pr_number
         if pr_number is None or pr_number <= 0:
             continue
+        reads += 1
         merge_state = query_merge_state(app_config=cfg, pr_number=pr_number)
         if merge_state != "BEHIND":
             # None (unknown / not open), CLEAN, BLOCKED, DIRTY, CONFLICTING,
@@ -1809,14 +1817,24 @@ def tick(
             # merge, no force-push) so they never drift far enough to CONFLICT.
             # Only BEHIND PRs are touched; conflicting/clean ones are left alone.
             # Bounded per tick and fully fail-safe (never breaks the tick).
-            try:
-                freshened = freshen_behind_prs(db, app, cfg=cfg, root=root)
-                for slug, pr_number in freshened:
-                    summary.handler_runs.append(
-                        (slug, f"pr#{pr_number}(behind)", "branch-freshened")
-                    )
-            except Exception as exc:
-                summary.errors.append((app, f"branch-freshening failed (non-fatal): {exc!r}"))
+            #
+            # ``update-branch`` is a WRITE (a server-side merge commit on each PR
+            # branch that re-triggers CI), so it is GATED exactly like every other
+            # forward-motion op: suppressed in ``paused`` / ``drain-reviews`` modes
+            # (an operator who paused — often BECAUSE a bad merge hit main — must
+            # not have us merge that main into every open PR) and only when
+            # auto-merge is enabled (freshening branches for merges that will
+            # never happen is pointless churn).
+            _fresh_mode = get_mode(root, db_path=db)
+            if _fresh_mode not in {"paused", "drain-reviews"} and settings.auto_merge.enabled:
+                try:
+                    freshened = freshen_behind_prs(db, app, cfg=cfg, root=root)
+                    for slug, pr_number in freshened:
+                        summary.handler_runs.append(
+                            (slug, f"pr#{pr_number}(behind)", "branch-freshened")
+                        )
+                except Exception as exc:
+                    summary.errors.append((app, f"branch-freshening failed (non-fatal): {exc!r}"))
 
             try:
                 recovered = _prune_stale_in_progress(db, app, settings=settings, root=root)

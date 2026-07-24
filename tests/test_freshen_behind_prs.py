@@ -87,7 +87,10 @@ def test_behind_pr_is_refreshed(tmp_path: Path) -> None:
 
 def test_conflicting_and_dirty_and_clean_are_skipped(tmp_path: Path) -> None:
     db = _seed(tmp_path)
-    _story(db, state=StoryState.PR_OPEN.value, slug="conflict", pr_number=1)
+    # Real ``gh pr view --json mergeStateStatus`` values: a merge conflict is
+    # DIRTY (never "CONFLICTING" — that's the separate ``mergeable`` enum the
+    # code never queries); BLOCKED = required checks/reviews pending.
+    _story(db, state=StoryState.PR_OPEN.value, slug="blocked", pr_number=1)
     _story(db, state=StoryState.CI_GREEN.value, slug="dirty", pr_number=2)
     _story(db, state=StoryState.READY_FOR_MERGE.value, slug="clean", pr_number=3)
     _story(db, state=StoryState.PR_OPEN.value, slug="unknown", pr_number=4)
@@ -97,7 +100,7 @@ def test_conflicting_and_dirty_and_clean_are_skipped(tmp_path: Path) -> None:
         "sacrifice",
         cfg=_CFG,
         root=tmp_path,
-        query_merge_state=_merge_state({1: "CONFLICTING", 2: "DIRTY", 3: "CLEAN", 4: None}),
+        query_merge_state=_merge_state({1: "BLOCKED", 2: "DIRTY", 3: "CLEAN", 4: None}),
         update_branch=upd,
     )
     # Nothing BEHIND → nothing touched.
