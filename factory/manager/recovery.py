@@ -115,6 +115,7 @@ PLAYBOOK_REDISPATCH_PHANTOM_PR = "redispatch-phantom-pr-open"
 PLAYBOOK_REVERT_PREMATURE_DEPLOY = "revert-premature-deploy-enable"
 PLAYBOOK_CONFLICTING_GATED_PR = "conflicting-gated-pr"  # escalate-only, v1
 PLAYBOOK_RECOVER_STUCK_FIXONLY = "recover-stuck-fixonly-mode"
+PLAYBOOK_QUARANTINE_INVALID_ENUM = "quarantine-invalid-enum-story"
 
 # Story states already known (auto_merge.py's _MERGEABLE_STATES) to mean
 # "already reached the merge gate" — reused here to spot a PR that passed
@@ -840,6 +841,128 @@ def execute_recover_stuck_fixonly_mode(
 
 
 # --------------------------------------------------------------------------- #
+# Playbook 6 — quarantine-invalid-enum-story
+# --------------------------------------------------------------------------- #
+
+
+def _is_valid_story_state(value: str | None) -> bool:
+    """True iff ``value`` is a recognised :class:`StoryState` enum value."""
+    if value is None:
+        return False
+    try:
+        StoryState(value)
+    except ValueError:
+        return False
+    return True
+
+
+def detect_invalid_enum_stories(
+    root: Path,
+    *,
+    db_path: Path | None = None,
+    apps: list[str] | None = None,
+) -> list[RecoveryTarget]:
+    """PRECONDITION: story.state is a string OUTSIDE the ``StoryState`` enum.
+
+    This is a "poisoned" row — a bad manual/manager write (e.g. the
+    ``abandoned`` row that halted the factory for days on 2026-07-07). The
+    orchestrator's poisoned-row guard skips it NON-FATALLY every tick, but that
+    skip is otherwise silent and permanent: the invalid row is re-evaluated and
+    re-skipped forever until a human hand-repairs it. This detector surfaces such
+    rows so the reconciler can park them in a terminal quarantine sink.
+
+    Read-only: queries the DB and classifies each row's state string in Python
+    (the invalid value cannot be expressed as a SQL enum filter). Every other
+    recovery playbook targets a SPECIFIC valid state; this is the one that
+    handles the INVALID-enum case the others structurally cannot.
+    """
+    eng = _engine(_db_path(root, db_path))
+    with Session(eng) as session:
+        stmt = select(StoryRecord)
+        if apps:
+            stmt = stmt.where(StoryRecord.app.in_(apps))  # type: ignore[attr-defined]
+        rows = session.exec(stmt).all()
+
+    targets: list[RecoveryTarget] = []
+    for story in rows:
+        if _is_valid_story_state(story.state):
+            continue  # healthy enum value — not our concern
+        targets.append(
+            RecoveryTarget(
+                playbook=PLAYBOOK_QUARANTINE_INVALID_ENUM,
+                key=f"story:{story.id}",
+                description=(
+                    f"story {story.id} ({story.app}/{story.slug}) has invalid "
+                    f"state {story.state!r} (outside the StoryState enum) — "
+                    "quarantining to a terminal sink so it stops being re-skipped"
+                ),
+                story_id=story.id,
+                app=story.app,
+                extra={
+                    "invalid_state": story.state,
+                    "slug": story.slug,
+                    "prior_error": story.error,
+                },
+            )
+        )
+    return targets
+
+
+def execute_quarantine_invalid_enum_story(
+    root: Path,
+    target: RecoveryTarget,
+    *,
+    dry_run: bool,
+    db_path: Path | None = None,
+) -> RecoveryOutcome:
+    """ACTION: move an invalid-enum row to the terminal
+    ``StoryState.QUARANTINED_INVALID_STATE`` sink, preserving the original
+    invalid string in ``error`` for forensics.
+
+    Reversible: an operator who identifies the root cause can move the row back
+    to a live dispatch state and clear ``error``. Idempotent: a row already in
+    the quarantine sink is a valid enum value, so the detector never re-matches
+    it. Fail-safe: the precondition is re-checked at execute time; if the row
+    became a valid state out-of-band between detection and execution, we skip.
+    """
+    invalid_state = target.extra.get("invalid_state")
+    action_desc = (
+        f"quarantine story {target.story_id}: state {invalid_state!r} -> "
+        f"{StoryState.QUARANTINED_INVALID_STATE.value!r} "
+        "(original invalid state preserved in error)"
+    )
+    if dry_run:
+        return RecoveryOutcome(target.playbook, target, "dry_run", action_desc)
+
+    eng = _engine(_db_path(root, db_path))
+    try:
+        with Session(eng) as session:
+            story = session.get(StoryRecord, target.story_id)
+            # Re-check the precondition at execute time — if the row became a
+            # valid state (operator repair, or already quarantined) between
+            # detection and execution, there is nothing to do.
+            if story is None or _is_valid_story_state(story.state):
+                return RecoveryOutcome(
+                    target.playbook,
+                    target,
+                    "skipped_stale",
+                    "story state is no longer an invalid enum at execute time",
+                )
+            original = story.state
+            story.state = StoryState.QUARANTINED_INVALID_STATE.value
+            # Preserve the poisoned value so the forensic trail survives the
+            # quarantine — never clobber an existing error, append to it.
+            note = f"quarantined invalid state {original!r}"
+            story.error = f"{story.error}; {note}" if story.error else note
+            story.updated_at = datetime.now(UTC).isoformat()
+            session.add(story)
+            session.commit()
+    except Exception as exc:  # noqa: BLE001
+        return RecoveryOutcome(target.playbook, target, "error", action_desc, error=repr(exc))
+    return RecoveryOutcome(target.playbook, target, "recovered", action_desc)
+
+
+# --------------------------------------------------------------------------- #
 # Recovery log (state/events/recovery.ndjson)
 # --------------------------------------------------------------------------- #
 
@@ -1165,6 +1288,16 @@ def build_recovery_registry(ctx: _RecoveryContext) -> list[PlaybookSpec]:
             execute=execute_recover_stuck_fixonly_mode,
             execute_kwargs={"db_path": ctx.db_path},
         ),
+        # Playbook 6: quarantine-invalid-enum-story
+        PlaybookSpec(
+            name=PLAYBOOK_QUARANTINE_INVALID_ENUM,
+            kind="mutating",
+            detect=lambda: detect_invalid_enum_stories(
+                ctx.root, db_path=ctx.db_path, apps=ctx.apps
+            ),
+            execute=execute_quarantine_invalid_enum_story,
+            execute_kwargs={"db_path": ctx.db_path},
+        ),
     ]
 
 
@@ -1299,6 +1432,7 @@ __all__ = [
     "PLAYBOOK_REVERT_PREMATURE_DEPLOY",
     "PLAYBOOK_CONFLICTING_GATED_PR",
     "PLAYBOOK_RECOVER_STUCK_FIXONLY",
+    "PLAYBOOK_QUARANTINE_INVALID_ENUM",
     "detect_retry_mergeable_blocked_stories",
     "execute_retry_mergeable_blocked_story",
     "detect_phantom_pr_open_stories",
@@ -1308,5 +1442,7 @@ __all__ = [
     "detect_conflicting_gated_prs",
     "detect_stuck_fixonly_mode",
     "execute_recover_stuck_fixonly_mode",
+    "detect_invalid_enum_stories",
+    "execute_quarantine_invalid_enum_story",
     "run_recovery_cycle",
 ]

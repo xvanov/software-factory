@@ -2449,6 +2449,7 @@ def tick(
                 stories_advanced=summary.stories_advanced,
                 stories_blocked=summary.stories_blocked,
                 errors=len(summary.errors),
+                skipped=len(summary.skipped),
                 merges_attempted=len(summary.merges),
                 success=_tick_succeeded,
                 exception=_tick_exception,
