@@ -508,9 +508,21 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
 
     Pure read; no schema change. Cross-direction ordering is intentionally NOT
     enforced here (directions are treated as independent features).
+
+    Dual-draft exemption (issue #100): ``…-alt-a`` / ``…-alt-b`` siblings are
+    competing INTERPRETATIONS of the same work, not a serial dependency — alt-b
+    does not build on alt-a's output. If THIS story is itself a dual-draft
+    alternative, other same-direction dual-draft alternatives are NOT treated as
+    dependencies, so the two race independently: alt-b neither waits on alt-a
+    reaching ``deployed`` nor is deadlock-terminalized when alt-a dies in an
+    alt-a-specific sink. A non-alt lower-id story is still a real foundation and
+    stays in the dependency set unchanged.
     """
     if story.id is None:
         return []
+    from factory.chain.dual_draft import _draft_alt_suffix
+
+    story_is_alt = _draft_alt_suffix(story.slug or "") is not None
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
         siblings = session.exec(
@@ -522,7 +534,11 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
     return sorted(
         s.id
         for s in siblings
-        if s.id is not None and s.id < story.id and s.state != StoryState.DEPLOYED.value
+        if s.id is not None
+        and s.id < story.id
+        and s.state != StoryState.DEPLOYED.value
+        # Exempt same-direction dual-draft siblings from each other's deps.
+        and not (story_is_alt and _draft_alt_suffix(s.slug or "") is not None)
     )
 
 
