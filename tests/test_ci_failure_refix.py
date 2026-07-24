@@ -253,7 +253,11 @@ def test_identical_failure_signature_does_not_redispatch_again(
         return True
 
     second = am._handle_ci_failure(
-        story=story, app_config=_cfg(), pr_number=77, db=db, root=tmp_path,
+        story=story,
+        app_config=_cfg(),
+        pr_number=77,
+        db=db,
+        root=tmp_path,
         close_pr_fn=_confirm_close,
     )
     # Exhausted (identical signature) -> PR closed + story parked terminally.
@@ -297,9 +301,7 @@ def test_different_failure_signature_redispatches_again(
     events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
     redispatch_events = [e for e in events if e.get("event") == "ci_fix_redispatch"]
     assert len(redispatch_events) == 2
-    assert (
-        redispatch_events[0]["failure_signature"] != redispatch_events[1]["failure_signature"]
-    )
+    assert redispatch_events[0]["failure_signature"] != redispatch_events[1]["failure_signature"]
     assert not [e for e in events if e.get("event") == "ci_fix_exhausted"]
 
     with Session(create_engine(f"sqlite:///{db}")) as ses:
@@ -307,9 +309,7 @@ def test_different_failure_signature_redispatches_again(
     assert r.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
 
 
-def test_cap_reached_does_not_redispatch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cap_reached_does_not_redispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = _seed(tmp_path)
     story = _pr_open_story(db)
     monkeypatch.setattr(am, "_fetch_ci_failure_logs", lambda **kw: "irrelevant")
@@ -334,7 +334,11 @@ def test_cap_reached_does_not_redispatch(
         return True
 
     redispatched = am._handle_ci_failure(
-        story=story, app_config=_cfg(), pr_number=77, db=db, root=tmp_path,
+        story=story,
+        app_config=_cfg(),
+        pr_number=77,
+        db=db,
+        root=tmp_path,
         close_pr_fn=_confirm_close,
     )
     # Cap reached -> PR closed + story parked terminally.
@@ -350,7 +354,9 @@ def test_cap_reached_does_not_redispatch(
     assert len(exhausted) == 1
     assert exhausted[0]["reason"] == "cap_reached"
     # No NEW redispatch was recorded beyond the simulated prior ones.
-    assert len([e for e in events if e.get("event") == "ci_fix_redispatch"]) == am._MAX_CI_FIX_CYCLES
+    assert (
+        len([e for e in events if e.get("event") == "ci_fix_redispatch"]) == am._MAX_CI_FIX_CYCLES
+    )
 
 
 def test_ci_fix_exhausted_is_deduped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -389,8 +395,12 @@ def test_does_not_redispatch_story_not_in_mergeable_state(tmp_path: Path) -> Non
     db = _seed(tmp_path)
     story = persist_story(
         StoryRecord(
-            direction_id="042", app="sacrifice", title="t", slug="dev",
-            scope="backend", state=StoryState.DEV_IN_PROGRESS.value,
+            direction_id="042",
+            app="sacrifice",
+            title="t",
+            slug="dev",
+            scope="backend",
+            state=StoryState.DEV_IN_PROGRESS.value,
             github_pr_number=77,
         ),
         db,
@@ -424,13 +434,19 @@ def test_park_skipped_for_placeholder_pr(tmp_path: Path, monkeypatch: pytest.Mon
     monkeypatch.setattr(am, "_fetch_ci_failure_logs", lambda **kw: "irrelevant")
     for i in range(am._MAX_CI_FIX_CYCLES):
         log_story_event(
-            story.id, "ci_fix_redispatch",
+            story.id,
+            "ci_fix_redispatch",
             {"pr_number": -1, "attempt": i + 1, "failure_signature": f"s{i}"},
-            software_factory_root=tmp_path, slug_hint=story.slug,
+            software_factory_root=tmp_path,
+            slug_hint=story.slug,
         )
     closed: list[object] = []
     outcome = am._handle_ci_failure(
-        story=story, app_config=_cfg(), pr_number=-1, db=db, root=tmp_path,
+        story=story,
+        app_config=_cfg(),
+        pr_number=-1,
+        db=db,
+        root=tmp_path,
         close_pr_fn=lambda *a, **k: closed.append(a),
     )
     assert outcome == "parked"
@@ -444,9 +460,11 @@ def _seed_cap_reached(db, tmp_path, story, monkeypatch):
     monkeypatch.setattr(am, "_fetch_ci_failure_logs", lambda **kw: "irrelevant")
     for i in range(am._MAX_CI_FIX_CYCLES):
         log_story_event(
-            story.id, "ci_fix_redispatch",
+            story.id,
+            "ci_fix_redispatch",
             {"pr_number": 77, "attempt": i + 1, "failure_signature": f"s{i}"},
-            software_factory_root=tmp_path, slug_hint=story.slug,
+            software_factory_root=tmp_path,
+            slug_hint=story.slug,
         )
 
 
@@ -459,7 +477,11 @@ def test_infra_failure_is_not_parked(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(am, "_ci_failure_is_genuine", lambda **kw: False)  # infra-only
     closed: list[object] = []
     outcome = am._handle_ci_failure(
-        story=story, app_config=_cfg(), pr_number=77, db=db, root=tmp_path,
+        story=story,
+        app_config=_cfg(),
+        pr_number=77,
+        db=db,
+        root=tmp_path,
         close_pr_fn=lambda *a, **k: closed.append(a) or True,
     )
     assert outcome == "left"  # NOT parked
@@ -478,7 +500,11 @@ def test_unconfirmed_close_is_not_parked(tmp_path: Path, monkeypatch: pytest.Mon
     _seed_cap_reached(db, tmp_path, story, monkeypatch)
     monkeypatch.setattr(am, "_ci_failure_is_genuine", lambda **kw: True)
     outcome = am._handle_ci_failure(
-        story=story, app_config=_cfg(), pr_number=77, db=db, root=tmp_path,
+        story=story,
+        app_config=_cfg(),
+        pr_number=77,
+        db=db,
+        root=tmp_path,
         close_pr_fn=lambda pr, repo, **kw: False,  # close NOT confirmed
     )
     assert outcome == "left"  # NOT parked
@@ -513,7 +539,11 @@ def test_auto_merge_tick_redispatches_on_real_ci_failure(
         story=story,
     )
     actions = am.auto_merge_tick(
-        tmp_path, "sacrifice", dry_run=False, fixture_prs=[fixture], db_path=db,
+        tmp_path,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
     )
     assert len(actions) == 1
     assert actions[0].merged is False
@@ -543,7 +573,11 @@ def test_auto_merge_tick_dry_run_unaffected_by_ci_failure(tmp_path: Path) -> Non
         story=story,
     )
     actions = am.auto_merge_tick(
-        tmp_path, "sacrifice", dry_run=True, fixture_prs=[fixture], db_path=db,
+        tmp_path,
+        "sacrifice",
+        dry_run=True,
+        fixture_prs=[fixture],
+        db_path=db,
     )
     assert len(actions) == 1
     assert actions[0].merged is False
@@ -563,8 +597,12 @@ def test_auto_merge_tick_placeholder_pr_unaffected_by_ci_failure(tmp_path: Path)
     db = _seed(tmp_path)
     story = persist_story(
         StoryRecord(
-            direction_id="042", app="sacrifice", title="t", slug="ph",
-            scope="backend", state=StoryState.PR_OPEN.value,
+            direction_id="042",
+            app="sacrifice",
+            title="t",
+            slug="ph",
+            scope="backend",
+            state=StoryState.PR_OPEN.value,
         ),
         db,
     )
@@ -578,7 +616,11 @@ def test_auto_merge_tick_placeholder_pr_unaffected_by_ci_failure(tmp_path: Path)
         story=story,
     )
     actions = am.auto_merge_tick(
-        tmp_path, "sacrifice", dry_run=False, fixture_prs=[fixture], db_path=db,
+        tmp_path,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
     )
     assert len(actions) == 1
     assert "re-dispatched" not in actions[0].reason
@@ -616,11 +658,14 @@ def test_genuine_true_on_required_failure_conclusion(monkeypatch: pytest.MonkeyP
     import subprocess
 
     monkeypatch.setattr(
-        subprocess, "run",
-        _fake_genuine_run([
-            {"conclusion": "SUCCESS", "name": "lint"},
-            {"conclusion": "FAILURE", "name": "pytest"},  # required + genuine defect
-        ]),
+        subprocess,
+        "run",
+        _fake_genuine_run(
+            [
+                {"conclusion": "SUCCESS", "name": "lint"},
+                {"conclusion": "FAILURE", "name": "pytest"},  # required + genuine defect
+            ]
+        ),
         raising=True,
     )
     assert am._ci_failure_is_genuine(app_config=_cfg(), pr_number=77) is True
@@ -633,12 +678,15 @@ def test_genuine_false_on_infra_only(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
 
     monkeypatch.setattr(
-        subprocess, "run",
-        _fake_genuine_run([
-            {"conclusion": "SUCCESS", "name": "lint"},
-            {"conclusion": "TIMED_OUT", "name": "pytest"},  # runner wall-clock
-            {"conclusion": "CANCELLED", "name": "smoke"},
-        ]),
+        subprocess,
+        "run",
+        _fake_genuine_run(
+            [
+                {"conclusion": "SUCCESS", "name": "lint"},
+                {"conclusion": "TIMED_OUT", "name": "pytest"},  # runner wall-clock
+                {"conclusion": "CANCELLED", "name": "smoke"},
+            ]
+        ),
         raising=True,
     )
     assert am._ci_failure_is_genuine(app_config=_cfg(), pr_number=77) is False
@@ -654,7 +702,8 @@ def test_genuine_false_when_only_nonrequired_check_fails(
     import subprocess
 
     monkeypatch.setattr(
-        subprocess, "run",
+        subprocess,
+        "run",
         _fake_genuine_run(
             [
                 {"conclusion": "TIMED_OUT", "name": "pytest"},  # REQUIRED, transient
@@ -665,6 +714,78 @@ def test_genuine_false_when_only_nonrequired_check_fails(
         raising=True,
     )
     assert am._ci_failure_is_genuine(app_config=_cfg(), pr_number=77) is False
+
+
+def test_genuine_false_on_duplicate_name_mixed_conclusions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A REQUIRED name maps to TWO rollup entries with MIXED conclusions: the
+    required check itself TIMED_OUT (transient) while a NON-required check sharing
+    the same name concluded FAILURE. ``statusCheckRollup`` does not mark which
+    entry is required, so an exact-name match could pick up the non-required
+    FAILURE and auto-close a PR whose only required red was a timeout. Mixed
+    conclusions for one name are AMBIGUOUS → NOT genuine (safe under-close)."""
+    import subprocess
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        _fake_genuine_run(
+            [
+                {"conclusion": "SUCCESS", "name": "lint"},
+                {"conclusion": "TIMED_OUT", "name": "pytest"},  # the REQUIRED pytest, transient
+                {"conclusion": "FAILURE", "name": "pytest"},  # a NON-required same-named check
+            ]
+        ),
+        raising=True,
+    )
+    assert am._ci_failure_is_genuine(app_config=_cfg(), pr_number=77) is False
+
+
+def test_genuine_true_on_duplicate_name_all_agree_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A REQUIRED name maps to MULTIPLE rollup entries that ALL agree on FAILURE
+    (e.g. a matrix/re-run reporting the same name twice). Unanimous FAILURE is
+    unambiguous → genuine (the duplicate-name guard must not suppress a real
+    all-red)."""
+    import subprocess
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        _fake_genuine_run(
+            [
+                {"conclusion": "SUCCESS", "name": "lint"},
+                {"conclusion": "FAILURE", "name": "pytest"},
+                {"conclusion": "FAILURE", "name": "pytest"},  # same name, agrees
+            ]
+        ),
+        raising=True,
+    )
+    assert am._ci_failure_is_genuine(app_config=_cfg(), pr_number=77) is True
+
+
+def test_genuine_true_on_single_failure_with_infra_dup_on_other_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A required name with a SINGLE unambiguous FAILURE stays genuine even when a
+    DIFFERENT required name is a mixed/infra red — the guard is per-name, so one
+    clean required FAILURE is enough to close."""
+    import subprocess
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        _fake_genuine_run(
+            [
+                {"conclusion": "TIMED_OUT", "name": "smoke"},  # a different required, transient
+                {"conclusion": "FAILURE", "name": "pytest"},  # single, unambiguous, required
+            ]
+        ),
+        raising=True,
+    )
+    assert am._ci_failure_is_genuine(app_config=_cfg(), pr_number=77) is True
 
 
 def test_genuine_false_on_query_problem(monkeypatch: pytest.MonkeyPatch) -> None:
