@@ -457,10 +457,12 @@ def test_apply_proposal_aborts_on_patch_apply_failure(tmp_path: Path) -> None:
 
 
 def test_apply_proposal_refuses_dirty_tree(tmp_path: Path) -> None:
-    """Uncommitted edits to *tracked* files → abandoned, no branch
-    created. The operator's WIP must never get swept into an improver
-    commit. (Untracked files are tolerated — that's where the
-    proposals JSON lives in real runs.)"""
+    """Uncommitted edits to *tracked* files the patch TARGETS → abandoned, no
+    branch created. The operator's WIP must never get swept into an improver
+    commit. (Untracked files are tolerated — that's where the proposals JSON
+    lives in real runs. Since 2026-07-24 tracked files OUTSIDE the patch's target
+    paths are tolerated too — see
+    ``test_apply_proposal_proceeds_when_dirt_is_outside_the_patch``.)"""
     rel = "factory/personas/dev.md"
     repo = _make_repo_with_file(tmp_path, rel, "# Persona\nbody line\n")
     # Modify a tracked file (the persona itself) so the working tree
@@ -482,7 +484,8 @@ def test_apply_proposal_refuses_dirty_tree(tmp_path: Path) -> None:
         runner=runner,
     )
     assert result.status == "abandoned"
-    assert result.error == "dirty_working_tree"
+    assert (result.error or "").startswith("dirty_working_tree")
+    assert rel in (result.error or ""), "error should name the conflicting path"
     # We did NOT create the branch.
     branches = subprocess.run(
         ["git", "branch", "--list"],
@@ -492,6 +495,46 @@ def test_apply_proposal_refuses_dirty_tree(tmp_path: Path) -> None:
         check=True,
     )
     assert "factory-improver/" not in branches.stdout
+
+
+def test_apply_proposal_proceeds_when_dirt_is_outside_the_patch(tmp_path: Path) -> None:
+    """Unrelated uncommitted work must NOT block an apply.
+
+    Repo-wide, this check aborted every apply on a live factory tree, which
+    carries uncommitted operator work as normal practice. ``git add <paths>``
+    cannot sweep in files outside the patch's target paths, so scoping the
+    refusal preserves the guard's actual purpose.
+    """
+    rel = "factory/personas/dev.md"
+    repo = _make_repo_with_file(tmp_path, rel, "# Persona\nbody line\n")
+    # Commit an UNRELATED tracked file, then dirty it.
+    other = repo / "apps" / "sacrifice" / "config.yaml"
+    other.parent.mkdir(parents=True, exist_ok=True)
+    other.write_text("repo: x/y\n", encoding="utf-8")
+    for args in (
+        ["git", "add", "apps/sacrifice/config.yaml"],
+        ["git", "commit", "-q", "-m", "add unrelated"],
+    ):
+        subprocess.run(args, cwd=str(repo), check=True, capture_output=True)
+    other.write_text("repo: x/y\nPRECIOUS\n", encoding="utf-8")
+
+    proposal = {
+        "kind": "prompt_edit",
+        "target": rel,
+        "rationale": "Unrelated dirt must not block this.",
+        "suggested_patch": _persona_diff_safe(rel),
+    }
+    runner, _calls = _make_runner_with_capture()
+
+    result = apply_proposal(
+        proposal, repo, proposal_index=0, timestamp="123", runner=runner
+    )
+
+    assert not (result.error or "").startswith("dirty_working_tree"), (
+        f"unrelated dirt blocked the apply: {result.error!r}"
+    )
+    # And the unrelated work is still there.
+    assert "PRECIOUS" in other.read_text(encoding="utf-8")
 
 
 def test_apply_proposal_invalid_short_circuits(tmp_path: Path) -> None:

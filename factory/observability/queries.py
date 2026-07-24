@@ -173,6 +173,8 @@ _TERMINAL_STATES_FOR_PROGRESS = {
     # superseded loser is terminal-for-progress so the direction reads done
     # (1/1 effective) instead of a perpetual 1/2.
     "superseded_by_sibling",
+    # Operator-closed stories are settled; they must not hold a direction open.
+    "closed_by_operator",
 }
 
 # Stories in these states are out-of-band and should NOT contribute to

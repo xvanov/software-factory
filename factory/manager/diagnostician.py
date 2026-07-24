@@ -479,12 +479,23 @@ def _sentinel_proposal(*, concern_title: str, error: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 # Status strings that represent a failed apply attempt.
+#
+# ``escalation_acknowledged`` and ``staging_rejected`` were added 2026-07-24.
+# Omitting them made L3 blind to its own dominant outcomes: of 163 lifetime apply
+# attempts, 105 were ``escalation_acknowledged`` and 3 ``staging_rejected`` — so
+# **108 of 163 (66%) were invisible** to this feedback channel. L3 could not learn
+# that it escalates to a human ~65% of the time, nor that its own unified diffs
+# fail ``git apply`` with "corrupt patch", because neither outcome counted as a
+# failure. An escalation is not a success; a proposal that reaches no artifact is
+# a failed attempt whatever the label.
 _FAILED_APPLY_STATUSES = frozenset({
     "test_failed",
     "patch_failed",
     "abandoned",
     "push_failed",
     "pr_failed",
+    "escalation_acknowledged",
+    "staging_rejected",
 })
 
 # Maximum entries shown in the "Prior failed attempts" section.

@@ -818,16 +818,40 @@ def _apply_one_manager_proposal(
         result["branch"] = None
         return result
 
-    # Refuse dirty working tree (mirrors factory_improver_apply behaviour).
+    # Refuse a dirty working tree — but only for the paths this patch actually
+    # touches.
+    #
+    # This check used to be repo-wide (``git diff --quiet HEAD --``), which made
+    # the autonomous daemon structurally incapable of ever applying anything: the
+    # live factory tree is dirty as a matter of normal operating practice (state
+    # files, in-flight operator work), so EVERY apply aborted with
+    # ``dirty_working_tree``. Measured 2026-07-24: 53 of 163 lifetime apply
+    # attempts died here, 0 ever reached a branch.
+    #
+    # Path-scoping is safe because the two destructive steps downstream are both
+    # scoped too: ``git add`` already uses ``_diff_target_paths(patch)``, so
+    # unrelated dirty files are never committed, and ``_cleanup()`` below reverts
+    # only these same paths rather than doing a repo-wide ``reset --hard``. What
+    # remains refused is the case that actually matters: a patch trying to land on
+    # top of uncommitted edits to the very files it rewrites.
+    #
+    # Empty ``paths`` (a patch we could not parse targets from) falls back to the
+    # old repo-wide check — fail closed when we cannot tell what will be touched.
+    _dirty_scope = _diff_target_paths(patch)
     diff_proc = _run(
-        ["git", "diff", "--quiet", "HEAD", "--"],
+        ["git", "diff", "--quiet", "HEAD", "--", *_dirty_scope]
+        if _dirty_scope
+        else ["git", "diff", "--quiet", "HEAD", "--"],
         cwd=root,
         runner=runner,
         timeout=15,
     )
     if diff_proc.returncode != 0:
         result["status"] = "abandoned"
-        result["error"] = "dirty_working_tree"
+        result["error"] = (
+            "dirty_working_tree: uncommitted changes in the patch's own target "
+            f"paths ({', '.join(_dirty_scope[:5]) or 'repo-wide'})"
+        )
         result["branch"] = None
         return result
 
@@ -839,8 +863,25 @@ def _apply_one_manager_proposal(
             # starting_branch` silently carries those uncommitted changes
             # across the branch switch (real incident on 2026-05-27: a failed
             # apply attempt left factory/routes.yaml dirty on main).
-            _run(["git", "reset", "--hard", "HEAD"], cwd=root, runner=runner, timeout=15)
-            _run(["git", "clean", "-fd"], cwd=root, runner=runner, timeout=15)
+            #
+            # SCOPED to the patch's own target paths (2026-07-24). This was a
+            # repo-wide ``reset --hard HEAD`` + ``clean -fd``, which would have
+            # destroyed any uncommitted operator work in the live tree the moment
+            # an apply failed. Now that the dirty-tree refusal above is
+            # path-scoped, an apply can legitimately run in a tree with unrelated
+            # dirty files — so a repo-wide reset here would turn a recoverable
+            # patch failure into operator data loss. Revert only what we touched.
+            if _dirty_scope:
+                _run(
+                    ["git", "checkout", "HEAD", "--", *_dirty_scope],
+                    cwd=root,
+                    runner=runner,
+                    timeout=15,
+                )
+                _run(["git", "clean", "-fd", "--", *_dirty_scope], cwd=root, runner=runner, timeout=15)
+            else:
+                _run(["git", "reset", "--hard", "HEAD"], cwd=root, runner=runner, timeout=15)
+                _run(["git", "clean", "-fd"], cwd=root, runner=runner, timeout=15)
             if starting_branch:
                 _run(["git", "checkout", starting_branch], cwd=root, runner=runner, timeout=15)
             _run(["git", "branch", "-D", branch], cwd=root, runner=runner, timeout=15)
@@ -1181,6 +1222,15 @@ def apply_manager_proposals(
 
         # Record in history. Persist the stable ids so future cycles dedup on
         # content, not the ts-slug path.
+        #
+        # ``error`` is persisted deliberately (added 2026-07-24). It used to be
+        # dropped here, and that single omission hid a total yield failure for 59
+        # days: 53 consecutive applies aborted with the SAME
+        # ``dirty_working_tree`` error and every one recorded a bare
+        # ``status: "abandoned"`` with no reason. Without the reason there is no
+        # way — for an operator OR for L3's own failed-apply feedback channel —
+        # to tell a systematic wiring bug from unrelated one-off failures. Keep
+        # it: a status without a reason is not an audit trail.
         history_entry = {
             "proposal_path": str(p),
             "proposal_id": proposal.get("proposal_id", ""),
@@ -1191,6 +1241,7 @@ def apply_manager_proposals(
             "pr_number": result.get("pr_number"),
             "status": result.get("status", "unknown"),
             "classification": classification,
+            "error": result.get("error") or "",
         }
         _append_history(root, history_entry)
 

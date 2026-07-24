@@ -168,6 +168,34 @@ class StoryState(StrEnum):
     # edge — the SOURCE state is by definition not a valid enum, so no transition
     # table entry could name it.
     QUARANTINED_INVALID_STATE = "quarantined_invalid_state"
+    # Operator-closed sink. GitHub is the system of record for whether work is
+    # still wanted; the local DB is a PROJECTION of it. When an operator closes a
+    # story's tracker ISSUE while the local row still sits in a
+    # recoverable-pending-human block (``blocked_deploy_failed`` /
+    # ``blocked_budget_exceeded`` / ``blocked_tests_need_clarification`` /
+    # ``blocked_review_nonconvergent``), those two disagree: the human has decided
+    # the work is done or abandoned, while the factory still lists it as awaiting
+    # that same human. Before this sink there was NO way to record that decision —
+    # the pending-human blocks are deliberately excluded from
+    # ``tracker_issue._RESOLVED_STORY_STATES`` precisely because a human MIGHT
+    # revive them, so a row whose human had already ruled sat in the operator
+    # inbox forever (observed 2026-07-24: stories 81 and 130, tracker issues #267
+    # and #337 closed by the operator days earlier, still listed as needing human
+    # action with zero open PRs or issues on GitHub).
+    #
+    # ``orchestrator.reconcile_closed_trackers`` parks such a row here at the top
+    # of a tick. TERMINAL (no outgoing transition → ``is_terminal`` True,
+    # ``_dispatch_for_story`` returns None), absent from
+    # ``auto_merge._MERGEABLE_STATES`` and ``_AUTO_RECOVERABLE_STATES``, in
+    # ``_NON_CAP_COUNTING_STATES`` and ``_DEAD_END_DEP_STATES`` (an
+    # operator-closed foundation will never deploy, so dependents must stop
+    # waiting on it), and classified resolved for tracker-issue closing. Set via
+    # DIRECT state assignment (like ``SUPERSEDED_BY_SIBLING``) because the closure
+    # can arrive from ANY pending-human state, so no single EVENT_* edge fits.
+    # RECOVERY: re-open the tracker issue and move the row back to a live dispatch
+    # state — reconciliation never resurrects on its own (it only ever advances
+    # toward terminal, so it stays idempotent).
+    CLOSED_BY_OPERATOR = "closed_by_operator"
 
 
 class StoryRecord(SQLModel, table=True):
