@@ -980,6 +980,51 @@ def _query_pr_state(*, app_config: AppConfig, pr_number: int) -> str | None:
     return None
 
 
+def _query_pr_merge_state(*, app_config: AppConfig, pr_number: int) -> str | None:
+    """GitHub ``mergeStateStatus`` for an OPEN PR (upper-cased), or ``None``.
+
+    Used by ``freshen_behind_prs`` to decide whether a PR is merely BEHIND a
+    moved base (safe to fast-forward via ``gh pr update-branch``) versus
+    truly conflicting (``DIRTY`` / ``mergeable == CONFLICTING`` — left to the
+    conflict-recovery path) or already clean (nothing to do). Read-only ``gh pr
+    view`` shell-out mirroring ``_query_pr_state``.
+
+    ``None`` is the fail-safe sentinel (placeholder PR number, gh missing,
+    timeout, non-zero exit, unparseable payload) AND is deliberately returned
+    for any PR that is not currently OPEN, so a closed/merged PR is never
+    freshened.
+    """
+    import subprocess
+
+    if pr_number <= 0:  # synthesized placeholder — nothing to query
+        return None
+    cmd = [
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "state,mergeStateStatus",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if str(data.get("state", "")).upper() != "OPEN":
+        return None  # only ever freshen OPEN PRs
+    return str(data.get("mergeStateStatus", "")).upper() or None
+
+
 def _write_drift_event(
     *,
     root: Path,
@@ -1373,6 +1418,74 @@ def reconcile_from_github(
     return reconciled
 
 
+# Bound on how many ``gh pr update-branch`` calls ``freshen_behind_prs`` will
+# make in a single tick. Each is a write-side merge-base-in, so cap the burst;
+# any PR left BEHIND is simply refreshed on a later tick (it never drifts far
+# because it is caught while still only BEHIND, never CONFLICTING).
+_MAX_BRANCH_FRESHEN_PER_TICK = 10
+
+
+def freshen_behind_prs(
+    db: Path,
+    app: str,
+    *,
+    cfg: AppConfig,
+    root: Path,
+    max_freshen: int = _MAX_BRANCH_FRESHEN_PER_TICK,
+    query_merge_state: Callable[..., str | None] = _query_pr_merge_state,
+    update_branch: Callable[..., bool] | None = None,
+) -> list[tuple[str, int]]:
+    """Keep OPEN mergeable PRs fresh so they never drift far enough to conflict.
+
+    A PR cut from an older ``main`` falls BEHIND as ``main`` advances and, left
+    alone, eventually CONFLICTS. Prevent that: each tick, for every story in a
+    mergeable state (``pr_open`` / ``ci_green`` / ``ready_for_merge``) whose PR
+    is merely ``BEHIND`` (``mergeStateStatus == "BEHIND"``), merge the base
+    branch back in via ``gh pr update-branch`` (a MERGE — never a force-push).
+
+    ONLY ``BEHIND`` PRs are touched: ``CONFLICTING`` / ``DIRTY`` PRs are left to
+    the conflict-recovery path (``_attempt_pr_reconcile`` + terminal-block), and
+    already-clean PRs need nothing. Bounded at ``max_freshen`` update-branch
+    calls per tick. ``update_branch`` defaults to ``auto_merge._attempt_pr_reconcile``
+    (the existing ``gh pr update-branch`` wrapper — no duplicate gh plumbing).
+    Fully fail-safe and idempotent (a freshened PR reports CLEAN next tick and
+    is no longer a candidate). Returns ``(slug, pr_number)`` for each PR whose
+    branch was advanced, for the TickSummary.
+    """
+    from factory.chain.auto_merge import _MERGEABLE_STATES, _attempt_pr_reconcile
+
+    if update_branch is None:
+        update_branch = _attempt_pr_reconcile
+
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+    with Session(eng) as session:
+        rows = session.exec(select(StoryRecord).where(StoryRecord.app == app)).all()
+    candidates = [
+        s
+        for s in rows
+        if s.github_pr_number and s.github_pr_number > 0 and s.state in _MERGEABLE_STATES
+    ]
+
+    refreshed: list[tuple[str, int]] = []
+    attempts = 0
+    for story in candidates:
+        if attempts >= max_freshen:
+            break
+        pr_number = story.github_pr_number
+        if pr_number is None or pr_number <= 0:
+            continue
+        merge_state = query_merge_state(app_config=cfg, pr_number=pr_number)
+        if merge_state != "BEHIND":
+            # None (unknown / not open), CLEAN, BLOCKED, DIRTY, CONFLICTING,
+            # UNSTABLE, … → not our job. Never touch a non-BEHIND PR.
+            continue
+        attempts += 1
+        if update_branch(app_config=cfg, pr_number=pr_number):
+            refreshed.append((story.slug, pr_number))
+
+    return refreshed
+
+
 def reconcile_dual_draft_winners(
     db: Path,
     app: str,
@@ -1690,6 +1803,20 @@ def tick(
             # existing rate-gated, mode-guarded ``_should_run_issue_hygiene`` +
             # ``reconcile_completed_issues`` block — the dual-draft supersede
             # above just moves losers into the resolved state that sweep closes.
+
+            # Fix B — branch-freshening: keep OPEN mergeable PRs that are merely
+            # BEHIND a moved base fast-forwarded (``gh pr update-branch`` — a
+            # merge, no force-push) so they never drift far enough to CONFLICT.
+            # Only BEHIND PRs are touched; conflicting/clean ones are left alone.
+            # Bounded per tick and fully fail-safe (never breaks the tick).
+            try:
+                freshened = freshen_behind_prs(db, app, cfg=cfg, root=root)
+                for slug, pr_number in freshened:
+                    summary.handler_runs.append(
+                        (slug, f"pr#{pr_number}(behind)", "branch-freshened")
+                    )
+            except Exception as exc:
+                summary.errors.append((app, f"branch-freshening failed (non-fatal): {exc!r}"))
 
             try:
                 recovered = _prune_stale_in_progress(db, app, settings=settings, root=root)
