@@ -78,6 +78,29 @@ _PRIOR_NOTES_LIMIT = 10
 _SCHEMA_VERSION = 1
 
 
+def _self_repo_slug(root: Path) -> str | None:
+    """Resolve the factory's OWN ``owner/name`` GitHub slug, or None.
+
+    The autonomous L4 path needs this because ``apply.apply_manager_proposals``
+    gates PR creation on ``if open_prs and repo and push:``. The daemon used to
+    pass no ``repo`` at all, so that condition was permanently False and the
+    watcher was structurally incapable of opening a PR no matter how good the
+    proposal was — measured 2026-07-24: 0 of 163 lifetime apply attempts ever set
+    a ``pr_number``, and no ``factory-manager/*`` branch has ever existed. Only
+    the operator CLI (``factory manager apply --repo``) could ship.
+
+    Returns None (preserving the old no-PR behaviour) rather than raising if the
+    factory app config is missing or unreadable — a config problem must not take
+    down the L1 daemon.
+    """
+    try:
+        from factory.app_config import load_app_config
+
+        return load_app_config("factory", root).repo or None
+    except Exception:  # noqa: BLE001 - never let config resolution kill the daemon
+        return None
+
+
 # --------------------------------------------------------------------------- #
 # Helpers — stream reading
 # --------------------------------------------------------------------------- #
@@ -117,6 +140,41 @@ def _read_stream_since(root: Path, stream: str, since: datetime) -> list[dict]:
 
     # Keep only the most recent _MAX_LINES_PER_STREAM entries.
     return matching[-_MAX_LINES_PER_STREAM:]
+
+
+def _streams_have_new_events(root: Path, since: datetime | None) -> bool:
+    """True if any raw signal stream has an event newer than ``since``.
+
+    The L1 cost gate. L1 used to fire unconditionally on a wall-clock timer, so a
+    completely idle factory was billed at exactly the same rate as a busy one.
+    Measured 2026-07-24: 44,111 watcher calls / **$971.86 — 87% of all run rows
+    and 50% of lifetime LLM spend** — against a 7.2% escalation rate, and with
+    notes reading "minute 823 of the factory drain continues identically to the
+    prior twenty-two minutes". Roughly $890 of that bought nothing.
+
+    Gating on stream delta ties L1 spend to activity rather than to elapsed time:
+    an idle factory costs ~nothing, and the first new event still triggers a cycle
+    on the very next tick, so nothing is missed — only re-observed.
+
+    ``since=None`` (no prior note) returns True: always observe at least once.
+    Any read error also returns True — fail OPEN, because silently not watching
+    is far worse than paying for one redundant cycle.
+    """
+    if since is None:
+        return True
+    for stream in _RAW_STREAMS:
+        try:
+            path = _events_path(root, stream)
+            if not path.exists():
+                continue
+            # Cheap pre-filter: an untouched file cannot hold new events.
+            if datetime.fromtimestamp(path.stat().st_mtime, tz=UTC) <= since:
+                continue
+            if _read_stream_since(root, stream, since):
+                return True
+        except Exception:  # noqa: BLE001 - fail open, never skip watching on error
+            return True
+    return False
 
 
 def _truncate_strings(obj: Any) -> Any:
@@ -841,6 +899,27 @@ def run_watcher_daemon(
                         file=sys.stderr,
                     )
 
+            # L1 cost gate: skip the LLM cycle when nothing has happened since the
+            # last note. Recovery, poisoned-row escalation and the circuit breaker
+            # above all still run every iteration — they are deterministic and
+            # free. Only the paid observation is gated. See
+            # ``_streams_have_new_events`` for the measured rationale.
+            if not _streams_have_new_events(root, _last_note_ts(root)):
+                print(
+                    "[watcher] no new signal events since last note: skipping L1 "
+                    "cycle (cost gate)",
+                    file=sys.stderr,
+                )
+                iterations += 1
+                if max_iters is not None and iterations >= max_iters:
+                    print(
+                        f"[watcher] reached max_iters={max_iters}, stopping.",
+                        file=sys.stderr,
+                    )
+                    break
+                time.sleep(interval_s)
+                continue
+
             try:
                 result = run_watcher_once(root=root, lookback=lookback)
                 note = result.get("note", {})
@@ -948,6 +1027,8 @@ def run_watcher_daemon(
                                                     proposal_path=Path(l3_proposal_path)
                                                     if l3_proposal_path
                                                     else None,
+                                                    repo=_self_repo_slug(root),
+                                                    open_prs=True,
                                                 )
                                                 print(
                                                     f"[watcher] L4 apply: "

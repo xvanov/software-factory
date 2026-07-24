@@ -47,6 +47,8 @@ _TERMINAL_STATES = frozenset(
         # Budget-exhausted stories are also terminal; their absence here made
         # the stalled-story detector re-alarm on them forever (concern-spam).
         "blocked_budget_exceeded",
+        # Operator-closed sink — aging here is the intended end state, not a stall.
+        "closed_by_operator",
     }
 )
 

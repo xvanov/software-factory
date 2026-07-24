@@ -58,6 +58,8 @@ _TERMINAL_STATES = {
     "blocked_review_nonconvergent",
     # Dual-draft loser sink — terminal (abandoned), never in-flight.
     "superseded_by_sibling",
+    # Operator-closed sink — terminal, never in-flight.
+    "closed_by_operator",
 }
 
 _BLOCKED_STATES = {

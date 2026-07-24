@@ -44,8 +44,13 @@ def _story(
 ) -> StoryRecord:
     return persist_story(
         StoryRecord(
-            direction_id="099", app="sacrifice", title="t", slug=slug,
-            scope="backend", state=state, github_pr_number=pr_number,
+            direction_id="099",
+            app="sacrifice",
+            title="t",
+            slug=slug,
+            scope="backend",
+            state=state,
+            github_pr_number=pr_number,
             github_branch=f"factory/{slug}",
         ),
         db,
@@ -59,8 +64,10 @@ def _reload(db: Path, story_id: int | None) -> StoryRecord:
 
 def _fixed_state(value: str | None):
     """A ``query_pr_state`` stub that always returns ``value``."""
+
     def _q(*, app_config: AppConfig, pr_number: int) -> str | None:
         return value
+
     return _q
 
 
@@ -85,7 +92,10 @@ def test_merged_on_github_advances_local_to_deploy_pending(tmp_path: Path) -> No
     s = _story(db, state=StoryState.PR_OPEN.value, slug="merged")
 
     out = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("MERGED"),
     )
 
@@ -113,7 +123,10 @@ def test_merged_advances_from_ci_green_and_ready_for_merge(tmp_path: Path) -> No
     b = _story(db, state=StoryState.READY_FOR_MERGE.value, slug="rfm", pr_number=8)
 
     out = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("MERGED"),
     )
 
@@ -136,13 +149,14 @@ def test_closed_on_github_moves_story_to_attention_state(tmp_path: Path) -> None
     s = _story(db, state=StoryState.PR_OPEN.value, slug="closed")
 
     out = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("CLOSED"),
     )
 
-    assert out == [
-        ("closed", StoryState.PR_OPEN.value, StoryState.BLOCKED_DEPLOY_FAILED.value)
-    ]
+    assert out == [("closed", StoryState.PR_OPEN.value, StoryState.BLOCKED_DEPLOY_FAILED.value)]
     r = _reload(db, s.id)
     assert r.state == StoryState.BLOCKED_DEPLOY_FAILED.value
     assert r.error and "CLOSED on GitHub" in r.error
@@ -163,7 +177,10 @@ def test_open_pr_is_noop_no_event(tmp_path: Path) -> None:
     s = _story(db, state=StoryState.PR_OPEN.value, slug="open")
 
     out = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("OPEN"),
     )
 
@@ -179,7 +196,10 @@ def test_gh_query_failure_is_failsafe_noop(tmp_path: Path) -> None:
     s = _story(db, state=StoryState.PR_OPEN.value, slug="unknown")
 
     out = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state(None),
     )
 
@@ -204,7 +224,11 @@ def test_terminal_and_no_pr_stories_are_skipped(tmp_path: Path) -> None:
         return "MERGED"
 
     out = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path, query_pr_state=_tracking_q,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
+        query_pr_state=_tracking_q,
     )
 
     assert out == []
@@ -224,7 +248,10 @@ def test_reconcile_is_idempotent(tmp_path: Path) -> None:
     s = _story(db, state=StoryState.PR_OPEN.value, slug="idem")
 
     first = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("MERGED"),
     )
     assert first  # advanced once
@@ -232,7 +259,10 @@ def test_reconcile_is_idempotent(tmp_path: Path) -> None:
     # Re-run: the story is now in DEPLOY_PENDING (not a mergeable candidate),
     # so nothing is queried and no new event is emitted.
     second = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("MERGED"),
     )
     assert second == []
@@ -269,7 +299,10 @@ def test_merged_records_merge_action_and_enqueues_deploy(tmp_path: Path) -> None
     s = _story(db, state=StoryState.PR_OPEN.value, slug="ship")
 
     reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("MERGED"),
     )
 
@@ -290,7 +323,10 @@ def test_open_pr_records_no_merge_and_no_deploy(tmp_path: Path) -> None:
     _story(db, state=StoryState.PR_OPEN.value, slug="stillopen")
 
     reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("OPEN"),
     )
 
@@ -303,13 +339,19 @@ def test_merged_record_and_enqueue_is_idempotent(tmp_path: Path) -> None:
     s = _story(db, state=StoryState.PR_OPEN.value, slug="idem-ship")
 
     reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("MERGED"),
     )
     # Re-run: the story already left the mergeable states, so it is no longer a
     # candidate — no duplicate merge row, no duplicate deploy.
     reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("MERGED"),
     )
 
@@ -323,7 +365,10 @@ def test_closed_pr_records_no_merge_and_no_deploy(tmp_path: Path) -> None:
     _story(db, state=StoryState.PR_OPEN.value, slug="dead")
 
     reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("CLOSED"),
     )
 
@@ -344,8 +389,12 @@ def test_reconcile_is_bounded_per_tick(tmp_path: Path) -> None:
         return "OPEN"  # no-op action, we only care about the call count
 
     out = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
-        query_pr_state=_tracking_q, max_reconcile=2,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
+        query_pr_state=_tracking_q,
+        max_reconcile=2,
     )
 
     assert out == []
@@ -417,18 +466,28 @@ def _dual_pair(db: Path) -> tuple[StoryRecord, StoryRecord]:
     """Winner (``-alt-a``, PR 555) + loser (``-alt-b``, PR 556), same direction."""
     winner = persist_story(
         StoryRecord(
-            direction_id="008", app="sacrifice", title="w", slug="dd-topic-alt-a",
-            scope="backend", state=StoryState.PR_OPEN.value,
-            github_issue_number=209, github_pr_number=555,
+            direction_id="008",
+            app="sacrifice",
+            title="w",
+            slug="dd-topic-alt-a",
+            scope="backend",
+            state=StoryState.PR_OPEN.value,
+            github_issue_number=209,
+            github_pr_number=555,
             github_branch="factory/dd-topic-alt-a",
         ),
         db,
     )
     loser = persist_story(
         StoryRecord(
-            direction_id="008", app="sacrifice", title="l", slug="dd-topic-alt-b",
-            scope="backend", state=StoryState.PR_OPEN.value,
-            github_issue_number=210, github_pr_number=556,
+            direction_id="008",
+            app="sacrifice",
+            title="l",
+            slug="dd-topic-alt-b",
+            scope="backend",
+            state=StoryState.PR_OPEN.value,
+            github_issue_number=210,
+            github_pr_number=556,
             github_branch="factory/dd-topic-alt-b",
         ),
         db,
@@ -438,8 +497,10 @@ def _dual_pair(db: Path) -> tuple[StoryRecord, StoryRecord]:
 
 def _per_pr_state(mapping: dict[int, str]):
     """A ``query_pr_state`` stub keyed by pr_number (default OPEN)."""
+
     def _q(*, app_config: AppConfig, pr_number: int) -> str | None:
         return mapping.get(pr_number, "OPEN")
+
     return _q
 
 
@@ -455,7 +516,10 @@ def test_reconcile_merge_supersedes_losing_dual_draft_sibling(tmp_path: Path) ->
     # OPEN, so reconcile does NOT advance the loser itself — the supersede must
     # come from the Part-1 sibling cleanup, not reconcile's own EVENT_MERGED.
     out = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_per_pr_state({555: "MERGED"}),
         github_client_factory=lambda: client,
         sibling_cleanup_runner=runner,
@@ -487,7 +551,10 @@ def test_reconcile_loser_pr_closed_midloop_is_not_clobbered(tmp_path: Path) -> N
     # Winner MERGED; loser's PR reports CLOSED (the cleanup just closed it) —
     # exactly the stale-snapshot ordering that caused the clobber.
     reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_per_pr_state({555: "MERGED", 556: "CLOSED"}),
         github_client_factory=lambda: client,
         sibling_cleanup_runner=runner,
@@ -511,7 +578,10 @@ def test_reconcile_merge_non_dual_draft_never_builds_client(tmp_path: Path) -> N
         raise AssertionError("client should not be built for a non-dual-draft merge")
 
     out = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_fixed_state("MERGED"),
         github_client_factory=_factory,
     )
@@ -529,7 +599,10 @@ def test_reconcile_merge_winner_never_self_superseded(tmp_path: Path) -> None:
     client = _Client(_Repo({209: _Issue(209), 210: _Issue(210)}))
 
     reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_per_pr_state({555: "MERGED"}),
         github_client_factory=lambda: client,
         sibling_cleanup_runner=_Runner(),
@@ -548,7 +621,10 @@ def test_reconcile_sibling_cleanup_failure_never_breaks_reconcile(tmp_path: Path
         raise RuntimeError("token resolution exploded")
 
     out = reconcile_from_github(
-        db, "sacrifice", cfg=_CFG, root=tmp_path,
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
         query_pr_state=_per_pr_state({555: "MERGED"}),
         github_client_factory=_boom_factory,
     )
@@ -558,3 +634,95 @@ def test_reconcile_sibling_cleanup_failure_never_breaks_reconcile(tmp_path: Path
     assert _reload(db, winner.id).state == StoryState.DEPLOY_PENDING.value
     # Loser untouched (cleanup could not run) — Part 2 self-check is the backstop.
     assert _reload(db, loser.id).state == StoryState.PR_OPEN.value
+
+
+# --------------------------------------------------------------------------- #
+# G2 broadening: a merged PR on a NON-mergeable, non-terminal state
+# --------------------------------------------------------------------------- #
+
+
+def test_merged_advances_from_reviewer_requested_changes(tmp_path: Path) -> None:
+    """A PR merged out-of-band while the story had bounced to
+    REVIEWER_REQUESTED_CHANGES (e.g. after a CI-failure re-dispatch) must still
+    be detected and routed to DEPLOY_PENDING — there is no EVENT_MERGED edge
+    from that state, so reconcile FORCES DEPLOY_PENDING (a merged PR is ground
+    truth). This is the story-136 stuck-winner case (G2)."""
+    db = _seed(tmp_path)
+    s = _story(db, state=StoryState.REVIEWER_REQUESTED_CHANGES.value, slug="stuck", pr_number=99)
+
+    out = reconcile_from_github(
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
+        query_pr_state=_fixed_state("MERGED"),
+    )
+
+    assert out == [
+        ("stuck", StoryState.REVIEWER_REQUESTED_CHANGES.value, StoryState.DEPLOY_PENDING.value)
+    ]
+    assert _reload(db, s.id).state == StoryState.DEPLOY_PENDING.value
+
+
+def test_merged_advances_from_dev_in_progress(tmp_path: Path) -> None:
+    """Same, from DEV_IN_PROGRESS (story 132's shape: CI-failed, re-dispatched
+    to dev, PR merged out-of-band). Forced to DEPLOY_PENDING."""
+    db = _seed(tmp_path)
+    s = _story(db, state=StoryState.DEV_IN_PROGRESS.value, slug="devmerged", pr_number=101)
+
+    out = reconcile_from_github(
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
+        query_pr_state=_fixed_state("MERGED"),
+    )
+
+    assert _reload(db, s.id).state == StoryState.DEPLOY_PENDING.value
+    assert out and out[0][2] == StoryState.DEPLOY_PENDING.value
+
+
+def test_closed_pr_on_dev_in_progress_is_noop(tmp_path: Path) -> None:
+    """A CLOSED (not merged) PR on an in-DEV story is NORMAL churn — the story
+    will open a fresh PR — so it must NOT be sunk to BLOCKED_DEPLOY_FAILED. Only
+    a CLOSED PR on a MERGEABLE (open-PR) state sinks to attention."""
+    db = _seed(tmp_path)
+    s = _story(db, state=StoryState.DEV_IN_PROGRESS.value, slug="devchurn", pr_number=77)
+
+    out = reconcile_from_github(
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
+        query_pr_state=_fixed_state("CLOSED"),
+    )
+
+    assert out == []  # no drift recorded
+    assert _reload(db, s.id).state == StoryState.DEV_IN_PROGRESS.value  # untouched
+
+
+def test_terminal_story_with_pr_is_never_reconsidered(tmp_path: Path) -> None:
+    """A terminal story (already DEPLOYED / SUPERSEDED) that still carries a PR
+    number is not a candidate — reconcile never queries or mutates it."""
+    db = _seed(tmp_path)
+    d = _story(db, state=StoryState.DEPLOYED.value, slug="done", pr_number=88)
+    sup = _story(db, state=StoryState.SUPERSEDED_BY_SIBLING.value, slug="sup", pr_number=89)
+
+    calls: list[int] = []
+
+    def _spy(*, app_config: AppConfig, pr_number: int) -> str | None:
+        calls.append(pr_number)
+        return "MERGED"
+
+    out = reconcile_from_github(
+        db,
+        "sacrifice",
+        cfg=_CFG,
+        root=tmp_path,
+        query_pr_state=_spy,
+    )
+
+    assert out == []
+    assert calls == []  # neither terminal story was queried
+    assert _reload(db, d.id).state == StoryState.DEPLOYED.value
+    assert _reload(db, sup.id).state == StoryState.SUPERSEDED_BY_SIBLING.value

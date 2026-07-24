@@ -51,3 +51,32 @@ def test_tick_emits_tick_start_and_tick_end(factory_root: Path) -> None:
     assert "exception" not in tick_end or tick_end["exception"] is None, (
         "tick_end must not carry an exception on a normal tick"
     )
+    # #96 Part 1: tick_end carries the quarantined-row (skipped) count; a clean
+    # tick with no poisoned rows reports 0.
+    assert tick_end["skipped"] == 0, "tick_end must carry skipped=0 on a clean tick"
+
+
+def test_write_tick_event_skipped_is_backward_compatible() -> None:
+    """The new ``skipped`` param defaults to omitted so existing callers that
+    never pass it produce a payload without a ``skipped`` key."""
+    from factory.manager.signals import write_tick_event
+
+    captured: dict = {}
+
+    def _fake_write_event(stream, payload, *, software_factory_root=None):
+        captured["stream"] = stream
+        captured["payload"] = payload
+
+    import factory.manager.signals as signals
+
+    orig = signals.write_event
+    signals.write_event = _fake_write_event  # type: ignore[assignment]
+    try:
+        # Legacy call — no skipped= arg.
+        write_tick_event("tick_end", tick_id="t", app="a", dry_run=False, errors=0)
+        assert "skipped" not in captured["payload"]
+        # New call — skipped threaded through.
+        write_tick_event("tick_end", tick_id="t", app="a", dry_run=False, skipped=3)
+        assert captured["payload"]["skipped"] == 3
+    finally:
+        signals.write_event = orig  # type: ignore[assignment]

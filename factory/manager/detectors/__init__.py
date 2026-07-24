@@ -23,6 +23,7 @@ import inspect
 from collections.abc import Callable
 
 from factory.manager.detectors.cost_spike import cost_spike
+from factory.manager.detectors.fms_yield import fms_yield
 from factory.manager.detectors.placeholder_prompts import placeholder_prompts
 from factory.manager.detectors.retry_storm import retry_storm
 from factory.manager.detectors.review_churn import review_churn
@@ -36,6 +37,7 @@ __all__ = [
     "DETECTORS",
     "DETECTOR_DOCS",
     "cost_spike",
+    "fms_yield",
     "placeholder_prompts",
     "retry_storm",
     "review_churn",
@@ -51,6 +53,7 @@ DETECTORS: dict[str, Callable] = {
     "retry_storm": retry_storm,
     "review_churn": review_churn,
     "cost_spike": cost_spike,
+    "fms_yield": fms_yield,
     "tick_duration_outliers": tick_duration_outliers,
     "state_distribution_skew": state_distribution_skew,
     "worktree_orphans": worktree_orphans,
