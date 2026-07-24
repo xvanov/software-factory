@@ -254,6 +254,10 @@ _RESOLVED_STORY_STATES = frozenset(
         # will never deploy), so its tracker issue should close rather than
         # linger — same resolved-terminal rationale as blocked_ci_unresolved.
         "blocked_dependency_unmet",
+        # A poisoned row quarantined by the operational reconciler (its ``state``
+        # was an invalid enum) is terminally parked and will never deploy — same
+        # resolved-terminal rationale as the two above, so its tracker closes.
+        "quarantined_invalid_state",
     }
 )
 

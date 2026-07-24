@@ -782,6 +782,34 @@ def run_watcher_daemon(
             except Exception:  # noqa: BLE001
                 pass
 
+            # Issue #96: surface persistent poisoned (invalid-enum) rows to a
+            # GitHub issue BEFORE the recovery cycle below. A recent tick_end
+            # with skipped>0 plus a still-poisoned DB row escalates ONCE per
+            # cooldown window (deduped on a stable signature, mirroring the L2
+            # concern dedup) via the shared escalation channel. It runs before
+            # recovery deliberately: the reconciler playbook
+            # (quarantine-invalid-enum-story) parks the row in a terminal sink,
+            # after which its identity is no longer visible as "poisoned" — so
+            # the human-facing escalation must capture it first. Best-effort: any
+            # failure here must never take down the daemon.
+            try:
+                from factory.manager.poison_escalation import escalate_poisoned_rows
+
+                _poison_summary = escalate_poisoned_rows(root=root)
+                if _poison_summary.get("status") == "escalated":
+                    print(
+                        "[watcher] poisoned-row escalation: opened/updated issue "
+                        f"#{_poison_summary.get('issue_number')} for "
+                        f"{len(_poison_summary.get('poisoned', []))} row(s)",
+                        file=sys.stderr,
+                    )
+            except Exception as _poison_exc:  # noqa: BLE001
+                print(
+                    f"[watcher] WARNING: poisoned-row escalation failed: {_poison_exc!r}; "
+                    "continuing (fail-open)",
+                    file=sys.stderr,
+                )
+
             # Phase 10: operational recovery runs BEFORE L1/L2/L3 escalation.
             # Rule-based playbooks fix stale operational state (stuck
             # blocked_deploy_failed, orphaned pr_open rows, a premature

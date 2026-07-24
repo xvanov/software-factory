@@ -262,12 +262,21 @@ def write_tick_event(
     stories_advanced: int | None = None,
     stories_blocked: int | None = None,
     errors: int | None = None,
+    skipped: int | None = None,
     merges_attempted: int | None = None,
     success: bool | None = None,
     exception: str | None = None,
     software_factory_root: Path | None = None,
 ) -> None:
-    """Append a ``tick_start`` or ``tick_end`` record to ``state/events/ticks.ndjson``."""
+    """Append a ``tick_start`` or ``tick_end`` record to ``state/events/ticks.ndjson``.
+
+    ``skipped`` is the count of rows the tick QUARANTINED this cycle (invalid-enum
+    "poisoned" rows the poisoned-row guard skips non-fatally, see
+    ``TickSummary.skipped``). It is optional and defaults to omitted so existing
+    callers stay unaffected; when passed, it carries the skip count into the
+    ``tick_end`` signal so the FMS can escalate a persistent poisoned row rather
+    than let it be silently re-skipped every tick.
+    """
     payload: dict[str, Any] = {
         "event": event,
         "tick_id": tick_id,
@@ -282,6 +291,8 @@ def write_tick_event(
         payload["stories_blocked"] = stories_blocked
     if errors is not None:
         payload["errors"] = errors
+    if skipped is not None:
+        payload["skipped"] = skipped
     if merges_attempted is not None:
         payload["merges_attempted"] = merges_attempted
     if success is not None:

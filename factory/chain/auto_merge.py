@@ -1178,7 +1178,11 @@ def _ci_failure_is_genuine(*, app_config: AppConfig, pr_number: int) -> bool:
         rollup = (_json.loads(view.stdout or "{}") or {}).get("statusCheckRollup") or []
     except (ValueError, AttributeError):
         return False
-    # Genuine ⇔ a REQUIRED check concluded a real FAILURE.
+    # Group real conclusions by check name. A single name can map to MULTIPLE
+    # rollup entries (a required check and a non-required check sharing a name, or
+    # a re-run) and ``statusCheckRollup`` does NOT mark which entry is required, so
+    # name alone cannot tell them apart.
+    verdicts_by_name: dict[str, list[str]] = {}
     for check in rollup:
         if not isinstance(check, dict):
             continue
@@ -1187,7 +1191,15 @@ def _ci_failure_is_genuine(*, app_config: AppConfig, pr_number: int) -> bool:
             continue  # non-required check failing never blocks merge
         # CheckRun uses ``conclusion``; legacy StatusContext uses ``state``.
         verdict = (check.get("conclusion") or check.get("state") or "").upper()
-        if verdict in _GENUINE_FAILURE_CONCLUSIONS:
+        verdicts_by_name.setdefault(name, []).append(verdict)
+    # Genuine ⇔ some REQUIRED name's entries ALL agree on a real FAILURE. A name
+    # with MIXED conclusions (e.g. a required TIMED_OUT colliding with a non-
+    # required same-named FAILURE) is AMBIGUOUS → NOT genuine: safe under-close, so
+    # the CI-recovery wheel keeps turning instead of destroying a PR over a
+    # transient red. A single unambiguous FAILURE, or duplicate entries that all
+    # agree on FAILURE, stays genuine.
+    for verdicts in verdicts_by_name.values():
+        if verdicts and all(v in _GENUINE_FAILURE_CONCLUSIONS for v in verdicts):
             return True
     return False
 
