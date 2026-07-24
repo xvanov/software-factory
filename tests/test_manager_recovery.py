@@ -915,6 +915,7 @@ class TestPlaybookRegistry:
             recovery.PLAYBOOK_REVERT_PREMATURE_DEPLOY,
             recovery.PLAYBOOK_CONFLICTING_GATED_PR,
             recovery.PLAYBOOK_RECOVER_STUCK_FIXONLY,
+            recovery.PLAYBOOK_QUARANTINE_INVALID_ENUM,
         ]
 
     def test_registry_kinds_match_playbook_semantics(self, root: Path) -> None:
@@ -958,3 +959,86 @@ class TestPlaybookRegistry:
         combined = [*specs, extra]
         assert combined[-1].name == "new-playbook"
         assert len(combined) == len(specs) + 1
+
+
+# --------------------------------------------------------------------------- #
+# Playbook 6: quarantine-invalid-enum-story (#96)
+# --------------------------------------------------------------------------- #
+
+
+class TestQuarantineInvalidEnum:
+    def test_detects_invalid_enum_row_only(self, root: Path) -> None:
+        _write_app_config(root, "sacrifice")
+        # A poisoned row (state outside the StoryState enum) and a healthy one.
+        poisoned_id = _add_story(root, slug="poisoned", state="abandoned")
+        _add_story(root, slug="healthy", state=StoryState.STORY_CREATED.value)
+
+        targets = recovery.detect_invalid_enum_stories(root)
+        assert len(targets) == 1
+        target = targets[0]
+        assert target.playbook == recovery.PLAYBOOK_QUARANTINE_INVALID_ENUM
+        assert target.story_id == poisoned_id
+        assert target.extra["invalid_state"] == "abandoned"
+
+    def test_execute_moves_to_terminal_and_preserves_original(self, root: Path) -> None:
+        _write_app_config(root, "sacrifice")
+        story_id = _add_story(root, slug="poisoned", state="abandoned", error="prior boom")
+
+        targets = recovery.detect_invalid_enum_stories(root)
+        outcome = recovery.execute_quarantine_invalid_enum_story(
+            root, targets[0], dry_run=False
+        )
+        assert outcome.status == "recovered"
+
+        story = _get_story(root, story_id)
+        assert story.state == StoryState.QUARANTINED_INVALID_STATE.value
+        # Original invalid string preserved for forensics; prior error kept too.
+        assert "abandoned" in (story.error or "")
+        assert "prior boom" in (story.error or "")
+
+    def test_is_idempotent(self, root: Path) -> None:
+        _write_app_config(root, "sacrifice")
+        story_id = _add_story(root, slug="poisoned", state="abandoned")
+
+        targets = recovery.detect_invalid_enum_stories(root)
+        recovery.execute_quarantine_invalid_enum_story(root, targets[0], dry_run=False)
+
+        # After quarantine the row is a VALID enum value, so it is no longer
+        # detected — the reconciler never re-processes it (no loop).
+        assert recovery.detect_invalid_enum_stories(root) == []
+
+        # Re-executing the stale target is a no-op (skipped_stale), not a crash.
+        outcome = recovery.execute_quarantine_invalid_enum_story(
+            root, targets[0], dry_run=False
+        )
+        assert outcome.status == "skipped_stale"
+        assert _get_story(root, story_id).state == StoryState.QUARANTINED_INVALID_STATE.value
+
+    def test_dry_run_makes_no_mutation(self, root: Path) -> None:
+        _write_app_config(root, "sacrifice")
+        story_id = _add_story(root, slug="poisoned", state="abandoned")
+
+        targets = recovery.detect_invalid_enum_stories(root)
+        outcome = recovery.execute_quarantine_invalid_enum_story(
+            root, targets[0], dry_run=True
+        )
+        assert outcome.status == "dry_run"
+        assert _get_story(root, story_id).state == "abandoned"
+
+    def test_healthy_world_yields_no_targets(self, root: Path) -> None:
+        _write_app_config(root, "sacrifice")
+        _add_story(root, slug="a", state=StoryState.STORY_CREATED.value)
+        _add_story(root, slug="b", state=StoryState.QUARANTINED_INVALID_STATE.value)
+        assert recovery.detect_invalid_enum_stories(root) == []
+
+    def test_run_recovery_cycle_quarantines_poisoned_row(self, root: Path) -> None:
+        _write_app_config(root, "sacrifice")
+        story_id = _add_story(root, slug="poisoned", state="not-a-real-state")
+
+        summary = recovery.run_recovery_cycle(root, apps=["sacrifice"])
+
+        assert any(
+            e["playbook"] == recovery.PLAYBOOK_QUARANTINE_INVALID_ENUM
+            for e in summary["recovered"]
+        )
+        assert _get_story(root, story_id).state == StoryState.QUARANTINED_INVALID_STATE.value

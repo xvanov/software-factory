@@ -112,3 +112,37 @@ def test_poisoned_state_row_is_skipped_not_fatal(
     )
     emitted = [e for e in events if e.get("event") == "invalid_state_skipped"]
     assert len(emitted) == 1, f"expected exactly one emit across two ticks, got {len(emitted)}"
+
+
+def test_tick_end_carries_skipped_count(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#96 Part 1: the quarantined-row count flows into the tick_end signal so
+    the FMS can escalate a persistent poisoned row instead of it being silent."""
+    import json
+
+    db = factory_root / "factory.db"
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+    SQLModel.metadata.create_all(eng)
+    with Session(eng) as session:
+        session.add(
+            StoryRecord(
+                direction_id="006",
+                app="sacrifice",
+                title="poisoned",
+                slug="poisoned",
+                scope="backend",
+                state="abandoned",  # not a StoryState value
+                chain_kind="tdd",
+            )
+        )
+        session.commit()
+
+    O.tick(factory_root, "sacrifice", db_path=db, max_advances_per_story=1)
+
+    ticks = factory_root / "state" / "events" / "ticks.ndjson"
+    lines = [ln for ln in ticks.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    tick_end = next(
+        json.loads(ln) for ln in lines if json.loads(ln)["event"] == "tick_end"
+    )
+    assert tick_end["skipped"] == 1, "tick_end must carry the poisoned-row skip count"

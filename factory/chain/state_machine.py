@@ -147,6 +147,27 @@ class StoryState(StrEnum):
     # blocking sibling does NOT by itself re-enter this story — an operator must
     # ALSO move this story back to a live dispatch state (e.g. ``story_created``).
     BLOCKED_DEPENDENCY_UNMET = "blocked_dependency_unmet"
+    # Poisoned-row quarantine sink. A story row whose ``state`` string is OUTSIDE
+    # this enum (a bad manual/manager write, e.g. the ``abandoned`` row that
+    # halted the factory for days on 2026-07-07) is NON-FATALLY skipped by the
+    # orchestrator's poisoned-row guard every tick — but that skip is otherwise
+    # SILENT and permanent: the invalid row is re-evaluated (and re-skipped)
+    # forever until a human hand-repairs it. The operational reconciler
+    # (``factory.manager.recovery`` playbook ``quarantine-invalid-enum-story``)
+    # moves such a row HERE — a VALID terminal enum value — preserving the
+    # original invalid string in ``error`` for forensics. Once here the row is a
+    # normal terminal state: ``StoryState(state)`` no longer raises, so the guard
+    # stops tripping and the row stops being skipped/re-evaluated. TERMINAL (no
+    # outgoing transition → ``is_terminal`` True, ``_dispatch_for_story`` returns
+    # None), absent from ``auto_merge._MERGEABLE_STATES``, and classified resolved
+    # for tracker-issue closing (``tracker_issue._RESOLVED_STORY_STATES``) — the
+    # row produced nothing and never will, so its tracker should close rather than
+    # linger. RECOVERY IS MANUAL: an operator who identifies the root cause can
+    # move the row back to a live dispatch state (and clear ``error``). Set via
+    # DIRECT state assignment (like ``SUPERSEDED_BY_SIBLING``), never an EVENT_*
+    # edge — the SOURCE state is by definition not a valid enum, so no transition
+    # table entry could name it.
+    QUARANTINED_INVALID_STATE = "quarantined_invalid_state"
 
 
 class StoryRecord(SQLModel, table=True):
