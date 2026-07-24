@@ -302,8 +302,13 @@ def test_loop4_story_merges_on_surviving_gates(tmp_path) -> None:
 
     story = persist_story(
         StoryRecord(
-            direction_id="007", app="sacrifice", title="t", slug="loop4",
-            scope="frontend", state=StoryState.PR_OPEN.value, chain_kind="tdd",
+            direction_id="007",
+            app="sacrifice",
+            title="t",
+            slug="loop4",
+            scope="frontend",
+            state=StoryState.PR_OPEN.value,
+            chain_kind="tdd",
             github_pr_number=110,
             tech_writer_result_json=json.dumps(
                 {"context_updates": ["context/modules/frontend.md"], "rationale": "updated"}
@@ -315,19 +320,29 @@ def test_loop4_story_merges_on_surviving_gates(tmp_path) -> None:
     import sqlite3 as _sq
 
     conn = _sq.connect(str(db))
-    conn.execute("UPDATE stories SET dev_attempts_json=? WHERE id=?",
-                 (json.dumps([{"test_run_passed": True, "test_output_tail": "ok"}]), story.id))
+    conn.execute(
+        "UPDATE stories SET dev_attempts_json=? WHERE id=?",
+        (json.dumps([{"test_run_passed": True, "test_output_tail": "ok"}]), story.id),
+    )
     conn.commit()
     conn.close()
 
     fixture = FixturePR(
-        pr_number=110, head_sha="abc", base_branch="main", labels=[],
-        files_changed=["frontend/services/api.ts"], ci_state="success",
-        story=story, repo_root=None,
+        pr_number=110,
+        head_sha="abc",
+        base_branch="main",
+        labels=[],
+        files_changed=["frontend/services/api.ts"],
+        ci_state="success",
+        story=story,
+        repo_root=None,
     )
     actions = auto_merge_tick(
-        app="sacrifice", software_factory_root=root, dry_run=True,
-        fixture_prs=[fixture], db_path=db,
+        app="sacrifice",
+        software_factory_root=root,
+        dry_run=True,
+        fixture_prs=[fixture],
+        db_path=db,
     )
     assert len(actions) == 1
     act = actions[0]
@@ -485,7 +500,11 @@ def test_auto_merge_does_not_close_sibling_when_dry_run(
         story=winner,
     )
     actions = auto_merge_tick(
-        factory_root, "sacrifice", dry_run=True, fixture_prs=[fixture], db_path=db,
+        factory_root,
+        "sacrifice",
+        dry_run=True,
+        fixture_prs=[fixture],
+        db_path=db,
     )
     assert actions[0].merged, actions[0].reason
     # No github_client was even provided in dry-run; nothing to assert on
@@ -706,7 +725,11 @@ def test_auto_merge_enabled_then_failing_check_leaves_story_redispatchable(
         story=story,
     )
     auto_merge_tick(
-        factory_root, "sacrifice", dry_run=False, fixture_prs=[fixture], db_path=db,
+        factory_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
         merge_fn=lambda **_k: None,
         pr_merged_query=lambda **_k: False,
     )
@@ -740,17 +763,29 @@ def _seed_dual_pair(
 
     winner = persist_story(
         StoryRecord(
-            direction_id="042", app="sacrifice", title="w",
-            slug="picker-refactor-alt-a", scope="docs", state=winner_state,
-            chain_kind="docs", github_issue_number=209, github_pr_number=555,
+            direction_id="042",
+            app="sacrifice",
+            title="w",
+            slug="picker-refactor-alt-a",
+            scope="docs",
+            state=winner_state,
+            chain_kind="docs",
+            github_issue_number=209,
+            github_pr_number=555,
         ),
         db,
     )
     loser = persist_story(
         StoryRecord(
-            direction_id="042", app="sacrifice", title="l",
-            slug="picker-refactor-alt-b", scope="docs", state=loser_state,
-            chain_kind="docs", github_issue_number=210, github_pr_number=loser_pr,
+            direction_id="042",
+            app="sacrifice",
+            title="l",
+            slug="picker-refactor-alt-b",
+            scope="docs",
+            state=loser_state,
+            chain_kind="docs",
+            github_issue_number=210,
+            github_pr_number=loser_pr,
         ),
         db,
     )
@@ -818,15 +853,25 @@ def test_sibling_already_shipped_false_for_non_dual_draft(factory_root: Path) ->
     db = factory_root / "state" / "non-dd.db"
     persist_story(
         StoryRecord(
-            direction_id="043", app="sacrifice", title="s", slug="plain-shipped",
-            scope="docs", state=StoryState.DEPLOYED.value, github_pr_number=1,
+            direction_id="043",
+            app="sacrifice",
+            title="s",
+            slug="plain-shipped",
+            scope="docs",
+            state=StoryState.DEPLOYED.value,
+            github_pr_number=1,
         ),
         db,
     )
     normal = persist_story(
         StoryRecord(
-            direction_id="043", app="sacrifice", title="n", slug="plain-other",
-            scope="docs", state=StoryState.PR_OPEN.value, github_pr_number=2,
+            direction_id="043",
+            app="sacrifice",
+            title="n",
+            slug="plain-other",
+            scope="docs",
+            state=StoryState.PR_OPEN.value,
+            github_pr_number=2,
         ),
         db,
     )
@@ -858,12 +903,21 @@ def test_evaluate_one_pr_refuses_loser_when_sibling_shipped(factory_root: Path) 
     _winner, loser = _seed_dual_pair(db, winner_state=StoryState.DEPLOYED.value)
 
     fixture = FixturePR(
-        pr_number=556, head_sha="loser-sha", base_branch="main", labels=[],
-        files_changed=["context/project.md"], ci_state="success", story=loser,
+        pr_number=556,
+        head_sha="loser-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=loser,
     )
     action = _evaluate_one_pr(
-        app="sacrifice", fixture=fixture, app_config=_cfg(), dry_run=True,
-        github_client=None, db_path=db,
+        app="sacrifice",
+        fixture=fixture,
+        app_config=_cfg(),
+        dry_run=True,
+        github_client=None,
+        db_path=db,
     )
     assert action.merged is False
     assert action.superseded_by_sibling is True
@@ -882,12 +936,22 @@ def test_evaluate_one_pr_failsafe_merges_on_query_error(factory_root: Path) -> N
         raise RuntimeError("query exploded")
 
     fixture = FixturePR(
-        pr_number=556, head_sha="loser-sha", base_branch="main", labels=[],
-        files_changed=["context/project.md"], ci_state="success", story=loser,
+        pr_number=556,
+        head_sha="loser-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=loser,
     )
     action = _evaluate_one_pr(
-        app="sacrifice", fixture=fixture, app_config=_cfg(), dry_run=True,
-        github_client=None, db_path=db, sibling_shipped_query=_boom,
+        app="sacrifice",
+        fixture=fixture,
+        app_config=_cfg(),
+        dry_run=True,
+        github_client=None,
+        db_path=db,
+        sibling_shipped_query=_boom,
     )
     # Despite the deployed sibling, the raising query fails safe → the docs-chain
     # loser merges normally (dry-run merged=True), never wrongly superseded.
@@ -915,12 +979,21 @@ def test_auto_merge_tick_supersedes_loser_and_closes_pr(
     monkeypatch.setattr(subprocess, "run", _fake_run, raising=True)
 
     fixture = FixturePR(
-        pr_number=556, head_sha="loser-sha", base_branch="main", labels=[],
-        files_changed=["context/project.md"], ci_state="success", story=loser,
+        pr_number=556,
+        head_sha="loser-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=loser,
     )
     actions = auto_merge_tick(
-        factory_root, "sacrifice", dry_run=False, fixture_prs=[fixture],
-        github_client=None, db_path=db,
+        factory_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        github_client=None,
+        db_path=db,
     )
 
     assert actions[0].merged is False
@@ -928,8 +1001,7 @@ def test_auto_merge_tick_supersedes_loser_and_closes_pr(
     assert _reload_story(db, loser.id).state == StoryState.SUPERSEDED_BY_SIBLING.value
     # The loser's PR (556) was closed so it can never auto-merge.
     assert any(
-        c[:3] == ["gh", "pr", "close"] and "556" in c and "--delete-branch" in c
-        for c in closed
+        c[:3] == ["gh", "pr", "close"] and "556" in c and "--delete-branch" in c for c in closed
     )
     # No merge row recorded for the loser.
     assert _merged_rows(db) == []
@@ -944,12 +1016,664 @@ def test_auto_merge_tick_does_not_supersede_when_no_sibling_shipped(
     winner, _loser = _seed_dual_pair(db, winner_state=StoryState.PR_OPEN.value)
 
     fixture = FixturePR(
-        pr_number=555, head_sha="win-sha", base_branch="main", labels=[],
-        files_changed=["context/project.md"], ci_state="success", story=winner,
+        pr_number=555,
+        head_sha="win-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=winner,
     )
     actions = auto_merge_tick(
-        factory_root, "sacrifice", dry_run=True, fixture_prs=[fixture], db_path=db,
+        factory_root,
+        "sacrifice",
+        dry_run=True,
+        fixture_prs=[fixture],
+        db_path=db,
     )
     assert actions[0].superseded_by_sibling is False
     assert actions[0].merged is True
     assert _reload_story(db, winner.id).state == StoryState.DEPLOY_PENDING.value
+
+
+# --------------------------------------------------------------------------- #
+# Conflict -> dev REBUILD loop: a genuinely-CONFLICTING PR is regenerated on a
+# FRESH branch off current main (bounded), instead of parking forever the first
+# time ``gh pr update-branch`` can't reconcile it.
+# --------------------------------------------------------------------------- #
+
+
+def _conflict_story(*, pr_number: int, issue: int, slug: str = "conflict-story") -> StoryRecord:
+    """A docs-chain story (hermetic gates) sitting at PR_OPEN with a PR."""
+    return StoryRecord(
+        direction_id="099",
+        app="sacrifice",
+        title="t",
+        slug=slug,
+        scope="docs",
+        state=StoryState.PR_OPEN.value,
+        chain_kind="docs",
+        github_issue_number=issue,
+        github_branch=f"factory/story-{issue}-{slug}",
+        github_pr_number=pr_number,
+    )
+
+
+def _read_events(root: Path, story: StoryRecord) -> list[dict]:
+    from factory.chain.event_log import read_story_events
+
+    return read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+
+
+def _event_types(root: Path, story: StoryRecord) -> list[str]:
+    return [e.get("event") for e in _read_events(root, story)]
+
+
+# --- _pr_is_conflicting -----------------------------------------------------
+
+
+def test_pr_is_conflicting_true_on_conflicting(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    from factory.app_config import AppConfig
+    from factory.chain import auto_merge as am
+
+    def _run(cmd, **kw):
+        return subprocess.CompletedProcess(
+            cmd, 0, json.dumps({"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"}), ""
+        )
+
+    monkeypatch.setattr(subprocess, "run", _run, raising=True)
+    cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main")
+    assert am._pr_is_conflicting(app_config=cfg, pr_number=7) is True
+
+
+def test_pr_is_conflicting_false_on_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    from factory.app_config import AppConfig
+    from factory.chain import auto_merge as am
+
+    def _run(cmd, **kw):
+        return subprocess.CompletedProcess(
+            cmd, 0, json.dumps({"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}), ""
+        )
+
+    monkeypatch.setattr(subprocess, "run", _run, raising=True)
+    cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main")
+    assert am._pr_is_conflicting(app_config=cfg, pr_number=7) is False
+
+
+def test_pr_is_conflicting_failsafe_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    from factory.app_config import AppConfig
+    from factory.chain import auto_merge as am
+
+    def _run(cmd, **kw):
+        raise subprocess.CalledProcessError(1, cmd, "", "boom")
+
+    monkeypatch.setattr(subprocess, "run", _run, raising=True)
+    cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main")
+    assert am._pr_is_conflicting(app_config=cfg, pr_number=7) is False
+
+
+# --- _reset_branch_for_fresh_rebuild ---------------------------------------
+
+
+def test_reset_branch_closes_pr_and_wipes_branch(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reset closes the PR with --delete-branch, removes the worktree, and
+    deletes the stale LOCAL branch so the next worktree is cut from origin/main."""
+    import subprocess
+
+    from factory.app_config import AppConfig
+    from factory.chain import auto_merge as am
+
+    calls: list[list] = []
+
+    def _run(cmd, **kw):
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    removed: list[dict] = []
+
+    def _fake_remove(source_repo, **kwargs):
+        removed.append(dict(kwargs))
+        return True
+
+    monkeypatch.setattr(subprocess, "run", _run, raising=True)
+    monkeypatch.setattr("factory.app_config.resolve_app_repo_path", lambda cfg, root: factory_root)
+    monkeypatch.setattr(
+        "factory.chain.worktree.remove_worktree_for_story", _fake_remove, raising=True
+    )
+
+    story = _conflict_story(pr_number=321, issue=42, slug="s")
+    cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main")
+    ok = am._reset_branch_for_fresh_rebuild(
+        story=story, app_config=cfg, pr_number=321, root=factory_root
+    )
+    assert ok is True
+    # PR closed with --delete-branch.
+    assert any(
+        c[:3] == ["gh", "pr", "close"] and "321" in c and "--delete-branch" in c for c in calls
+    )
+    # Stale local branch deleted.
+    assert any(c[:3] == ["git", "branch", "-D"] and "factory/story-42-s" in c for c in calls)
+    # Worktree removed for the right story.
+    assert removed and removed[0]["story_id"] == 42
+
+
+# --- _handle_pr_conflict_rebuild (orchestrator) ----------------------------
+
+
+def test_conflict_rebuild_under_cap_redispatches(factory_root: Path) -> None:
+    """Case 1: a conflicting PR under the cap is reset to a FRESH branch and
+    re-dispatched to dev — PR pointer cleared, state flipped, NOT parked."""
+    from factory.app_config import AppConfig
+    from factory.chain import auto_merge as am
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_conflict_story(pr_number=400, issue=50), db)
+
+    reset_calls: list[dict] = []
+
+    def _fake_reset(*, story, app_config, pr_number, root):
+        reset_calls.append({"pr_number": pr_number})
+        return True
+
+    cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main")
+    outcome = am._handle_pr_conflict_rebuild(
+        story=story,
+        app_config=cfg,
+        pr_number=400,
+        db=db,
+        root=factory_root,
+        reset_fn=_fake_reset,
+    )
+    assert outcome == "rebuild_redispatched"
+    assert reset_calls == [{"pr_number": 400}]
+    reloaded = _reload_story(db, story.id)
+    assert reloaded.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
+    assert reloaded.github_pr_number is None
+    assert reloaded.github_branch is None
+    payload = json.loads(reloaded.reviewer_result_json)
+    assert payload["source"] == "merge_conflict"
+    assert payload["findings"][0]["criterion"] == "merge_conflict"
+    assert "conflict_rebuild_redispatch" in _event_types(factory_root, story)
+
+
+def test_conflict_rebuild_parks_after_cap(factory_root: Path) -> None:
+    """Case 2 (unit): once the cap of prior rebuilds is reached, the orchestrator
+    returns 'exhausted', logs a deduped conflict_rebuild_exhausted, and leaves
+    the story untouched (the caller parks it)."""
+    from factory.app_config import AppConfig
+    from factory.chain import auto_merge as am
+    from factory.chain.event_log import log_story_event
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_conflict_story(pr_number=401, issue=51), db)
+    for _ in range(am._MAX_CONFLICT_REBUILDS):
+        log_story_event(
+            story.id,
+            "conflict_rebuild_redispatch",
+            {"pr_number": 401},
+            software_factory_root=factory_root,
+            slug_hint=story.slug,
+        )
+
+    def _fake_reset(**_kwargs):  # must NOT be called once exhausted
+        raise AssertionError("reset must not run after the cap")
+
+    cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main")
+    outcome = am._handle_pr_conflict_rebuild(
+        story=story,
+        app_config=cfg,
+        pr_number=401,
+        db=db,
+        root=factory_root,
+        reset_fn=_fake_reset,
+    )
+    assert outcome == "exhausted"
+    assert "conflict_rebuild_exhausted" in _event_types(factory_root, story)
+    reloaded = _reload_story(db, story.id)
+    # Untouched — still mergeable + PR intact; the tick performs the actual park.
+    assert reloaded.state == StoryState.PR_OPEN.value
+    assert reloaded.github_pr_number == 401
+
+
+def test_conflict_rebuild_persists_before_reset_raises(factory_root: Path) -> None:
+    """PERSIST-FIRST / destroy-last: a raising reset seam is swallowed AFTER the
+    redispatch intent is already durably persisted → 'rebuild_redispatched', the
+    story is redispatched (state flipped, PR pointer cleared), and no work is
+    lost. The reset runs LAST, so its failure never reverts the redispatch."""
+    from factory.app_config import AppConfig
+    from factory.chain import auto_merge as am
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_conflict_story(pr_number=402, issue=52), db)
+
+    def _boom(**_kwargs):
+        raise RuntimeError("reset exploded")
+
+    cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main")
+    outcome = am._handle_pr_conflict_rebuild(
+        story=story,
+        app_config=cfg,
+        pr_number=402,
+        db=db,
+        root=factory_root,
+        reset_fn=_boom,
+    )
+    assert outcome == "rebuild_redispatched"
+    reloaded = _reload_story(db, story.id)
+    assert reloaded.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
+    assert reloaded.github_pr_number is None
+    assert "conflict_rebuild_redispatch" in _event_types(factory_root, story)
+
+
+def test_conflict_rebuild_persist_failure_destroys_nothing(factory_root: Path) -> None:
+    """DESTROY-LAST guarantee: if the persist of the redispatch intent fails, the
+    destructive reset must NOT run — nothing is closed/deleted — and the result
+    is 'failed' so the tick parks a fully-recoverable story (PR + branch intact,
+    retryable next tick)."""
+    from factory.app_config import AppConfig
+    from factory.chain import auto_merge as am
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_conflict_story(pr_number=403, issue=53), db)
+
+    reset_called: list[bool] = []
+
+    def _record_reset(**_kwargs):
+        reset_called.append(True)
+        return True
+
+    def _persist_boom(*_a, **_k):
+        raise RuntimeError("db write failed")
+
+    # Make ONLY the redispatch persist fail (the one inside _handle_pr_conflict_
+    # rebuild). Patch at the handlers module where the function imports it.
+    import factory.chain.handlers as _handlers
+
+    orig_persist = _handlers.persist_story
+    _handlers.persist_story = _persist_boom
+    try:
+        cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main")
+        outcome = am._handle_pr_conflict_rebuild(
+            story=story,
+            app_config=cfg,
+            pr_number=403,
+            db=db,
+            root=factory_root,
+            reset_fn=_record_reset,
+        )
+    finally:
+        _handlers.persist_story = orig_persist
+
+    assert outcome == "failed"
+    # DESTROY-LAST: the reset (which closes the PR + deletes the branch) never ran.
+    assert reset_called == []
+    # DB row is unchanged — the failed persist wrote nothing.
+    assert _reload_story(db, story.id).state == StoryState.PR_OPEN.value
+    assert "conflict_rebuild_redispatch" not in _event_types(factory_root, story)
+
+
+# --- Integration through auto_merge_tick ------------------------------------
+
+
+def _gh_fake(*, view_status: str, update_branch_ok: bool, record: list | None = None):
+    """A subprocess.run stand-in that answers the gh/git calls the conflict path
+    makes: ``gh pr view`` (mergeability), ``gh pr update-branch`` (reconcile),
+    ``gh pr close`` / ``git branch -D`` (reset), everything else → success."""
+    import subprocess as _sp
+
+    def _run(cmd, **kw):
+        if record is not None:
+            record.append(list(cmd))
+        if cmd[:3] == ["gh", "pr", "view"]:
+            payload = {
+                "state": "OPEN",
+                "mergeable": "CONFLICTING" if view_status == "CONFLICTING" else "UNKNOWN",
+                "mergeStateStatus": "DIRTY"
+                if view_status in ("CONFLICTING", "DIRTY")
+                else "BEHIND",
+            }
+            return _sp.CompletedProcess(cmd, 0, json.dumps(payload), "")
+        if cmd[:3] == ["gh", "pr", "update-branch"]:
+            if update_branch_ok:
+                return _sp.CompletedProcess(cmd, 0, "", "")
+            raise _sp.CalledProcessError(1, cmd, "", "merge conflict")
+        return _sp.CompletedProcess(cmd, 0, "", "")
+
+    return _run
+
+
+def _conflict_merge_fn(**_kwargs) -> str:
+    """A merge_fn that always reports a merge failure, driving the tick into the
+    terminal-unmergeable branch (reason starts with 'gh merge failed')."""
+    return "merge conflict"
+
+
+def test_tick_conflicting_pr_under_cap_is_rebuilt_not_parked(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Case 1 (integration): a CONFLICTING PR whose update-branch reconcile
+    fails is re-dispatched to dev on a fresh branch — NOT parked to
+    blocked_deploy_failed."""
+    import subprocess
+
+    from factory.chain import auto_merge as am
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_conflict_story(pr_number=500, issue=60), db)
+
+    monkeypatch.setattr(
+        subprocess, "run", _gh_fake(view_status="CONFLICTING", update_branch_ok=False), raising=True
+    )
+    monkeypatch.setattr("factory.app_config.resolve_app_repo_path", lambda cfg, root: factory_root)
+    monkeypatch.setattr(
+        "factory.chain.worktree.remove_worktree_for_story", lambda *a, **k: True, raising=True
+    )
+
+    fixture = FixturePR(
+        pr_number=500,
+        head_sha="conf-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=story,
+    )
+    actions = am.auto_merge_tick(
+        factory_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
+        merge_fn=_conflict_merge_fn,
+    )
+    assert actions[0].merged is False
+    reloaded = _reload_story(db, story.id)
+    assert reloaded.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
+    assert reloaded.state != StoryState.BLOCKED_DEPLOY_FAILED.value
+    assert reloaded.github_pr_number is None
+    assert "conflict_rebuild_redispatch" in _event_types(factory_root, story)
+
+
+def test_tick_conflicting_pr_parks_after_cap(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Case 2 (integration): after the rebuild cap is exhausted, a still-
+    conflicting PR parks to blocked_deploy_failed."""
+    import subprocess
+
+    from factory.chain import auto_merge as am
+    from factory.chain.event_log import log_story_event, read_story_events
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_conflict_story(pr_number=501, issue=61), db)
+    # Capture id/slug BEFORE the tick: the park path commits the story object
+    # without refreshing it, detaching it from its session (accessing attributes
+    # afterward would raise DetachedInstanceError).
+    sid, slug = story.id, story.slug
+    for _ in range(am._MAX_CONFLICT_REBUILDS):
+        log_story_event(
+            sid,
+            "conflict_rebuild_redispatch",
+            {"pr_number": 501},
+            software_factory_root=factory_root,
+            slug_hint=slug,
+        )
+
+    monkeypatch.setattr(
+        subprocess, "run", _gh_fake(view_status="CONFLICTING", update_branch_ok=False), raising=True
+    )
+
+    fixture = FixturePR(
+        pr_number=501,
+        head_sha="conf-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=story,
+    )
+    am.auto_merge_tick(
+        factory_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
+        merge_fn=_conflict_merge_fn,
+    )
+    reloaded = _reload_story(db, sid)
+    assert reloaded.state == StoryState.BLOCKED_DEPLOY_FAILED.value
+    assert "conflict_rebuild_exhausted" in [
+        e.get("event")
+        for e in read_story_events(sid, software_factory_root=factory_root, slug_hint=slug)
+    ]
+
+
+def test_tick_behind_pr_uses_update_branch_not_rebuild(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Case 3 (integration): a branch that update-branch CAN advance (merely
+    behind) is recovered via update-branch — the rebuild path is never taken,
+    and the story is left in place for re-evaluation."""
+    import subprocess
+
+    from factory.chain import auto_merge as am
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_conflict_story(pr_number=502, issue=62), db)
+
+    monkeypatch.setattr(
+        subprocess, "run", _gh_fake(view_status="DIRTY", update_branch_ok=True), raising=True
+    )
+
+    fixture = FixturePR(
+        pr_number=502,
+        head_sha="behind-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=story,
+    )
+    am.auto_merge_tick(
+        factory_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
+        merge_fn=_conflict_merge_fn,
+    )
+    reloaded = _reload_story(db, story.id)
+    # update-branch recovered it → left in place (still mergeable), NOT rebuilt.
+    assert reloaded.state == StoryState.PR_OPEN.value
+    assert reloaded.github_pr_number == 502
+    types = _event_types(factory_root, story)
+    assert "branch_updated" in [
+        e.get("result")
+        for e in _read_events(factory_root, story)
+        if e.get("event") == "auto_merge_reconcile_attempt"
+    ]
+    assert "conflict_rebuild_redispatch" not in types
+
+
+def test_tick_conflict_rebuild_reset_failure_still_redispatches(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Case 4 (integration / persist-first): if the fresh-branch reset raises, the
+    tick does NOT propagate the error AND does NOT lose the story — because the
+    redispatch intent is persisted BEFORE the (best-effort) reset, the story is
+    still redispatched to dev, not parked. A partial reset failure is bounded by
+    the rebuild cap, never irreversible work loss."""
+    import subprocess
+
+    from factory.chain import auto_merge as am
+    from factory.chain.event_log import read_story_events
+    from factory.chain.handlers import persist_story
+
+    db = factory_root / "state" / "factory.db"
+    story = persist_story(_conflict_story(pr_number=503, issue=63), db)
+    sid, slug = story.id, story.slug
+
+    monkeypatch.setattr(
+        subprocess, "run", _gh_fake(view_status="CONFLICTING", update_branch_ok=False), raising=True
+    )
+
+    def _boom(**_kwargs):
+        raise RuntimeError("reset exploded mid-tick")
+
+    monkeypatch.setattr(am, "_reset_branch_for_fresh_rebuild", _boom, raising=True)
+
+    fixture = FixturePR(
+        pr_number=503,
+        head_sha="conf-sha",
+        base_branch="main",
+        labels=[],
+        files_changed=["context/project.md"],
+        ci_state="success",
+        story=story,
+    )
+    # Must not raise.
+    am.auto_merge_tick(
+        factory_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fixture],
+        db_path=db,
+        merge_fn=_conflict_merge_fn,
+    )
+    reloaded = _reload_story(db, sid)
+    # Persisted BEFORE the raising reset → redispatched, NOT parked, no work lost.
+    assert reloaded.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
+    assert reloaded.state != StoryState.BLOCKED_DEPLOY_FAILED.value
+    assert reloaded.github_pr_number is None
+    assert "conflict_rebuild_redispatch" in [
+        e.get("event")
+        for e in read_story_events(sid, software_factory_root=factory_root, slug_hint=slug)
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Real-git integration for the irreversible reset — no monkeypatched subprocess.
+# Proves _reset_branch_for_fresh_rebuild genuinely wipes the stale surfaces so
+# the NEXT ensure_worktree_for_story cuts a branch straight off CURRENT
+# origin/main (conflict-free). This is the one operation that deletes work, so
+# it is exercised against a real repo rather than mocked seams.
+# --------------------------------------------------------------------------- #
+
+
+def _git(args: list[str], cwd: Path, *, check: bool = True):
+    import subprocess
+
+    return subprocess.run(
+        args, cwd=str(cwd), capture_output=True, text=True, check=check, timeout=60
+    )
+
+
+def test_reset_branch_real_git_yields_fresh_cut_off_current_main(tmp_path: Path) -> None:
+    """A story branch cut from an OLDER main that has since advanced with a
+    CONFLICTING change is genuinely wiped by ``_reset_branch_for_fresh_rebuild``
+    (real git, no mocks): the next ``ensure_worktree_for_story`` cuts a branch
+    straight off CURRENT origin/main, conflict-free."""
+    from factory.app_config import AppConfig
+    from factory.chain import auto_merge as am
+    from factory.chain.branch import feature_branch_name
+    from factory.chain.worktree import ensure_worktree_for_story
+
+    # 1. Bare origin + source clone; origin/main starts at "v0".
+    origin = tmp_path / "origin.git"
+    _git(["git", "init", "-q", "--bare", "--initial-branch=main", str(origin)], tmp_path)
+    source = tmp_path / "src"
+    source.mkdir()
+    _git(["git", "init", "-q", "--initial-branch=main"], source)
+    _git(["git", "config", "user.email", "t@e.x"], source)
+    _git(["git", "config", "user.name", "T E"], source)
+    (source / "data.txt").write_text("v0\n", encoding="utf-8")
+    _git(["git", "add", "."], source)
+    _git(["git", "commit", "-q", "-m", "init"], source)
+    _git(["git", "remote", "add", "origin", str(origin)], source)
+    _git(["git", "push", "-u", "-q", "origin", "main"], source)
+
+    # 2. Cut the per-story worktree/branch off origin/main (v0), commit a
+    #    divergent change to data.txt.
+    root = tmp_path / "sf"
+    (root / "state").mkdir(parents=True)
+    issue, slug = 77, "conflict-rebuild"
+    branch = feature_branch_name(issue, slug)
+    wt = ensure_worktree_for_story(
+        source,
+        software_factory_root=root,
+        app="sacrifice",
+        story_id=issue,
+        slug=slug,
+        base_branch="main",
+    )
+    (Path(wt) / "data.txt").write_text("STORY VERSION\n", encoding="utf-8")
+    _git(["git", "add", "data.txt"], wt)
+    _git(["git", "commit", "-q", "-m", "story change"], wt)
+    stale_head = _git(["git", "rev-parse", "HEAD"], wt).stdout.strip()
+
+    # 3. Advance origin/main with a CONFLICTING change to the SAME file.
+    _git(["git", "checkout", "-q", "main"], source)
+    (source / "data.txt").write_text("MAIN VERSION\n", encoding="utf-8")
+    _git(["git", "add", "data.txt"], source)
+    _git(["git", "commit", "-q", "-m", "main change"], source)
+    _git(["git", "push", "-q", "origin", "main"], source)
+
+    # Sanity: the stale story branch really DOES conflict with current main.
+    _git(["git", "fetch", "-q", "origin", "main"], wt)
+    conflict = _git(["git", "merge", "--no-commit", "--no-ff", "origin/main"], wt, check=False)
+    assert conflict.returncode != 0
+    _git(["git", "merge", "--abort"], wt, check=False)
+
+    # 4. Run the ACTUAL destructive reset. pr_number=0 skips the gh pr close
+    #    (no GitHub needed) so this exercises the real worktree + local-branch
+    #    wipe — the part that irreversibly deletes work.
+    story = StoryRecord(
+        direction_id="099",
+        app="sacrifice",
+        title="t",
+        slug=slug,
+        scope="docs",
+        state=StoryState.PR_OPEN.value,
+        chain_kind="docs",
+        github_issue_number=issue,
+        github_branch=branch,
+    )
+    cfg = AppConfig(name="sacrifice", repo="o/r", default_branch="main", app_repo_path=str(source))
+    assert (
+        am._reset_branch_for_fresh_rebuild(story=story, app_config=cfg, pr_number=0, root=root)
+        is True
+    )
+    # The stale local branch was deleted by the reset.
+    assert branch not in _git(["git", "branch", "--list", branch], source).stdout
+
+    # 5. The next worktree cut is FRESH off CURRENT origin/main (conflict-free):
+    #    a freshly-cut branch with no commits sits exactly at the current main tip.
+    wt2 = ensure_worktree_for_story(
+        source,
+        software_factory_root=root,
+        app="sacrifice",
+        story_id=issue,
+        slug=slug,
+        base_branch="main",
+    )
+    fresh_head = _git(["git", "rev-parse", "HEAD"], wt2).stdout.strip()
+    origin_main = _git(["git", "rev-parse", "origin/main"], source).stdout.strip()
+    assert fresh_head == origin_main  # cut from CURRENT main
+    assert fresh_head != stale_head  # NOT the old conflicting branch
+    # Current main's content is present — no conflict markers, no stale story work.
+    assert (Path(wt2) / "data.txt").read_text(encoding="utf-8") == "MAIN VERSION\n"
