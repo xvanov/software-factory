@@ -71,6 +71,20 @@ _MERGEABLE_STATES = {
 # CI failure the dev cannot fix escalates instead of looping forever.
 _MAX_CI_FIX_CYCLES = 3
 
+# CONFLICT -> dev REBUILD loop. When an open PR is genuinely CONFLICTING with
+# main (a real content conflict, mergeable=="CONFLICTING" / mergeStateStatus
+# DIRTY — NOT merely BEHIND, which ``_attempt_pr_reconcile``'s
+# ``gh pr update-branch`` already fixes), the branch was cut from an OLDER main
+# that has since advanced. Re-dispatching dev on the SAME stale branch just
+# re-conflicts at PR-open's ``git merge origin/main`` — so instead we REBUILD
+# the change on a FRESH branch cut from CURRENT main (close the conflicting PR,
+# wipe the stale local/remote branch + worktree, and re-dispatch dev). Bounded
+# by ``_MAX_CONFLICT_REBUILDS`` via the event log so a genuinely-unresolvable
+# conflict PARKS after N rebuilds instead of looping forever — the conflict
+# analogue of ``_MAX_CI_FIX_CYCLES``. We never silently auto-resolve a conflict;
+# we regenerate the change cleanly via dev.
+_MAX_CONFLICT_REBUILDS = 2
+
 # Gate labels the docs chain produces. The docs chain skips the TDD
 # red→green loop, so the 10 TDD gate labels don't apply. The single
 # label the docs chain DOES enforce is ``canonical-paths-only`` — when
@@ -80,6 +94,7 @@ _MAX_CI_FIX_CYCLES = 3
 # Kept as a frozenset so the worker can swap the gate set on
 # ``chain_kind`` without re-checking the TDD list.
 _DOCS_CHAIN_GATE_LABELS: frozenset[str] = frozenset({"canonical-paths-only"})
+
 
 def _story_targets_factory_repo(app_config: AppConfig) -> bool:
     """True when ``app_config`` builds the factory's own repo (a self-edit app).
@@ -263,9 +278,7 @@ def _escalate_self_edit(
     one.
     """
     proposal = {
-        "proposal_id": (
-            f"chain-selfedit-story-{getattr(story, 'id', None)}-pr-{pr_number}"
-        ),
+        "proposal_id": (f"chain-selfedit-story-{getattr(story, 'id', None)}-pr-{pr_number}"),
         "concern_title": f"chain factory self-edit PR #{pr_number}",
         "proposal": {"suggested_patch": patch},
         "detail": detail,
@@ -398,9 +411,7 @@ def _evaluate_self_edit_gate(
             detail=reason,
             patch=patch,
         )
-        return _SelfEditDecision(
-            allow=False, status="forbidden", forbidden=True, logs_tail=reason
-        )
+        return _SelfEditDecision(allow=False, status="forbidden", forbidden=True, logs_tail=reason)
 
     # Not a runtime self-edit (touches no factory/ code) → nothing for staging
     # to validate; safe to merge like any other content/docs change.
@@ -430,9 +441,7 @@ def _evaluate_self_edit_gate(
             detail=reason,
             patch=patch,
         )
-        return _SelfEditDecision(
-            allow=False, status="staging_infra_failed", logs_tail=reason
-        )
+        return _SelfEditDecision(allow=False, status="staging_infra_failed", logs_tail=reason)
 
     if getattr(decision, "promote", False):
         return _SelfEditDecision(allow=True, status="staging_validated")
@@ -475,9 +484,7 @@ _SIBLING_SHIPPED_STATES: frozenset[str] = frozenset(
 )
 
 
-def _default_sibling_rows(
-    *, direction_id: str, app: str, db_path: Path
-) -> list[StoryRecord]:
+def _default_sibling_rows(*, direction_id: str, app: str, db_path: Path) -> list[StoryRecord]:
     """All StoryRecords sharing ``direction_id`` + ``app`` (the sibling set)."""
     eng = _engine(db_path)
     with Session(eng) as session:
@@ -550,9 +557,7 @@ def _sibling_already_shipped(
 
         rows_fn = sibling_rows or _default_sibling_rows
         merged_fn = merged_pr_exists or _default_merged_pr_exists
-        rows = rows_fn(
-            direction_id=story.direction_id, app=story.app, db_path=db_path
-        )
+        rows = rows_fn(direction_id=story.direction_id, app=story.app, db_path=db_path)
         for sib in rows:
             if getattr(sib, "id", None) == getattr(story, "id", None):
                 continue  # never compare a story to itself
@@ -905,8 +910,7 @@ def _gh_pr_merge(
         # mergeable — merge it directly instead of reporting failure
         # (PR 111, 2026-06-11; also the May-29/30 docs-chain merge errors).
         if wait_for_ci and (
-            "clean status" in stderr
-            or "Protected branch rules not configured" in stderr
+            "clean status" in stderr or "Protected branch rules not configured" in stderr
         ):
             direct_cmd = [c for c in cmd if c != "--auto"]
             try:
@@ -950,8 +954,14 @@ def _pr_is_merged_on_github(
     if pr_number <= 0:
         return False
     cmd = [
-        "gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
-        "--json", "state,mergedAt",
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "state,mergedAt",
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -986,8 +996,14 @@ def _pr_terminally_unmergeable(
     import subprocess
 
     cmd = [
-        "gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
-        "--json", "state,mergeable,mergeStateStatus",
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "state,mergeable,mergeStateStatus",
     ]
     try:
         out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
@@ -1034,7 +1050,13 @@ def _query_ci_state(*, app_config: AppConfig, pr_number: int) -> str | None:
     if pr_number <= 0:  # synthesized placeholder (dry-run docs) — nothing to query
         return None
     cmd = [
-        "gh", "pr", "checks", str(pr_number), "--repo", app_config.repo, "--required",
+        "gh",
+        "pr",
+        "checks",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--required",
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -1134,8 +1156,16 @@ def _ci_failure_is_genuine(*, app_config: AppConfig, pr_number: int) -> bool:
     # Source 2: real conclusions keyed by check name.
     try:
         view = subprocess.run(
-            ["gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
-             "--json", "statusCheckRollup"],
+            [
+                "gh",
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                app_config.repo,
+                "--json",
+                "statusCheckRollup",
+            ],
             capture_output=True,
             text=True,
             timeout=60,
@@ -1208,7 +1238,10 @@ def _close_pr_and_confirm(pr_number: int, repo: str, *, comment: str) -> bool:
     try:
         subprocess.run(
             ["gh", "pr", "close", str(pr_number), "--repo", repo],
-            capture_output=True, text=True, check=True, timeout=30,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
         return False
@@ -1217,7 +1250,10 @@ def _close_pr_and_confirm(pr_number: int, repo: str, *, comment: str) -> bool:
     try:
         subprocess.run(
             ["gh", "pr", "comment", str(pr_number), "--repo", repo, "--body", comment],
-            capture_output=True, text=True, check=False, timeout=30,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass  # comment is best-effort; the close (the important part) succeeded
@@ -1269,10 +1305,18 @@ def _fetch_ci_failure_logs(*, app_config: AppConfig, pr_number: int) -> str:
     try:
         view = subprocess.run(
             [
-                "gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
-                "--json", "headRefName,statusCheckRollup",
+                "gh",
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                app_config.repo,
+                "--json",
+                "headRefName,statusCheckRollup",
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return ""
@@ -1304,11 +1348,21 @@ def _fetch_ci_failure_logs(*, app_config: AppConfig, pr_number: int) -> str:
         try:
             listed = subprocess.run(
                 [
-                    "gh", "run", "list", "--repo", app_config.repo,
-                    "--branch", head_ref, "--limit", "5",
-                    "--json", "databaseId,conclusion,status",
+                    "gh",
+                    "run",
+                    "list",
+                    "--repo",
+                    app_config.repo,
+                    "--branch",
+                    head_ref,
+                    "--limit",
+                    "5",
+                    "--json",
+                    "databaseId,conclusion,status",
                 ],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return ""
@@ -1332,7 +1386,9 @@ def _fetch_ci_failure_logs(*, app_config: AppConfig, pr_number: int) -> str:
     try:
         log_proc = subprocess.run(
             ["gh", "run", "view", run_id, "--repo", app_config.repo, "--log-failed"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return ""
@@ -1606,6 +1662,277 @@ def _attempt_pr_reconcile(*, app_config: AppConfig, pr_number: int) -> bool:
         return False
 
 
+def _pr_is_conflicting(*, app_config: AppConfig, pr_number: int) -> bool:
+    """True iff the PR is a GENUINE content conflict (``mergeable`` CONFLICTING
+    / ``mergeStateStatus`` DIRTY) — as opposed to closed, merged, or merely
+    BEHIND.
+
+    Only a true conflict warrants a fresh-branch REBUILD: closed/merged PRs are
+    parked, and a merely-behind branch is recovered by ``_attempt_pr_reconcile``
+    (``gh pr update-branch``). Read-only. Fail-safe: any gh/parse error returns
+    False so we never trigger a destructive rebuild on an ambiguous signal.
+    """
+    import json as _json  # pragma: no cover - real-run path
+    import subprocess
+
+    cmd = [
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "mergeable,mergeStateStatus",
+    ]
+    try:
+        out = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60).stdout
+        data = _json.loads(out)
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+        ValueError,
+        TypeError,
+    ):
+        return False
+    if not isinstance(data, dict):
+        return False
+    mergeable = str(data.get("mergeable", "")).upper()
+    merge_status = str(data.get("mergeStateStatus", "")).upper()
+    return mergeable == "CONFLICTING" or merge_status == "DIRTY"
+
+
+_CONFLICT_REBUILD_COMMENT = (
+    "Auto-closing: this PR became un-mergeable — a real merge conflict with the "
+    "base branch that could not be reconciled by updating the branch. Rather than "
+    "silently auto-resolve the conflict, the factory is REBUILDING the change "
+    "cleanly on a fresh branch cut from current main and will open a new PR. "
+    "(If the conflict keeps recurring, the story parks for a human after a small "
+    "number of rebuild attempts.)"
+)
+
+
+def _reset_branch_for_fresh_rebuild(
+    *, story: StoryRecord, app_config: AppConfig, pr_number: int, root: Path
+) -> bool:  # pragma: no cover - real-run path; drives gh/git side effects
+    """Discard the conflicting PR's stale branch so the next dev run cuts a
+    FRESH branch from current ``origin/main``.
+
+    The per-story branch name is DETERMINISTIC (``feature_branch_name`` — issue
+    number + slug), so merely clearing ``story.github_branch`` would recompute
+    the same name and ``ensure_worktree_for_story`` would REUSE the stale local
+    branch/worktree, carrying the conflicting commits forward. To truly rebuild
+    on current main we must wipe all three stale surfaces:
+
+      1. the remote branch + open PR  — ``gh pr close --delete-branch``;
+      2. the per-story worktree       — ``remove_worktree_for_story`` (it is
+         checked out on the stale branch, so it must go before step 3);
+      3. the stale LOCAL branch       — ``git branch -D`` in the source repo, so
+         ``ensure_worktree_for_story`` falls to its ``worktree add -b <branch>
+         <origin/main>`` path and cuts the branch fresh.
+
+    Best-effort per step (each wrapped) so a partial failure never wedges the
+    tick; returns True when the reset ran. The caller clears
+    ``story.github_pr_number`` / ``github_branch`` and re-dispatches dev.
+    """
+    import subprocess
+
+    from factory.app_config import resolve_app_repo_path
+    from factory.chain.branch import feature_branch_name
+    from factory.chain.worktree import remove_worktree_for_story
+
+    branch = story.github_branch or (
+        feature_branch_name(story.github_issue_number, story.slug)
+        if story.github_issue_number is not None
+        else None
+    )
+    # 1. Close the PR + delete its remote head. A closed PR can never merge;
+    #    --delete-branch removes the stale remote branch so the rebuilt push
+    #    starts from a clean slate.
+    if pr_number > 0:
+        try:
+            subprocess.run(
+                [
+                    "gh",
+                    "pr",
+                    "close",
+                    str(pr_number),
+                    "--repo",
+                    app_config.repo,
+                    "--delete-branch",
+                    "--comment",
+                    _CONFLICT_REBUILD_COMMENT,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    source_repo = resolve_app_repo_path(app_config, root)
+    # 2. Remove the per-story worktree (checked out on the stale branch).
+    try:
+        remove_worktree_for_story(
+            source_repo,
+            software_factory_root=root,
+            app=story.app,
+            story_id=story.github_issue_number,
+            slug=story.slug,
+        )
+    except Exception:  # noqa: BLE001 - best-effort cleanup
+        pass
+    # 3. Delete the stale local branch so the next worktree is cut from
+    #    origin/main instead of reusing the conflicting commits.
+    if branch:
+        try:
+            subprocess.run(
+                ["git", "branch", "-D", str(branch)],
+                cwd=str(source_repo),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return True
+
+
+def _handle_pr_conflict_rebuild(
+    *,
+    story: StoryRecord,
+    app_config: AppConfig,
+    pr_number: int,
+    db: Path,
+    root: Path,
+    reset_fn: Any = None,
+) -> str:
+    """Re-dispatch a genuinely-CONFLICTING PR's story to dev to REBUILD on a
+    FRESH branch off current main, bounded by ``_MAX_CONFLICT_REBUILDS``.
+
+    Returns:
+      * ``"rebuild_redispatched"`` — the story was reset (conflicting PR closed,
+        stale branch/worktree wiped, ``github_pr_number``/``github_branch``
+        cleared) and fed back to dev via the reviewer-findings plumbing. The
+        caller must NOT park it.
+      * ``"exhausted"`` — the rebuild cap is reached (a deduped
+        ``conflict_rebuild_exhausted`` was logged). The caller should park the
+        story to ``blocked_deploy_failed`` via the existing
+        ``EVENT_PR_UNMERGEABLE`` sink so it never loops forever.
+      * ``"failed"`` — the fresh-branch reset could not be completed (a seam
+        raised or returned falsy, or the re-dispatch persist failed). FAIL-SAFE:
+        the caller should park; we NEVER re-dispatch onto a branch that would
+        just re-conflict, and this function never raises.
+
+    Mirrors ``_handle_ci_failure``: caps via the event log (counts
+    ``conflict_rebuild_redispatch`` events for THIS story) and re-dispatches to
+    ``REVIEWER_REQUESTED_CHANGES`` (the state that dispatches to dev next tick
+    and feeds ``story.reviewer_result_json`` into ``handle_dev``).
+
+    ``reset_fn`` is a test seam (defaults to ``_reset_branch_for_fresh_rebuild``);
+    it MUST perform the external close/wipe side effects and return truthy iff
+    the reset ran.
+    """
+    from factory.chain.event_log import log_story_event, read_story_events
+    from factory.chain.handlers import persist_story
+
+    if story.state not in _MERGEABLE_STATES:
+        # Defensive: the caller already guards on this. Never rebuild a story
+        # that isn't sitting in a mergeable state.
+        return "failed"
+
+    events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+    prior_rebuilds = [e for e in events if e.get("event") == "conflict_rebuild_redispatch"]
+
+    if len(prior_rebuilds) >= _MAX_CONFLICT_REBUILDS:
+        if not any(e.get("event") == "conflict_rebuild_exhausted" for e in events):
+            try:
+                log_story_event(
+                    story.id,
+                    "conflict_rebuild_exhausted",
+                    {
+                        "pr_number": pr_number,
+                        "rebuilds": len(prior_rebuilds),
+                        "cap": _MAX_CONFLICT_REBUILDS,
+                    },
+                    software_factory_root=root,
+                    slug_hint=story.slug,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        return "exhausted"
+
+    reset = reset_fn or _reset_branch_for_fresh_rebuild
+    try:
+        did_reset = bool(reset(story=story, app_config=app_config, pr_number=pr_number, root=root))
+    except Exception:  # noqa: BLE001 - fail-safe: fall back to park
+        did_reset = False
+    if not did_reset:
+        return "failed"
+
+    # Fresh-branch reset ran: clear the PR + branch pointers so the dev / PR-open
+    # flow cuts a NEW branch from origin/main and opens a NEW PR (the old ones
+    # were just discarded).
+    story.github_pr_number = None
+    story.github_branch = None
+    base = app_config.default_branch or "main"
+    # Feed the conflict back as a reviewer finding so the dev run knows WHY it is
+    # rebuilding (reuse the existing reviewer-findings plumbing, same shape as
+    # the CI-failure re-dispatch — a well-formed dict, never a bare string).
+    finding = {
+        "severity": "high",
+        "criterion": "merge_conflict",
+        "location": f"PR #{pr_number} vs {base}",
+        "what": (
+            f"PR #{pr_number} became un-mergeable — a real merge conflict with "
+            f"{base} that could not be reconciled by updating the branch. The "
+            "stale branch has been discarded; rebuild the same change cleanly on "
+            "top of current main so it merges without conflict. Do NOT attempt to "
+            "resurrect the old branch."
+        ),
+    }
+    story.reviewer_result_json = json.dumps(
+        {
+            "findings": [finding],
+            "source": "merge_conflict",
+            "summary": (
+                "PR conflicted with main; rebuild the change on a fresh branch "
+                "cut from current main."
+            ),
+        }
+    )
+    story.state = StoryState.REVIEWER_REQUESTED_CHANGES.value
+    # Reset BOTH per-loop counters (mirror _handle_ci_failure): a rebuild hits an
+    # already-approved story whose reviewer_cycles may be near the cap; without
+    # resetting, the follow-up review pass could trip non-convergence on the
+    # first pass and mislabel a conflict rebuild.
+    story.dev_retries = 0
+    story.reviewer_cycles = 0
+    try:
+        persist_story(story, db)
+    except Exception:  # noqa: BLE001 - could not persist the re-dispatch → park
+        return "failed"
+
+    try:
+        log_story_event(
+            story.id,
+            "conflict_rebuild_redispatch",
+            {
+                "pr_number": pr_number,
+                "attempt": len(prior_rebuilds) + 1,
+                "cap": _MAX_CONFLICT_REBUILDS,
+            },
+            software_factory_root=root,
+            slug_hint=story.slug,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return "rebuild_redispatched"
+
+
 def auto_merge_tick(
     software_factory_root: Path,
     app: str,
@@ -1645,6 +1972,7 @@ def auto_merge_tick(
     cfg = load_app_config(app, root)
 
     fixtures: list[FixturePR] = list(fixture_prs or [])
+
     def _story_worktree(root: Path, app: str, db_story: StoryRecord | None) -> Path | None:
         """The story's chain worktree, RECREATED on demand — command gates
         (smoke-green boots the PR's OWN code) need a local tree to run in.
@@ -1690,12 +2018,18 @@ def auto_merge_tick(
             if feat:
                 fetched = subprocess.run(
                     ["git", "fetch", "origin", feat],
-                    cwd=str(wt), check=False, capture_output=True, timeout=60,
+                    cwd=str(wt),
+                    check=False,
+                    capture_output=True,
+                    timeout=60,
                 )
                 if fetched.returncode == 0:
                     subprocess.run(
                         ["git", "reset", "--hard", f"origin/{feat}"],
-                        cwd=str(wt), check=False, capture_output=True, timeout=60,
+                        cwd=str(wt),
+                        check=False,
+                        capture_output=True,
+                        timeout=60,
                     )
             # Refresh the branch with the CURRENT base before gates run. A
             # PR that lingered through review cycles goes stale as siblings
@@ -1707,16 +2041,24 @@ def auto_merge_tick(
             base = cfg.default_branch or "main"
             subprocess.run(
                 ["git", "fetch", "origin", base],
-                cwd=str(wt), check=False, capture_output=True, timeout=60,
+                cwd=str(wt),
+                check=False,
+                capture_output=True,
+                timeout=60,
             )
             merged = subprocess.run(
                 ["git", "merge", "--no-edit", f"origin/{base}"],
-                cwd=str(wt), capture_output=True, timeout=120,
+                cwd=str(wt),
+                capture_output=True,
+                timeout=120,
             )
             if merged.returncode != 0:
                 subprocess.run(
                     ["git", "merge", "--abort"],
-                    cwd=str(wt), check=False, capture_output=True, timeout=60,
+                    cwd=str(wt),
+                    check=False,
+                    capture_output=True,
+                    timeout=60,
                 )
             return wt
         except Exception:
@@ -1981,9 +2323,7 @@ def auto_merge_tick(
                     # forever). Best-effort/idempotent; never raises.
                     from factory.chain.dual_draft import close_abandoned_draft_sibling
 
-                    close_abandoned_draft_sibling(
-                        story, cfg, root, db, github_client, dry_run
-                    )
+                    close_abandoned_draft_sibling(story, cfg, root, db, github_client, dry_run)
         elif (
             not dry_run
             and not action.merged
@@ -2009,8 +2349,10 @@ def auto_merge_tick(
                     f.story.id, software_factory_root=root, slug_hint=f.story.slug
                 )
             )
-            if not _already_tried and not dry_run and _attempt_pr_reconcile(
-                app_config=cfg, pr_number=action.pr_number
+            if (
+                not _already_tried
+                and not dry_run
+                and _attempt_pr_reconcile(app_config=cfg, pr_number=action.pr_number)
             ):
                 # Branch advanced — skip sinking; re-evaluate mergeability on the
                 # next tick instead of blocking.
@@ -2025,29 +2367,69 @@ def auto_merge_tick(
                 except Exception:  # noqa: BLE001
                     pass
             else:
-                # Truly conflicting (or reconcile already tried). Sink so the
-                # worker stops retrying and drive_chain can drain to DONE.
+                # Reconcile failed (or was already tried). Before PARKING, if
+                # this is a GENUINE content conflict (not closed/merged, and not
+                # merely BEHIND — update-branch above handles behind), try to
+                # REBUILD the change on a FRESH branch cut from current main: a
+                # branch cut from an older main re-conflicts at PR-open's
+                # ``git merge origin/main`` forever otherwise. Bounded by
+                # ``_MAX_CONFLICT_REBUILDS`` (event-log cap) so a genuinely
+                # unresolvable conflict parks after N rebuilds and never loops.
+                # FAIL-SAFE: any error here falls back to the park below.
+                _rebuilt = False
                 try:
-                    if not dry_run and not _already_tried:
-                        log_story_event(
-                            f.story.id,
-                            "auto_merge_reconcile_attempt",
-                            {"pr_number": action.pr_number, "result": "still_conflicting"},
-                            software_factory_root=root,
-                            slug_hint=f.story.slug,
+                    if not dry_run and _pr_is_conflicting(
+                        app_config=cfg, pr_number=action.pr_number
+                    ):
+                        _outcome = _handle_pr_conflict_rebuild(
+                            story=f.story,
+                            app_config=cfg,
+                            pr_number=action.pr_number,
+                            db=db,
+                            root=root,
                         )
-                    f.story.state = advance(f.story, EVENT_PR_UNMERGEABLE).value
-                    f.story.error = (
-                        f"auto-merge gave up: PR #{action.pr_number} is terminally "
-                        f"un-mergeable (closed/merged/conflicting) after a branch-"
-                        f"update attempt. Needs regeneration or human resolution."
-                    )
-                    eng = _engine(db)
-                    with Session(eng) as session:
-                        session.add(f.story)
-                        session.commit()
-                except Exception:
-                    pass
+                        if _outcome == "rebuild_redispatched":
+                            _rebuilt = True
+                            try:
+                                log_story_event(
+                                    f.story.id,
+                                    "auto_merge_reconcile_attempt",
+                                    {
+                                        "pr_number": action.pr_number,
+                                        "result": "conflict_rebuild_redispatch",
+                                    },
+                                    software_factory_root=root,
+                                    slug_hint=f.story.slug,
+                                )
+                            except Exception:  # noqa: BLE001
+                                pass
+                except Exception:  # noqa: BLE001 - never break the tick; park below
+                    _rebuilt = False
+                if not _rebuilt:
+                    # Not a conflict, rebuild cap exhausted, or the reset failed.
+                    # Sink so the worker stops retrying and drive_chain can drain
+                    # to DONE.
+                    try:
+                        if not dry_run and not _already_tried:
+                            log_story_event(
+                                f.story.id,
+                                "auto_merge_reconcile_attempt",
+                                {"pr_number": action.pr_number, "result": "still_conflicting"},
+                                software_factory_root=root,
+                                slug_hint=f.story.slug,
+                            )
+                        f.story.state = advance(f.story, EVENT_PR_UNMERGEABLE).value
+                        f.story.error = (
+                            f"auto-merge gave up: PR #{action.pr_number} is terminally "
+                            f"un-mergeable (closed/merged/conflicting) after a branch-"
+                            f"update attempt. Needs regeneration or human resolution."
+                        )
+                        eng = _engine(db)
+                        with Session(eng) as session:
+                            session.add(f.story)
+                            session.commit()
+                    except Exception:
+                        pass
         # Part 2 — the per-PR evaluation refused to merge this dual-draft
         # alternative because a SIBLING already shipped. Terminally supersede
         # this loser and close its PR so it can never merge a redundant second
@@ -2092,11 +2474,7 @@ def auto_merge_tick(
             # checks is NOT an error — the merge is pending, not failed.
             # Reporting it as an error every tick would spam the L1 watcher
             # (concern-spam) for a healthy in-flight PR.
-            _ok = (
-                action.merged
-                or action.auto_merge_enabled
-                or action.superseded_by_sibling
-            )
+            _ok = action.merged or action.auto_merge_enabled or action.superseded_by_sibling
             _wge_am(
                 kind="auto_merge_attempt",
                 story_id=_story_id_am,
