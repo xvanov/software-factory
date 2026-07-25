@@ -1292,7 +1292,9 @@ def off_cmd(
     if still_running:
         console.print(f"[red]Still running: {', '.join(still_running)}[/red]")
         raise typer.Exit(code=1)
-    console.print(Panel.fit("[bold red]FACTORY OFF[/bold red] — nothing running, $0/hour", title="off"))
+    console.print(
+        Panel.fit("[bold red]FACTORY OFF[/bold red] — nothing running, $0/hour", title="off")
+    )
 
 
 @app.command("on")
@@ -1326,7 +1328,10 @@ def on_cmd() -> None:
     mode = get_mode(_FACTORY_ROOT)
     note = "" if mode == "normal" else f"\n[yellow]NOTE: factory mode is '{mode}'[/yellow]"
     console.print(
-        Panel.fit(f"[bold green]FACTORY ON[/bold green] — {len(report['started'])} unit(s){note}", title="on")
+        Panel.fit(
+            f"[bold green]FACTORY ON[/bold green] — {len(report['started'])} unit(s){note}",
+            title="on",
+        )
     )
 
 
@@ -3458,3 +3463,102 @@ def version_cmd() -> None:
         dirty_flag = ""
     typer.echo(f"{state.sha} {state.branch}{dirty_flag}")
     raise typer.Exit(code=0)
+
+
+@app.command("audit-chain")
+def audit_chain_cmd(
+    stream: str | None = typer.Option(
+        None, "--stream", help="Verify only this stream (default: every stream present)"
+    ),
+    limit: int = typer.Option(10, "--limit", "-n", help="Max problems to print per stream"),
+) -> None:
+    """Verify the tamper-evident hash chain over ``state/events/*.ndjson``.
+
+    The event streams are the factory's memory of itself — the FMS reads them to
+    decide what is wrong, and an operator reads them to decide whether the FMS
+    was right. Each record now carries ``chain_id``/``seq``/``prev_hash``/
+    ``entry_hash``, so an edited, deleted, reordered, or foreign row is
+    detectable instead of indistinguishable from real history.
+
+    Benign conditions are reported SEPARATELY from tampering, because conflating
+    them would make this cry wolf on every deployment:
+
+    * ``unchained_legacy_rows`` — written before chaining existed. Expected.
+    * ``truncated_by_rotation`` — size-based rotation dropped an old segment.
+    * ``seq_gap`` — a jump mid-stream, usually a rotation boundary.
+    * ``broken_link`` / ``foreign_chain_id`` / ``corrupt_entry`` — history was
+      altered, or a row came from a different origin (e.g. a test run's chain).
+
+    Exit code 0 unless a genuine tamper verdict is found, then 1.
+    """
+    from factory.observability.audit_chain import (
+        TAMPER_VERDICTS,
+        chain_id_for,
+        known_streams,
+        verify_stream,
+    )
+
+    events_dir = _FACTORY_ROOT / "state" / "events"
+    if not events_dir.exists():
+        console.print(f"[yellow]no event streams at {events_dir}[/yellow]")
+        raise typer.Exit(code=0)
+
+    streams = [stream] if stream else known_streams(events_dir)
+    if not streams:
+        console.print("[yellow]no streams found to verify[/yellow]")
+        raise typer.Exit(code=0)
+
+    expected = chain_id_for(events_dir)
+    console.print(Panel.fit(f"chain_id={expected}\nstreams={len(streams)}", title="audit-chain"))
+
+    table = Table(title="chain verification")
+    table.add_column("stream")
+    table.add_column("records", justify="right")
+    table.add_column("chained", justify="right")
+    table.add_column("legacy", justify="right")
+    table.add_column("verdict")
+
+    tampered: list[Any] = []
+    for name in streams:
+        report = verify_stream(name, events_dir=events_dir, expected_chain_id=expected)
+        if report.total_records == 0:
+            continue
+        if report.tampered:
+            tampered.append(report)
+            colour = "red"
+        elif report.verdicts:
+            colour = "yellow"
+        else:
+            colour = "green"
+        table.add_row(
+            report.stream,
+            str(report.total_records),
+            str(report.chained_records),
+            str(report.unchained_records),
+            f"[{colour}]{', '.join(report.verdicts) or 'ok'}[/{colour}]",
+        )
+    console.print(table)
+
+    if not tampered:
+        console.print(
+            "[green]No tampering detected. Any verdicts above are benign "
+            "(legacy rows / rotation).[/green]"
+        )
+        raise typer.Exit(code=0)
+
+    for report in tampered:
+        problems = [p for p in report.problems if p.get("verdict") in TAMPER_VERDICTS]
+        console.print(
+            Panel.fit(
+                "\n".join(
+                    f"[{p.get('ts') or '?'}] {p['verdict']}: {p['detail']}"
+                    for p in problems[:limit]
+                )
+                or "(no detail)",
+                title=f"[red]TAMPER — {report.stream}[/red]",
+            )
+        )
+        if len(problems) > limit:
+            console.print(f"[dim]... {len(problems) - limit} more (raise --limit)[/dim]")
+
+    raise typer.Exit(code=1)
