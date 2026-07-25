@@ -212,3 +212,86 @@ def test_noop_when_in_sync(tmp_path: Path) -> None:
     res = _invoke(live, gate="true")
     assert res.returncode == 0
     assert "already in sync" in res.stdout
+
+
+# --------------------------------------------------------------------------- #
+# Non-Python assets (regression)
+# --------------------------------------------------------------------------- #
+
+
+@_GITSKIP
+def test_non_python_factory_assets_are_deployed(tmp_path: Path) -> None:
+    """factory/ ships more than Python, and those assets must reach the live tree.
+
+    The changed-file filter was ``\\.py$``, so two asset classes could be merged
+    to main and never deploy:
+
+      * ``factory/personas/*.md`` — the persona prompts. ``prompt_edit`` is the
+        FMS's SAFEST self-edit class, so the loop could merge a prompt
+        improvement that never reached the running factory.
+      * ``factory/observability/conformance_model.yaml`` — the conformance
+        checker raises on a missing model, so the live box would exit 2 and its
+        detector would silently report no findings: a verifier that looks
+        healthy because it never ran.
+    """
+    live = _setup(
+        tmp_path,
+        local_files={"factory/chain/foo.py": "V = 1\n"},
+        main_files={
+            "factory/chain/foo.py": "V = 2\n",
+            "factory/personas/dev.md": "# Dev persona — `dev`\n",
+            "factory/observability/conformance_model.yaml": "version: 1\n",
+        },
+    )
+    proc = _invoke(live, gate="true")
+    assert proc.returncode == 0, proc.stderr
+
+    assert (live / "factory/personas/dev.md").exists(), "persona prompt was not deployed"
+    assert (live / "factory/observability/conformance_model.yaml").exists(), (
+        "conformance model was not deployed"
+    )
+    assert (live / "factory/chain/foo.py").read_text(encoding="utf-8") == "V = 2\n"
+
+
+@_GITSKIP
+def test_data_assets_are_not_fed_to_the_import_gate(tmp_path: Path) -> None:
+    """A deployed .md/.yaml must never be turned into a dotted module name.
+
+    ``${f%.py}`` leaves a non-Python path intact, so widening the file filter
+    without also filtering the gate would hand importlib
+    ``factory.observability.conformance_model.yaml`` and fail with a
+    ModuleNotFoundError for a module that was never supposed to exist —
+    reverting a perfectly good deploy. A failure of exactly that shape
+    ("No module named 'factory.chain.beta'") took this unit down on 2026-07-24.
+
+    Uses the REAL gate (no IMPORT_GATE_CMD injection) so the module-name
+    derivation is what is under test.
+    """
+    live = _setup(
+        tmp_path,
+        local_files={"factory/__init__.py": "", "factory/personas/dev.md": "# old\n"},
+        main_files={"factory/__init__.py": "", "factory/personas/dev.md": "# new\n"},
+    )
+    proc = subprocess.run(
+        ["bash", str(_SCRIPT)],
+        cwd=str(live),
+        env={
+            "FACTORY_DIR": str(live),
+            "PATH": os.environ["PATH"],
+            "SKIP_MANAGER_RESTART": "1",
+            "LOCK_FILE": str(live.parent / "sd.lock"),
+            # Stand in for `uv run python` so the gate's real module-name
+            # derivation runs without needing the project env. Any argument that
+            # is not an importable module makes this fail, which is the point.
+            "IMPORT_GATE_CMD": (
+                "python3 -c 'import sys; "
+                'sys.exit(1) if any(a.endswith((".yaml", ".md", ".json")) '
+                "for a in sys.argv[1:]) else sys.exit(0)'"
+            ),
+        },
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert proc.returncode == 0, f"a data-only deploy must not fail the gate: {proc.stderr}"
+    assert (live / "factory/personas/dev.md").read_text(encoding="utf-8") == "# new\n"

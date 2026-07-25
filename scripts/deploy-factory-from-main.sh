@@ -94,7 +94,20 @@ cd "$FACTORY_DIR"
 git fetch --quiet "$GIT_REMOTE" "$GIT_BRANCH" || { alert "git fetch failed"; exit 1; }
 
 # ── Changed factory/** source files (working tree vs main) ──────────
-mapfile -t ALL_CHANGED < <(git diff --name-only "$REMOTE_REF" -- factory/ | grep -E '\.py$' || true)
+# Python is not the only thing factory/ ships. Two asset classes were silently
+# undeployable because this filter was ``\.py$``:
+#
+#   * factory/personas/*.md      — the persona prompts. ``prompt_edit`` is the
+#     FMS's SAFEST self-edit class, so the loop could merge a prompt improvement
+#     to main that would never reach the running factory.
+#   * factory/observability/*.yaml — e.g. conformance_model.yaml. The conformance
+#     checker raises on a missing model, so the live box would exit 2 and its
+#     detector would silently report no findings — a verifier that looks healthy
+#     because it never ran.
+#
+# Deliberately narrow: only the extensions factory/ actually ships. A blanket
+# match would sweep in __pycache__ and any stray artefact.
+mapfile -t ALL_CHANGED < <(git diff --name-only "$REMOTE_REF" -- factory/ | grep -E '\.(py|md|yaml|yml|json)$' || true)
 
 APPLY=()
 SKIPPED_FORBIDDEN=()
@@ -168,10 +181,20 @@ else
   # Dotted module paths for the deployed files that still EXIST (deletions are
   # skipped). An ``__init__.py`` imports as its PACKAGE dir (so a broken
   # re-export in it is still caught), not skipped.
+  # ONLY Python files are gated. ``${f%.py}`` leaves a non-Python path intact,
+  # so a deployed .md/.yaml asset would be handed to importlib verbatim and fail
+  # with a ModuleNotFoundError for a module that was never supposed to exist —
+  # reverting a perfectly good deploy. (A failure of exactly that shape,
+  # "No module named 'factory.chain.beta'", took this unit down on 2026-07-24.)
+  # Data assets have no import to check; py_compile does not accept them either.
   GATE_MODS=()
   GATE_FILES=()
   for f in "${APPLY[@]}"; do
     [ -f "$f" ] || continue
+    case "$f" in
+      *.py) : ;;
+      *) continue ;;  # data asset: nothing to compile or import
+    esac
     GATE_FILES+=("$f")
     case "$f" in
       */__init__.py) GATE_MODS+=("$(dirname "$f")") ;;  # import the package
@@ -188,7 +211,12 @@ else
   # integration breakage) plus each deployed module's dotted path — run
   # UNCONDITIONALLY on GATE_FILES, not gated on GATE_MODS, so an
   # ``__init__.py``-only deploy is still import-checked.
-  if [ "$GATE_OK" -eq 1 ] && [ "${#GATE_FILES[@]}" -gt 0 ]; then
+  #
+  # Gated on APPLY, not GATE_FILES: a deploy of ONLY data assets (a persona
+  # prompt, the conformance model) has no modules to import but must still
+  # import factory.cli. A malformed YAML that some module parses at import time
+  # would otherwise sail through unchecked.
+  if [ "$GATE_OK" -eq 1 ] && [ "${#APPLY[@]}" -gt 0 ]; then
     # e.g. factory/chain/foo -> factory.chain.foo
     PYIMPORT="import importlib, factory.cli; [importlib.import_module(m.replace('/', '.')) for m in __import__('sys').argv[1:]]"
     if ! uv run python -c "$PYIMPORT" "${GATE_MODS[@]}" >>/tmp/factory-self-deploy-import.log 2>&1; then
