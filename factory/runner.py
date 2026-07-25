@@ -213,6 +213,19 @@ class RunResult:
     # back for free as "infra". Defaults False so every non-infra return path
     # (including a normal red run) is correctly counted as a real attempt.
     premodel_infra: bool = False
+    # Whether the usage/cost numbers on this result are TRUSTWORTHY, as opposed
+    # to merely zero. Three-valued on purpose:
+    #   None  — not applicable: no model call was attempted (dry-run, pre-model
+    #           infra failure). Zero usage is the correct, known answer.
+    #   True  — a model call happened and the provider reported usage we read
+    #           successfully.
+    #   False — a model call happened but the usage/cost read failed or the
+    #           provider did not report a cost. The numbers are a floor, not a
+    #           measurement.
+    # Without this, ``cost_usd == 0.0`` is overloaded three ways and every
+    # aggregator silently treats "unknown" as "free" (measured on the live
+    # ledger: 1016 text runs with output tokens but zero recorded cost).
+    usage_reliable: bool | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -260,6 +273,18 @@ class Run(SQLModel, table=True):
     # not applicable" (pre-model failures, dry-runs) — 0 means "a real call
     # happened and had zero cache hits".
     cached_input_tokens: int | None = None
+    # The persisted half of ``RunResult.premodel_infra`` / ``usage_reliable``.
+    # Both were previously in-memory only, so the ledger could not tell a
+    # dry-run from a pre-model infra failure from a real call whose cost we
+    # failed to read — all three land as ``cost_usd = 0``. Every downstream
+    # aggregator (settings/spend.py, settings/audit.py, observability/queries.py,
+    # the cost_spike + fms_yield detectors) inferred from that zero, so an
+    # unreadable provider response looked exactly like a free run.
+    #
+    # NULL on both = a legacy row written before these columns existed; readers
+    # must fall back to the old heuristic rather than assuming False.
+    premodel_infra: bool | None = None
+    usage_reliable: bool | None = None
 
 
 def _engine(db_path: Path | None = None) -> Any:
@@ -295,6 +320,8 @@ def _record_run(
     direction_id: str | None = None,
     app: str | None = None,
     cached_input_tokens: int | None = None,
+    premodel_infra: bool | None = None,
+    usage_reliable: bool | None = None,
     software_factory_root: Path | None = None,
     started_at: str | None = None,
 ) -> None:
@@ -321,6 +348,8 @@ def _record_run(
             direction_id=direction_id,
             app=app,
             cached_input_tokens=cached_input_tokens,
+            premodel_infra=premodel_infra,
+            usage_reliable=usage_reliable,
         )
         session.add(row)
         session.commit()
@@ -1310,6 +1339,7 @@ async def sandbox_run(
             model_tier=difficulty,
             direction_id=direction_id,
             app=app,
+            premodel_infra=True,
         )
         return RunResult(success=False, error=err, summary=err, premodel_infra=True)
 
@@ -1339,6 +1369,7 @@ async def sandbox_run(
             model_tier=difficulty,
             direction_id=direction_id,
             app=app,
+            premodel_infra=True,
         )
         return RunResult(success=False, error=err, summary=err, premodel_infra=True)
 
@@ -1424,6 +1455,11 @@ async def sandbox_run(
     # work then crashed" (a genuine failed dev attempt — must burn a retry)
     # apart from "the sandbox died before any model work" (infra — free retry).
     _partial_usage: dict[str, float] = {}
+    # Whether the SDK actually reported a cost for this conversation. Kept
+    # separate from ``_partial_usage`` (which is float-valued) so "the provider
+    # reported 0.0" stays distinguishable from "we could not read a cost at
+    # all". Populated inside ``_do_run``; read by every exit path below.
+    _usage_meta: dict[str, bool] = {}
 
     def _do_run() -> tuple[int, int, int, float, str, list[dict[str, Any]]]:
         # ``Conversation`` is a factory that returns LocalConversation/RemoteConversation
@@ -1445,7 +1481,13 @@ async def sandbox_run(
             # cache/fresh split (``cache_read_tokens``) — no need to re-parse
             # a raw litellm response here.
             t_cached = int(getattr(tok, "cache_read_tokens", 0) or 0)
-            cost = float(getattr(stats, "accumulated_cost", 0.0) or 0.0)
+            # Read the cost through a None sentinel rather than a 0.0 default:
+            # an SDK shape change that drops ``accumulated_cost`` would
+            # otherwise be indistinguishable from a genuinely free run, and
+            # every run in the ledger would silently read as $0.
+            _cost_raw = getattr(stats, "accumulated_cost", None)
+            cost = float(_cost_raw or 0.0)
+            _usage_meta["reliable"] = _cost_raw is not None
             # Record usage the instant it is known so a later crash in this
             # function is still attributable to real model work.
             _partial_usage.update(tokens_in=t_in, tokens_out=t_out, cached=t_cached, cost=cost)
@@ -1526,6 +1568,10 @@ async def sandbox_run(
             direction_id=direction_id,
             app=app,
             cached_input_tokens=int(_partial_usage.get("cached", 0) or 0),
+            premodel_infra=not model_did_work,
+            # Only meaningful when the model actually ran: a run that died
+            # before any model work has no usage to be un/reliable about.
+            usage_reliable=_usage_meta.get("reliable") if model_did_work else None,
         )
         return RunResult(
             success=False,
@@ -1541,6 +1587,7 @@ async def sandbox_run(
             recent_tool_calls=[],
             self_summary="",
             premodel_infra=not model_did_work,
+            usage_reliable=_usage_meta.get("reliable") if model_did_work else None,
         )
     except Exception as exc:
         err = f"sandbox run raised: {exc!r}"
@@ -1571,6 +1618,10 @@ async def sandbox_run(
             direction_id=direction_id,
             app=app,
             cached_input_tokens=int(_partial_usage.get("cached", 0) or 0),
+            premodel_infra=not model_did_work,
+            # Only meaningful when the model actually ran: a run that died
+            # before any model work has no usage to be un/reliable about.
+            usage_reliable=_usage_meta.get("reliable") if model_did_work else None,
         )
         return RunResult(
             success=False,
@@ -1588,6 +1639,7 @@ async def sandbox_run(
             recent_tool_calls=[],
             self_summary="",
             premodel_infra=not model_did_work,
+            usage_reliable=_usage_meta.get("reliable") if model_did_work else None,
         )
 
     files_changed = _scan_repo_for_changed_files(Path(repo_path))
@@ -1612,6 +1664,8 @@ async def sandbox_run(
         direction_id=direction_id,
         app=app,
         cached_input_tokens=cached_input_tokens,
+        premodel_infra=False,
+        usage_reliable=_usage_meta.get("reliable", True),
     )
 
     return RunResult(
@@ -1626,6 +1680,7 @@ async def sandbox_run(
         last_assistant_message=last_assistant_message,
         recent_tool_calls=recent_tool_calls,
         self_summary=self_summary,
+        usage_reliable=_usage_meta.get("reliable", True),
     )
 
 
@@ -1732,6 +1787,7 @@ def text_run(
             model_tier=model_tier,
             direction_id=direction_id,
             app=app,
+            premodel_infra=True,
         )
         raise RuntimeError(msg)
 
@@ -1787,6 +1843,10 @@ def text_run(
     tokens_out = 0
     cached_input_tokens = 0
     cost_usd = 0.0
+    # Starts True and is only ever cleared: if ANY attempt in the retry ladder
+    # failed to yield a cost, the accumulated total is a floor, not a
+    # measurement, and the whole row is flagged unreliable.
+    usage_reliable = True
     text = ""
     parsed: dict[str, Any] | None = None
     last_finish_reason: str | None = None
@@ -1831,10 +1891,19 @@ def text_run(
         attempt_out = int(usage.get("completion_tokens", 0) or 0)
         tokens_out += attempt_out
         cached_input_tokens += _extract_cached_tokens(usage)
+        # LiteLLM reports the computed price on a private attribute. Treat a
+        # missing attribute, a missing key, or a raise as UNKNOWN rather than
+        # zero — silently adding 0.0 is how 1016 live text runs ended up with
+        # output tokens and no recorded cost, indistinguishable from free runs.
         try:
-            cost_usd += float(getattr(response, "_hidden_params", {}).get("response_cost") or 0.0)
-        except Exception:
-            pass
+            _hidden = getattr(response, "_hidden_params", None)
+            _attempt_cost = _hidden.get("response_cost") if isinstance(_hidden, dict) else None
+            if _attempt_cost is None:
+                usage_reliable = False
+            else:
+                cost_usd += float(_attempt_cost)
+        except Exception:  # noqa: BLE001 - a cost read must never fail the call
+            usage_reliable = False
         try:
             last_finish_reason = response["choices"][0].get("finish_reason")
         except Exception:
@@ -1892,6 +1961,8 @@ def text_run(
                         direction_id=direction_id,
                         app=app,
                         cached_input_tokens=cached_input_tokens,
+                        premodel_infra=False,
+                        usage_reliable=usage_reliable,
                     )
                     raise RuntimeError(
                         f"JSON-mode response was not valid JSON after "
@@ -1926,6 +1997,8 @@ def text_run(
         direction_id=direction_id,
         app=app,
         cached_input_tokens=cached_input_tokens,
+        premodel_infra=False,
+        usage_reliable=usage_reliable,
     )
 
     if schema is not None:

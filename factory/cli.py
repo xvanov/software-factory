@@ -1292,7 +1292,9 @@ def off_cmd(
     if still_running:
         console.print(f"[red]Still running: {', '.join(still_running)}[/red]")
         raise typer.Exit(code=1)
-    console.print(Panel.fit("[bold red]FACTORY OFF[/bold red] — nothing running, $0/hour", title="off"))
+    console.print(
+        Panel.fit("[bold red]FACTORY OFF[/bold red] — nothing running, $0/hour", title="off")
+    )
 
 
 @app.command("on")
@@ -1326,7 +1328,10 @@ def on_cmd() -> None:
     mode = get_mode(_FACTORY_ROOT)
     note = "" if mode == "normal" else f"\n[yellow]NOTE: factory mode is '{mode}'[/yellow]"
     console.print(
-        Panel.fit(f"[bold green]FACTORY ON[/bold green] — {len(report['started'])} unit(s){note}", title="on")
+        Panel.fit(
+            f"[bold green]FACTORY ON[/bold green] — {len(report['started'])} unit(s){note}",
+            title="on",
+        )
     )
 
 
@@ -1896,6 +1901,11 @@ def audit_cmd(
             f"  [yellow]~estimated={report.estimated_cost_pct:.1f}% "
             f"(${report.estimated_cost_usd:.4f})[/yellow]"
         )
+    if report.unreliable_usage_run_count > 0:
+        header += (
+            f"  [red]?unreliable={report.unreliable_usage_pct:.1f}% "
+            f"({report.unreliable_usage_run_count} runs)[/red]"
+        )
     console.print(Panel.fit(header, title="audit"))
 
     def _rows_table(title: str, key_col: str, rows: list[Any]) -> Table:
@@ -1910,7 +1920,14 @@ def audit_cmd(
             # ``~`` marks rows whose cost_usd includes spend priced at an
             # ESTIMATED rate (see the footnote below) — operators must not
             # read these as exact until reconciled against the real bill.
-            key_display = f"~{row.key}" if row.has_estimated_cost else row.key
+            # ``?`` marks rows containing a run that called a model but whose
+            # usage we never read at all: that row's cost is a FLOOR, not a
+            # measurement. A row can carry both markers.
+            key_display = row.key
+            if row.has_estimated_cost:
+                key_display = f"~{key_display}"
+            if getattr(row, "has_unreliable_usage", False):
+                key_display = f"?{key_display}"
             t.add_row(
                 key_display,
                 str(row.run_count),
@@ -1938,6 +1955,25 @@ def audit_cmd(
                 title="audit — cost-accuracy caveat",
             )
         )
+
+    if report.unreliable_usage_run_count > 0 or report.unknown_usage_run_count > 0:
+        lines = []
+        if report.unreliable_usage_run_count > 0:
+            lines.append(
+                f"[red]? marks rows containing a run that CALLED a model but "
+                f"reported no readable usage/cost: "
+                f"{report.unreliable_usage_run_count} run(s), "
+                f"{report.unreliable_usage_pct:.1f}% of the window. Their cost "
+                f"is a floor — total_cost_usd understates by an unknown "
+                f"amount.[/red]"
+            )
+        if report.unknown_usage_run_count > 0:
+            lines.append(
+                f"[dim]{report.unknown_usage_run_count} run(s) predate the "
+                f"usage_reliable column and are neither confirmed reliable nor "
+                f"flagged; they are excluded from the percentage above.[/dim]"
+            )
+        console.print(Panel.fit("\n".join(lines), title="audit — usage-completeness caveat"))
 
     u = report.unattributed
     by_persona = ", ".join(f"{k}={v}" for k, v in sorted(u.by_persona.items())) or "(none)"
@@ -1967,6 +2003,10 @@ def audit_cmd(
                 "LiteLLM price entry until someone registers one), or (b) the "
                 "provider changed a rate LiteLLM/our registration hasn't caught "
                 "up with yet.\n"
+                "  3b. Case (a) is no longer silent: a call that returned no "
+                "readable cost now records usage_reliable=False and surfaces in "
+                "the usage-completeness panel above. A non-zero ? count is the "
+                "first thing to check when the bill exceeds our total.\n"
                 "  4. The 'unattributed' panel above does NOT explain a variance "
                 "against the bill — those runs still recorded a cost_usd, they "
                 "just aren't tied to a story/direction/app.",
