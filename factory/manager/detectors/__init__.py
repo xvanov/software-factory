@@ -22,6 +22,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 
+from factory.manager.detectors.conformance_breach import conformance_breach
 from factory.manager.detectors.cost_spike import cost_spike
 from factory.manager.detectors.fms_yield import fms_yield
 from factory.manager.detectors.placeholder_prompts import placeholder_prompts
@@ -36,6 +37,7 @@ from factory.manager.detectors.worktree_orphans import worktree_orphans
 __all__ = [
     "DETECTORS",
     "DETECTOR_DOCS",
+    "conformance_breach",
     "cost_spike",
     "fms_yield",
     "placeholder_prompts",
@@ -53,6 +55,7 @@ DETECTORS: dict[str, Callable] = {
     "retry_storm": retry_storm,
     "review_churn": review_churn,
     "cost_spike": cost_spike,
+    "conformance_breach": conformance_breach,
     "fms_yield": fms_yield,
     "tick_duration_outliers": tick_duration_outliers,
     "state_distribution_skew": state_distribution_skew,
@@ -61,7 +64,4 @@ DETECTORS: dict[str, Callable] = {
     "stalled_stories": stalled_stories,
 }
 
-DETECTOR_DOCS: dict[str, str] = {
-    name: inspect.getdoc(fn) or ""
-    for name, fn in DETECTORS.items()
-}
+DETECTOR_DOCS: dict[str, str] = {name: inspect.getdoc(fn) or "" for name, fn in DETECTORS.items()}

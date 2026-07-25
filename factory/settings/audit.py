@@ -56,6 +56,15 @@ class RollupRow:
     # ``azure/deepseek-v4-pro``'s cache-read rate) — the CLI marks these
     # rows with ``~`` so operators don't read a guess as exact.
     has_estimated_cost: bool = False
+    # True if ANY run in this bucket made a real model call whose usage/cost we
+    # could NOT read (``Run.usage_reliable is False``). Distinct from
+    # ``has_estimated_cost``: that flags a known-quantity priced at a guessed
+    # RATE; this flags a quantity we never measured at all, so the bucket's
+    # cost is a floor. The CLI marks these rows with ``?``.
+    has_unreliable_usage: bool = False
+    # Number of runs in the bucket flagged unreliable — lets an operator see
+    # whether it's one straggler or the whole bucket.
+    unreliable_run_count: int = 0
 
 
 @dataclass
@@ -88,6 +97,18 @@ class AuditReport:
     estimated_cost_usd: float = 0.0
     estimated_cost_pct: float = 0.0
     estimated_models: tuple[str, ...] = ()
+    # Usage-completeness caveat: runs that DID call a model but whose usage or
+    # cost could not be read (``Run.usage_reliable is False``). Their recorded
+    # cost is a floor, so ``total_cost_usd`` understates by an unknown amount.
+    # ``unreliable_usage_pct`` is the share of runs, not of dollars — the whole
+    # point is that we don't know their dollars.
+    #
+    # Legacy rows (written before the column existed) have ``usage_reliable is
+    # None`` and are counted in ``unknown_usage_run_count`` instead, so a
+    # backfill gap can't masquerade as a clean bill of health.
+    unreliable_usage_run_count: int = 0
+    unreliable_usage_pct: float = 0.0
+    unknown_usage_run_count: int = 0
 
 
 def _window_runs(
@@ -155,6 +176,9 @@ def _rollup(runs: list[Run], keyfn: Callable[[Run], str | None]) -> list[RollupR
         row.duration_s += float(r.duration_s or 0.0)
         if _model_cost_is_estimated(r.model):
             row.has_estimated_cost = True
+        if getattr(r, "usage_reliable", None) is False:
+            row.has_unreliable_usage = True
+            row.unreliable_run_count += 1
     for row in buckets.values():
         row.cost_usd = round(row.cost_usd, 6)
     return sorted(buckets.values(), key=lambda row: row.cost_usd, reverse=True)
@@ -205,6 +229,13 @@ def build_audit_report(
         round(100.0 * estimated_cost_usd / total_cost_usd, 2) if total_cost_usd else 0.0
     )
 
+    # Usage completeness. A run is only "unreliable" when it explicitly recorded
+    # False — None means the row predates the column, which is a DIFFERENT
+    # (and equally reportable) kind of not-knowing.
+    unreliable_usage_run_count = sum(1 for r in runs if getattr(r, "usage_reliable", None) is False)
+    unknown_usage_run_count = sum(1 for r in runs if getattr(r, "usage_reliable", None) is None)
+    unreliable_usage_pct = round(100.0 * unreliable_usage_run_count / len(runs), 2) if runs else 0.0
+
     return AuditReport(
         window_days=days,
         total_run_count=len(runs),
@@ -216,6 +247,9 @@ def build_audit_report(
         estimated_cost_usd=estimated_cost_usd,
         estimated_cost_pct=estimated_cost_pct,
         estimated_models=tuple(sorted(estimated_models)),
+        unreliable_usage_run_count=unreliable_usage_run_count,
+        unreliable_usage_pct=unreliable_usage_pct,
+        unknown_usage_run_count=unknown_usage_run_count,
     )
 
 

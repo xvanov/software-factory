@@ -1901,6 +1901,11 @@ def audit_cmd(
             f"  [yellow]~estimated={report.estimated_cost_pct:.1f}% "
             f"(${report.estimated_cost_usd:.4f})[/yellow]"
         )
+    if report.unreliable_usage_run_count > 0:
+        header += (
+            f"  [red]?unreliable={report.unreliable_usage_pct:.1f}% "
+            f"({report.unreliable_usage_run_count} runs)[/red]"
+        )
     console.print(Panel.fit(header, title="audit"))
 
     def _rows_table(title: str, key_col: str, rows: list[Any]) -> Table:
@@ -1915,7 +1920,14 @@ def audit_cmd(
             # ``~`` marks rows whose cost_usd includes spend priced at an
             # ESTIMATED rate (see the footnote below) — operators must not
             # read these as exact until reconciled against the real bill.
-            key_display = f"~{row.key}" if row.has_estimated_cost else row.key
+            # ``?`` marks rows containing a run that called a model but whose
+            # usage we never read at all: that row's cost is a FLOOR, not a
+            # measurement. A row can carry both markers.
+            key_display = row.key
+            if row.has_estimated_cost:
+                key_display = f"~{key_display}"
+            if getattr(row, "has_unreliable_usage", False):
+                key_display = f"?{key_display}"
             t.add_row(
                 key_display,
                 str(row.run_count),
@@ -1943,6 +1955,25 @@ def audit_cmd(
                 title="audit — cost-accuracy caveat",
             )
         )
+
+    if report.unreliable_usage_run_count > 0 or report.unknown_usage_run_count > 0:
+        lines = []
+        if report.unreliable_usage_run_count > 0:
+            lines.append(
+                f"[red]? marks rows containing a run that CALLED a model but "
+                f"reported no readable usage/cost: "
+                f"{report.unreliable_usage_run_count} run(s), "
+                f"{report.unreliable_usage_pct:.1f}% of the window. Their cost "
+                f"is a floor — total_cost_usd understates by an unknown "
+                f"amount.[/red]"
+            )
+        if report.unknown_usage_run_count > 0:
+            lines.append(
+                f"[dim]{report.unknown_usage_run_count} run(s) predate the "
+                f"usage_reliable column and are neither confirmed reliable nor "
+                f"flagged; they are excluded from the percentage above.[/dim]"
+            )
+        console.print(Panel.fit("\n".join(lines), title="audit — usage-completeness caveat"))
 
     u = report.unattributed
     by_persona = ", ".join(f"{k}={v}" for k, v in sorted(u.by_persona.items())) or "(none)"
@@ -1972,6 +2003,10 @@ def audit_cmd(
                 "LiteLLM price entry until someone registers one), or (b) the "
                 "provider changed a rate LiteLLM/our registration hasn't caught "
                 "up with yet.\n"
+                "  3b. Case (a) is no longer silent: a call that returned no "
+                "readable cost now records usage_reliable=False and surfaces in "
+                "the usage-completeness panel above. A non-zero ? count is the "
+                "first thing to check when the bill exceeds our total.\n"
                 "  4. The 'unattributed' panel above does NOT explain a variance "
                 "against the bill — those runs still recorded a cost_usd, they "
                 "just aren't tied to a story/direction/app.",
@@ -3560,5 +3595,119 @@ def audit_chain_cmd(
         )
         if len(problems) > limit:
             console.print(f"[dim]... {len(problems) - limit} more (raise --limit)[/dim]")
+@app.command("conformance")
+def conformance_cmd(
+    app_name: str | None = typer.Option(None, "--app", help="Only check this app's stories"),
+    story: int | None = typer.Option(None, "--story", help="Only check this story id"),
+    since: str | None = typer.Option(
+        None, "--since", help="Only report findings at/after this ISO-8601 timestamp"
+    ),
+    limit: int = typer.Option(40, "--limit", "-n", help="Max findings to print"),
+) -> None:
+    """Replay the control-plane trace and check it against the abstract model.
+
+    Answers "did the running code emit a trace the model accepts?" — not "does
+    the state machine look right". Reads ``state/events/state_writes.ndjson``
+    (every story state change, emitted by an ORM listener so no writer can
+    escape it) and judges each hop against
+    ``factory/observability/conformance_model.yaml``.
+
+    Two finding kinds, both reported, neither blocking a merge:
+
+    * ``illegal_transition`` — a sanctioned writer produced a state it may not,
+      or a story skipped a whole phase.
+    * ``coverage_breach`` — an undeclared writer changed control-plane state, or
+      the write could not be attributed. This is the load-bearing check: without
+      it, conformance only validates the paths someone remembered to declare and
+      silently blesses everything else.
+
+    Exit code 0 when conformant, 1 when there are findings, 2 on a bad model.
+    """
+    from factory.observability.conformance import (
+        COVERAGE_BREACH,
+        ILLEGAL_TRANSITION,
+        check_live_trace,
+    )
+
+    try:
+        report = check_live_trace(software_factory_root=_FACTORY_ROOT, app=app_name, story_id=story)
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]error:[/red] conformance model unusable: {exc}")
+        raise typer.Exit(code=2) from exc
+
+    findings = report.findings
+    if since:
+        findings = [f for f in findings if (f.ts or "") >= since]
+
+    counts = "  ".join(f"{k}={v}" for k, v in report.counts.items()) or "(no writes recorded)"
+    style = "green" if not findings else "red"
+    console.print(
+        Panel.fit(
+            f"[{style}]checked={report.checked}  findings={len(findings)}[/{style}]\n{counts}",
+            title="conformance — control-plane trace",
+        )
+    )
+
+    if report.checked == 0:
+        # Distinguish "nothing recorded" from "the filter matched nothing" — the
+        # two look identical in the counts and mean very different things.
+        if app_name or story is not None:
+            scope = f"--app {app_name}" if app_name else f"--story {story}"
+            console.print(
+                f"[yellow]No state writes matched {scope}. The stream may hold "
+                "writes for other stories — re-run without the filter to see "
+                "them.[/yellow]"
+            )
+        else:
+            console.print(
+                "[yellow]No state writes recorded yet. The trace is emitted when a "
+                "story's state actually changes — run a tick that advances one, or "
+                "check that state/events/state_writes.ndjson exists.[/yellow]"
+            )
+        raise typer.Exit(code=0)
+
+    if not findings:
+        console.print("[green]Trace is conformant: every state change is accounted for.[/green]")
+        raise typer.Exit(code=0)
+
+    table = Table(title="conformance findings")
+    table.add_column("verdict")
+    table.add_column("story", justify="right")
+    table.add_column("app")
+    table.add_column("from -> to")
+    table.add_column("writer")
+    for finding in findings[:limit]:
+        colour = "red" if finding.verdict == ILLEGAL_TRANSITION else "yellow"
+        table.add_row(
+            f"[{colour}]{finding.verdict}[/{colour}]",
+            str(finding.story_id),
+            str(finding.app or ""),
+            f"{finding.from_state} -> {finding.to_state}",
+            finding.writer,
+        )
+    console.print(table)
+
+    if len(findings) > limit:
+        console.print(f"[dim]... {len(findings) - limit} more (raise --limit)[/dim]")
+
+    if report.unknown_writers:
+        console.print(
+            Panel.fit(
+                "[yellow]Undeclared writers seen in the trace:\n  "
+                + "\n  ".join(report.unknown_writers)
+                + "\n\nEach is a control-plane path the model does not know about. "
+                "Either it is legitimate — add it to allowed_direct_writes in "
+                "factory/observability/conformance_model.yaml with a rationale — "
+                "or it is a bug.[/yellow]",
+                title=f"conformance — {COVERAGE_BREACH}",
+            )
+        )
+
+    # One line per distinct finding shape; the table above is the summary.
+    seen: set[str] = set()
+    for finding in findings:
+        if finding.reason and finding.reason not in seen:
+            seen.add(finding.reason)
+            console.print(f"[dim]- {finding.reason}[/dim]")
 
     raise typer.Exit(code=1)
