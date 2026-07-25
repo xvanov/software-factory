@@ -341,9 +341,28 @@ def _all_paths_are_factory_python_self_edit(paths: list[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _validate_prompt_edit(patch: str, repo_root: Path) -> bool:  # noqa: ARG001
+def _diff_touches_persona_frontmatter(patch: str) -> bool:
+    """True when a persona patch adds or removes a YAML frontmatter delimiter.
+
+    A persona file may carry a ``---`` header holding behavioural config (model,
+    temperature, max_output_tokens). Editing that header is a SETTINGS change
+    wearing a prose change's clothes: the prompt-edit rules (heading preserved,
+    line counts) say nothing useful about it, while the persona_settings rules
+    (numeric clamps) say exactly the right thing. Routing it by which rules
+    actually constrain the risk is the point.
+    """
+    for line in patch.splitlines():
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
+            if line[1:].strip() == "---":
+                return True
+    return False
+
+
+def _validate_prompt_edit(patch: str, repo_root: Path) -> bool:
     """prompt_edit is safe only when the patch:
     - touches only factory/personas/*.md files
+    - does not add or remove a YAML frontmatter delimiter (that is a
+      persona_settings change; it is validated by the numeric clamps instead)
     - does not remove markdown headings
     - ≤50 added, ≤30 deleted lines
     - does not create new files (must edit existing ones)
@@ -356,6 +375,10 @@ def _validate_prompt_edit(patch: str, repo_root: Path) -> bool:  # noqa: ARG001
             return False
     if _diff_creates_new_file(patch):
         return False
+    if _diff_touches_persona_frontmatter(patch):
+        # Not a prose edit. Defer to the settings validator, which clamps the
+        # numeric values a frontmatter block can carry.
+        return _validate_persona_settings(patch, repo_root)
     added, deleted = _diff_line_counts(patch)
     if added > 50 or deleted > 30:
         return False

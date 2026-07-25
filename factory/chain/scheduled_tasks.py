@@ -837,8 +837,15 @@ def _live_run(persona: str, app: str, software_factory_root: Path) -> dict[str, 
         app_repo_path=resolve_app_repo_path(cfg, software_factory_root),
         task_scope=None,
     )
-    persona_md_path = Path(__file__).resolve().parent.parent / "personas" / f"{persona}.md"
-    persona_prompt = persona_md_path.read_text(encoding="utf-8") if persona_md_path.exists() else ""
+    # Go through the loader rather than reading the file directly: it strips
+    # frontmatter (which must never reach the model) and raises on a missing
+    # persona instead of silently degrading to an empty prompt. The old
+    # ``if exists() else ""`` meant a typo'd or deleted persona produced a
+    # scheduled run with NO system prompt that still cost money and still wrote
+    # its findings back as if authoritative.
+    from factory.personas.loader import read_persona_prompt
+
+    persona_prompt = read_persona_prompt(persona)
 
     # UX auditor: enrich the prompt with flow artifacts, app URL, and runtime context.
     if persona == "ux_auditor":
