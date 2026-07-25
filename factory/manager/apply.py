@@ -143,6 +143,19 @@ _FORBIDDEN_PATH_PATTERNS = (
     # is forbidden regardless of the staging gate: staging validates "does the
     # factory run", not "is the bench still honest".
     re.compile(r"^bench/.+$"),  # bench/** (the grader)
+    # The tracer and the verifiers. Weng's rule (cited in
+    # AUDIT-2026-07-24-sota-harness.md): a self-improving agent must not be able
+    # to edit the runs directory, the tracer, the verifier, or the LLM config
+    # that judge it. A loop that can weaken its own integrity check is
+    # unfalsifiable in exactly the way an editable grader is.
+    #
+    # Note these are NOT covered by the manager patterns above: they live under
+    # factory/observability/, and the model_router route table is YAML, which
+    # the ``\.py$`` patterns would miss entirely.
+    re.compile(r"^factory/observability/audit_chain\.py$"),  # the integrity chain
+    re.compile(r"^factory/observability/conformance\.py$"),  # the trace checker
+    re.compile(r"^factory/observability/conformance_model\.yaml$"),  # its abstract model
+    re.compile(r"^factory/observability/state_trace\.py$"),  # the trace emitter
 )
 
 # Sub-pattern that matches *only* manager sub-directory .py files (not the

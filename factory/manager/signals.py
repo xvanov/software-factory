@@ -115,6 +115,27 @@ def write_event(
         directory = _events_dir(software_factory_root)
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{stream}.ndjson"
+
+        # Normalise to a JSON-serializable form BEFORE stamping the chain. The
+        # fallback below repr()s unserializable values; doing that after hashing
+        # would mean the line on disk no longer matches its own entry_hash, and
+        # verification would report a broken link for a record nobody touched.
+        try:
+            json.dumps(record)
+        except (TypeError, ValueError) as enc_exc:
+            safe: dict[str, Any] = {}
+            for k, v in record.items():
+                try:
+                    json.dumps(v)
+                    safe[k] = v
+                except (TypeError, ValueError):
+                    safe[k] = repr(v)
+            record = safe
+            print(
+                f"[signals] non-serializable value in stream={stream}: {enc_exc}",
+                file=sys.stderr,
+            )
+
         # Cap unbounded stream growth: roll the file BEFORE appending when it
         # has crossed the size threshold. Rotation is best-effort and never
         # raises; a failure here must not lose the event we are about to write.
@@ -124,24 +145,32 @@ def write_event(
             rotate_if_needed(path)
         except Exception as rot_exc:  # noqa: BLE001 - telemetry path, never fail
             print(f"[signals] rotation check failed stream={stream!r}: {rot_exc}", file=sys.stderr)
+
+        def _append(line: str) -> None:
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+
+        # Stamp the tamper-evident chain fields (chain_id, seq, prev_hash,
+        # entry_hash) and append, all under one lock, so this stream's history
+        # can be verified rather than merely trusted.
+        #
+        # Deliberately fail-open: if the chain cannot be used (no fcntl,
+        # unwritable head file) nothing has been written yet and we fall through
+        # to a plain unchained append. Losing an event is never acceptable;
+        # losing its link is — and `factory audit-chain` reports unchained rows
+        # explicitly rather than treating their absence as proof of integrity.
+        chained = False
         try:
-            line = json.dumps(record) + "\n"
-        except (TypeError, ValueError) as enc_exc:
-            # Fallback: repr every value that's not serializable
-            safe: dict[str, Any] = {}
-            for k, v in record.items():
-                try:
-                    json.dumps(v)
-                    safe[k] = v
-                except (TypeError, ValueError):
-                    safe[k] = repr(v)
-            line = json.dumps(safe) + "\n"
+            from factory.observability.audit_chain import append_chained
+
+            chained = append_chained(directory, stream, record, _append)
+        except Exception as chain_exc:  # noqa: BLE001 - never lose the event
             print(
-                f"[signals] non-serializable value in stream={stream}: {enc_exc}",
+                f"[signals] chain stamp failed stream={stream!r}: {chain_exc}",
                 file=sys.stderr,
             )
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(line)
+        if not chained:
+            _append(json.dumps(record) + "\n")
     except Exception as exc:  # noqa: BLE001
         # Best-effort: never crash a tick on a telemetry-append failure. But
         # never swallow it silently either — bump an observable counter and log

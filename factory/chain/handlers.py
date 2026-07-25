@@ -250,10 +250,16 @@ def _ensure_story_columns(eng: Any) -> None:
     """
     from sqlalchemy import text
 
+    from factory.observability.schema import stories_migration_columns
+
+    # Use the MERGED column set, not this module's dict alone: the observability
+    # layer migrates the same table from its own list, and the two had drifted
+    # apart. Which columns a live factory.db gained used to depend on which
+    # engine opened it first.
     with eng.begin() as conn:
         rows = conn.execute(text("PRAGMA table_info(stories)")).fetchall()
         existing = {r[1] for r in rows}
-        for col, sqltype in _MIGRATION_COLUMNS.items():
+        for col, sqltype in stories_migration_columns():
             if col in existing:
                 continue
             conn.execute(text(f"ALTER TABLE stories ADD COLUMN {col} {sqltype}"))
