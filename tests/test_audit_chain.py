@@ -46,6 +46,12 @@ def _events(root: Path) -> Path:
     return root / "state" / "events"
 
 
+def _emit_one(args: tuple[str, int]) -> None:
+    """Module-level so ProcessPoolExecutor can pickle it."""
+    root, index = args
+    write_event("runs", {"event": "run_finished", "i": index}, software_factory_root=Path(root))
+
+
 def _emit(root: Path, count: int, stream: str = "runs") -> None:
     for i in range(count):
         write_event(
@@ -374,6 +380,37 @@ def test_concurrent_writers_do_not_collide(tmp_path: Path) -> None:
     records = [json.loads(line) for line in _lines(tmp_path)]
     seqs = sorted(r["seq"] for r in records)
     assert seqs == list(range(1, 41)), "every writer got a distinct seq"
+    report = verify_stream("runs", events_dir=_events(tmp_path))
+    assert not report.tampered, report.as_dict()
+
+
+def test_concurrent_processes_racing_on_head_creation_do_not_collide(tmp_path: Path) -> None:
+    """Separate PROCESSES racing on the first write, head file absent.
+
+    Stronger than the thread test above: ``flock`` is a cross-process lock, and
+    threads in one interpreter can mask a locking mistake that separate
+    processes would expose.
+
+    Honest limitation: this exercises the create path but does NOT
+    deterministically reproduce the truncate-before-lock window that the ``"a+"``
+    open mode fixes. That window needs a specific interleaving (process B calls
+    ``exists()`` before A creates the file, then opens after A has written), and
+    on a fast local filesystem it does not reliably occur — this test passed
+    against the buggy version on three consecutive runs. The fix stands on
+    reasoning (``"w+"`` truncates before the lock is held) and on being simpler
+    code; this test guards the surrounding behaviour, not that one window.
+    """
+    from concurrent.futures import ProcessPoolExecutor
+
+    assert not (_events(tmp_path) / CHAIN_HEADS_FILENAME).exists()
+
+    with ProcessPoolExecutor(max_workers=6) as pool:
+        list(pool.map(_emit_one, [(str(tmp_path), i) for i in range(30)]))
+
+    records = [json.loads(line) for line in _lines(tmp_path)]
+    assert sorted(r["seq"] for r in records) == list(range(1, 31)), (
+        "every process must get a distinct seq"
+    )
     report = verify_stream("runs", events_dir=_events(tmp_path))
     assert not report.tampered, report.as_dict()
 

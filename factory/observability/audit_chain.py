@@ -210,11 +210,15 @@ def append_chained(
         events_dir.mkdir(parents=True, exist_ok=True)
         chain_id = chain_id_for(events_dir)
         heads_path = events_dir / CHAIN_HEADS_FILENAME
-        with (
-            open(heads_path, "r+", encoding="utf-8")
-            if heads_path.exists()
-            else open(heads_path, "w+", encoding="utf-8") as handle
-        ):
+        # "a+" specifically: it creates the file if absent but NEVER truncates.
+        # An earlier version used "w+" for the create case, which truncates at
+        # OPEN time — i.e. before the lock is acquired. A second process
+        # arriving while the first held the lock would blank the head it had
+        # just written, and the next writer would reuse a sequence number,
+        # producing a SEQ_GAP that reads as tampering when nothing was tampered
+        # with. In append mode all writes land at EOF, so the truncate() inside
+        # the lock below is what makes the rewrite work.
+        with open(heads_path, "a+", encoding="utf-8") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:
                 handle.seek(0)
@@ -248,8 +252,15 @@ def append_chained(
                 handle.seek(0)
                 handle.truncate()
                 handle.write(json.dumps(heads, sort_keys=True))
+                # flush() only — deliberately NOT fsync(). This runs on EVERY
+                # telemetry write (the live `prompts` stream alone has 45k
+                # records), and an fsync there costs milliseconds each. flush()
+                # already makes the head visible to other processes and survives
+                # a process crash, which is the failure this needs to tolerate.
+                # A machine crash would lose the appended event line too — that
+                # is not fsynced either — so fsyncing only the head would be
+                # both slower and inconsistent.
                 handle.flush()
-                os.fsync(handle.fileno())
                 return True
             finally:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
