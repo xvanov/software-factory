@@ -75,6 +75,13 @@ _RUNS_NEW_COLUMNS: list[tuple[str, str]] = [
     # storing the split makes cost_usd recomputable once a real rate is
     # confirmed, instead of the guess being baked in unrecoverably.
     ("cached_input_tokens", "INTEGER"),
+    # Usage honesty. Both are NULLable three-state flags, NOT booleans with a
+    # default: NULL means "this row predates the columns", so a reader can tell
+    # a legacy row from one that genuinely recorded False. Without these,
+    # ``cost_usd = 0`` conflates a dry-run, a pre-model infra failure, and a
+    # real call whose cost we could not read.
+    ("premodel_infra", "BOOLEAN"),
+    ("usage_reliable", "BOOLEAN"),
 ]
 
 _STORIES_NEW_COLUMNS: list[tuple[str, str]] = [
@@ -87,14 +94,38 @@ _STORIES_NEW_COLUMNS: list[tuple[str, str]] = [
 ]
 
 
+def stories_migration_columns() -> list[tuple[str, str]]:
+    """Every ``ALTER TABLE stories ADD COLUMN`` this codebase knows about.
+
+    Two modules independently migrate the ``stories`` table: this one (via
+    :func:`migrate`, called from ``runner._engine``) and
+    ``factory.chain.handlers._ensure_story_columns`` (called from its own
+    ``_engine``). They carried DIFFERENT column lists, so which columns a live
+    ``factory.db`` actually gained depended on which engine happened to open it
+    first. No column is missing today, but the divergence is a live trap: a
+    column added to one list is invisible to the other's callers.
+
+    Merging here makes both paths apply the identical set. The chain's dict is
+    imported lazily — ``handlers`` is heavy and imports ``runner``, which
+    imports this module.
+    """
+    merged: dict[str, str] = dict(_STORIES_NEW_COLUMNS)
+    try:
+        from factory.chain.handlers import _MIGRATION_COLUMNS
+
+        for name, sql_type in _MIGRATION_COLUMNS.items():
+            merged.setdefault(name, sql_type)
+    except Exception:  # noqa: BLE001 - a migration must not hard-fail on import
+        pass
+    return list(merged.items())
+
+
 def _existing_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     cur = conn.execute(f"PRAGMA table_info({table})")
     return {row[1] for row in cur.fetchall()}
 
 
-def _ensure_columns(
-    conn: sqlite3.Connection, table: str, columns: list[tuple[str, str]]
-) -> None:
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: list[tuple[str, str]]) -> None:
     existing = _existing_columns(conn, table)
     for name, sql_type in columns:
         if name in existing:
@@ -114,14 +145,12 @@ def migrate(db_path: Path) -> None:
     try:
         existing_tables = {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         if "runs" in existing_tables:
             _ensure_columns(conn, "runs", _RUNS_NEW_COLUMNS)
         if "stories" in existing_tables:
-            _ensure_columns(conn, "stories", _STORIES_NEW_COLUMNS)
+            _ensure_columns(conn, "stories", stories_migration_columns())
         conn.commit()
     finally:
         conn.close()
