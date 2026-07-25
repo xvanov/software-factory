@@ -453,13 +453,24 @@ def truncate_error(text: str, max_length: int = _DEFAULT_ERROR_MAX_LENGTH) -> st
 
 
 def _read_persona_prompt(persona: str) -> str:
-    path = _PERSONAS_DIR / f"{persona}.md"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Persona file missing: {path}. Available: "
-            f"{sorted(p.stem for p in _PERSONAS_DIR.glob('*.md'))}"
-        )
-    return path.read_text(encoding="utf-8")
+    """Return ONLY the system-prompt body for ``persona``.
+
+    Delegates to the persona loader, which strips YAML frontmatter. That
+    stripping is the point: a persona that grows a ``model:`` key must not start
+    describing its own routing to itself inside its system prompt. Files without
+    frontmatter (every persona today) are returned unchanged.
+
+    ``PersonaError`` is re-raised as ``FileNotFoundError`` for a missing file so
+    the eight existing callers keep the exception type they handle.
+    """
+    from factory.personas.loader import PersonaError, read_persona_prompt
+
+    try:
+        return read_persona_prompt(persona, personas_dir=_PERSONAS_DIR)
+    except PersonaError as exc:
+        if "missing" in str(exc):
+            raise FileNotFoundError(str(exc)) from exc
+        raise
 
 
 def _provider_env_key(model: str) -> str | None:

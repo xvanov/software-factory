@@ -1292,7 +1292,9 @@ def off_cmd(
     if still_running:
         console.print(f"[red]Still running: {', '.join(still_running)}[/red]")
         raise typer.Exit(code=1)
-    console.print(Panel.fit("[bold red]FACTORY OFF[/bold red] — nothing running, $0/hour", title="off"))
+    console.print(
+        Panel.fit("[bold red]FACTORY OFF[/bold red] — nothing running, $0/hour", title="off")
+    )
 
 
 @app.command("on")
@@ -1326,7 +1328,10 @@ def on_cmd() -> None:
     mode = get_mode(_FACTORY_ROOT)
     note = "" if mode == "normal" else f"\n[yellow]NOTE: factory mode is '{mode}'[/yellow]"
     console.print(
-        Panel.fit(f"[bold green]FACTORY ON[/bold green] — {len(report['started'])} unit(s){note}", title="on")
+        Panel.fit(
+            f"[bold green]FACTORY ON[/bold green] — {len(report['started'])} unit(s){note}",
+            title="on",
+        )
     )
 
 
@@ -3458,3 +3463,71 @@ def version_cmd() -> None:
         dirty_flag = ""
     typer.echo(f"{state.sha} {state.branch}{dirty_flag}")
     raise typer.Exit(code=0)
+
+
+personas_app = typer.Typer(help="Persona prompt management.")
+app.add_typer(personas_app, name="personas")
+
+
+@personas_app.command("validate")
+def personas_validate_cmd(
+    persona: str | None = typer.Option(None, "--persona", help="Validate only this persona"),
+    strict: bool = typer.Option(False, "--strict", help="Treat warnings as failures too"),
+) -> None:
+    """Check persona prompt files for structural and contract problems.
+
+    Persona prompts are inputs to every paid model call and the chain's entire
+    behaviour depends on them, yet nothing validated them — the only constraint
+    was that the file existed.
+
+    The check that matters most is ``contract_collision``: a prompt that
+    demonstrates a value outside a field's real enum (e.g. ``"scope":
+    "orphan"`` when the contract allows backend/frontend/test). Dev cannot tell
+    an invented example token from a live contract value, implements the
+    example, and the reviewer correctly rejects it every round — structural
+    non-convergence with no bug in either model. That is what happened to story
+    14.
+
+    Exit 0 when clean, 1 on errors (or on warnings with --strict).
+    """
+    from factory.personas.validator import ERROR, validate_all, validate_persona
+
+    if persona:
+        findings = validate_persona(persona)
+        checked = 1
+    else:
+        report = validate_all()
+        findings = report.findings
+        checked = report.checked
+
+    errors = [f for f in findings if f.severity == ERROR]
+    warnings = [f for f in findings if f.severity != ERROR]
+
+    style = "red" if errors else ("yellow" if warnings else "green")
+    console.print(
+        Panel.fit(
+            f"[{style}]checked={checked}  errors={len(errors)}  warnings={len(warnings)}[/{style}]",
+            title="personas — validate",
+        )
+    )
+
+    if findings:
+        table = Table(title="findings")
+        table.add_column("severity")
+        table.add_column("persona")
+        table.add_column("code")
+        table.add_column("detail")
+        for finding in [*errors, *warnings]:
+            colour = "red" if finding.severity == ERROR else "yellow"
+            table.add_row(
+                f"[{colour}]{finding.severity}[/{colour}]",
+                finding.persona,
+                finding.code,
+                finding.message,
+            )
+        console.print(table)
+    else:
+        console.print("[green]All persona files are structurally valid.[/green]")
+
+    if errors or (strict and warnings):
+        raise typer.Exit(code=1)

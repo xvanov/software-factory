@@ -132,15 +132,17 @@ _SAFE_TARGET_CLASSES = {"prompt_edit", "persona_settings", "detector_tool"}
 # *modifying* existing sub-directory files while still allowing new detector
 # additions.  See ``_path_is_forbidden_for_patch`` for the full logic.
 _FORBIDDEN_PATH_PATTERNS = (
-    re.compile(r"^factory/manager/.+\.py$"),           # manager/**/*.py (any depth)
+    re.compile(r"^factory/manager/.+\.py$"),  # manager/**/*.py (any depth)
     re.compile(r"^factory/chain/factory_improver_apply\.py$"),  # the old apply module
-    re.compile(r"^factory/manager/apply\.py$"),        # this module itself (redundant with above, explicit)
+    re.compile(
+        r"^factory/manager/apply\.py$"
+    ),  # this module itself (redundant with above, explicit)
     # WS3.1: the held-out benchmark harness that JUDGES the factory must stay
     # forbidden — the self-improvement loop must never edit the bench that
     # scores it (a loop that can rewrite its own grader is unfalsifiable). This
     # is forbidden regardless of the staging gate: staging validates "does the
     # factory run", not "is the bench still honest".
-    re.compile(r"^bench/.+$"),                         # bench/** (the grader)
+    re.compile(r"^bench/.+$"),  # bench/** (the grader)
 )
 
 # Sub-pattern that matches *only* manager sub-directory .py files (not the
@@ -192,6 +194,7 @@ def _append_history(
         p.write_text(json.dumps(history, indent=2, default=str), encoding="utf-8")
     except OSError as exc:
         import sys
+
         print(f"[manager.apply] WARNING: failed to write history: {exc}", file=sys.stderr)
 
 
@@ -325,9 +328,28 @@ def _all_paths_are_factory_python_self_edit(paths: list[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _validate_prompt_edit(patch: str, repo_root: Path) -> bool:  # noqa: ARG001
+def _diff_touches_persona_frontmatter(patch: str) -> bool:
+    """True when a persona patch adds or removes a YAML frontmatter delimiter.
+
+    A persona file may carry a ``---`` header holding behavioural config (model,
+    temperature, max_output_tokens). Editing that header is a SETTINGS change
+    wearing a prose change's clothes: the prompt-edit rules (heading preserved,
+    line counts) say nothing useful about it, while the persona_settings rules
+    (numeric clamps) say exactly the right thing. Routing it by which rules
+    actually constrain the risk is the point.
+    """
+    for line in patch.splitlines():
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
+            if line[1:].strip() == "---":
+                return True
+    return False
+
+
+def _validate_prompt_edit(patch: str, repo_root: Path) -> bool:
     """prompt_edit is safe only when the patch:
     - touches only factory/personas/*.md files
+    - does not add or remove a YAML frontmatter delimiter (that is a
+      persona_settings change; it is validated by the numeric clamps instead)
     - does not remove markdown headings
     - ≤50 added, ≤30 deleted lines
     - does not create new files (must edit existing ones)
@@ -340,6 +362,10 @@ def _validate_prompt_edit(patch: str, repo_root: Path) -> bool:  # noqa: ARG001
             return False
     if _diff_creates_new_file(patch):
         return False
+    if _diff_touches_persona_frontmatter(patch):
+        # Not a prose edit. Defer to the settings validator, which clamps the
+        # numeric values a frontmatter block can carry.
+        return _validate_persona_settings(patch, repo_root)
     added, deleted = _diff_line_counts(patch)
     if added > 50 or deleted > 30:
         return False
@@ -735,7 +761,9 @@ def _apply_one_manager_proposal(
 
     if classification in ("forbidden", "escalate_to_human"):
         # Record but do not apply.
-        result["status"] = "forbidden" if classification == "forbidden" else "escalation_acknowledged"
+        result["status"] = (
+            "forbidden" if classification == "forbidden" else "escalation_acknowledged"
+        )
         result["branch"] = None
         # WS3.1: an escalation must never die silently in the history file. Open
         # (idempotently) a GitHub issue + emit a loud alert so a human actually
@@ -754,6 +782,7 @@ def _apply_one_manager_proposal(
             )
         except Exception as _esc_exc:  # noqa: BLE001 - notification is best-effort
             import sys
+
             print(
                 f"[manager.apply] WARNING: escalation notification failed: {_esc_exc!r}",
                 file=sys.stderr,
@@ -878,7 +907,12 @@ def _apply_one_manager_proposal(
                     runner=runner,
                     timeout=15,
                 )
-                _run(["git", "clean", "-fd", "--", *_dirty_scope], cwd=root, runner=runner, timeout=15)
+                _run(
+                    ["git", "clean", "-fd", "--", *_dirty_scope],
+                    cwd=root,
+                    runner=runner,
+                    timeout=15,
+                )
             else:
                 _run(["git", "reset", "--hard", "HEAD"], cwd=root, runner=runner, timeout=15)
                 _run(["git", "clean", "-fd"], cwd=root, runner=runner, timeout=15)
@@ -986,6 +1020,7 @@ def _apply_one_manager_proposal(
                     _record_cb(root=root, sha=commit_sha, proposal_path=str(proposal_path))
         except Exception as _cb_record_exc:  # noqa: BLE001
             import sys
+
             print(
                 f"[manager.apply] WARNING: failed to record manager commit for "
                 f"circuit-breaker: {_cb_record_exc!r}",
@@ -994,7 +1029,9 @@ def _apply_one_manager_proposal(
 
         # 5. Push.
         if push:
-            proc = _run(["git", "push", "-u", "origin", branch], cwd=root, runner=runner, timeout=120)
+            proc = _run(
+                ["git", "push", "-u", "origin", branch], cwd=root, runner=runner, timeout=120
+            )
             if proc.returncode != 0:
                 result["status"] = "abandoned"
                 result["error"] = f"git_push_failed: {(proc.stderr or '').strip()[:200]}"
@@ -1132,6 +1169,7 @@ def apply_manager_proposals(
             }
     except Exception as _cb_exc:  # noqa: BLE001
         import sys
+
         print(
             f"[manager.apply] WARNING: circuit-breaker check failed: {_cb_exc!r}; "
             "continuing with apply (fail-open).",
@@ -1204,7 +1242,10 @@ def apply_manager_proposals(
         # Update counters.
         if classification == "safe" and result.get("status") in ("opened_pr", "applied"):
             summary["safe_applied"] += 1
-        elif classification == "risky" and result.get("status") in ("opened_pr", "queued_for_review"):
+        elif classification == "risky" and result.get("status") in (
+            "opened_pr",
+            "queued_for_review",
+        ):
             summary["risky_opened"] += 1
         elif classification == "forbidden":
             summary["forbidden"] += 1
