@@ -42,6 +42,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -167,10 +168,21 @@ def chain_id_for(events_dir: Path) -> str:
             os.close(fd)
         return new_id
     except FileExistsError:
-        try:
-            return path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return new_id
+        # Another writer won the create. It may not have written the id yet, so
+        # an immediate read can come back EMPTY — and returning ``new_id`` there
+        # would mint a second identity for the same directory, which verification
+        # then reports as FOREIGN_CHAIN_ID. Retry briefly instead of inventing
+        # one. ``append_chained`` also calls this inside its lock, so this path
+        # is only reachable via a direct caller (the CLI, the verifier).
+        for _ in range(20):
+            try:
+                existing = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                break
+            if existing:
+                return existing
+            time.sleep(0.01)
+        return new_id
     except OSError:
         return new_id
 
@@ -208,7 +220,6 @@ def append_chained(
 
     try:
         events_dir.mkdir(parents=True, exist_ok=True)
-        chain_id = chain_id_for(events_dir)
         heads_path = events_dir / CHAIN_HEADS_FILENAME
         # "a+" specifically: it creates the file if absent but NEVER truncates.
         # An earlier version used "w+" for the create case, which truncates at
@@ -221,6 +232,15 @@ def append_chained(
         with open(heads_path, "a+", encoding="utf-8") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:
+                # Resolve the chain id INSIDE the lock. Outside it, two writers
+                # racing on a fresh events dir could each mint a different id:
+                # the loser of the O_EXCL create can read the file back before
+                # the winner has written to it, see empty, and fall back to its
+                # own uuid. Two ids in one stream is reported (correctly) as
+                # FOREIGN_CHAIN_ID, so the symptom was a rare "tampering"
+                # verdict on a stream nobody had touched — a ~1-in-10 flake in
+                # the concurrency test.
+                chain_id = chain_id_for(events_dir)
                 handle.seek(0)
                 raw = handle.read().strip()
                 heads: dict[str, Any] = json.loads(raw) if raw else {}

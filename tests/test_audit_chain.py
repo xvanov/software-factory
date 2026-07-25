@@ -498,3 +498,37 @@ def test_events_dir_env_seam_still_isolates_writes(tmp_path: Path, monkeypatch) 
     write_event("runs", {"event": "run_finished"})
     assert (tmp_path / "state" / "events" / "runs.ndjson").exists()
     assert os.environ["FACTORY_STATE_ROOT"] == str(tmp_path)
+
+
+def test_chain_id_is_resolved_under_the_lock_not_before_it(tmp_path: Path) -> None:
+    """A stream must never end up with two chain ids.
+
+    Regression for a ~1-in-10 flake in the concurrency test above. ``chain_id_for``
+    used to be called BEFORE the head-file lock, so two writers racing on a fresh
+    events dir could each mint a different id: the loser of the ``O_EXCL`` create
+    reads the file back before the winner has written to it, sees empty, and falls
+    back to its own uuid. Two ids in one stream is then reported (correctly) as
+    FOREIGN_CHAIN_ID — so the symptom was a "tampering" verdict on a stream nobody
+    had touched.
+
+    Asserted on the RECORDS rather than by trying to hit the window: whatever the
+    interleaving, one directory must yield exactly one id.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    assert not (_events(tmp_path) / CHAIN_ID_FILENAME).exists()
+
+    def emit(i: int) -> None:
+        write_event("runs", {"event": "run_finished", "i": i}, software_factory_root=tmp_path)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(emit, range(40)))
+
+    records = [json.loads(line) for line in _lines(tmp_path)]
+    ids = {r["chain_id"] for r in records}
+    assert len(ids) == 1, f"one events dir must have exactly one chain id, got {ids}"
+    assert ids == {chain_id_for(_events(tmp_path))}
+
+    report = verify_stream("runs", events_dir=_events(tmp_path))
+    assert not report.tampered, report.as_dict()
+    assert report.chain_ids_seen == [chain_id_for(_events(tmp_path))]
