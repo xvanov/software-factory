@@ -1292,7 +1292,9 @@ def off_cmd(
     if still_running:
         console.print(f"[red]Still running: {', '.join(still_running)}[/red]")
         raise typer.Exit(code=1)
-    console.print(Panel.fit("[bold red]FACTORY OFF[/bold red] — nothing running, $0/hour", title="off"))
+    console.print(
+        Panel.fit("[bold red]FACTORY OFF[/bold red] — nothing running, $0/hour", title="off")
+    )
 
 
 @app.command("on")
@@ -1326,7 +1328,10 @@ def on_cmd() -> None:
     mode = get_mode(_FACTORY_ROOT)
     note = "" if mode == "normal" else f"\n[yellow]NOTE: factory mode is '{mode}'[/yellow]"
     console.print(
-        Panel.fit(f"[bold green]FACTORY ON[/bold green] — {len(report['started'])} unit(s){note}", title="on")
+        Panel.fit(
+            f"[bold green]FACTORY ON[/bold green] — {len(report['started'])} unit(s){note}",
+            title="on",
+        )
     )
 
 
@@ -3458,3 +3463,121 @@ def version_cmd() -> None:
         dirty_flag = ""
     typer.echo(f"{state.sha} {state.branch}{dirty_flag}")
     raise typer.Exit(code=0)
+
+
+@app.command("conformance")
+def conformance_cmd(
+    app_name: str | None = typer.Option(None, "--app", help="Only check this app's stories"),
+    story: int | None = typer.Option(None, "--story", help="Only check this story id"),
+    since: str | None = typer.Option(
+        None, "--since", help="Only report findings at/after this ISO-8601 timestamp"
+    ),
+    limit: int = typer.Option(40, "--limit", "-n", help="Max findings to print"),
+) -> None:
+    """Replay the control-plane trace and check it against the abstract model.
+
+    Answers "did the running code emit a trace the model accepts?" — not "does
+    the state machine look right". Reads ``state/events/state_writes.ndjson``
+    (every story state change, emitted by an ORM listener so no writer can
+    escape it) and judges each hop against
+    ``factory/observability/conformance_model.yaml``.
+
+    Two finding kinds, both reported, neither blocking a merge:
+
+    * ``illegal_transition`` — a sanctioned writer produced a state it may not,
+      or a story skipped a whole phase.
+    * ``coverage_breach`` — an undeclared writer changed control-plane state, or
+      the write could not be attributed. This is the load-bearing check: without
+      it, conformance only validates the paths someone remembered to declare and
+      silently blesses everything else.
+
+    Exit code 0 when conformant, 1 when there are findings, 2 on a bad model.
+    """
+    from factory.observability.conformance import (
+        COVERAGE_BREACH,
+        ILLEGAL_TRANSITION,
+        check_live_trace,
+    )
+
+    try:
+        report = check_live_trace(software_factory_root=_FACTORY_ROOT, app=app_name, story_id=story)
+    except (ValueError, OSError) as exc:
+        console.print(f"[red]error:[/red] conformance model unusable: {exc}")
+        raise typer.Exit(code=2) from exc
+
+    findings = report.findings
+    if since:
+        findings = [f for f in findings if (f.ts or "") >= since]
+
+    counts = "  ".join(f"{k}={v}" for k, v in report.counts.items()) or "(no writes recorded)"
+    style = "green" if not findings else "red"
+    console.print(
+        Panel.fit(
+            f"[{style}]checked={report.checked}  findings={len(findings)}[/{style}]\n{counts}",
+            title="conformance — control-plane trace",
+        )
+    )
+
+    if report.checked == 0:
+        # Distinguish "nothing recorded" from "the filter matched nothing" — the
+        # two look identical in the counts and mean very different things.
+        if app_name or story is not None:
+            scope = f"--app {app_name}" if app_name else f"--story {story}"
+            console.print(
+                f"[yellow]No state writes matched {scope}. The stream may hold "
+                "writes for other stories — re-run without the filter to see "
+                "them.[/yellow]"
+            )
+        else:
+            console.print(
+                "[yellow]No state writes recorded yet. The trace is emitted when a "
+                "story's state actually changes — run a tick that advances one, or "
+                "check that state/events/state_writes.ndjson exists.[/yellow]"
+            )
+        raise typer.Exit(code=0)
+
+    if not findings:
+        console.print("[green]Trace is conformant: every state change is accounted for.[/green]")
+        raise typer.Exit(code=0)
+
+    table = Table(title="conformance findings")
+    table.add_column("verdict")
+    table.add_column("story", justify="right")
+    table.add_column("app")
+    table.add_column("from -> to")
+    table.add_column("writer")
+    for finding in findings[:limit]:
+        colour = "red" if finding.verdict == ILLEGAL_TRANSITION else "yellow"
+        table.add_row(
+            f"[{colour}]{finding.verdict}[/{colour}]",
+            str(finding.story_id),
+            str(finding.app or ""),
+            f"{finding.from_state} -> {finding.to_state}",
+            finding.writer,
+        )
+    console.print(table)
+
+    if len(findings) > limit:
+        console.print(f"[dim]... {len(findings) - limit} more (raise --limit)[/dim]")
+
+    if report.unknown_writers:
+        console.print(
+            Panel.fit(
+                "[yellow]Undeclared writers seen in the trace:\n  "
+                + "\n  ".join(report.unknown_writers)
+                + "\n\nEach is a control-plane path the model does not know about. "
+                "Either it is legitimate — add it to allowed_direct_writes in "
+                "factory/observability/conformance_model.yaml with a rationale — "
+                "or it is a bug.[/yellow]",
+                title=f"conformance — {COVERAGE_BREACH}",
+            )
+        )
+
+    # One line per distinct finding shape; the table above is the summary.
+    seen: set[str] = set()
+    for finding in findings:
+        if finding.reason and finding.reason not in seen:
+            seen.add(finding.reason)
+            console.print(f"[dim]- {finding.reason}[/dim]")
+
+    raise typer.Exit(code=1)

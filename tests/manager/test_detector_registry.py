@@ -13,6 +13,7 @@ EXPECTED_NAMES = {
     "runs_failed_since",
     "retry_storm",
     "review_churn",
+    "conformance_breach",
     "cost_spike",
     "fms_yield",
     "tick_duration_outliers",
@@ -28,8 +29,7 @@ SINCE = NOW - timedelta(hours=1)
 
 def test_detectors_has_expected_entries() -> None:
     assert len(DETECTORS) == len(EXPECTED_NAMES), (
-        f"Expected {len(EXPECTED_NAMES)} detectors, got "
-        f"{len(DETECTORS)}: {list(DETECTORS)}"
+        f"Expected {len(EXPECTED_NAMES)} detectors, got {len(DETECTORS)}: {list(DETECTORS)}"
     )
 
 
