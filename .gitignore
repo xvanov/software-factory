@@ -80,5 +80,17 @@ state/issue_hygiene/
 # (``.claude/skills/`` IS tracked: those are checked-in project skills.)
 .claude/worktrees/
 
+# Direction artifacts — mockups, screen recordings, binaries a persona was given
+# as input. Keep them on disk next to their direction, but NEVER in git: three
+# exercise-demo mp4s put 50 MB into this repo's history permanently (git's pack
+# is 72 MB, almost all of it those files). Text siblings (direction.md, flow.md,
+# api_spec.md) are the reviewable source and stay tracked.
+#
+# Already-committed binaries are NOT removed by this rule — history still holds
+# them, and rewriting it would invalidate every open branch and PR. This stops
+# the bleeding; use git-lfs or object storage if you need new large inputs.
+apps/*/directions/*/artifacts/**
+!apps/*/directions/*/artifacts/.gitkeep
+
 # coverage.py data file (never commit)
 .coverage
