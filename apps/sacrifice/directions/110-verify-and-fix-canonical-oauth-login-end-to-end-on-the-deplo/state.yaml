@@ -1,0 +1,122 @@
+status: pm-validated
+source: operator-deliverables
+created_at: '2026-07-23T17:34:06.665326+00:00'
+audit:
+- ts: '2026-07-23T17:34:06.665329+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: operator-deliverables
+- ts: '2026-07-23T17:34:37.170681+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.84
+pm_result:
+  type: bug
+  priority: p1
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D110 verify deployed web OAuth login end-to-end
+  tracker_body: "## Summary\nVerify and fix the canonical OAuth web login flow on\
+    \ the deployed Sacrifice instance so a real desktop-browser user can complete\
+    \ both Google and GitHub sign-in and end authenticated without weakening the existing\
+    \ auth_code + state-cookie CSRF hardening.\n\n## Why\nThe code path for canonical\
+    \ web OAuth already exists, but the deployed instance is still not completing\
+    \ login end-to-end. WHY is deployment pinned back? Because browser login is failing\
+    \ somewhere in the real environment, likely due to deploy staleness, redirect\
+    \ URI/origin mismatch, or cookie behavior on the deployed host. This blocks confidence\
+    \ in the hardened auth path and leaves a critical user entrypoint unreliable.\n\
+    \n## Direction signals\n- Direction type/priority: bug / p1\n- Backpressure present\
+    \ via `explore: true`\n- Acceptance criteria are testable and specific\n- Current\
+    \ likely fault domains called out by the direction:\n  - deployed app not running\
+    \ canonical auth_code exchange path\n  - OAuth redirect URI mismatch for deployed\
+    \ origin\n  - state/CSRF cookie not being set, persisted, or honored on callback\n\
+    \  - frontend callback handler not completing `/api/auth/exchange` on deployed\
+    \ web\n\n## Acceptance criteria to preserve\n- Clicking 'Sign in with Google'\
+    \ on the deployed web app completes OAuth and ends authenticated (token stored,\
+    \ user loaded, no redirect-error banner).\n- Clicking 'Sign in with GitHub' on\
+    \ the deployed web app completes OAuth and ends authenticated.\n- After the provider\
+    \ redirect, the web client POSTs `/api/auth/exchange` with the `?auth_code=` from\
+    \ the callback URL and stores the returned `access_token`.\n- The OAuth state/CSRF\
+    \ cookie set at `/api/auth/<provider>/login` is present and honored on the callback\
+    \ on the deployed origin.\n- A reproducible check (e2e spec or documented manual\
+    \ steps) demonstrates a full sign-in against the deployed instance.\n\n## PM decomposition\
+    \ notes\nWHY split this? Because diagnosis, runtime config/deploy fixes, frontend\
+    \ callback correctness, and reproducible verification are different failure surfaces.\
+    \ One oversized \"fix OAuth\" story would force a dev sandbox to chase environment,\
+    \ browser, backend, and docs all at once and stall. Small vertical slices let\
+    \ the chain land the minimum that proves the real user flow.\n\n## Proposed execution\
+    \ order\n1. Add an executable deployed-web verification harness for the callback\
+    \ exchange path.\n2. Fix backend/deploy state-cookie and redirect-origin behavior\
+    \ if verification shows mismatch.\n3. Fix frontend deployed callback handling\
+    \ only if the browser proves it is the failing layer.\n4. Add reproducible operator-facing\
+    \ verification steps/doc.\n\n## Risks / questions to answer during implementation\n\
+    - WHY is the deployed origin still pointing at `k-911-x17.porgy-boga.ts.net` in\
+    \ any redirect-related config?\n- WHY would state cookie issuance succeed locally\
+    \ but fail in deployed web? Domain, SameSite, Secure, path, proxy headers, or\
+    \ callback host mismatch?\n- WHY would `/api/auth/exchange` not be observed after\
+    \ callback? Missing frontend callback execution, stale frontend deploy, or callback\
+    \ error path?\n- WHY must CSRF hardening be preserved? Because bearer compromise\
+    \ is already high impact across goals, payments, uploads, notifications, and dashboard\
+    \ surfaces.\n"
+  child_stories:
+  - title: D110 add deployed-web OAuth callback verification spec
+    scope: test
+    chain_kind: tdd
+    rationale: First prove the real failure path with an automated browser-level check
+      that exercises the deployed web callback flow shape. WHY first? Because without
+      an executable repro, dev will guess between stale deploy, cookie policy, and
+      callback handler. Keep this to one verification slice that asserts callback
+      URL carries auth_code, frontend POSTs /api/auth/exchange, and authenticated
+      state is reached or a clear failure is captured.
+    estimated_new_files: 2
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 180
+    points: 5
+  - title: D110 fix deployed OAuth state cookie and redirect origin
+    scope: backend
+    chain_kind: tdd
+    rationale: If deployed login fails before exchange completes, the highest-value
+      vertical slice is backend/deploy correctness for state-cookie issuance and callback
+      validation on the deployed origin. WHY separate this? Because cookie/domain/redirect-uri
+      problems can often be fixed without touching frontend logic, and the acceptance
+      criteria explicitly require the cookie to be present and honored.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 190
+    points: 5
+  - title: D110 fix web callback exchange handling after OAuth redirect
+    scope: frontend
+    chain_kind: tdd
+    rationale: If the provider returns with auth_code but the web client does not
+      POST /api/auth/exchange and persist the access token, land that as its own user-visible
+      slice. WHY isolate it? Because frontend callback handling is independently shippable
+      and directly maps to the acceptance criterion around exchange + stored token
+      + loaded user + no redirect-error banner.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 3
+  - title: D110 document reproducible deployed Google/GitHub sign-in check
+    scope: docs
+    chain_kind: docs
+    rationale: The direction explicitly requires a reproducible check via e2e spec
+      or documented manual steps. If the executable spec already exists, this docs
+      slice should capture the operator/manual fallback or deployment verification
+      procedure under canonical docs paths. WHY separate docs? Because docs-only changes
+      should not be bundled with code and can land independently once the flow is
+      fixed.
+    estimated_new_files: 1
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 70
+    points: 2
+  labels:
+  - bug
+  - priority/p1
+  - auth
+  - oauth
+  - web
+  - deployed
+  confidence: 0.84
+tracker_issue: 340

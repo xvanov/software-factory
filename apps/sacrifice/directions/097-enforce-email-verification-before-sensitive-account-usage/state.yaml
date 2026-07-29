@@ -1,0 +1,122 @@
+status: pm-validated
+source: scheduled-security
+created_at: '2026-07-20T09:06:10.277983+00:00'
+audit:
+- ts: '2026-07-20T09:06:10.277986+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: scheduled-security
+- ts: '2026-07-20T09:06:21.731734+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.82
+pm_result:
+  type: security
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D097 enforce email verification before sensitive usage
+  tracker_body: '## Summary
+
+    Direction D097: enforce email verification before sensitive account usage.
+
+
+    ## Why
+
+    Mailbox proof reduces fraudulent account creation and strengthens identity assurance.
+
+
+    ## What matters
+
+    - WHY gate new email/password accounts? Because bearer access to goals, payments,
+    uploads, notifications, and related authenticated surfaces is high impact.
+
+    - WHY now? Current context explicitly calls out no email verification as an auth
+    hardening gap.
+
+    - WHY not bundle this as one backend task? Because token issuance, redemption,
+    and authorization enforcement are distinct slices with different failure modes
+    and should land independently.
+
+
+    ## Acceptance criteria from direction
+
+    - New email/password accounts remain restricted until verification token is redeemed
+
+    - Verification tokens are single-use, expiring, and cryptographically signed
+
+    - Tests cover verified vs unverified authorization paths
+
+
+    ## Proposed decomposition
+
+    1. Add the verification token issue/redeem foundation for email/password accounts.
+
+    2. Enforce verified-email checks on one sensitive authorization dependency/path
+    so the restriction is real and testable.
+
+    3. Expand enforcement to remaining sensitive account usage surfaces covered by
+    shared auth dependencies.
+
+
+    ## Risks / questions to validate during implementation
+
+    - Which exact routes count as "sensitive account usage"? The context strongly
+    suggests shared authenticated surfaces such as goals, payments, uploads, notifications,
+    dashboard/chat-adjacent endpoints. Start at the shared auth dependency if possible
+    to avoid route drift.
+
+    - Verification UX/email delivery mechanism is not specified here. The security
+    core is token issuance/redeem and gated authorization, not polished email product
+    flow.
+
+    - Existing OAuth users should not be unintentionally regressed; this direction
+    is specifically about new email/password accounts.
+
+    '
+  child_stories:
+  - title: D097 add signed single-use email verification token flow
+    scope: backend
+    chain_kind: tdd
+    rationale: 'First vertical slice: create the core token lifecycle so new email/password
+      accounts can be marked unverified, receive a redeemable verification token,
+      and become verified only after redemption. WHY first? Because authorization
+      gating is meaningless until there is a trusted state transition from unverified
+      to verified. Keep this slice limited to token generation/redeem semantics and
+      tests for signed, expiring, single-use behavior.'
+    estimated_new_files: 3
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 180
+    points: 5
+  - title: D097 gate one sensitive auth path on verified email
+    scope: backend
+    chain_kind: tdd
+    rationale: 'Second slice: prove the restriction works end-to-end by enforcing
+      verified-email checks on a representative sensitive authenticated path via the
+      shared auth dependency if feasible. WHY only one path first? Because it validates
+      the contract and failure response without over-bundling every route. This should
+      include tests for verified vs unverified authorization paths to satisfy the
+      explicit acceptance criterion.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 140
+    points: 3
+  - title: D097 extend verified-email gate to remaining sensitive routes
+    scope: backend
+    chain_kind: tdd
+    rationale: 'Final slice: apply the verified-email enforcement consistently across
+      the rest of the sensitive account usage surface once the dependency/path contract
+      is proven. WHY separate this? Because broad route coverage can easily exceed
+      the chain limits if mixed with token work. Sequence after the first gating slice
+      so implementation can reuse the established pattern and avoid regressions.'
+    estimated_new_files: 0
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 160
+    points: 3
+  labels:
+  - security
+  - priority/p2
+  confidence: 0.82
+tracker_issue: 287

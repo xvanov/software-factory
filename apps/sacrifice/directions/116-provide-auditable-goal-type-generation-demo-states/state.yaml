@@ -1,0 +1,127 @@
+status: pm-validated
+source: scheduled-ux_auditor
+created_at: '2026-07-24T00:02:05.465373+00:00'
+audit:
+- ts: '2026-07-24T00:02:05.465376+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: scheduled-ux_auditor
+- ts: '2026-07-24T00:02:45.469522+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.8
+pm_result:
+  type: ux
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D116 auditable goal-type generation demo states
+  tracker_body: '## Summary
+
+    Direction D116 asks for an auditable, deterministic way to observe the user-visible
+    goal-type generation progress states so a scheduled UX audit can trigger the flow
+    and verify each banner transition plus the ready-notification handoff.
+
+
+    ## Why
+
+    The current flow depends on background factory events, but deploy is disabled
+    and `text_run` transport does not expose a live endpoint or event stream that
+    an audit can reliably observe. WHY this matters: without deterministic state progression,
+    the audit cannot verify whether users receive clear progress feedback during generation.
+
+
+    ## Acceptance criteria from direction
+
+    - A scheduled UX audit can trigger goal-type generation and verify each documented
+    status-banner state and the ready notification flow.
+
+
+    ## Product readout / PM pressure
+
+    - WHY should this exist? To make the UX auditable, not merely manually demoable.
+
+    - WHY is determinism required? Because scheduled audits fail if progress depends
+    on non-deterministic workers or external timing.
+
+    - WHY split this work? Because one oversized "demo mode" story would blend backend
+    simulation, trigger plumbing, and UI verification into a retry trap.
+
+
+    ## Proposed delivery slices
+
+    1. Add a deterministic backend demo-state source for goal-type generation progress.
+
+    2. Expose a trigger/read path the audit can invoke to drive and inspect the demo
+    sequence.
+
+    3. Render the documented banner transitions and ready-notification flow against
+    the deterministic sequence in the client.
+
+    4. Lock the audit path with an executable integration/UI test that verifies the
+    end-to-end state progression.
+
+
+    ## Risks / open questions
+
+    - The direction does not specify whether the audit runs through backend integration
+    tests, frontend E2E, or a scheduler-driven scripted path. The slices below assume
+    the smallest auditable path: deterministic server-side state progression plus
+    an auditable client/test harness.
+
+    - The documented statuses are named in `flow.md` as `queued -> in progress ->
+    pull request open -> merging`; the final ready notification flow must also be
+    observable in the same deterministic path.
+
+    '
+  child_stories:
+  - title: D116 add deterministic demo state sequence for goal generation
+    scope: backend
+    chain_kind: tdd
+    rationale: First land the smallest abstraction that can emit the documented generation
+      states in a fixed order without depending on live factory events. WHY first?
+      Nothing downstream is auditable until a deterministic source of truth exists.
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 140
+    points: 5
+  - title: D116 expose audit trigger/read path for demo generation states
+    scope: backend
+    chain_kind: tdd
+    rationale: Add a minimal trigger or read path the scheduled audit can call to
+      start the deterministic sequence and inspect current progress. WHY separate
+      from the sequence logic? Route/API plumbing is its own slice and easier to land/review
+      independently.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 120
+    points: 3
+  - title: D116 render banner demo progression and ready notification
+    scope: frontend
+    chain_kind: tdd
+    rationale: Wire the client to display each documented banner state and the ready
+      notification flow from the deterministic audit path. WHY its own slice? User-visible
+      correctness is the actual product value and should land independently after
+      the backend path exists.
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 160
+    points: 5
+  - title: D116 add audit test for end-to-end demo state verification
+    scope: test
+    chain_kind: tdd
+    rationale: Codify the scheduled audit expectation in an executable test harness
+      that triggers the flow and verifies the full state progression plus ready notification
+      handoff. WHY last? It should validate the previously landed deterministic backend
+      and frontend behavior rather than inventing it.
+    estimated_new_files: 2
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 180
+    points: 5
+  labels:
+  - ux
+  - priority/p2
+  confidence: 0.8
+tracker_issue: 366

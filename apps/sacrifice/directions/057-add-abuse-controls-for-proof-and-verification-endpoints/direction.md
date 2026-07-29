@@ -2,7 +2,7 @@
 title: Add abuse controls for proof and verification endpoints
 type: security
 priority: p2
-explore: false
+explore: true
 created_at: '2026-06-22T09:02:21.711941+00:00'
 ---
 

@@ -1,0 +1,187 @@
+status: pm-validated
+source: operator
+created_at: '2026-07-18T17:05:00.000000+00:00'
+audit:
+- ts: '2026-07-18T17:05:00.000000+00:00'
+  by: operator.orchestrator
+  event: created
+  details:
+    reason: "Close the deploy gap \u2014 merged main code does not reach the live\
+      \ backend because deploy.enabled is false (no Docker artifacts). Operator-requested\
+      \ direction; explore:true so the chain converges without further backpressure."
+- ts: '2026-07-18T16:57:28.002206+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.91
+pm_result:
+  type: infra
+  priority: p1
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D088 Docker production deploy and factory auto-deploy
+  tracker_body: '## Summary
+
+    D088 builds the missing production deployment path for Sacrifice so merges to
+    `main` can actually reach the live backend.
+
+
+    ## Why this matters
+
+    - Today the factory can merge code, but `deploy.enabled: false` means production
+    never updates.
+
+    - The config already points at Docker-based deploy artifacts that do not exist
+    yet.
+
+    - This creates a dangerous gap: auth/security fixes land on `main` while the public
+    app keeps serving stale code.
+
+
+    ## Requested outcome
+
+    - Add the Docker production artifacts referenced by app config.
+
+    - Make the health check path work with the deploy machinery.
+
+    - Prove build/up/health/smoke/rollback behavior before turning on auto-deploy.
+
+    - Only after that, flip `apps/sacrifice/config.yaml` to `deploy.enabled: true`.
+
+
+    ## Acceptance criteria from direction
+
+    - `docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml
+    up -d` brings up the full stack cleanly.
+
+    - The configured health check passes after deploy; a failed health check triggers
+    rollback, not a broken live app.
+
+    - A merge to `main` results in the live backend (`localhost:8000`, reachable via
+    `https://sacrifice.rentus.homes`) serving the merged code.
+
+    - Mobile `POST /api/auth/email/login` and `/register` are verified against the
+    freshly deployed backend; CSRF hardening must not break Expo Go mobile auth.
+
+    - Deploy is idempotent and safe to re-run; `make smoke` gates the deploy.
+
+
+    ## PM triage notes
+
+    WHY split this? Because turning on deploy before proving health/rollback is how
+    you brick prod. WHY avoid one giant infra story? Because Dockerfiles + compose
+    + health route + rollback + config flip + mobile regression is too large for one
+    dev sandbox. The safe sequence is: establish runnable images, establish compose
+    orchestration, establish health compatibility, establish smoke/rollback proof,
+    then enable factory deploy.
+
+
+    ## Proposed story sequence
+
+    1. Add backend production Docker image.
+
+    2. Add production compose stack wired to backend and stateful services.
+
+    3. Reconcile the configured health endpoint with the app''s actual health route.
+
+    4. Add deploy rollback artifact/flow expected by config.
+
+    5. Prove mobile auth smoke against deployed stack.
+
+    6. Flip factory auto-deploy on once the above is verified.
+
+
+    ## Risks / things to inspect
+
+    - What currently serves `localhost:8000` and whether compose will replace or conflict
+    with it.
+
+    - Whether frontend artifacts are actually required for this direction or whether
+    the live requirement is backend-only.
+
+    - Whether Celery/Redis are mandatory for boot or optional; direction says include
+    them as app requires.
+
+    - Whether rollback should reuse previous compose file, previous image tags, or
+    both.
+
+    - Whether `make smoke` already exercises the required auth regression or needs
+    deploy-aware wiring first.
+
+
+    ## Definition of done for triage
+
+    Spawn the stories below in order. Do not enable deploy until health-check + rollback
+    + smoke are proven end-to-end.'
+  child_stories:
+  - title: D088 add backend production Dockerfile for Sacrifice API
+    scope: infra
+    chain_kind: tdd
+    rationale: 'WHY first? No deploy path exists without a runnable backend image.
+      Keep this slice narrow: produce the backend container artifact the config expects,
+      with port 8000 startup aligned to FastAPI/uvicorn. This is the foundation for
+      later compose and deploy stories.'
+    estimated_new_files: 1
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 120
+    points: 3
+  - title: D088 add docker-compose.prod.yml for backend + data services
+    scope: infra
+    chain_kind: tdd
+    rationale: 'WHY separate from the Dockerfile? Compose orchestration is its own
+      failure surface: service wiring, env propagation, ports, volumes, dependencies.
+      Keep this to the production stack startup contract using the image/build inputs
+      established by the prior story.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 5
+  - title: D088 reconcile production health check to /healthz or app route
+    scope: backend
+    chain_kind: tdd
+    rationale: WHY isolate health? Deploy gating depends on a stable observable trigger/response.
+      The direction explicitly calls out possible mismatch between `curl ... /healthz`
+      and existing `/api/health`. This slice should make the configured health endpoint
+      pass post-boot without bundling broader deploy changes.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 140
+    points: 3
+  - title: D088 add rollback artifact expected by production deploy config
+    scope: infra
+    chain_kind: tdd
+    rationale: WHY before enabling deploy? Because rollback is the safety net and
+      the config already references `docker-compose.prod.yml.previous`. This slice
+      should add the minimal artifact/command support so a failed health check can
+      revert instead of leaving prod broken.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 160
+    points: 5
+  - title: D088 prove deployed mobile auth smoke for login/register
+    scope: test
+    chain_kind: tdd
+    rationale: 'WHY make auth smoke explicit? The direction names a critical regression
+      guard: CSRF hardening must not break Expo Go mobile email login/register against
+      the freshly deployed backend. This should be a narrow smoke/deploy verification
+      slice, not mixed into image construction.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 180
+    points: 5
+  - title: D088 enable factory auto-deploy in apps/sacrifice/config.yaml
+    scope: infra
+    chain_kind: tdd
+    rationale: 'WHY last? Because flipping `deploy.enabled: true` changes live production
+      behavior. This story should only land after image, compose, health, rollback,
+      and smoke gates are already in place. Keep it tiny and auditable: config enablement
+      plus any minimal deploy wiring required for idempotent reruns.'
+    estimated_new_files: 0
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 80
+    points: 2
+  labels:
+  - infra
+  - priority/p1
+  confidence: 0.91
+tracker_issue: 242

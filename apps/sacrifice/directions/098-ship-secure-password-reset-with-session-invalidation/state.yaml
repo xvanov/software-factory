@@ -1,0 +1,125 @@
+status: pm-validated
+source: scheduled-security
+created_at: '2026-07-20T09:06:10.401662+00:00'
+audit:
+- ts: '2026-07-20T09:06:10.401665+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: scheduled-security
+- ts: '2026-07-20T09:06:37.168829+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.9
+pm_result:
+  type: security
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D098 secure password reset with session invalidation
+  tracker_body: '## Summary
+
+    Ship a secure password reset flow for Sacrifice so compromised users can recover
+    access without leaking whether an email exists and so a successful reset evicts
+    previously issued bearer sessions.
+
+
+    ## Why
+
+    - Account recovery is a core security requirement.
+
+    - WHY generic responses? To prevent email/account enumeration on the reset request
+    surface.
+
+    - WHY single-use expiring tokens? To reduce replay and stale-link abuse.
+
+    - WHY session invalidation on success? Because resetting the password is not enough
+    if stolen bearer tokens remain valid across goals, payments, uploads, notifications,
+    and related authenticated flows.
+
+
+    ## Acceptance criteria from direction
+
+    - Reset request/confirm endpoints use expiring single-use tokens with generic
+    responses
+
+    - Successful reset revokes existing sessions/bearers for that user
+
+    - Tests verify token expiry, replay rejection, and anti-enumeration behavior
+
+
+    ## Product/implementation notes
+
+    - The repo context explicitly calls out password reset as an open auth hardening
+    gap.
+
+    - OAuth code-exchange behavior is already hardened; this direction is specifically
+    about email/password recovery.
+
+    - Keep slices vertical and small enough for one dev sandbox pass. Sequence matters:
+    token/reset primitives first, then confirm flow, then explicit session invalidation
+    coverage.
+
+    '
+  child_stories:
+  - title: D098 add reset-token model/service with expiry and single-use tests
+    scope: backend
+    chain_kind: tdd
+    rationale: WHY first? The confirm endpoint cannot be secure without a token primitive
+      that encodes expiry and one-time consumption. This slice introduces the smallest
+      reusable reset-token abstraction plus focused tests before any route wiring.
+    estimated_new_files: 3
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 180
+    points: 5
+  - title: D098 add password reset request endpoint with generic responses
+    scope: backend
+    chain_kind: tdd
+    rationale: WHY separate this from confirm? Anti-enumeration behavior is its own
+      user-visible security contract and can land independently once token issuance
+      exists. This slice should wire request handling so existing and non-existing
+      emails return the same generic response semantics.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 150
+    points: 3
+  - title: D098 add password reset confirm endpoint and replay rejection
+    scope: backend
+    chain_kind: tdd
+    rationale: WHY its own PR? Confirm is where password mutation and token consumption
+      happen; replay rejection belongs here and should be proven end-to-end against
+      the single-use token behavior introduced earlier. Depends on the token primitive
+      story landing first.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 190
+    points: 5
+  - title: D098 revoke user bearers on successful password reset
+    scope: backend
+    chain_kind: tdd
+    rationale: WHY isolate session invalidation? Bearer revocation is the high-risk
+      auth-hardening requirement called out by project context and may touch shared
+      auth/session mechanics. Keeping it separate reduces blast radius and makes the
+      security guarantee reviewable. Depends on confirm flow existing.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 5
+  - title: D098 add auth-route tests for expiry, enumeration, and revocation
+    scope: test
+    chain_kind: tdd
+    rationale: WHY a dedicated verification slice if earlier stories include tests?
+      Because the direction explicitly requires end-to-end proof of token expiry,
+      replay rejection, and anti-enumeration behavior at the route level, plus post-reset
+      bearer invalidation. This consolidates scenario coverage after the runtime pieces
+      land.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 160
+    points: 3
+  labels:
+  - security
+  - priority/p2
+  confidence: 0.9
+tracker_issue: 290

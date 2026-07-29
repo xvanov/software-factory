@@ -1,0 +1,117 @@
+status: pm-validated
+source: scheduled-ux_auditor
+created_at: '2026-07-20T00:06:07.398774+00:00'
+audit:
+- ts: '2026-07-20T00:06:07.398777+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: scheduled-ux_auditor
+- ts: '2026-07-20T00:06:21.873736+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.8
+pm_result:
+  type: ux
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D096 enable executable UX-audit inputs
+  tracker_body: '## Summary
+
+    Direction D096 aims to make UX audits executable instead of speculative.
+
+
+    WHY this matters: the current auditor cannot produce empirical, step-level findings
+    unless it receives two concrete inputs:
+
+    1. the actual ordered flow narrative for each audited flow, and
+
+    2. a runtime observation path for each step (live browser sandbox access or recorded
+    artifacts).
+
+
+    The direction carries sufficient backpressure via `explore: true` and testable
+    acceptance criteria.
+
+
+    ## Acceptance criteria from direction
+
+    - UX auditor input includes each `flow.md` body or equivalent ordered steps.
+
+    - UX auditor run can access a live browser sandbox or recorded step artifacts
+    tied to each flow step.
+
+
+    ## PM decomposition notes
+
+    WHY split this small? Because this work crosses intake shape, artifact/runtime
+    access, and proof that the auditor can consume them. A single bundled story would
+    likely sprawl across pipeline plumbing plus docs plus fixtures. The slices below
+    preserve vertical value and keep each sandbox within chain limits.
+
+
+    Recommended sequence:
+
+    1. Define and validate the auditor input contract for ordered flow steps.
+
+    2. Add one executable observation path via recorded step artifacts tied to steps.
+
+    3. Add/verify live browser sandbox access path for runs that need runtime observation.
+
+    4. Document the required direction inputs so future UX audits are spawnable without
+    guesswork.'
+  child_stories:
+  - title: D096 add UX-auditor input schema for ordered flow steps
+    scope: backend
+    chain_kind: tdd
+    rationale: WHY first? The auditor cannot consume flow narratives unless there
+      is a concrete input shape that includes each `flow.md` body or equivalent ordered
+      steps. This slice should introduce the smallest contract/validation path and
+      tests proving step data is present before later runtime-access slices depend
+      on it.
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 140
+    points: 3
+  - title: D096 support recorded step artifacts in UX-auditor runs
+    scope: backend
+    chain_kind: tdd
+    rationale: WHY this separate slice? Acceptance requires an auditor run to access
+      recorded artifacts tied to each flow step. That is independently valuable even
+      before live browser execution is wired, because it enables empirical audit input
+      from captured evidence. Keep it focused on linking artifacts to ordered steps
+      and proving the run can read them.
+    estimated_new_files: 3
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 180
+    points: 5
+  - title: D096 expose live browser sandbox access for UX-auditor runs
+    scope: infra
+    chain_kind: tdd
+    rationale: WHY not bundle with recorded artifacts? Live runtime access is a distinct
+      observation path with different failure modes and plumbing. This slice should
+      only make the auditor run able to use a live browser sandbox when available,
+      with a narrow smoke/integration proof. It should follow the input-schema slice
+      so the run already knows which steps it is observing.
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 190
+    points: 5
+  - title: D096 document required flow and runtime inputs for UX audits
+    scope: docs
+    chain_kind: docs
+    rationale: 'WHY docs as its own PR? Future directions need to know what to supply:
+      ordered `flow.md` steps and either live sandbox access or recorded step artifacts.
+      This is documentation-only and should land separately under canonical docs paths
+      so the chain can route it through the docs pipeline.'
+    estimated_new_files: 1
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 60
+    points: 2
+  labels:
+  - ux
+  - priority/p2
+  confidence: 0.8
+tracker_issue: 283

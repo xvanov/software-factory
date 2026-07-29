@@ -1,0 +1,107 @@
+status: pm-validated
+source: scheduled-ux_auditor
+created_at: '2026-07-23T06:00:39.122827+00:00'
+audit:
+- ts: '2026-07-23T06:00:39.122830+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: scheduled-ux_auditor
+- ts: '2026-07-23T06:01:06.939646+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.82
+pm_result:
+  type: ux
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D105 make-chat-resume-state-auditable
+  tracker_body: '## Summary
+
+    Make the documented chat resume behavior empirically observable in the scheduled
+    UX audit runtime.
+
+
+    ## Why
+
+    The direction is explicit about the failure mode: the audit runtime can leave
+    the chat flow and return later, but today it cannot verify whether the session
+    resumes from the last assistant message because persisted local session state,
+    navigation state, and restored assistant state are not observable under `text_run`.
+
+
+    ## Acceptance Criteria
+
+    - Scheduled UX audit can leave the chat flow, return later, and verify the session
+    resumes from the last assistant message with objective evidence.
+
+
+    ## Evidence from flow
+
+    - Flow: `009-chat-goal-creation/flow.md`
+
+    - Step: `6`
+
+    - Current gap: under `text_run` without a live app session, the resume-on-return
+    requirement could not be verified.
+
+    - Suggested direction: add a runnable audit target or scripted fixture that exposes
+    persisted chat-session state so resume behavior can be checked empirically.
+
+
+    ## PM triage notes
+
+    - WHY does this matter? Because a documented UX promise that cannot be observed
+    in audit is not a controlled product behavior.
+
+    - WHY is this a UX-classified change rather than pure test work? Because the user-facing
+    behavior already exists conceptually; the missing piece is auditable evidence
+    of persisted resume state.
+
+    - WHY split this? Because one slice should expose deterministic resume-state evidence,
+    and a separate slice should teach the scheduled audit to consume that evidence.
+    Bundling both would risk an oversized, cross-cutting story.
+
+
+    ## Delivery shape
+
+    Sequence matters:
+
+    1. Expose auditable persisted chat resume state in a runnable target/fixture.
+
+    2. Update the scheduled UX audit to leave and return, then assert resume from
+    the last assistant message using objective evidence.
+
+    '
+  child_stories:
+  - title: D105 add auditable chat resume-state fixture or debug target
+    scope: frontend
+    chain_kind: tdd
+    rationale: 'First vertical slice: make persisted chat session state observable
+      without a live app session so the audit has something deterministic to inspect.
+      WHY first? Because the current blocker is lack of observable evidence; the audit
+      cannot verify what the product does if no runnable target exposes restored assistant
+      state.'
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 5
+  - title: D105 teach scheduled UX audit to verify chat resume evidence
+    scope: test
+    chain_kind: tdd
+    rationale: 'Second vertical slice: update the scheduled audit runtime/script to
+      leave the chat flow, return later, and assert that the resumed session matches
+      the last assistant message using the evidence exposed by the prior slice. WHY
+      separate? Because audit-consumption logic is independently shippable once the
+      observable state exists, and keeping it isolated preserves the size cap.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 140
+    points: 3
+  labels:
+  - ux
+  - priority/p2
+  confidence: 0.82
+tracker_issue: 316

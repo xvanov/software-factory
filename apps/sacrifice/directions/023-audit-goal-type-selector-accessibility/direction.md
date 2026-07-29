@@ -2,7 +2,7 @@
 title: Audit goal type selector accessibility
 type: ux
 priority: p2
-explore: false
+explore: true
 created_at: '2026-06-11T15:18:27.169640+00:00'
 ---
 

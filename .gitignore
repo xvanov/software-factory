@@ -54,6 +54,24 @@ state/.halt_history.json
 state/.manager_apply_history.json
 state/.improver_backoff.json
 state/*.log
+# Timestamped SQLite snapshots taken before destructive repairs (``state/*.db``
+# is already ignored; the ``.bak-<epoch>`` copies are the same data and run to
+# tens of MB each). Recovery artifacts, never part of the durable record.
+state/*.db.bak-*
+# L1 idle-generator bookkeeping — last-fire timestamp so the idle loop does not
+# re-fire within its cooldown. Pure runtime; recreated on demand.
+state/idle_generator.json
+# Manager escalation debounce history (one entry per L2->L3 escalation, pruned
+# on read). Runtime-only; the durable record is the concern/proposal PRs.
+state/.manager_escalation_history.json
+# Issue-hygiene watermarks (``<app>.last``) — the reconcile pass stores the last
+# swept cursor per app so it does not rescan closed issues every tick.
+state/issue_hygiene/
+
+# Claude Code agent worktrees — linked working dirs sharing this repo's .git,
+# created per background agent and removed when unchanged. Never committed.
+# (``.claude/skills/`` IS tracked: those are checked-in project skills.)
+.claude/worktrees/
 
 # coverage.py data file (never commit)
 .coverage

@@ -1,0 +1,107 @@
+status: closed
+source: operator-loop3-selftick-demo
+created_at: '2026-07-20T23:33:56.892630+00:00'
+audit:
+- ts: '2026-07-20T23:33:56.892633+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: operator-loop3-selftick-demo
+- ts: '2026-07-20T23:36:38.120190+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.96
+- by: operator-loop3
+  event: status -> closed
+  details:
+    delivered_by: 'PR #57'
+pm_result:
+  type: security
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D005 redact provider secrets from persisted run error text
+  tracker_body: '## Summary
+
+    D005 asks for one security fix in the runner persistence path: redact provider
+    secrets from run `error` text before the value is written to `state/factory.db`.
+
+
+    ## Why this matters
+
+    WHY does this need to land? Because provider SDK exceptions can echo raw credentials
+    on auth/rate-limit failures, and the current persistence path stores that text
+    verbatim. That turns one transient provider failure into durable secret exposure
+    in the runs table, `factory spend`/audit output, and any copied DB.
+
+
+    ## What the direction explicitly requires
+
+    - Add a pure helper that redacts common provider-secret patterns from arbitrary
+    strings.
+
+    - Patterns called out explicitly: `sk-...`, `sk-ant-...`, `Bearer <token>`, `Authorization:
+    ...`, and long key-like hex/base64 runs.
+
+    - Replacement must be the literal `[REDACTED]`.
+
+    - Apply the redactor inside `factory.runner._record_run` before writing the run
+    row.
+
+    - Preserve non-secret text byte-for-byte.
+
+    - Make redaction idempotent.
+
+    - Add unit coverage for token redaction, header redaction, unchanged plain error
+    text, and the `_record_run` persistence path.
+
+
+    ## PM read
+
+    WHY split this? Because even a small fix benefits from one abstraction-introduction
+    slice and one persistence-wire slice. That keeps the pure-function behavior easy
+    to test in isolation and the DB write-path change easy to review.
+
+
+    ## Acceptance criteria to verify downstream
+
+    - No persisted run row contains a raw matched secret pattern in `error`.
+
+    - Re-running the redactor on already-redacted text does not change it further.
+
+    - Plain error strings remain unchanged.
+
+    - `_record_run` persists `[REDACTED]` instead of the original secret-bearing substrings.
+
+    '
+  child_stories:
+  - title: D005 add pure run-error secret redactor with unit tests
+    scope: backend
+    chain_kind: tdd
+    rationale: First land the pure-function core the direction calls for. WHY first?
+      Because pattern coverage, idempotence, and unchanged plain-text behavior are
+      easiest to validate in isolation before touching persistence. This slice should
+      introduce the helper and unit tests for `sk-...`, `sk-ant-...`, Bearer/Authorization,
+      long key-like runs, unchanged plain text, and idempotence.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 140
+    points: 3
+  - title: D005 apply redaction in _record_run before DB persistence
+    scope: backend
+    chain_kind: tdd
+    rationale: After the helper exists, wire `_record_run` to sanitize `error` before
+      insert/update and add the persistence-path test. WHY separate this? Because
+      the security invariant that matters is at the write boundary, and this slice
+      can prove the stored run row contains `[REDACTED]` rather than raw secrets without
+      re-bundling all helper behavior.
+    estimated_new_files: 0
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 110
+    points: 2
+  labels:
+  - security
+  - priority/p2
+  confidence: 0.96
+tracker_issue: 54

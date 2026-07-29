@@ -1,4 +1,4 @@
-status: needs-direction
+status: closed
 source: scheduled-security
 created_at: '2026-06-01T01:07:53.858227+00:00'
 audit:
@@ -31,26 +31,109 @@ audit:
     - user_flow
     - api_spec
     - explore_tag_or_artifacts
+- ts: '2026-07-18T15:01:20.224768+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.84
 tracker_issue: 98
 pm_result:
   type: security
   priority: p2
-  has_sufficient_backpressure: false
-  missing:
-  - user_flow
-  - api_spec
-  - explore_tag_or_artifacts
-  tracker_title: '[DIRECTION] Add CSRF protections to cookie-authenticated API routes'
-  tracker_body: '**Add CSRF protections to cookie-authenticated API routes**
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D018 add CSRF protections to cookie-authenticated routes
+  tracker_body: '## Summary
+
+    D018 targets CSRF risk on any cookie-authenticated API surface.
 
 
-    _(needs more backpressure: user_flow, api_spec, explore_tag_or_artifacts)_
+    ## Why
+
+    Cross-origin app access plus session auth creates account-action forgery risk
+    unless anti-CSRF controls are explicit.
+
+
+    ## Acceptance Criteria
+
+    - [ ] All state-changing authenticated routes reject requests without a valid
+    CSRF token or equivalent protection.
+
+    - [ ] Session cookie settings are reviewed and hardened for SameSite, Secure,
+    and HttpOnly semantics.
+
+
+    ## PM triage / WHY
+
+    - WHY now: bearer-token compromise is already treated as high impact, and cookie-authenticated
+    flows create a separate forgery path if browser requests can carry ambient credentials.
+
+    - WHY this scope: the direction is specifically about cookie-authenticated routes,
+    not every auth mechanism in the app.
+
+    - WHY split: one PR to establish the CSRF guardrail, one PR to apply it to state-changing
+    routes, one PR to harden cookie attributes, and docs separately so dev slices
+    stay under chain limits.
+
+
+    ## Notes for implementation
+
+    - Explore is enabled, so downstream can inspect the current auth/session surface
+    to determine which routes are actually cookie-authenticated today.
+
+    - The route-coverage story should focus on observable rejection behavior for missing/invalid
+    CSRF protection on state-changing authenticated endpoints.
+
+    - Cookie hardening should verify session-cookie semantics for SameSite, Secure,
+    and HttpOnly without broad auth redesign.
 
     '
-  child_stories: []
+  child_stories:
+  - title: D018 add backend CSRF guard primitives and tests
+    scope: backend
+    chain_kind: tdd
+    rationale: 'WHY first: downstream route enforcement needs a concrete reusable
+      guard instead of copy-pasted checks. This slice should introduce the CSRF validation
+      mechanism in the smallest reusable form plus focused tests, without yet wiring
+      every state-changing route.'
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 5
+  - title: D018 enforce CSRF on cookie-authenticated state changes
+    scope: backend
+    chain_kind: tdd
+    rationale: 'WHY separate: route adoption is where blast radius lives. Applying
+      the new guard to the relevant authenticated mutating routes is its own vertical
+      slice with end-to-end rejection behavior. This should land after the guard-primitives
+      story.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 190
+    points: 5
+  - title: D018 harden session cookie security attributes
+    scope: backend
+    chain_kind: tdd
+    rationale: 'WHY isolated: cookie semantics are acceptance criteria on their own
+      and can be verified independently of route-by-route CSRF coverage. Keep this
+      to auth/session cookie configuration and tests for SameSite, Secure, and HttpOnly
+      behavior.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 140
+    points: 3
+  - title: D018 document cookie auth and CSRF expectations
+    scope: docs
+    chain_kind: docs
+    rationale: 'WHY docs-only: future auth work needs canonical guidance on when CSRF
+      applies, what token or equivalent protection is expected, and how cookie settings
+      are hardened. Keep docs out of code PRs.'
+    estimated_new_files: 1
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 70
+    points: 2
   labels:
   - security
   - priority/p2
-  - needs-direction
-  confidence: 0.4
+  confidence: 0.84
 validation_issues: []

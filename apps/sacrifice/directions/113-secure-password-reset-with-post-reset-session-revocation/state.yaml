@@ -1,0 +1,176 @@
+status: pm-validated
+source: operator-deliverables
+created_at: '2026-07-23T22:32:57.029363+00:00'
+audit:
+- ts: '2026-07-23T22:32:57.029366+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: operator-deliverables
+- ts: '2026-07-23T22:33:20.628519+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.95
+pm_result:
+  type: security
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D113 secure password reset with session revocation
+  tracker_body: '## Summary
+
+    Implement a secure email/password reset flow for Sacrifice without adding email
+    delivery yet. WHY now: users with forgotten passwords are locked out today, and
+    auth tokens are high-impact across goals, payments, uploads, notifications, and
+    related surfaces. The direction is explicit that reset delivery is out of scope
+    for this iteration; the work is backend-only and must be exercised directly in
+    tests.
+
+
+    ## What the direction requires
+
+    - Add `POST /api/auth/password/reset/request` that always returns `202 Accepted`
+    for both known and unknown emails.
+
+    - Never return the reset token in the request response body.
+
+    - Mint a short-TTL (`<=30m`), purpose-scoped, single-use reset token for known
+    users only.
+
+    - Add `POST /api/auth/password/reset/confirm` that validates token signature,
+    purpose, expiry, and single-use semantics.
+
+    - Enforce the same password policy as registration.
+
+    - On successful reset, update the password hash and rotate `auth_session_id` so
+    all existing JWTs/sessions are revoked.
+
+    - Return `400` for invalid, expired, or reused reset tokens.
+
+    - Cover the required backend test cases: happy path, unknown-email non-enumeration,
+    reused token, expired token, wrong-purpose token, weak password, and post-reset
+    session revocation.
+
+
+    ## Product / security reasoning
+
+    - WHY always `202` on request: avoid user enumeration.
+
+    - WHY purpose-scoped token: a csrf/access token must never be replayed as a reset
+    token.
+
+    - WHY single-use + jti: reset links are high-risk and must burn after first success.
+
+    - WHY rotate `auth_session_id`: password reset is not complete if stolen bearer
+    tokens remain valid.
+
+    - WHY split this work: route plumbing, token semantics, and revocation/testing
+    are distinct failure domains; small slices reduce retry churn.
+
+
+    ## Out of scope
+
+    - Email sending infrastructure.
+
+    - Returning the raw reset token from the request endpoint.
+
+    - Frontend reset UX.
+
+
+    ## Acceptance criteria from direction
+
+    - `POST /api/auth/password/reset/request` returns 202 for BOTH a known and an
+    unknown email (no user enumeration), and never returns the reset token in the
+    response body.
+
+    - A valid single-use reset token lets `POST /api/auth/password/reset/confirm`
+    set a new password; the old password no longer authenticates and the new one does.
+
+    - Confirming a reset ROTATES `auth_session_id` so a JWT/session issued before
+    the reset is rejected afterward (session revocation).
+
+    - A reset token is single-use (a second confirm with the same token is 400), expires
+    (`<=30m`), and is purpose-scoped (a csrf/access token cannot be used as a reset
+    token).
+
+    - New password must satisfy the same policy as registration; a weak password is
+    rejected 400/422.
+
+    - Backend unit tests cover: happy path, unknown-email non-enumeration, reused
+    token, expired token, wrong-purpose token, weak password, and post-reset session
+    revocation.
+
+
+    ## Notes for implementation sequencing
+
+    The token contract/service should land before confirm-route enforcement. Request-route
+    non-enumeration can land independently once minting exists. Revocation behavior
+    should be verified after confirm succeeds.'
+  child_stories:
+  - title: D113 add password reset token service with single-use claims
+    scope: backend
+    chain_kind: tdd
+    rationale: 'Foundational slice. WHY first: every later route depends on a purpose-scoped
+      reset token contract. Implement mint/validate/consume semantics for short-TTL
+      password reset tokens, including purpose and jti handling, with focused service
+      tests. Keep this slice below size limits by stopping at the service boundary
+      rather than adding both endpoints here.'
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 5
+  - title: D113 add reset request endpoint with non-enumerating 202 response
+    scope: backend
+    chain_kind: tdd
+    rationale: 'Vertical user-visible value: clients can begin the reset flow safely.
+      WHY separate: request-path non-enumeration is a distinct security behavior and
+      should not be bundled with confirm-path password mutation. For known emails
+      the route triggers token minting internally; for unknown emails it still returns
+      202 and never leaks token material.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 120
+    points: 3
+  - title: D113 confirm reset updates password and rejects weak passwords
+    scope: backend
+    chain_kind: tdd
+    rationale: 'Core end-to-end reset value: a valid token changes credentials and
+      the old password stops working. WHY isolate this from session revocation: password-policy
+      enforcement and credential mutation are already enough moving parts for one
+      dev pass. This slice should cover happy path and weak-password rejection using
+      the same policy as registration.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 180
+    points: 5
+  - title: D113 revoke prior sessions on password reset confirmation
+    scope: backend
+    chain_kind: tdd
+    rationale: 'Security-critical follow-on to confirm flow. WHY its own slice: rotating
+      `auth_session_id` and proving previously issued JWTs fail afterward touches
+      auth invariants and deserves isolated regression coverage. Depends on the confirm
+      route already succeeding with a valid reset token.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 160
+    points: 3
+  - title: D113 add reset-token negative-path tests for reuse expiry purpose
+    scope: backend
+    chain_kind: tdd
+    rationale: 'Closes the exploit surface around token misuse. WHY separate: reused-token,
+      expired-token, and wrong-purpose-token cases are acceptance-critical but can
+      land as a tight follow-up once the service and confirm route exist. Keeping
+      negative-path hardening isolated makes failures easier to diagnose and avoids
+      oversizing the earlier slices.'
+    estimated_new_files: 1
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 110
+    points: 3
+  labels:
+  - security
+  - priority/p2
+  - auth
+  - backend
+  confidence: 0.95
+tracker_issue: 356

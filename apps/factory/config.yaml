@@ -15,7 +15,7 @@ app_repo_path: "."  # factory IS the app; resolves to the factory root itself
 # validates a factory self-edit on a cloned factory before it can merge — so
 # even with self-tick enabled, a fatal self-edit fails on the clone and never
 # touches the live factory.
-self_tick_enabled: false
+self_tick_enabled: true
 
 # The factory deploys nothing of itself through the app deploy path. Self-deploy
 # is handled by the staging + surgical-checkout flow (factory.manager.staging +
@@ -36,6 +36,10 @@ gates:
   # No browser/E2E harness for the factory itself.
   e2e_harness_ready: false
   mutation_testing: false
+  # Flaky-red resilience: on a test-gate RED, rerun failures in isolation;
+  # a test that fails-then-passes is quarantined (non-blocking, recorded as
+  # tech debt) rather than blocking the merge. A consistent red still blocks.
+  flake_quarantine: true
   # No runtime smoke gate for the factory: "does it run" is validated by the
   # chain-side staging gate (clone + full suite + import/CLI smoke + dry-run
   # tick), not by an app smoke_command. Leave unset so smoke-green is never a
