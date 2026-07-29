@@ -1,0 +1,80 @@
+status: pm-validated
+source: operator-loop3
+created_at: '2026-07-19T05:14:41.519020+00:00'
+audit:
+- ts: '2026-07-19T05:14:41.519023+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: operator-loop3
+- ts: '2026-07-19T05:14:49.707392+00:00'
+  by: factory.chain.pm_sync
+  event: status -> needs-direction
+  details:
+    missing:
+    - user_flow
+    - api_spec
+    - explore_tag_or_artifacts
+- ts: '2026-07-19T05:15:38.659451+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.97
+tracker_issue: 256
+pm_result:
+  type: chore
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D091 remove stray pre-factory bootstrap files
+  tracker_body: "## Summary\nRemove dead pre-factory bootstrap artifacts from the\
+    \ Sacrifice repository so the repo reflects current canonical sources of truth\
+    \ and stops misleading readers.\n\n## Why / PM triage\n- WHY remove them? They\
+    \ are explicitly described as stale, unmaintained, duplicate, or predating the\
+    \ current factory workflow.\n- WHY now? These files create reader confusion and\
+    \ imply workflows/documentation that are no longer authoritative.\n- WHY not bundle\
+    \ broad cleanup? Direction scope is narrow: deletions plus only strictly-required\
+    \ reference cleanup.\n- WHY is this safe? The direction requires a grep-based\
+    \ reference audit plus validation that backend pytest and `make smoke` still pass.\n\
+    \n## In scope\nRemove these tracked items if still present:\n- `HANDOFF.md`\n\
+    - `activity.md`\n- `ralph.sh`\n- `opencode.json`\n- `.opencode/`\n- `PROMPT.md`\n\
+    - in-repo `stories/` directory\n\nAlso perform only minimal reference cleanup\
+    \ required by those removals.\n\n## Acceptance criteria from direction\n- Listed\
+    \ stray files are removed (`git ls-files` no longer lists them).\n- `grep` confirms\
+    \ no backend/frontend code references the removed files.\n- Backend pytest suite\
+    \ and `make smoke` still pass after removal.\n- Diff is deletions (+ minimal necessary\
+    \ reference cleanup) only \u2014 no unrelated reformatting.\n\n## Decomposition\
+    \ logic\nWHY split this? Because the risky part is not deletion itself; it is\
+    \ proving nothing in runtime/dev tooling still depends on the files, then validating\
+    \ the repository after cleanup. The first slice establishes the audit and minimal\
+    \ cleanup boundary; the second lands the deletions and validation in one PR-sized\
+    \ pass.\n"
+  child_stories:
+  - title: D091 audit references to stray bootstrap files and clean blockers
+    scope: infra
+    chain_kind: tdd
+    rationale: 'First vertical slice: identify any backend/frontend or build references
+      to the listed files before removal, and apply only the minimal cleanup needed
+      so deletion can proceed safely. WHY separate it? It de-risks the actual delete
+      step and keeps the later removal PR small and binary: files gone, checks green.'
+    estimated_new_files: 0
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 90
+    points: 2
+  - title: D091 remove stray bootstrap files and verify smoke/tests
+    scope: infra
+    chain_kind: tdd
+    rationale: 'Second vertical slice: delete the listed stale files/directories,
+      confirm `git ls-files` no longer includes them, and run backend pytest plus
+      `make smoke`. WHY keep validation with deletion? Because the user value is a
+      cleaner repo without breakage, not deletion in isolation. Depends on the audit/cleanup
+      slice landing first if any references exist.'
+    estimated_new_files: 0
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 140
+    points: 3
+  labels:
+  - chore
+  - priority/p2
+  confidence: 0.97
+validation_issues: []

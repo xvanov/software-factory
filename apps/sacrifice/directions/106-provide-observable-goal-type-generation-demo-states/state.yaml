@@ -1,0 +1,110 @@
+status: pm-validated
+source: scheduled-ux_auditor
+created_at: '2026-07-23T06:00:39.255490+00:00'
+audit:
+- ts: '2026-07-23T06:00:39.255493+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: scheduled-ux_auditor
+- ts: '2026-07-23T06:01:26.594564+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.83
+pm_result:
+  type: ux
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D106 observable goal-type generation demo states
+  tracker_body: "## Summary\nDirection D106 asks for an observable, runnable demo\
+    \ or fixture so a UX audit can verify the goal-type generation status-banner progression\
+    \ and the final notification-driven return path.\n\n## Why\nThe current runtime\
+    \ does not let the audit observe long-running generation updates in a deterministic\
+    \ way. That means the team cannot answer the core product question: **does the\
+    \ user actually see clear progress across the documented states, and can they\
+    \ recover back into the flow when the generation completes?**\n\n## Evidence from\
+    \ direction\n- The audit specifically needs to observe these banner states: `queued`\
+    \ \u2192 `in progress` \u2192 `pull request open` \u2192 `merging`.\n- The current\
+    \ runtime has no live application endpoint or event stream available for this\
+    \ audit path.\n- The acceptance criterion requires a runnable environment or fixture\
+    \ that exposes each documented status-banner state and the final notification-driven\
+    \ return path.\n\n## Product framing\nThis is a UX-observability gap, not just\
+    \ a technical gap. If the states cannot be demonstrated on demand, the audit cannot\
+    \ validate whether the progress model is understandable or trustworthy. The smallest\
+    \ useful outcome is a deterministic demo path that makes each state inspectable\
+    \ without requiring real background factory work.\n\n## Scope guidance\nKeep this\
+    \ intentionally narrow:\n- Prefer deterministic fixture/demo behavior over real\
+    \ long-running orchestration.\n- Land the minimum backend support needed to expose\
+    \ known states.\n- Land the minimum frontend/demo path needed for the audit to\
+    \ step through the states and the notification return path.\n- Document exactly\
+    \ how the audit runs the demo, because an undiscoverable demo is effectively no\
+    \ demo.\n\n## Acceptance criteria from direction\n- A runnable environment or\
+    \ fixture lets the UX audit observe each documented status-banner state and the\
+    \ final notification-driven return path.\n\n## Proposed implementation slices\n\
+    The stories below are sequenced to create a deterministic backend fixture first,\
+    \ then expose it in the UI, then document the audit path."
+  child_stories:
+  - title: D106 add deterministic generation demo fixture state source
+    scope: backend
+    chain_kind: tdd
+    rationale: WHY first? Because without a deterministic source of truth for `queued`,
+      `in progress`, `pull request open`, and `merging`, every downstream slice guesses.
+      This should introduce the smallest backend fixture or stubbed state source the
+      app can read without invoking real background factory work. It is the enabling
+      slice for the rest.
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 160
+    points: 5
+  - title: D106 expose one runnable demo entry for generation status states
+    scope: backend
+    chain_kind: tdd
+    rationale: WHY separate this from the fixture? Because the audit needs an observable
+      runtime path, not just hidden test helpers. This slice should add one deterministic
+      app-facing endpoint or demo hook that surfaces the fixture states in a way the
+      frontend can consume. It depends on the fixture state source landing first.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 140
+    points: 3
+  - title: D106 render status-banner demo progression in the client
+    scope: frontend
+    chain_kind: tdd
+    rationale: WHY does this need its own slice? Because the user-visible audit target
+      is the banner progression itself. This story should wire the existing goal-type
+      generation UI, or a narrow demo surface, to the deterministic demo state feed
+      so the audit can visibly step through each documented banner state end to end.
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 180
+    points: 5
+  - title: D106 add deterministic notification return-path demo state
+    scope: frontend
+    chain_kind: tdd
+    rationale: 'WHY not bundle this with banner rendering? Because the return path
+      is a separate user outcome: can the audit observe the final notification handoff
+      back into the flow? This slice should prove that completion state can be entered
+      from a notification-driven path, using deterministic demo data rather than real
+      async completion.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 3
+  - title: D106 document how UX audit runs the demo states
+    scope: docs
+    chain_kind: docs
+    rationale: WHY docs as a separate slice? Because a demo nobody can discover or
+      run fails the audit. This should document the runnable setup, the exact status
+      sequence, and how to trigger the notification-driven return path. It should
+      come after the code slices so the instructions match reality.
+    estimated_new_files: 1
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 70
+    points: 2
+  labels:
+  - ux
+  - priority/p2
+  confidence: 0.83
+tracker_issue: 319

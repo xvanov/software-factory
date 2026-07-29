@@ -1,0 +1,86 @@
+status: pm-validated
+source: scheduled-ux_auditor
+created_at: '2026-07-21T06:12:46.752433+00:00'
+audit:
+- ts: '2026-07-21T06:12:46.752436+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: scheduled-ux_auditor
+- ts: '2026-07-21T06:12:55.298895+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.82
+pm_result:
+  type: ux
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D009 provide-ux-auditor-runtime-inputs
+  tracker_body: '## Summary
+
+    Provide the UX auditor with the runtime inputs it actually needs to validate flows:
+    at least one concrete `flow.md` artifact and app URL/runtime context on scheduled
+    UX audits.
+
+
+    ## Why
+
+    The current gap is not cosmetic. WHY can''t the auditor validate user flows today?
+    Because it lacks the flow definitions and target runtime. WHY does that matter?
+    Because an auditor without the exact flow file and runtime can only guess, and
+    guessed UX findings are low-trust.
+
+
+    ## Acceptance Criteria
+
+    - [ ] Scheduled UX audit input includes at least one `flow.md` plus app URL/runtime
+    context.
+
+    - [ ] UX auditor can reference concrete flow filenames and step numbers from supplied
+    artifacts.
+
+
+    ## PM Notes
+
+    - Backpressure is sufficient because `explore: true` is present.
+
+    - This should be split into small vertical slices: first establish how scheduled
+    UX audit input carries runtime artifacts, then make the auditor consume and cite
+    those artifacts.
+
+    - WHY split this way? Because plumbing inputs and proving citation behavior are
+    separable, independently reviewable slices.
+
+    - Repo context is currently unavailable, so file-level implementation details
+    may shift once the codebase is inspected.'
+  child_stories:
+  - title: D009 attach flow.md and app runtime context to scheduled UX audits
+    scope: backend
+    chain_kind: tdd
+    rationale: 'First vertical slice: ensure the scheduled UX audit payload/input
+      actually includes at least one flow artifact plus app URL/runtime context. WHY
+      first? Because the auditor cannot cite anything until these inputs exist. Keep
+      this to the scheduler/input-builder path only.'
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 160
+    points: 5
+  - title: D009 make UX auditor cite flow filenames and step numbers
+    scope: backend
+    chain_kind: tdd
+    rationale: 'Second vertical slice: update auditor consumption/parsing so findings
+      can reference concrete flow filenames and step numbers from supplied artifacts.
+      Depends on the input-plumbing slice landing first. WHY separate? Because consumption/citation
+      behavior is distinct from transport of runtime inputs and should be testable
+      on its own.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 5
+  labels:
+  - ux
+  - priority/p2
+  confidence: 0.82
+tracker_issue: 77

@@ -1,0 +1,9 @@
+status: created
+source: operator
+created_at: '2026-07-29T22:50:47.202203+00:00'
+audit:
+- ts: '2026-07-29T22:50:47.202203+00:00'
+  by: operator
+  event: created
+  details:
+    source: hand-written

@@ -12,6 +12,13 @@ build/
 *.egg-info/
 state/*.db
 state/*.db-journal
+# Stray runtime state written OUTSIDE the root state/ dir. The db helpers
+# mkdir their parent relative to the PROCESS cwd, so running a query from
+# inside e.g. a direction dir scaffolds an empty `state/factory.db` there and it
+# gets committed as a binary. The rules above are root-anchored by design; this
+# one has to be recursive to catch the accidents.
+**/state/*.db
+**/state/*.db-journal
 state/dry_run_scratch/
 # Per-story event logs (JSONL, append-only, grow with chain activity).
 # Surface via ``factory why`` / ``factory trace``; recreated on demand.
@@ -54,6 +61,36 @@ state/.halt_history.json
 state/.manager_apply_history.json
 state/.improver_backoff.json
 state/*.log
+# Timestamped SQLite snapshots taken before destructive repairs (``state/*.db``
+# is already ignored; the ``.bak-<epoch>`` copies are the same data and run to
+# tens of MB each). Recovery artifacts, never part of the durable record.
+state/*.db.bak-*
+# L1 idle-generator bookkeeping — last-fire timestamp so the idle loop does not
+# re-fire within its cooldown. Pure runtime; recreated on demand.
+state/idle_generator.json
+# Manager escalation debounce history (one entry per L2->L3 escalation, pruned
+# on read). Runtime-only; the durable record is the concern/proposal PRs.
+state/.manager_escalation_history.json
+# Issue-hygiene watermarks (``<app>.last``) — the reconcile pass stores the last
+# swept cursor per app so it does not rescan closed issues every tick.
+state/issue_hygiene/
+
+# Claude Code agent worktrees — linked working dirs sharing this repo's .git,
+# created per background agent and removed when unchanged. Never committed.
+# (``.claude/skills/`` IS tracked: those are checked-in project skills.)
+.claude/worktrees/
+
+# Direction artifacts — mockups, screen recordings, binaries a persona was given
+# as input. Keep them on disk next to their direction, but NEVER in git: three
+# exercise-demo mp4s put 50 MB into this repo's history permanently (git's pack
+# is 72 MB, almost all of it those files). Text siblings (direction.md, flow.md,
+# api_spec.md) are the reviewable source and stay tracked.
+#
+# Already-committed binaries are NOT removed by this rule — history still holds
+# them, and rewriting it would invalidate every open branch and PR. This stops
+# the bleeding; use git-lfs or object storage if you need new large inputs.
+apps/*/directions/*/artifacts/**
+!apps/*/directions/*/artifacts/.gitkeep
 
 # coverage.py data file (never commit)
 .coverage

@@ -1,0 +1,134 @@
+status: pm-validated
+source: scheduled-security
+created_at: '2026-07-19T13:58:13.189304+00:00'
+audit:
+- ts: '2026-07-19T13:58:13.189307+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: scheduled-security
+- ts: '2026-07-19T13:58:39.717242+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.87
+pm_result:
+  type: security
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D094 secure password reset and session revocation
+  tracker_body: '## Summary
+
+    Direction D094 adds secure password recovery so compromised credentials can be
+    rotated safely. WHY now: the app already treats bearer-token compromise as high
+    impact across goals, payments, uploads, notifications, and dashboard access, and
+    current context explicitly calls out the lack of a password reset flow as an auth
+    hardening gap.
+
+
+    ## User/problem framing
+
+    - A legitimate user who forgets their password needs a recovery path.
+
+    - An attacker must not learn whether an email exists from the forgot-password
+    endpoint.
+
+    - A stolen or replayed reset token must expire and be single-use.
+
+    - A successful password reset must invalidate prior active sessions/tokens so
+    compromise does not persist after recovery.
+
+
+    ## Acceptance criteria from direction
+
+    - Forgot-password issues expiring single-use reset tokens without disclosing account
+    existence
+
+    - Reset endpoint enforces token validity, complexity checks, and attempt throttling
+
+    - Successful reset revokes prior active sessions/tokens
+
+
+    ## PM decomposition notes
+
+    WHY split this way: the risky part is not just adding endpoints; it is introducing
+    a reset-token primitive, then wiring request flow, then wiring consume/reset behavior,
+    then forcing session invalidation. Those are distinct vertical slices and fit
+    the chain better as small PRs than one oversized auth rewrite.
+
+
+    Suggested implementation order:
+
+    1. Add reset-token persistence/validation primitive
+
+    2. Add forgot-password request endpoint with account-enumeration protection
+
+    3. Add reset-password consume endpoint with complexity + throttling
+
+    4. Add session/token revocation on successful reset
+
+
+    ## Risks / watchpoints
+
+    - Do not leak account existence through status code, response body, or timing-sensitive
+    branching where avoidable.
+
+    - Revocation semantics must cover currently active bearer sessions, not just password
+    change in storage.
+
+    - Token single-use behavior must be explicit and testable.
+
+    - Throttling needs an observable enforcement path for tests, not just comments
+    or TODOs.'
+  child_stories:
+  - title: D094 add password reset token model and validation service
+    scope: backend
+    chain_kind: tdd
+    rationale: 'WHY first: every later slice depends on a durable, expiring, single-use
+      reset-token primitive. Keep this to the model/service/test skeleton only so
+      downstream stories can consume a stable contract without bundling endpoint behavior.'
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 180
+    points: 5
+  - title: D094 add forgot-password endpoint with enumeration-safe response
+    scope: backend
+    chain_kind: tdd
+    rationale: 'WHY separate: request initiation is its own user-visible slice and
+      can land once the token primitive exists. This story should verify the endpoint
+      returns the same outward response whether the account exists or not while issuing
+      an expiring reset token for valid accounts.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 160
+    points: 3
+  - title: D094 add reset-password endpoint with token checks and throttling
+    scope: backend
+    chain_kind: tdd
+    rationale: "WHY separate from forgot-password: consuming the token has different\
+      \ invariants\u2014single-use enforcement, expiry, password complexity, and attempt\
+      \ throttling. This is a vertical slice because it delivers the actual recovery\
+      \ completion path once a token exists."
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 190
+    points: 5
+  - title: D094 revoke prior sessions after successful password reset
+    scope: backend
+    chain_kind: tdd
+    rationale: 'WHY its own PR: session invalidation is the security payoff and likely
+      touches auth token/session semantics that are easy to destabilize if bundled
+      with reset creation/consumption. This slice should prove that pre-reset bearer
+      sessions stop working after a successful reset.'
+    estimated_new_files: 0
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 5
+  labels:
+  - security
+  - priority/p2
+  - auth
+  - password-reset
+  confidence: 0.87
+tracker_issue: 271

@@ -1,4 +1,4 @@
-status: needs-direction
+status: closed
 source: scheduled-security
 created_at: '2026-06-01T01:07:53.862030+00:00'
 audit:
@@ -24,6 +24,14 @@ audit:
     - api_spec
     - explore_tag_or_artifacts
 - ts: '2026-07-17T23:57:42.815710+00:00'
+  by: factory.chain.pm_sync
+  event: status -> needs-direction
+  details:
+    missing:
+    - user_flow
+    - api_spec
+    - explore_tag_or_artifacts
+- ts: '2026-07-18T15:01:27.651289+00:00'
   by: factory.chain.pm_sync
   event: status -> needs-direction
   details:

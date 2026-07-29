@@ -24,7 +24,7 @@ rate_limits:
   ralph_runs_per_day: 24
   bug_hunter_runs_per_day: 6
   security_runs_per_day: 2
-  ux_auditor_runs_per_day: 4
+  ux_auditor_runs_per_day: 1  # throttled 2026-07-24 (was 4); see schedules: ux_audit
   # Factory self-improver. Now event-triggered — ``factory tick``
   # fires the improver whenever a fresh ``factory_needs_redesign``
   # event arrives (debounced ~10 min, capped daily). 12/day is the
@@ -85,7 +85,11 @@ schedules:
     persona: bug_hunter
     rate_limit_key: bug_hunter_runs_per_day
   - name: ux_audit
-    cron: "0 */6 * * *"
+    # Throttled 2026-07-24: every 6h (4/day) out-generated the pipeline (D114/115/116
+    # auto-filed in ~2h) and drove ~$145 projected EOD while feature work waited.
+    # Weekly (Mon 09:00) keeps UX-audit coverage without flooding the queue; raise
+    # again once the feature backlog (password reset / email verify) has drained.
+    cron: "0 9 * * 1"
     persona: ux_auditor
     rate_limit_key: ux_auditor_runs_per_day
   - name: security_weekly

@@ -1,0 +1,82 @@
+status: pm-validated
+source: operator-loop3-validate-dualdraft-fix
+created_at: '2026-07-21T06:16:58.470683+00:00'
+audit:
+- ts: '2026-07-21T06:16:58.470685+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: operator-loop3-validate-dualdraft-fix
+- ts: '2026-07-21T06:46:01.770942+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.94
+pm_result:
+  type: feature
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D010 factory version command for git SHA, branch, dirty
+  tracker_body: '## Summary
+
+    Add a `factory version` CLI command that answers the operator question: **what
+    code is live right now?**
+
+
+    ## Why
+
+    Current deploy behavior can leave `HEAD` as a misleading source of truth because
+    the live checkout is updated via surgical `git checkout origin/main -- factory/`.
+    Operators need a fast, local, read-only command that reports the factory repo''s
+    current short commit SHA, branch, and dirty state.
+
+
+    ## Direction evidence
+
+    - `explore: true` is present, so backpressure is sufficient.
+
+    - Acceptance criteria are specific and testable.
+
+
+    ## Acceptance Criteria
+
+    - [ ] A new `factory version` CLI command prints the factory repo''s current git
+    commit SHA (short) and branch name to stdout.
+
+    - [ ] It also indicates whether the working tree is dirty (has uncommitted changes).
+
+    - [ ] The command is read-only (no writes, no network) and exits 0 in a valid
+    git repo.
+
+    - [ ] A unit test invokes the underlying pure helper against a temp git repo and
+    asserts the reported SHA/branch/dirty flag match the repo state.
+
+
+    ## PM cut / WHY this shape
+
+    WHY one story? Because this is already the smallest vertical slice: one operator-facing
+    CLI behavior plus one pure helper plus one temp-repo test. Splitting helper vs
+    command would create sequencing overhead without reducing risk meaningfully.
+
+
+    WHY no extra stories? No schema change, no API, no docs-only deliverable, no multi-call-site
+    migration. Keep it surgical.'
+  child_stories:
+  - title: D010 add factory version CLI with git state helper and test
+    scope: backend
+    chain_kind: tdd
+    rationale: 'Single vertical slice: introduce a pure git-inspection helper and
+      wire it to a new `factory version` CLI command so operators can read SHA, branch,
+      and dirty state end-to-end. WHY one slice? The helper has no independent user
+      value until exposed by the CLI, and the CLI is not safe to land without the
+      temp-repo unit test proving the reported values match actual repo state.'
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 140
+    points: 3
+  labels:
+  - feature
+  - priority/p2
+  confidence: 0.94
+tracker_issue: 81

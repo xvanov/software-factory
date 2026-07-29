@@ -1,0 +1,78 @@
+status: pm-validated
+source: operator-loop3-soak
+created_at: '2026-07-21T02:18:56.197387+00:00'
+audit:
+- ts: '2026-07-21T02:18:56.197390+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: operator-loop3-soak
+- ts: '2026-07-21T02:19:45.219712+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.96
+pm_result:
+  type: infra
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D007 bound persisted run error text length
+  tracker_body: '## Summary
+
+    Bound persisted run error text in `factory.runner._record_run` so oversized provider
+    errors or stack traces do not bloat `state/factory.db`.
+
+
+    ## Why
+
+    - WHY store multi-megabyte errors if accounting and audit only need a bounded,
+    readable summary?
+
+    - WHY now? Because this is a small, single-call-site containment fix with clear
+    acceptance criteria.
+
+    - WHY this shape? A pure helper keeps truncation logic deterministic, testable,
+    and reusable.
+
+
+    ## Direction details
+
+    Acceptance criteria from the direction:
+
+    - Add a pure helper that truncates a string to a bounded max length (default 4000
+    chars), appending a clear marker like `...[truncated N chars]` when truncation
+    occurs.
+
+    - `_record_run` must apply the bound to the already-redacted error before persisting.
+
+    - Text at or under the bound is unchanged; helper is idempotent.
+
+    - Unit test covers both persistence-path truncation for over-long text and verbatim
+    storage for short text.
+
+
+    ## PM read
+
+    This is a tight infra/quality slice, not a broad refactor. One vertical story
+    should land it cleanly: introduce helper, wire the one persistence path, prove
+    behavior with focused unit coverage.
+
+    '
+  child_stories:
+  - title: D007 bound persisted run error text in _record_run
+    scope: infra
+    chain_kind: tdd
+    rationale: 'Single vertical slice: WHY split further when the user value is specifically
+      the persistence path staying lean? This should include the pure truncation helper,
+      wiring `_record_run` to use it after redaction, and unit coverage for long vs
+      short error persistence behavior. Small, one call site, independently shippable.'
+    estimated_new_files: 0
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 90
+    points: 3
+  labels:
+  - infra
+  - priority/p2
+  confidence: 0.96
+tracker_issue: 64

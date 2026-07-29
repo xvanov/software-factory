@@ -92,22 +92,23 @@ def compose_context_prelude(
                 else:
                     parts.append(f"\n### Parent direction: {ancestor.id_slug}\n")
                     parts.append(ancestor.raw_body.rstrip() + "\n")
-                    if software_factory_root is not None and ancestor.state:
-                        tracker_num = ancestor.state.get("tracker_issue")
-                        if isinstance(tracker_num, int) and tracker_num > 0:
-                            story_path = (
-                                software_factory_root
-                                / "state"
-                                / "stories"
-                                / f"{tracker_num}-{ancestor.slug}.md"
-                            )
-                            story_content = _read_text(story_path)
-                            if story_content is not None:
-                                parts.append(
-                                    f"\n#### Merged Story / Dev Agent Record: "
-                                    f"`{ancestor.id_slug}`\n"
-                                )
-                                parts.append(story_content.rstrip() + "\n")
+                    # NOTE (2026-07-29): a "Merged Story / Dev Agent Record"
+                    # section used to be appended here, read from
+                    # ``state/stories/<tracker>-<direction-slug>.md``. That file
+                    # has never existed — nothing writes ``state/stories/``, and
+                    # story files are written to ``apps/<app>/stories/`` named by
+                    # the STORY's issue number and slug, not the direction's. So
+                    # the read always returned None and ``_read_text`` swallowed
+                    # the FileNotFoundError: the section was silently omitted on
+                    # every call since it was written, and no persona has ever
+                    # received ancestor-story context.
+                    #
+                    # Removed rather than repointed, because it is not fixable
+                    # from filenames: nothing in a story's name identifies its
+                    # direction. The link lives only in ``stories.direction_id``,
+                    # so restoring the capability needs a DB lookup threaded in
+                    # here. Tracked as a deliverable of the direction-state
+                    # refactor; do not re-add a path-guessing version.
 
     if task_scope:
         sections = parse_navigation(navigation_md)

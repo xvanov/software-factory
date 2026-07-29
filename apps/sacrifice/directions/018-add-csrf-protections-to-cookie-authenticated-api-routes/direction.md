@@ -2,7 +2,7 @@
 title: Add CSRF protections to cookie-authenticated API routes
 type: security
 priority: p2
-explore: false
+explore: true
 created_at: '2026-06-01T01:07:53.858019+00:00'
 ---
 

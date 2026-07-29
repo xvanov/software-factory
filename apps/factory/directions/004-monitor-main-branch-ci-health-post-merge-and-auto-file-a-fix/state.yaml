@@ -1,0 +1,51 @@
+status: closed
+source: operator-loop3
+created_at: '2026-07-19T14:36:29.872938+00:00'
+audit:
+- ts: '2026-07-19T14:36:29.872941+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: operator-loop3
+- ts: '2026-07-20T21:51:35.410208+00:00'
+  by: factory.chain.pm_sync(dry-run)
+  event: status -> pm-validated
+  details:
+    confidence: 0.75
+pm_result:
+  type: infra
+  priority: p1
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: '[DIRECTION] Monitor main-branch CI health post-merge and auto-file...'
+  tracker_body: "**Monitor main-branch CI health post-merge and auto-file a fix on\
+    \ red**\n\nThe factory gates PRE-merge required checks (branch protection: a PR\
+    \ only merges when its required checks pass on the branch \u2014 verified working).\
+    \ But there is NO monitor for CI health on main AFTER merge. A required check\
+    \ that goes red on main post-merge (flaky test, merge-interaction failure not\
+    \ seen on the isolated branch, an infra/runner change, or a check that became\
+    \ red for any reason) sits UNNOTICED \u2014 observed 2026-07-19: sacrifice main\
+    \ showed a red typecheck check for ~8h with nothing reacting. The desired flow\
+    \ (operator): CI runs in the PR and only a green branch merges to main (already\
+    \ enforced); then on merge to main CI runs again, and IF it fails there, the factory\
+    \ should automatically file an issue so it gets fixed via the normal chain. WHAT\
+    \ TO BUILD: a tick/scheduled check per app that polls the latest completed main\
+    \ CI run for the app's repo (gh run list --branch main / gh api commits/{sha}/check-runs);\
+    \ if a REQUIRED check is red/failing on main, auto-file a direction (source: ci-health)\
+    \ capturing the failing job + its `gh run view --log-failed` digest, so the factory\
+    \ dispatches a fix through dev->review->CI->merge. Advisory-only red checks (not\
+    \ in the required set) should emit at most a warning, NOT an issue (avoid noise).\
+    \ Dedup: do not re-file the same main-CI failure (same check + same failure signature)\
+    \ while an open ci-health direction/issue for it exists. This closes the 'red\
+    \ on main goes unnoticed' gap while keeping the pre-merge gate as the primary\
+    \ defense.\n"
+  child_stories:
+  - title: Monitor main-branch CI health post-merge and auto-file a fix
+    scope: backend
+    chain_kind: tdd
+    rationale: Explore-tagged direction; single backend story as a starting point.
+    points: 3
+  labels:
+  - infra
+  - priority/p1
+  confidence: 0.75

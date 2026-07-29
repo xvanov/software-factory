@@ -1,0 +1,98 @@
+status: pm-validated
+source: scheduled-ux_auditor
+created_at: '2026-07-20T12:05:07.145069+00:00'
+audit:
+- ts: '2026-07-20T12:05:07.145072+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: scheduled-ux_auditor
+- ts: '2026-07-20T12:05:29.753826+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.75
+pm_result:
+  type: ux
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D100 wire-ux-auditor-to-live-browser-sandbox
+  tracker_body: '## Summary
+
+    Direction D100 asks to move the UX auditor off text-only wiring and onto a live
+    browser sandbox so it can collect objective evidence instead of inferred commentary.
+
+
+    ## Why / PM cut-through
+
+    - WHY does this matter? Because the current setup cannot produce the evidence
+    the UX schema requires.
+
+    - WHY is browser access the core need? Because the acceptance criterion explicitly
+    requires citations grounded in executable browser evidence: Playwright locator
+    actions, response timings, or axe rule ids.
+
+    - WHY not treat this as a single broad infra task? Because wiring runtime browser
+    capability, proving evidence emission, and documenting the operating path are
+    separate slices with different failure modes.
+
+
+    ## Acceptance criteria from direction
+
+    - ux_auditor runs with browser access and can emit findings citing Playwright
+    locator actions, response timings, or axe rule ids.
+
+
+    ## Notes / risks to watch
+
+    - The repo context is app-focused, but this direction appears to target factory/runtime
+    tooling around the UX auditor. The implementation should stay minimal and prove
+    the observable outcome: audited findings include live-browser-backed citations.
+
+    - The smallest shippable sequence is: enable browser-capable sandbox runtime,
+    then prove the auditor emits compliant evidence, then document how to invoke/verify
+    it.
+
+    '
+  child_stories:
+  - title: D100 add browser-capable sandbox wiring for ux_auditor runs
+    scope: infra
+    chain_kind: tdd
+    rationale: WHY first? Without a live browser in the sandbox, every downstream
+      UX-auditor change is fake. This slice should only introduce the runtime/path
+      needed for ux_auditor executions to launch a browser session in the existing
+      sandbox flow, not redesign the auditor. It is the dependency for the evidence-emission
+      slice.
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 160
+    points: 5
+  - title: D100 emit live-browser UX findings with objective evidence cites
+    scope: backend
+    chain_kind: tdd
+    rationale: 'WHY separate this? Once browser access exists, the next vertical value
+      is proving ux_auditor output cites concrete evidence types named in the direction:
+      Playwright locator actions, response timings, or axe rule ids. This slice should
+      focus on one execution path that produces compliant findings, building on the
+      browser-capable runtime from the prior story.'
+    estimated_new_files: 3
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 180
+    points: 5
+  - title: D100 document live-browser ux_auditor invocation and evidence
+    scope: docs
+    chain_kind: docs
+    rationale: WHY docs as its own slice? Operators need to know how to run and validate
+      the new live-browser path, and docs-only changes should not be bundled with
+      code. This should capture the invocation path and what compliant evidence looks
+      like after the first two slices land.
+    estimated_new_files: 1
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 60
+    points: 2
+  labels:
+  - ux
+  - priority/p2
+  confidence: 0.75
+tracker_issue: 297

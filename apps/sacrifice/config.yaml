@@ -66,6 +66,10 @@ gates:
   # true once a real Playwright harness + runnable stack exist.
   e2e_harness_ready: false
   mutation_testing: false
+  # Flaky-red resilience: on a test-gate RED, rerun the failures in isolation;
+  # a test that fails-then-passes is quarantined (non-blocking, recorded as
+  # tech debt) rather than blocking the merge. A consistent red still blocks.
+  flake_quarantine: true
   # D002 Karpathy Layer-2 runtime verifier. `make smoke` boots/reuses the
   # backend and drives register→login→create→activate→submit-proof — the exact
   # path that shipped broken while every gate was green (and whose unit tests,
