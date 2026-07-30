@@ -298,6 +298,156 @@ def edit_direction(
         console.print(f"  - {p.name}")
 
 
+def _resolve_direction_dir(app_name: str, id_or_slug: str) -> Path | None:
+    """Find one direction directory for ``app_name`` by id, slug or id-slug."""
+    directions_dir = _FACTORY_ROOT / "apps" / app_name / "directions"
+    if not directions_dir.exists():
+        return None
+    for c in sorted(p for p in directions_dir.iterdir() if p.is_dir()):
+        if (
+            c.name == id_or_slug
+            or c.name.startswith(f"{id_or_slug}-")
+            or c.name.endswith(f"-{id_or_slug}")
+        ):
+            return c
+    return None
+
+
+def _awaiting_approval_rows(apps: list[str]) -> list[tuple[str, str, str, str]]:
+    """``(app, dir_name, title, reason)`` for every direction parked at the
+    operator-approval gate. Shared by ``inbox`` and ``approve-direction``."""
+    from factory.directions.approval import approval_blocked_reason, awaiting_operator_approval
+    from factory.directions.parser import list_direction_dirs, parse_direction_dir
+
+    rows: list[tuple[str, str, str, str]] = []
+    for a in apps:
+        for ddir in list_direction_dirs(a, _FACTORY_ROOT):
+            try:
+                d = parse_direction_dir(a, ddir)
+            except Exception:  # noqa: BLE001 - a malformed sibling must not hide the rest
+                continue
+            if awaiting_operator_approval(d):
+                rows.append((a, ddir.name, d.title[:60], approval_blocked_reason(d)))
+    return rows
+
+
+@app.command("approve-direction")
+def approve_direction_cmd(
+    id_or_slug: str | None = typer.Argument(
+        None, help="Direction id (e.g. 015), slug, or 'id-slug'. Omit to LIST what is pending."
+    ),
+    app_name: str | None = typer.Option(None, "--app", help="App name; required to approve"),
+    note: str | None = typer.Option(None, "--note", help="Why you approved (stored in state.yaml)"),
+    reject: bool = typer.Option(
+        False, "--reject", help="Close the direction instead of approving it"
+    ),
+    by: str | None = typer.Option(
+        None, "--by", help="Who approved (default: $USER / 'operator')"
+    ),
+) -> None:
+    """Approve (or --reject) a MACHINE-FILED direction so the chain may build it.
+
+    Directions the factory filed for itself — every ``scheduled-<persona>``
+    source (ralph, bug_hunter, security, ux_auditor), any other machine filer,
+    and any direction whose source cannot be determined — are NOT auto-triaged
+    into stories. They park until an operator approves them here. Run with no
+    arguments to list everything waiting (also shown by ``factory inbox``).
+
+    Operator-filed directions never need this: they auto-triage as always.
+    """
+    from factory.directions.approval import (
+        approval_blocked_reason,
+        approve_direction,
+        awaiting_operator_approval,
+        requires_operator_approval,
+    )
+    from factory.directions.parser import parse_direction_dir
+
+    apps = [app_name] if app_name else _list_apps()
+
+    if id_or_slug is None:
+        rows = _awaiting_approval_rows(apps)
+        if not rows:
+            console.print("[dim]No directions awaiting operator approval.[/dim]")
+            return
+        table = Table(title="directions awaiting operator approval")
+        table.add_column("app")
+        table.add_column("direction")
+        table.add_column("title")
+        table.add_column("why parked")
+        for row in rows:
+            table.add_row(*row)
+        console.print(table)
+        console.print(
+            "[dim]Approve with:[/dim] factory approve-direction <id> --app <app>   "
+            "[dim]Reject with:[/dim] --reject"
+        )
+        return
+
+    if app_name is None:
+        console.print("[red]error:[/red] --app is required when naming a direction")
+        raise typer.Exit(code=2)
+
+    target = _resolve_direction_dir(app_name, id_or_slug)
+    if target is None:
+        console.print(f"[red]error:[/red] no direction matched {id_or_slug!r} in app {app_name!r}")
+        raise typer.Exit(code=2)
+
+    try:
+        direction = parse_direction_dir(app_name, target, software_factory_root=_FACTORY_ROOT)
+    except Exception as exc:  # noqa: BLE001 - surface the parse failure, don't traceback
+        console.print(f"[red]error:[/red] cannot parse {target}: {exc!r}")
+        raise typer.Exit(code=2) from None
+
+    if reject:
+        from factory.directions.watcher import mark_direction_status
+
+        mark_direction_status(
+            direction,
+            "closed",
+            by=(by or os.environ.get("USER") or "operator"),
+            details={"reason": "operator-rejected-at-approval-gate"},
+        )
+        console.print(
+            Panel.fit(
+                f"[bold]{target.name}[/bold] closed (operator rejected).\n"
+                "It will never be triaged into stories.",
+                title="rejected",
+                style="yellow",
+            )
+        )
+        return
+
+    if not requires_operator_approval(direction):
+        console.print(
+            f"[yellow]note:[/yellow] {target.name} is operator/human-filed "
+            "(source is on the auto-build allowlist) — it does not need approval."
+        )
+        return
+
+    if not awaiting_operator_approval(direction):
+        console.print(
+            f"[yellow]note:[/yellow] {target.name} is already approved or past the "
+            f"gate (status={direction.status})."
+        )
+        return
+
+    reason = approval_blocked_reason(direction)
+    record = approve_direction(
+        direction, by=(by or os.environ.get("USER") or "operator"), note=note
+    )
+    console.print(
+        Panel.fit(
+            f"[bold]{target.name}[/bold] approved by "
+            f"[bold]{record['approved_by']}[/bold]\n"
+            f"was parked because: {reason}\n"
+            "The next pm-sync / tick will triage it into stories.",
+            title="approved",
+            style="green",
+        )
+    )
+
+
 @app.command("directions-backfill")
 def directions_backfill_cmd(
     app_name: str = typer.Option(..., "--app", help="App name"),
@@ -408,8 +558,19 @@ def pm_sync_cmd(
     table.add_row("processed", str(summary.processed))
     table.add_row("validated", str(summary.validated))
     table.add_row("needs_direction", str(summary.needs_direction))
+    table.add_row("awaiting_approval", str(len(summary.awaiting_approval)))
     table.add_row("errors", str(len(summary.errors)))
     console.print(table)
+    if summary.awaiting_approval:
+        console.print(
+            "[yellow]parked — machine-filed, needs operator approval:[/yellow]"
+        )
+        for did, reason in summary.awaiting_approval:
+            console.print(f"  - {did}: {reason}")
+        console.print(
+            "[dim]approve with:[/dim] factory approve-direction <id> "
+            f"--app {app_name}   [dim](or --reject)[/dim]"
+        )
     if summary.errors:
         console.print("[red]errors:[/red]")
         for did, msg in summary.errors:
@@ -753,6 +914,18 @@ def tick_cmd(
                     sync_summary.validated,
                 )
             )
+            if sync_summary.awaiting_approval:
+                # Machine-filed directions parked at the operator-approval gate.
+                # Never silent: the tick names them so the operator can approve
+                # or reject with ``factory approve-direction``.
+                scheduled_results.append(
+                    (
+                        "directions_awaiting_approval",
+                        ", ".join(did for did, _ in sync_summary.awaiting_approval)[:60],
+                        len(sync_summary.awaiting_approval),
+                        0,
+                    )
+                )
         elif sync_reason not in {"disabled", "no_pending"}:
             scheduled_results.append(("auto_pm_sync", sync_reason, 0, 0))
     except Exception as exc:  # noqa: BLE001 - never fail the tick on triage
@@ -1053,6 +1226,26 @@ def inbox_cmd(
         console.print(nd_table)
     else:
         console.print("[dim]No directions in needs-direction.[/dim]")
+
+    # Machine-filed directions parked at the operator-approval gate. These are
+    # NOT auto-triaged into stories (see factory.directions.approval): a
+    # scheduled persona filing its own work orders is the treadmill that cost
+    # ~$145 and 4 hand-closed PRs before the gate existed. They must be visible
+    # here — a silently parked direction is a detect-without-remediate bug.
+    approval_rows = _awaiting_approval_rows(apps)
+    if approval_rows:
+        appr_table = Table(title="awaiting operator approval (auto-filed directions)")
+        appr_table.add_column("app")
+        appr_table.add_column("direction")
+        appr_table.add_column("title")
+        appr_table.add_column("why parked")
+        for appr_row in approval_rows:
+            appr_table.add_row(*appr_row)
+        console.print(appr_table)
+        console.print(
+            "[dim]approve/reject with:[/dim] factory approve-direction <id> --app <app> "
+            "[dim](--reject to close)[/dim]"
+        )
 
     # Budget warning.
     spend = today_spend_usd(_FACTORY_ROOT, db_path=db)

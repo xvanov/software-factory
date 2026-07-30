@@ -1,4 +1,4 @@
-"""Garbage-collect stale scheduled-persona directions stuck at needs-direction.
+"""Garbage-collect stale scheduled-persona directions nobody is acting on.
 
 Directions filed by the scheduled personas (ralph/bug_hunter/security/
 ux_auditor — ``source`` starting with ``scheduled-``) sometimes fail the
@@ -17,6 +17,12 @@ sat unactioned for a long time (either many consecutive
 ``needs-direction`` audit entries, or a long wall-clock age). Everything
 else is left alone — this is a safety net for abandoned scheduler noise,
 not a general-purpose direction sweeper.
+
+Since 2026-07-30 the same net also covers the other place scheduler noise
+can rot: a direction parked at ``status: created`` by the operator-approval
+gate (``factory.directions.approval``) that nobody ever approved or
+rejected. Same conservative threshold (14 days), same scheduler-source-only
+rule.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from factory.directions.approval import awaiting_operator_approval
 from factory.directions.parser import Direction, list_direction_dirs, parse_direction_dir
 from factory.directions.watcher import mark_direction_status
 
@@ -87,21 +94,36 @@ def is_gc_eligible(direction: Direction, *, now: datetime) -> bool:
     """Pure decision function — no I/O, no ``datetime.now()`` call.
 
     ``now`` is required (not defaulted) so tests can drive the age
-    threshold deterministically. Returns True only when ALL of:
+    threshold deterministically. Returns True in either of two cases, both
+    requiring a ``scheduled-`` source:
 
-      * ``direction.status == "needs-direction"``
-      * its recorded ``source`` starts with ``scheduled-``
-      * it has been stuck long enough: >= 5 consecutive needs-direction
-        audit entries, OR age > 14 days.
+      * ``status == "needs-direction"`` and it has been stuck long enough:
+        >= 5 consecutive needs-direction audit entries, OR age > 14 days.
+      * ``status == "created"``, it is parked at the operator-approval gate
+        (see ``factory.directions.approval``) and unapproved, AND age > 14
+        days. Without this, every scheduled-persona direction an operator
+        never got round to approving or rejecting would sit in
+        ``factory inbox`` forever — detect-without-remediate, just with a
+        cheaper failure mode than the treadmill it replaced. A re-filed
+        finding still recurs (the persona's own dedup only skips
+        non-terminal directions), which is the desired behaviour: a real
+        problem comes back, an ignored nag does not accumulate.
     """
-    if direction.status != "needs-direction":
-        return False
     source = str((direction.state or {}).get("source") or "")
     if not source.startswith(_SCHEDULED_SOURCE_PREFIX):
         return False
+
+    age_days = _direction_age_days(direction, now)
+
+    if direction.status == "created":
+        if not awaiting_operator_approval(direction):
+            return False
+        return age_days is not None and age_days > MAX_AGE_DAYS
+
+    if direction.status != "needs-direction":
+        return False
     if _consecutive_needs_direction_count(direction) >= MIN_CONSECUTIVE_NEEDS_DIRECTION_ENTRIES:
         return True
-    age_days = _direction_age_days(direction, now)
     if age_days is not None and age_days > MAX_AGE_DAYS:
         return True
     return False
@@ -116,7 +138,7 @@ def gc_stale_scheduled_directions(
     dry_run: bool = False,
     now: datetime | None = None,
 ) -> list[str]:
-    """Close stale scheduled-persona directions stuck at needs-direction.
+    """Close stale scheduled-persona directions nobody is acting on.
 
     Scans ``apps/<app>/directions/`` for directions passing
     ``is_gc_eligible``: sets ``status: closed`` on disk (with an audit
@@ -138,6 +160,10 @@ def gc_stale_scheduled_directions(
         if not is_gc_eligible(direction, now=resolved_now):
             continue
 
+        # Captured BEFORE the close, so the GitHub comment below names the
+        # status the direction rotted at rather than "closed".
+        prior_status = direction.status
+
         # Dry-run is a pure preview: report which directions WOULD be closed
         # (via the returned list) without mutating any state.yaml on disk.
         if not dry_run:
@@ -153,6 +179,11 @@ def gc_stale_scheduled_directions(
             # path: closes the tracker issue AND any child story issue. It never
             # raises (the on-disk close above is already committed), which is the
             # long-standing contract here — bookkeeping must not break the pass.
+            #
+            # ``prior_status`` (not a hardcoded state) because this pass now reaps
+            # two shapes: a scheduled direction stuck at ``needs-direction`` AND one
+            # parked at ``created`` awaiting operator approval. Naming the wrong one
+            # in the closing comment would mislead whoever reads the issue later.
             try:
                 from factory.directions.tracker_issue import close_direction_issues
 
@@ -165,7 +196,7 @@ def gc_stale_scheduled_directions(
                     reason=GC_REASON,
                     tracker_comment=(
                         "Closing automatically — this direction was filed by a "
-                        "scheduled persona and sat at `needs-direction` with no "
+                        f"scheduled persona and sat at `{prior_status}` with no "
                         "operator follow-up past the garbage-collection "
                         f"threshold ({GC_REASON})."
                     ),

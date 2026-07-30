@@ -96,6 +96,7 @@ not the code — re-sync before debugging. Provider keys live in `.env`
 ```bash
 factory on / off / power            # whole-factory kill switch (timers + FMS daemon)
 factory pm-sync --app X             # triage directions → stories  (--dry-run is a PURE preview)
+factory approve-direction           # list/approve/--reject MACHINE-FILED directions (gate)
 factory tick --app X                # drive every in-flight story one step
 factory status / queue / inbox      # where things are / what's in flight / what needs a human
 factory why <story-id>              # why is this stuck

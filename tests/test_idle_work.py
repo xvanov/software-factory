@@ -320,15 +320,26 @@ def test_persona_filed_direction_is_explore_and_developable(tmp_path: Path) -> N
     assert "explore_tag_or_artifacts" not in vr.missing
 
 
-def test_finding_direction_flows_to_pm_sync_without_operator(tmp_path: Path) -> None:
-    """A persona-filed (explore) direction is picked up by auto_pm_sync on the
-    tick with no operator step."""
+def test_finding_direction_flows_to_pm_sync_after_operator_approval(tmp_path: Path) -> None:
+    """A persona-filed (explore) direction reaches auto_pm_sync — but only once
+    an operator approves it.
+
+    CONTRACT CHANGE 2026-07-30: this test used to assert the finding flowed
+    "without an operator step". That is precisely the treadmill that let
+    ``ux_auditor`` file 015/016/017 (work orders for its own convenience) and
+    auto-build 4 PRs a human then had to close. A machine-filed direction now
+    parks at the operator-approval gate (``factory.directions.approval``); what
+    this test still guarantees is that approval is the ONLY thing missing —
+    backpressure, explore-tagging and the triage path all still work, so the
+    gate is a gate and not a dead end.
+    """
     from factory.chain.pm_sync import maybe_auto_pm_sync
+    from factory.directions.approval import approve_direction
     from factory.directions.creator import create_direction
 
     root = _write_root(tmp_path)
     # File a direction exactly as a scheduler persona does.
-    create_direction(
+    created = create_direction(
         app="sacrifice",
         title="fix subprocess shell=True in exec.py",
         type_tag="security",
@@ -344,6 +355,14 @@ def test_finding_direction_flows_to_pm_sync_without_operator(tmp_path: Path) -> 
         source="scheduled-bug_hunter",
     )
 
+    # Unapproved: parked, and visibly so (a distinct tick reason, not a silent
+    # zero-processed "synced").
+    summary, reason = maybe_auto_pm_sync("sacrifice", root, dry_run=True)
+    assert reason == "awaiting_approval"
+    assert summary is None
+
+    # Approved by an operator: the very same direction now flows.
+    approve_direction(created.direction, by="operator-test")
     summary, reason = maybe_auto_pm_sync("sacrifice", root, dry_run=True)
     assert reason == "synced"
     assert summary is not None and summary.processed == 1

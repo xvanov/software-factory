@@ -510,6 +510,11 @@ def _write_direction(root: Path, num: str = "003") -> None:
         "## Acceptance Criteria\n- it is better\n",
         encoding="utf-8",
     )
+    # ``source: operator`` keeps these fixtures on the human path: this file
+    # tests the SELF-TICK guard, not the operator-approval gate for
+    # machine-filed directions (``factory.directions.approval``), which would
+    # otherwise park a direction whose source cannot be determined.
+    (d / "state.yaml").write_text("status: created\nsource: operator\n", encoding="utf-8")
 
 
 def test_pm_sync_skips_factory_when_self_tick_disabled(factory_root: Path) -> None:
