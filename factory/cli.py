@@ -370,9 +370,7 @@ def directions_regenerate_state_cmd(
             f"\n[yellow]{result.no_row} direction(s) have no database row — run "
             f"`factory directions-backfill --app {app_name} --real-run` first.[/yellow]"
         )
-    console.print(
-        Panel.fit(body, title=f"directions-regenerate-state — app={app_name}")
-    )
+    console.print(Panel.fit(body, title=f"directions-regenerate-state — app={app_name}"))
 
 
 @app.command("pm-sync")

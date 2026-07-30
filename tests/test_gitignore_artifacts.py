@@ -131,8 +131,7 @@ def test_no_machine_written_projection_is_tracked() -> None:
     offenders = sorted(p for p in tracked if _MACHINE_WRITTEN.match(p))
     assert offenders == [], (
         "machine-written projections are still tracked; gitignore does not apply "
-        f"to tracked files, so these must be `git rm --cached`d:\n  "
-        + "\n  ".join(offenders)
+        "to tracked files, so these must be `git rm --cached`d:\n  " + "\n  ".join(offenders)
     )
 
 
@@ -268,11 +267,7 @@ def _real_gitignore_text() -> str:
 
 def _gitignore_without_d018_rules() -> str:
     """This repository's real ``.gitignore`` with direction 018's rules removed."""
-    kept = [
-        line
-        for line in _real_gitignore_text().splitlines()
-        if line.strip() not in _D018_RULES
-    ]
+    kept = [line for line in _real_gitignore_text().splitlines() if line.strip() not in _D018_RULES]
     text = "\n".join(kept) + "\n"
     for rule in _D018_RULES:
         assert rule not in text.splitlines(), f"failed to strip {rule!r}"
@@ -308,7 +303,7 @@ def test_transition_leaves_apps_clean(tmp_path: Path) -> None:
     apps_status = _porcelain(repo, "apps/")
     assert apps_status == [], (
         "a status transition must leave `git status --porcelain -- apps/` empty, "
-        f"but it shows:\n  " + "\n  ".join(apps_status)
+        "but it shows:\n  " + "\n  ".join(apps_status)
     )
     # And nothing anywhere else either — including the repo-root stories/ copy.
     whole_tree = _porcelain(repo)
@@ -351,8 +346,7 @@ def test_transition_dirties_apps_without_the_ignore_rules(tmp_path: Path) -> Non
         f"without the ignore rule apps/<app>/stories/*.md must dirty the tree; saw {paths}"
     )
     assert "stories/77-scratch-story.md" in paths, (
-        f"without the ignore rule the repo-root stories/*.md copy must dirty the "
-        f"tree; saw {paths}"
+        f"without the ignore rule the repo-root stories/*.md copy must dirty the tree; saw {paths}"
     )
 
 
