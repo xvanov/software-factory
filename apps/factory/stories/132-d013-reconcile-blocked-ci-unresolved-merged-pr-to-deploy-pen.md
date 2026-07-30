@@ -101,15 +101,12 @@ AC6.2: WHEN the full-path regression test is executed, GIVEN a dependent was blo
 Completed
 
 ## Agent Notes
-- Preserved reviewability: one state, one fix.
-- Reused existing merged reconciliation path instead of creating a parallel implementation. The `_record_reconciled_merge_and_enqueue_deploy` helper already handles merge action persistence and deploy enqueue — the D013 revival routes through it unchanged.
-- Three changes to `factory/chain/orchestrator.py`:
-  1. `_settled()` now returns False for `blocked_ci_unresolved` so it is not filtered from candidates.
-  2. `reconcile_from_github`'s docstring and candidate-selection comments updated to reflect the broader scope.
-  3. After reviving a `blocked_ci_unresolved` story, `_revive_dependents_of_revived_blocker` is called to un-park `blocked_dependency_unmet` stories whose blockers are no longer all permanently dead.
-- Added `_deps_none_permanently_dead(db, dep_ids)` helper — the dependent-revival guard that requires NONE of the pending deps be dead (not just "not all dead").
-- Added `_revive_dependents_of_revived_blocker` function that re-evaluates `blocked_dependency_unmet` stories in the same direction after a blocker revival.
-- All tests pass: 27/27 in test_reconcile_from_github.py, 28/28 in test_conformance.py, 741/741 in full suite (only pre-existing failure unrelated to this change).
+- Preserved scope to `blocked_ci_unresolved` while keeping existing mergeable reconciliation behavior unchanged.
+- Reused the existing reconciled-merge side-effect path (`_record_reconciled_merge_and_enqueue_deploy`) so merged blocked stories get the same `deploy_pending` transition, `merged=True` merge-action persistence, and deploy enqueue behavior as normal reconciled merges.
+- Updated reconciliation eligibility so `blocked_ci_unresolved` with a positive PR number is considered while terminal states still remain excluded.
+- Added dependent re-evaluation on blocked-story revival via `_revive_dependents_of_revived_blocker`, with `_deps_none_permanently_dead` guarding that dependents only revive when no pending blocker remains in a dead-end sink.
+- Added regression coverage for merged and closed-unmerged `blocked_ci_unresolved` outcomes, anomaly emission, deploy side effects, and full-path dependent revival behavior.
+- Verification now green: `uv run pytest tests/test_reconcile_from_github.py tests/test_conformance.py -q` and full suite `uv run pytest -q` both pass.
 
 ## File List
 - `factory/chain/orchestrator.py` — `_settled()`, `_deps_none_permanently_dead()`, `_revive_dependents_of_revived_blocker()`, `reconcile_from_github()` docstring and post-revive dependent re-evaluation hook
