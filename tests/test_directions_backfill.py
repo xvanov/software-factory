@@ -13,7 +13,6 @@ from typer.testing import CliRunner
 from factory.directions.backfill import BackfillResult, directions_backfill
 from factory.observability.schema import migrate
 
-
 # helpers
 
 

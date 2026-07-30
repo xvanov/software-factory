@@ -323,8 +323,7 @@ def directions_backfill_cmd(
     mode_label = "[yellow]DRY-RUN[/yellow]" if dry_run else "[green]REAL RUN[/green]"
     console.print(
         Panel.fit(
-            f"imported={result.imported} skipped={result.skipped}\n"
-            f"mode={mode_label}",
+            f"imported={result.imported} skipped={result.skipped}\nmode={mode_label}",
             title=f"directions-backfill — app={app_name}",
         )
     )
@@ -3601,6 +3600,8 @@ def personas_validate_cmd(
 
     if errors or (strict and warnings):
         raise typer.Exit(code=1)
+
+
 @app.command("audit-chain")
 def audit_chain_cmd(
     stream: str | None = typer.Option(
@@ -3696,6 +3697,8 @@ def audit_chain_cmd(
         )
         if len(problems) > limit:
             console.print(f"[dim]... {len(problems) - limit} more (raise --limit)[/dim]")
+
+
 @app.command("conformance")
 def conformance_cmd(
     app_name: str | None = typer.Option(None, "--app", help="Only check this app's stories"),
