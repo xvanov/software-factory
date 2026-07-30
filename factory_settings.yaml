@@ -85,11 +85,28 @@ schedules:
     persona: bug_hunter
     rate_limit_key: bug_hunter_runs_per_day
   - name: ux_audit
-    # Throttled 2026-07-24: every 6h (4/day) out-generated the pipeline (D114/115/116
-    # auto-filed in ~2h) and drove ~$145 projected EOD while feature work waited.
-    # Weekly (Mon 09:00) keeps UX-audit coverage without flooding the queue; raise
-    # again once the feature backlog (password reset / email verify) has drained.
-    cron: "0 9 * * 1"
+    # DISABLED 2026-07-30 (second occurrence). Throttled 2026-07-24 from 4/day to
+    # weekly after it auto-filed D114/115/116 in ~2h and drove ~$145 projected EOD
+    # while feature work waited. Weekly was still too much: on 2026-07-30 it filed
+    # 015/016/017, all of which asked for BETTER INPUTS FOR THE AUDITOR ITSELF
+    # ("provide executable fixtures for UX audits", "seed blocked-story fixtures
+    # for UX audit", "attach gate findings to UX audit inputs"). auto_pm_sync then
+    # validated them without operator review, so they were one tick away from
+    # spawning stories and PRs. All three were closed by the operator.
+    #
+    # The failure is structural, not a cadence problem: an auditor that can file
+    # its own work orders will always find something to ask for, and every request
+    # is self-justifying. Re-enable only alongside a rule that an auto-filed
+    # direction needs operator approval before auto_pm_sync triages it — otherwise
+    # throttling just slows the treadmill down.
+    #
+    # Yearly (1 Jan 09:00) is "effectively off" while staying a VALID cron.
+    # Do NOT use an impossible date like 31 February to disable a schedule:
+    # ``scheduler.cron.is_due`` -> ``_previous_fire`` calls croniter UNGUARDED, so
+    # ``CroniterBadDateError`` would propagate into the tick on every pass. A
+    # disable trick that can crash the scheduler is worse than the schedule.
+    # ``factory ux-audit-now`` runs it on demand, which is the intended use.
+    cron: "0 9 1 1 *"
     persona: ux_auditor
     rate_limit_key: ux_auditor_runs_per_day
   - name: security_weekly
