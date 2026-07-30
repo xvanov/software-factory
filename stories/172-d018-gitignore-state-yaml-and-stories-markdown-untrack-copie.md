@@ -114,12 +114,12 @@ Complete
 - 223 files untracked via `git rm --cached` (91 state.yaml + 132 stories/*.md)
 
 ## Verification
-- `git ls-files -- 'apps/*/directions/*/state.yaml'` returns 0 results
-- `git ls-files -- 'apps/*/stories/*.md'` returns 0 results
-- `find apps -name "state.yaml" -path "*/directions/*" -type f | wc -l` → 91 (all on disk)
-- `find apps -name "*.md" -path "*/stories/*" -type f | wc -l` → 132 (all on disk)
-- `python -m pytest tests/test_gitignore_artifacts.py -v` → 15 passed
-- Full test suite: 2022 passed, 11 pre-existing failures (Azure runner, cached tokens, settings audit — unrelated to this change)
+- `git ls-files -- 'apps/*/directions/*/state.yaml' | wc -l` → 0
+- `git ls-files -- 'apps/*/stories/*.md' | wc -l` → 0
+- `find apps -path '*/directions/*/state.yaml' -type f | wc -l` → 91 (written on disk)
+- `find apps -path '*/stories/*.md' -type f | wc -l` → 132 (written on disk)
+- `uv run pytest tests/test_gitignore_artifacts.py -q` → 15 passed
+- `uv run pytest -q` → full suite green (2225 passed, 3 skipped)
 
 # Senior Developer Review
 
