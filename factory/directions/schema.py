@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import CheckConstraint, Index, UniqueConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, Session, SQLModel
 from sqlmodel import select as _select
 
 DIRECTION_STATUSES: tuple[str, ...] = (
@@ -67,7 +67,7 @@ class DirectionRecord(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 
 
-def get_direction(session, app: str, direction_id: str) -> DirectionRecord | None:
+def get_direction(session: Session, app: str, direction_id: str) -> DirectionRecord | None:
     """Return the direction row for *app* + *direction_id*, or *None*."""
     return session.exec(
         _select(DirectionRecord).where(
@@ -78,7 +78,7 @@ def get_direction(session, app: str, direction_id: str) -> DirectionRecord | Non
 
 
 def upsert_direction(
-    session,
+    session: Session,
     app: str,
     direction_id: str,
     slug: str,
@@ -123,7 +123,7 @@ def upsert_direction(
 
 
 def list_directions(
-    session,
+    session: Session,
     app: str,
     status: str | None = None,
 ) -> list[DirectionRecord]:

@@ -591,7 +591,12 @@ def _deps_permanently_dead(db: Path, dep_ids: list[int]) -> bool:
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
         rows = session.exec(
-            select(StoryRecord).where(StoryRecord.id.in_(dep_ids))  # type: ignore[attr-defined]
+            # SQLModel columns are typed as their Python type but are Column
+            # objects at runtime, so ``.in_()`` is real. The narrow ignore names the
+            # code mypy actually emits (union-attr on ``int | None``); an
+            # ``attr-defined`` ignore here silently covered nothing and would have
+            # hidden a future real error.
+            select(StoryRecord).where(StoryRecord.id.in_(dep_ids))  # type: ignore[union-attr]
         ).all()
     if len(rows) != len(set(dep_ids)):
         return False  # a dep row is missing → can't prove dead → treat as live
@@ -615,7 +620,12 @@ def _deps_none_permanently_dead(db: Path, dep_ids: list[int]) -> bool:
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
         rows = session.exec(
-            select(StoryRecord).where(StoryRecord.id.in_(dep_ids))  # type: ignore[attr-defined]
+            # SQLModel columns are typed as their Python type but are Column
+            # objects at runtime, so ``.in_()`` is real. The narrow ignore names the
+            # code mypy actually emits (union-attr on ``int | None``); an
+            # ``attr-defined`` ignore here silently covered nothing and would have
+            # hidden a future real error.
+            select(StoryRecord).where(StoryRecord.id.in_(dep_ids))  # type: ignore[union-attr]
         ).all()
     if len(rows) != len(set(dep_ids)):
         return False  # a dep row is missing → can't prove safe → don't revive

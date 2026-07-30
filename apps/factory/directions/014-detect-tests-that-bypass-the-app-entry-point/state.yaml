@@ -1,4 +1,4 @@
-status: created
+status: pm-validated
 source: operator
 created_at: '2026-07-30T04:00:05.460960+00:00'
 audit:
@@ -7,3 +7,142 @@ audit:
   event: created
   details:
     source: hand-written
+- ts: '2026-07-30T04:16:42.250139+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.95
+pm_result:
+  type: infra
+  priority: p1
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D014 detect tests that bypass the app entry point
+  tracker_body: '## Summary
+
+    Add one narrow slop-detector rule for Python tests that bootstrap database/schema
+    infrastructure directly instead of driving the app entry point. WHY? Because the
+    failure mode here is not a vacuous assertion; it is setup that bypasses the subject,
+    so the test can only prove SQLModel/SQLAlchemy behavior, not app behavior.
+
+
+    The new rule should flag direct calls in test files to:
+
+    - `SQLModel.metadata.create_all`
+
+    - `sqlmodel.create_engine`
+
+    - `sqlalchemy.create_engine`
+
+
+    The finding must:
+
+    - emit a stable new `kind`
+
+    - include a `why_slop` explanation that explicitly names `factory.observability.schema.migrate`
+    as the app initializer the test should have driven
+
+    - flow through the existing `tests-meaningful` gate path with no new gate label
+
+    - respect the existing `# noqa: slop` single-test suppression
+
+
+    ## Why this matters
+
+    A prior test asserted on a table created by ORM metadata imported inside the test
+    itself, while production `migrate()` still created nothing. CI then redispatched
+    repeatedly against a test structurally incapable of observing the defect. This
+    direction closes that exact hole with one mechanical detector, not a broad style
+    judgement.
+
+
+    ## Acceptance criteria from direction
+
+    - Detector reports a finding with a stable new `kind` when a test file calls `SQLModel.metadata.create_all`
+    or a `create_engine` variant directly.
+
+    - Finding carries a `why_slop` explanation naming the app initializer the test
+    should have called.
+
+    - A test that obtains its database through the app initializer produces no finding.
+
+    - Existing `# noqa: slop` escape hatch suppresses the new finding on a single
+    test.
+
+    - `factory/observability/schema.py`''s own tests either pass or are explicitly
+    suppressed.
+
+    - `tests-meaningful` blocks a PR whose diff introduces the new finding through
+    the existing path, with no new gate label.
+
+    - Regression coverage includes the exact story-148 bad test body being flagged
+    and its fixed form being clean.
+
+
+    ## Decomposition logic
+
+    WHY split this? Because detector mechanics, gate plumbing proof, and repo-suite/regression
+    cleanup are separable vertical slices. The chain lands smaller PRs more reliably
+    than one broad "all infra work" bundle.
+
+    '
+  child_stories:
+  - title: D014 add slop kind for direct test DB bootstrap calls
+    scope: infra
+    chain_kind: tdd
+    rationale: First land the detector rule itself with a stable new kind and teaching
+      `why_slop` message naming `factory.observability.schema.migrate`. WHY first?
+      Everything else depends on a concrete finding shape existing before gate and
+      regression stories can prove behavior.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 5
+  - title: D014 prove noqa suppression and app-initializer clean path
+    scope: test
+    chain_kind: tdd
+    rationale: 'Add focused tests showing the new finding is suppressed by `# noqa:
+      slop` and that the fixed pattern using the app initializer yields no finding.
+      WHY separate? These are the user-visible edges that keep the rule narrow instead
+      of noisy.'
+    estimated_new_files: 1
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 130
+    points: 3
+  - title: D014 add story-148 regression fixture and exact-body coverage
+    scope: test
+    chain_kind: tdd
+    rationale: Capture the exact failing class of test from story 148 and assert both
+      bad and fixed forms. WHY its own slice? This preserves the motivating bug as
+      executable evidence and prevents future detector drift.
+    estimated_new_files: 1
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 120
+    points: 3
+  - title: D014 verify tests-meaningful gate blocks new bypass findings
+    scope: infra
+    chain_kind: tdd
+    rationale: Prove the finding reaches the existing gate path with no new label
+      or special-case routing. WHY separate? Detector logic can exist without gate
+      enforcement; this slice validates the operational outcome the direction actually
+      cares about.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 150
+    points: 3
+  - title: D014 make schema tests green under the new slop rule
+    scope: test
+    chain_kind: tdd
+    rationale: 'Audit and minimally update `factory/observability/schema.py` tests
+      so legitimate raw-engine coverage either passes cleanly or uses `# noqa: slop`.
+      WHY last? Only after the detector exists can repo-owned exceptions be handled
+      precisely instead of guessing.'
+    estimated_new_files: 0
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 110
+    points: 2
+  labels:
+  - infra
+  - priority/p1
+  confidence: 0.95
+tracker_issue: 138
