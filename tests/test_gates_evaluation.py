@@ -312,9 +312,7 @@ def test_tests_meaningful_passes_on_app_initializer_diff(
     )
     r = tests_meaningful.evaluate(pr, app_cfg_empty)
     assert r.passed, r.reason
-    assert all(
-        fnd["kind"] != "direct_db_bootstrap" for fnd in r.details.get("findings", [])
-    )
+    assert all(fnd["kind"] != "direct_db_bootstrap" for fnd in r.details.get("findings", []))
 
 
 def test_tests_meaningful_mutation_status_skipped_by_default(
