@@ -298,6 +298,15 @@ def test_collect_tests_meaningful_findings_finds_slop(tmp_path: Path) -> None:
     assert "test_sloppy.py" in finding["path"]
 
 
+
+def test_collect_tests_meaningful_findings_uses_repo_relative_paths(tmp_path: Path) -> None:
+    root = _write_app_with_slop_tests(tmp_path)
+
+    findings = _collect_tests_meaningful_findings("sacrifice", root)
+
+    assert findings[0]["path"] == "tests/test_sloppy.py"
+
+
 def test_collect_tests_meaningful_findings_reproducible(tmp_path: Path) -> None:
     """AC1.1: Fixture output is reproducible — same input → same findings."""
     root = _write_app_with_slop_tests(tmp_path)

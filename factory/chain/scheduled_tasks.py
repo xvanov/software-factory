@@ -762,12 +762,20 @@ def _collect_tests_meaningful_findings(
         return []
 
     findings: list[dict[str, object]] = []
+    repo_root_resolved = repo_dir.resolve()
     for py_file in sorted(repo_dir.rglob("test_*.py")):
         try:
             for fnd in scan_file(py_file):
-                findings.append(fnd.as_dict())
+                payload = fnd.as_dict()
+                finding_path = Path(str(payload.get("path", ""))).resolve()
+                try:
+                    payload["path"] = finding_path.relative_to(repo_root_resolved).as_posix()
+                except ValueError:
+                    payload["path"] = str(payload.get("path", ""))
+                findings.append(payload)
         except Exception:  # noqa: BLE001 - best-effort collection
             continue
+    findings.sort(key=lambda item: (str(item.get("path", "")), int(item.get("line", 0))))
     return findings
 
 
