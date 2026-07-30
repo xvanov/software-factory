@@ -263,14 +263,25 @@ def test_deleted_state_yaml_survives_pm_sync_without_retriage(tmp_path: Path) ->
     NOT re-triage it, and ``state.yaml`` is regenerated from the database
     without status drift.
     """
-    from sqlmodel import Session, SQLModel, create_engine
+    import sqlite3
 
-    from factory.directions.schema import get_direction, upsert_direction
-    from factory.directions.watcher import mark_direction_status
+    from factory.directions.parser import parse_direction_dir
+    from factory.directions.watcher import mark_direction_status, pending_directions
+
+    def _db_status(db_path: Path, *, app: str, direction_id: str) -> str | None:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            row = conn.execute(
+                "SELECT status FROM directions WHERE app=? AND direction_id=?",
+                (app, direction_id),
+            ).fetchone()
+        finally:
+            conn.close()
+        return None if row is None else str(row[0])
 
     _seed_app_config(tmp_path)
 
-    # -- create direction on disk (status = "created" in state.yaml) ---------
+    # -- create direction on disk and set an authoritative non-pending status
     created = create_direction(
         app="sacrifice",
         title="Add healthz endpoint",
@@ -287,78 +298,57 @@ def test_deleted_state_yaml_survives_pm_sync_without_retriage(tmp_path: Path) ->
     )
     dir_id = created.direction.id
     state_yaml = created.dir_path / "state.yaml"
+    state_db = tmp_path / "state" / "factory.db"
     assert state_yaml.exists()
 
-    # -- insert authoritative DB row at a non-pending status ----------------
-    state_db = tmp_path / "state" / "factory.db"
-    state_db.parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(f"sqlite:///{state_db}", echo=False)
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as session:
-        upsert_direction(
-            session,
-            app="sacrifice",
-            direction_id=dir_id,
-            slug=created.direction.slug,
-            status="pm-validated",
-        )
+    mark_direction_status(created.direction, "pm-validated", by="regression-test-seed")
+    assert _db_status(state_db, app="sacrifice", direction_id=dir_id) == "pm-validated"
 
-    # -- delete state.yaml (simulate operator action from flow step 5) ------
+    # -- delete state.yaml (simulate operator action from flow step 5)
     state_yaml.unlink()
     assert not state_yaml.exists()
 
-    # -- simulate factory restart: fresh engine to verify DB persistence ----
-    fresh_engine = create_engine(f"sqlite:///{state_db}", echo=False)
-    with Session(fresh_engine) as session:
-        row = get_direction(session, "sacrifice", dir_id)
-        assert row is not None
-        assert row.status == "pm-validated", (
-            "AC1.1: status must survive state.yaml deletion across fresh read-path"
-        )
+    # -- simulate restart/fresh read path: pending_directions re-resolves from DB
+    after_restart = pending_directions("sacrifice", tmp_path, state_db)
+    assert dir_id not in {d.id for d in after_restart}
+    assert _db_status(state_db, app="sacrifice", direction_id=dir_id) == "pm-validated", (
+        "AC1.1: status must survive state.yaml deletion across fresh read-path"
+    )
 
-    # -- run pm-sync --------------------------------------------------------
-    summary = pm_sync(
+    # -- run pm-sync twice to prove no re-triage and repeat stability
+    first = pm_sync(
+        app="sacrifice",
+        software_factory_root=tmp_path,
+        dry_run=True,
+        state_db_path=state_db,
+    )
+    second = pm_sync(
         app="sacrifice",
         software_factory_root=tmp_path,
         dry_run=True,
         state_db_path=state_db,
     )
 
-    # AC1.2: direction is NOT re-triaged — pm_sync must not see it as pending
-    assert summary.processed == 0, (
-        "AC1.2: pm-sync processed a direction whose DB status is pm-validated — "
-        "it should have been excluded from pending"
+    # AC1.2: pm-sync must not see this direction as pending after deletion
+    assert first.processed == 0 and second.processed == 0, (
+        "AC1.2: pm-sync re-triaged a direction whose DB status is pm-validated"
     )
+    assert _db_status(state_db, app="sacrifice", direction_id=dir_id) == "pm-validated"
 
-    # AC1.1 again: DB status still unchanged after pm-sync
-    with Session(fresh_engine) as session:
-        row = get_direction(session, "sacrifice", dir_id)
-        assert row is not None
-        assert row.status == "pm-validated"
-
-    # -- regenerate state.yaml from DB (AC2.1 + AC2.2) ----------------------
-    # mark_direction_status is the authoritative write path that projects
-    # state.yaml. Calling it with the same status regenerates the file.
-    mark_direction_status(
-        created.direction,
-        "pm-validated",
-        by="regression-test",
+    # -- regenerate state.yaml from DB (AC2.1 + AC2.2)
+    status_from_db = _db_status(state_db, app="sacrifice", direction_id=dir_id)
+    assert status_from_db is not None
+    fresh_direction = parse_direction_dir(
+        "sacrifice",
+        created.dir_path,
+        software_factory_root=tmp_path,
     )
+    mark_direction_status(fresh_direction, status_from_db, by="regression-test-regenerate")
 
-    # AC2.1: state.yaml is written for human inspection
-    assert state_yaml.exists(), (
-        "AC2.1: state.yaml must be regenerated for human inspection"
-    )
+    # AC2.1: state.yaml is rewritten for human inspection
+    assert state_yaml.exists(), "AC2.1: state.yaml must be regenerated for human inspection"
 
     # AC2.2: regenerated state.yaml carries the same status as the DB row
     regenerated = yaml.safe_load(state_yaml.read_text(encoding="utf-8"))
-    assert regenerated["status"] == "pm-validated", (
-        f"AC2.2: regenerated state.yaml status is {regenerated.get('status')!r}, "
-        f"expected 'pm-validated'"
-    )
-
-    # Confirm DB still authoritative — no drift
-    with Session(fresh_engine) as session:
-        row = get_direction(session, "sacrifice", dir_id)
-        assert row is not None
-        assert row.status == "pm-validated"
+    assert regenerated["status"] == status_from_db
+    assert _db_status(state_db, app="sacrifice", direction_id=dir_id) == status_from_db

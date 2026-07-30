@@ -32,3 +32,5 @@ about the orchestrator.
 ## Testing gotcha (story D012 follow-up)
 
 - Slop detector rule `direct_db_bootstrap` flags tests that call `create_engine(...)`/`SQLModel.metadata.create_all(...)` directly. For DB assertions in tests, bootstrap through `factory.observability.schema.migrate(db_path)` and query with `sqlite3` instead of creating engines inside the test body.
+- Full-suite runs rely on extras being installed (`uv sync --all-extras`). Without it, acceptance-oracle subprocesses (`python -m pytest`) and runtime deps like `litellm`/`textual` can fail with `ModuleNotFoundError`, even if targeted tests pass.
+- D012 deleted-`state.yaml` regression coverage lives in `tests/test_pm_sync_dry_run.py::test_deleted_state_yaml_survives_pm_sync_without_retriage`; it intentionally seeds status through `mark_direction_status` + `sqlite3` assertions (not direct test-time `create_engine`/`create_all`).
