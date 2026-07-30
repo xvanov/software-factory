@@ -105,7 +105,7 @@ factory mode <name>                 # normal | fix-only | drain-reviews | paused
 factory resume                      # clear an FMS halt — OPERATOR ONLY, never automate
 factory tui                         # live dashboard
 factory manager watch|diagnose|apply    # drive an FMS tier by hand
-factory reconcile-issues            # close GitHub issues left open by completed work
+factory reconcile-issues            # close GitHub issues left open by completed/closed work
 factory new-direction               # interactive; or use the `new-direction` skill
 ```
 
