@@ -1052,9 +1052,7 @@ def test_full_path_block_ci_merge_revive_dependent(
     # AC6.2: The dependent is dispatchable again after the blocker proceeds to
     # deployed on the normal path.
     blocker_after_reconcile = _reload(db, blocker.id)
-    blocker_after_reconcile.state = advance(
-        blocker_after_reconcile, EVENT_DEPLOY_SUCCEEDED
-    ).value
+    blocker_after_reconcile.state = advance(blocker_after_reconcile, EVENT_DEPLOY_SUCCEEDED).value
     persist_story(blocker_after_reconcile, db)
     assert _reload(db, blocker.id).state == StoryState.DEPLOYED.value
 
@@ -1069,7 +1067,9 @@ def test_full_path_block_ci_merge_revive_dependent(
     assert f"advanced_to:{StoryState.DEPLOY_PENDING.value}" in drift_actions
     assert f"dependent_revived:blocker_{blocker.id}_no_longer_dead" in drift_actions
     # Verify the event payload carries the expected fields.
-    blocker_drift = [e for e in drift if e["action"] == f"advanced_to:{StoryState.DEPLOY_PENDING.value}"][0]
+    blocker_drift = [
+        e for e in drift if e["action"] == f"advanced_to:{StoryState.DEPLOY_PENDING.value}"
+    ][0]
     assert blocker_drift["story_id"] == blocker.id
     assert blocker_drift["local_state_before"] == StoryState.BLOCKED_CI_UNRESOLVED.value
     assert blocker_drift["authoritative_pr_state"] == "MERGED"
