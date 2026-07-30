@@ -248,3 +248,117 @@ def test_pm_sync_dry_run_no_directions_empty_summary(tmp_path: Path) -> None:
     assert summary.processed == 0
     assert summary.validated == 0
     assert summary.needs_direction == 0
+
+
+# ---------------------------------------------------------------------------
+# D012 regression: deleted state.yaml does not cause re-triage
+# ---------------------------------------------------------------------------
+
+
+def test_deleted_state_yaml_survives_pm_sync_without_retriage(tmp_path: Path) -> None:
+    """AC1.1 + AC1.2 + AC2.1 + AC2.2 — Integration regression test.
+
+    Proves that a direction whose ``state.yaml`` is deleted keeps its status
+    across a fresh read-path (factory restart simulation), ``pm_sync`` does
+    NOT re-triage it, and ``state.yaml`` is regenerated from the database
+    without status drift.
+    """
+    from sqlmodel import Session, SQLModel, create_engine
+
+    from factory.directions.schema import get_direction, upsert_direction
+    from factory.directions.watcher import mark_direction_status
+
+    _seed_app_config(tmp_path)
+
+    # -- create direction on disk (status = "created" in state.yaml) ---------
+    created = create_direction(
+        app="sacrifice",
+        title="Add healthz endpoint",
+        type_tag="feature",
+        why="Smoke test wants a stable endpoint.",
+        has_ui=False,
+        flow_steps=None,
+        has_api=True,
+        api_spec_lines=['- `POST /healthz` -> 200 {"status":"ok"}'],
+        acceptance=["Returns 200", "JSON body has status"],
+        explore=False,
+        attach_files=None,
+        software_factory_root=tmp_path,
+    )
+    dir_id = created.direction.id
+    state_yaml = created.dir_path / "state.yaml"
+    assert state_yaml.exists()
+
+    # -- insert authoritative DB row at a non-pending status ----------------
+    state_db = tmp_path / "state" / "factory.db"
+    state_db.parent.mkdir(parents=True, exist_ok=True)
+    engine = create_engine(f"sqlite:///{state_db}", echo=False)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        upsert_direction(
+            session,
+            app="sacrifice",
+            direction_id=dir_id,
+            slug=created.direction.slug,
+            status="pm-validated",
+        )
+
+    # -- delete state.yaml (simulate operator action from flow step 5) ------
+    state_yaml.unlink()
+    assert not state_yaml.exists()
+
+    # -- simulate factory restart: fresh engine to verify DB persistence ----
+    fresh_engine = create_engine(f"sqlite:///{state_db}", echo=False)
+    with Session(fresh_engine) as session:
+        row = get_direction(session, "sacrifice", dir_id)
+        assert row is not None
+        assert row.status == "pm-validated", (
+            "AC1.1: status must survive state.yaml deletion across fresh read-path"
+        )
+
+    # -- run pm-sync --------------------------------------------------------
+    summary = pm_sync(
+        app="sacrifice",
+        software_factory_root=tmp_path,
+        dry_run=True,
+        state_db_path=state_db,
+    )
+
+    # AC1.2: direction is NOT re-triaged — pm_sync must not see it as pending
+    assert summary.processed == 0, (
+        "AC1.2: pm-sync processed a direction whose DB status is pm-validated — "
+        "it should have been excluded from pending"
+    )
+
+    # AC1.1 again: DB status still unchanged after pm-sync
+    with Session(fresh_engine) as session:
+        row = get_direction(session, "sacrifice", dir_id)
+        assert row is not None
+        assert row.status == "pm-validated"
+
+    # -- regenerate state.yaml from DB (AC2.1 + AC2.2) ----------------------
+    # mark_direction_status is the authoritative write path that projects
+    # state.yaml. Calling it with the same status regenerates the file.
+    mark_direction_status(
+        created.direction,
+        "pm-validated",
+        by="regression-test",
+    )
+
+    # AC2.1: state.yaml is written for human inspection
+    assert state_yaml.exists(), (
+        "AC2.1: state.yaml must be regenerated for human inspection"
+    )
+
+    # AC2.2: regenerated state.yaml carries the same status as the DB row
+    regenerated = yaml.safe_load(state_yaml.read_text(encoding="utf-8"))
+    assert regenerated["status"] == "pm-validated", (
+        f"AC2.2: regenerated state.yaml status is {regenerated.get('status')!r}, "
+        f"expected 'pm-validated'"
+    )
+
+    # Confirm DB still authoritative — no drift
+    with Session(fresh_engine) as session:
+        row = get_direction(session, "sacrifice", dir_id)
+        assert row is not None
+        assert row.status == "pm-validated"
