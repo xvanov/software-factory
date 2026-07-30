@@ -19,6 +19,18 @@ DIRECTION_STATUSES: tuple[str, ...] = (
     "closed",
 )
 
+# Direction statuses that RESOLVE a direction: no further work will happen on
+# it, so its GitHub tracker issue and every child story issue should be closed.
+#
+# Deliberately an explicit ALLOWLIST (never "everything that is not pending" or
+# an ``is_terminal``-style predicate). The story-side equivalent
+# (``tracker_issue._RESOLVED_STORY_STATES``) learned this the hard way: states
+# that are "terminal by omission" get silently classified as resolved and the
+# remediation over-fires. Adding a status here is a deliberate decision; an
+# unknown/unparseable status resolves to "not resolved", which keeps the issues
+# OPEN — the fail-safe direction.
+RESOLVED_DIRECTION_STATUSES: frozenset[str] = frozenset({"closed"})
+
 
 def _validated_status(status: str) -> str:
     if status not in DIRECTION_STATUSES:

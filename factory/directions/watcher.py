@@ -20,7 +20,7 @@ import yaml
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from factory.directions.parser import Direction, list_direction_dirs, parse_direction_dir
-from factory.directions.schema import get_direction
+from factory.directions.schema import RESOLVED_DIRECTION_STATUSES, get_direction
 
 
 class DirectionCursor(SQLModel, table=True):
@@ -88,12 +88,22 @@ def mark_direction_status(
     *,
     by: str,
     details: dict[str, Any] | None = None,
+    app_config: Any | None = None,
+    github_client: Any | None = None,
 ) -> None:
     """Authoritative database write + best-effort ``state.yaml`` projection.
 
     The ``directions`` table row is the source of truth.  ``state.yaml`` is
     still written for human inspection but its failure does NOT fail the
     transition.
+
+    When *new_status* resolves the direction (see
+    ``schema.RESOLVED_DIRECTION_STATUSES``) and BOTH *app_config* and
+    *github_client* are supplied, the direction's GitHub tracker issue and every
+    child story issue are closed too — see the comment on that block. Callers
+    without a GitHub client (e.g. an operator calling this from a REPL) still
+    transition correctly; ``factory reconcile-issues`` closes the issues for any
+    direction already in a resolved status, so the remediation self-heals.
     """
     # ---- authoritative database write -----------------------------------
     root = _root_from_direction(direction)
@@ -145,6 +155,37 @@ def mark_direction_status(
     # Keep the in-memory record in sync with the authoritative write.
     direction.status = new_status
     direction.state = state
+
+    # ---- best-effort GitHub issue close ---------------------------------
+    # Closing a direction means "no more work will happen here", but nothing
+    # used to close the direction's GitHub tracker issue or its child story
+    # issues, so they leaked open forever (observed 2026-07-28 on the
+    # operator-closed D015/D016/D017: 6 orphaned issues). That is the
+    # detect-without-remediate class — the state transition happened and
+    # nothing closed the loop.
+    #
+    # BEST-EFFORT BY DESIGN, exactly like the ``state.yaml`` projection above
+    # and the GC precedent in ``factory.directions.gc``: the authoritative
+    # ``directions`` row is ALREADY committed at this point, so a GitHub
+    # outage / missing token / 404 must never fail — or raise out of — the
+    # status transition. ``close_direction_issues`` swallows its own errors;
+    # the belt-and-braces try/except here also covers an import or
+    # path-derivation failure. Anything missed is re-swept by
+    # ``factory reconcile-issues``, which closes issues for directions already
+    # in a resolved status.
+    if new_status in RESOLVED_DIRECTION_STATUSES and app_config is not None:
+        try:
+            from factory.directions.tracker_issue import close_direction_issues
+
+            close_direction_issues(
+                direction,
+                app_config,
+                github_client,
+                by=by,
+                reason=str((details or {}).get("reason") or "") or None,
+            )
+        except Exception:  # noqa: BLE001 - bookkeeping must never fail the transition
+            pass
 
 
 def _read_state_yaml(state_path: Path) -> dict[str, Any]:

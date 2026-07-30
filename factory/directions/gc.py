@@ -149,21 +149,29 @@ def gc_stale_scheduled_directions(
             )
 
         if not dry_run and github_client is not None and app_config is not None:
-            tracker = (direction.state or {}).get("tracker_issue")
-            if isinstance(tracker, int) and tracker > 0:
-                try:
-                    repo = github_client.get_repo(app_config.repo)
-                    issue = repo.get_issue(tracker)
-                    if str(getattr(issue, "state", "")).lower() != "closed":
-                        issue.create_comment(
-                            "Closing automatically — this direction was filed by a "
-                            "scheduled persona and sat at `needs-direction` with no "
-                            "operator follow-up past the garbage-collection "
-                            f"threshold ({GC_REASON})."
-                        )
-                        issue.edit(state="closed", state_reason="not_planned")
-                except Exception:  # noqa: BLE001 - bookkeeping must never break the GC pass
-                    pass
+            # Shared remediation for every "direction is finished/abandoned"
+            # path: closes the tracker issue AND any child story issue. It never
+            # raises (the on-disk close above is already committed), which is the
+            # long-standing contract here — bookkeeping must not break the pass.
+            try:
+                from factory.directions.tracker_issue import close_direction_issues
+
+                close_direction_issues(
+                    direction,
+                    app_config,
+                    github_client,
+                    software_factory_root=root,
+                    by=GC_BY,
+                    reason=GC_REASON,
+                    tracker_comment=(
+                        "Closing automatically — this direction was filed by a "
+                        "scheduled persona and sat at `needs-direction` with no "
+                        "operator follow-up past the garbage-collection "
+                        f"threshold ({GC_REASON})."
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - bookkeeping must never break the GC pass
+                pass
 
         closed.append(direction.id or direction.slug)
 

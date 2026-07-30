@@ -380,12 +380,20 @@ def reconcile_issues_cmd(
         False, "--dry-run", help="Report what would close; make no GitHub changes"
     ),
 ) -> None:
-    """Close GitHub issues left open for completed directions/stories (idempotent).
+    """Close GitHub issues left open for completed OR closed work (idempotent).
 
-    A detect-and-remediate safety net: the event-driven close on deploy can
-    no-op (e.g. an async ``--auto`` merge with no token in scope), leaving
-    completed work with open trackers / story issues. This sweeps and closes
-    them. Safe to re-run; an already-closed issue is never touched.
+    A detect-and-remediate safety net for two leaks:
+
+      * the event-driven close on deploy can no-op (e.g. an async ``--auto``
+        merge with no token in scope), leaving *completed* work with open
+        trackers / story issues;
+      * a direction closed with no GitHub client in scope (an operator closing
+        it by hand) leaves its tracker AND every child story issue open — those
+        children are usually parked in a non-resolved state, so the
+        completed-work predicate can never reach them.
+
+    This sweeps and closes both. Safe to re-run; an already-closed issue is
+    never touched.
     """
     load_dotenv()
     load_dotenv(_FACTORY_ROOT / ".env", override=False)
