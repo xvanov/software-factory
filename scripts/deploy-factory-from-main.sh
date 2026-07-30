@@ -52,8 +52,22 @@ DRY_RUN=0
 
 LOG_PREFIX="[factory-self-deploy]"
 log()   { echo "$LOG_PREFIX $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+# Under test, alerts go to stderr ONLY — never to syslog.
+#
+# tests/test_factory_self_deploy.py drives this script dozens of times per run
+# with fixture paths (factory/chain/alpha.py, factory/manager/bar.py), and each
+# alert used to land in the operator's journal at daemon.err. One `pytest -q` put
+# ~195 fake "import gate FAILED" ALERTs into journalctl in a single second, all
+# indistinguishable from a real deploy failure. Synthetic failures must never be
+# written to production telemetry — the same class as the sm-truncation
+# escalations that were really test pollution (2026-06). The test seams already
+# tell us we are under test; reuse them rather than inventing a new flag.
+_under_test() {
+  [ -n "${IMPORT_GATE_CMD:-}" ] || [ "${SKIP_MANAGER_RESTART:-0}" = "1" ] || [ -n "${PYTEST_CURRENT_TEST:-}" ]
+}
 alert() {
   echo "FACTORY_SELF_DEPLOY_ALERT: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >&2
+  _under_test && return 0
   logger -t factory-self-deploy -p daemon.err "ALERT: $*" 2>/dev/null || true
 }
 
