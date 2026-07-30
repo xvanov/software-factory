@@ -92,5 +92,31 @@ state/issue_hygiene/
 apps/*/directions/*/artifacts/**
 !apps/*/directions/*/artifacts/.gitkeep
 
+# Machine-written direction state (direction 018). Direction 012 made the
+# ``directions`` TABLE authoritative for a direction's status; ``state.yaml`` is
+# now a projection the chain rewrites on every transition. It is still WRITTEN to
+# disk so an operator can read a status without querying the database, but it
+# must never be tracked: a tick that changes a status has to leave the tree
+# clean. ``factory directions-regenerate-state`` rebuilds it in a fresh clone.
+#
+# The human-authored siblings (direction.md, flow.md, api_spec.md) are the
+# reviewable source and stay tracked — only ``state.yaml`` is machine-written.
+apps/*/directions/*/state.yaml
+
+# Machine-written story markdown (direction 018). ``stories.sm_result_json`` is
+# the source of truth; the rendered markdown is a projection nothing reads out of
+# git. Two patterns, because the chain writes the file twice under two roots:
+#   * apps/<app>/stories/<id>-<slug>.md — where the SM handler writes it
+#     (``software_factory_root / "apps" / app / target_path``).
+#   * stories/<id>-<slug>.md — the SAME relative target_path the dev persona is
+#     handed, resolved against ITS worktree root. For the ``factory`` app that
+#     worktree shares this repo, so the copy lands at the repo root and the dev
+#     commits it. This was the dominant leak: nearly every merged story PR
+#     added one.
+# Both patterns contain a slash, so both are anchored to their own directory —
+# nothing outside them is affected, and non-``.md`` files in them stay tracked.
+apps/*/stories/*.md
+stories/*.md
+
 # coverage.py data file (never commit)
 .coverage

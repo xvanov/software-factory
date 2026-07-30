@@ -10,6 +10,7 @@ Phase-1 additions:
   * ``factory tell --app <app> "<text>"``
   * ``factory edit-direction --app <app> <id-or-slug>``
   * ``factory directions-backfill --app <app> [--dry-run]``
+  * ``factory directions-regenerate-state --app <app> [--dry-run]``
   * ``factory pm-sync --app <app> [--dry-run]``
   * ``factory ingest-issue --app <app> <issue-number>``
 """
@@ -327,6 +328,49 @@ def directions_backfill_cmd(
             title=f"directions-backfill — app={app_name}",
         )
     )
+
+
+@app.command("directions-regenerate-state")
+def directions_regenerate_state_cmd(
+    app_name: str = typer.Option(..., "--app", help="App name"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report what would be written without touching disk"
+    ),
+) -> None:
+    """Rebuild missing ``state.yaml`` projections from the ``directions`` table.
+
+    ``state.yaml`` is gitignored machine-written state (direction 018), so a
+    fresh clone has ``direction.md`` but no projection. This writes one per
+    direction that is missing it, from its authoritative database row.
+
+    Existing files are never overwritten, so this is a no-op — and produces no
+    git diff — on a tree that already has its projections. The inverse command
+    is ``factory directions-backfill`` (on-disk direction → database row).
+    """
+    load_dotenv()
+    load_dotenv(_FACTORY_ROOT / ".env", override=False)
+
+    from factory.directions.backfill import regenerate_state_files
+
+    state_db = _FACTORY_ROOT / "state" / "factory.db"
+    result = regenerate_state_files(
+        app_name,
+        _FACTORY_ROOT,
+        state_db,
+        dry_run=dry_run,
+    )
+
+    mode_label = "[yellow]DRY-RUN[/yellow]" if dry_run else "[green]WROTE[/green]"
+    body = (
+        f"written={result.written} already-present={result.present} "
+        f"no-db-row={result.no_row}\nmode={mode_label}"
+    )
+    if result.no_row:
+        body += (
+            f"\n[yellow]{result.no_row} direction(s) have no database row — run "
+            f"`factory directions-backfill --app {app_name} --real-run` first.[/yellow]"
+        )
+    console.print(Panel.fit(body, title=f"directions-regenerate-state — app={app_name}"))
 
 
 @app.command("pm-sync")
