@@ -13,9 +13,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
 import yaml
-
 
 # ---------------------------------------------------------------------------
 # Git helpers
@@ -88,9 +86,7 @@ class TestStateYamlGitignored:
 
         # Without the ignore rule, git status should show the file.
         porcelain = _porcelain(repo)
-        assert porcelain != "", (
-            "state.yaml should dirty git status without ignore rule"
-        )
+        assert porcelain != "", "state.yaml should dirty git status without ignore rule"
         assert "state.yaml" in porcelain
 
     def test_state_yaml_clean_with_ignore_rule(self, tmp_path: Path) -> None:
@@ -105,9 +101,7 @@ class TestStateYamlGitignored:
         _git(repo, "commit", "-m", "add direction.md")
 
         # Add the ignore rule.
-        (repo / ".gitignore").write_text(
-            "apps/*/directions/*/state.yaml\n", encoding="utf-8"
-        )
+        (repo / ".gitignore").write_text("apps/*/directions/*/state.yaml\n", encoding="utf-8")
         _git(repo, "add", ".gitignore")
         _git(repo, "commit", "-m", "add gitignore")
 
@@ -133,18 +127,14 @@ class TestStateYamlGitignored:
         _git(repo, "add", ".")
         _git(repo, "commit", "-m", "add direction.md")
 
-        (repo / ".gitignore").write_text(
-            "apps/*/directions/*/state.yaml\n", encoding="utf-8"
-        )
+        (repo / ".gitignore").write_text("apps/*/directions/*/state.yaml\n", encoding="utf-8")
         _git(repo, "add", ".gitignore")
         _git(repo, "commit", "-m", "add gitignore")
 
         # Simulate a tick writing state.yaml.
         state = {"status": "pm-validated", "created_at": "2026-01-01T00:00:00Z"}
         state_path = direction_dir / "state.yaml"
-        state_path.write_text(
-            yaml.safe_dump(state, sort_keys=False), encoding="utf-8"
-        )
+        state_path.write_text(yaml.safe_dump(state, sort_keys=False), encoding="utf-8")
 
         # File exists on disk even though git status is clean.
         assert state_path.exists(), "state.yaml must exist on disk"
@@ -179,9 +169,7 @@ class TestStoriesMarkdownGitignored:
 
         # Without the ignore rule, git status should show the file.
         porcelain = _porcelain(repo)
-        assert porcelain != "", (
-            "stories/*.md should dirty git status without ignore rule"
-        )
+        assert porcelain != "", "stories/*.md should dirty git status without ignore rule"
         assert "test-story.md" in porcelain
 
     def test_story_md_clean_with_ignore_rule(self, tmp_path: Path) -> None:
@@ -195,9 +183,7 @@ class TestStoriesMarkdownGitignored:
         _git(repo, "commit", "-m", "add stories dir")
 
         # Add the ignore rule.
-        (repo / ".gitignore").write_text(
-            "apps/*/stories/*.md\n", encoding="utf-8"
-        )
+        (repo / ".gitignore").write_text("apps/*/stories/*.md\n", encoding="utf-8")
         _git(repo, "add", ".gitignore")
         _git(repo, "commit", "-m", "add gitignore")
 
@@ -221,9 +207,7 @@ class TestStoriesMarkdownGitignored:
         _git(repo, "add", ".")
         _git(repo, "commit", "-m", "add stories dir")
 
-        (repo / ".gitignore").write_text(
-            "apps/*/stories/*.md\n", encoding="utf-8"
-        )
+        (repo / ".gitignore").write_text("apps/*/stories/*.md\n", encoding="utf-8")
         _git(repo, "add", ".gitignore")
         _git(repo, "commit", "-m", "add gitignore")
 
@@ -272,9 +256,7 @@ class TestUntrackPreviouslyCommitted:
         assert state_path.exists(), "state.yaml must still exist on disk"
 
         # But git no longer tracks it.
-        tracked_after = _git(
-            repo, "ls-files", "--", "apps/*/directions/*/state.yaml"
-        )
+        tracked_after = _git(repo, "ls-files", "--", "apps/*/directions/*/state.yaml")
         assert tracked_after.strip() == "", (
             f"state.yaml should no longer be tracked: {tracked_after}"
         )
@@ -302,9 +284,7 @@ class TestUntrackPreviouslyCommitted:
         story_path.write_text("# Old Story\n\nAC: test\n", encoding="utf-8")
         _git(repo, "checkout", "--", "apps/factory/stories/42-old-story.md")
 
-        (repo / ".gitignore").write_text(
-            "apps/*/stories/*.md\n", encoding="utf-8"
-        )
+        (repo / ".gitignore").write_text("apps/*/stories/*.md\n", encoding="utf-8")
         _git(repo, "rm", "--cached", "--", "apps/*/stories/*.md")
         _git(repo, "add", ".gitignore")
         _git(repo, "commit", "-m", "untrack stories/*.md and add gitignore")
@@ -339,8 +319,7 @@ class TestHumanAuthoredArtifactsStayTracked:
 
         # Apply the story's gitignore rules.
         (repo / ".gitignore").write_text(
-            "apps/*/directions/*/state.yaml\n"
-            "apps/*/stories/*.md\n",
+            "apps/*/directions/*/state.yaml\napps/*/stories/*.md\n",
             encoding="utf-8",
         )
         _git(repo, "add", ".")
@@ -348,9 +327,7 @@ class TestHumanAuthoredArtifactsStayTracked:
 
         # direction.md must be tracked.
         tracked = _git(repo, "ls-files", "--", "apps/*/directions/*/direction.md")
-        assert "direction.md" in tracked, (
-            "direction.md must remain tracked (human-authored)"
-        )
+        assert "direction.md" in tracked, "direction.md must remain tracked (human-authored)"
 
     def test_flow_md_still_tracked(self, tmp_path: Path) -> None:
         """flow.md is NOT gitignored by the new rules."""
@@ -361,17 +338,14 @@ class TestHumanAuthoredArtifactsStayTracked:
         (direction_dir / "flow.md").write_text("# Flow\n", encoding="utf-8")
 
         (repo / ".gitignore").write_text(
-            "apps/*/directions/*/state.yaml\n"
-            "apps/*/stories/*.md\n",
+            "apps/*/directions/*/state.yaml\napps/*/stories/*.md\n",
             encoding="utf-8",
         )
         _git(repo, "add", ".")
         _git(repo, "commit", "-m", "add flow.md and gitignore")
 
         tracked = _git(repo, "ls-files", "--", "apps/*/directions/*/flow.md")
-        assert "flow.md" in tracked, (
-            "flow.md must remain tracked (human-authored)"
-        )
+        assert "flow.md" in tracked, "flow.md must remain tracked (human-authored)"
 
     def test_api_spec_md_still_tracked(self, tmp_path: Path) -> None:
         """api_spec.md is NOT gitignored by the new rules."""
@@ -382,17 +356,14 @@ class TestHumanAuthoredArtifactsStayTracked:
         (direction_dir / "api_spec.md").write_text("# API Spec\n", encoding="utf-8")
 
         (repo / ".gitignore").write_text(
-            "apps/*/directions/*/state.yaml\n"
-            "apps/*/stories/*.md\n",
+            "apps/*/directions/*/state.yaml\napps/*/stories/*.md\n",
             encoding="utf-8",
         )
         _git(repo, "add", ".")
         _git(repo, "commit", "-m", "add api_spec.md and gitignore")
 
         tracked = _git(repo, "ls-files", "--", "apps/*/directions/*/api_spec.md")
-        assert "api_spec.md" in tracked, (
-            "api_spec.md must remain tracked (human-authored)"
-        )
+        assert "api_spec.md" in tracked, "api_spec.md must remain tracked (human-authored)"
 
     def test_context_md_still_tracked(self, tmp_path: Path) -> None:
         """apps/<app>/context/*.md is NOT gitignored by the new rules."""
@@ -403,17 +374,14 @@ class TestHumanAuthoredArtifactsStayTracked:
         (context_dir / "dispatch.md").write_text("# Dispatch\n", encoding="utf-8")
 
         (repo / ".gitignore").write_text(
-            "apps/*/directions/*/state.yaml\n"
-            "apps/*/stories/*.md\n",
+            "apps/*/directions/*/state.yaml\napps/*/stories/*.md\n",
             encoding="utf-8",
         )
         _git(repo, "add", ".")
         _git(repo, "commit", "-m", "add context doc and gitignore")
 
         tracked = _git(repo, "ls-files", "--", "apps/*/context/modules/dispatch.md")
-        assert "dispatch.md" in tracked, (
-            "apps/<app>/context/*.md must remain tracked"
-        )
+        assert "dispatch.md" in tracked, "apps/<app>/context/*.md must remain tracked"
 
     def test_artifacts_dir_not_tracked_but_gitkeep_is(self, tmp_path: Path) -> None:
         """artifacts/ contents are gitignored (existing rule), .gitkeep stays tracked."""
@@ -435,9 +403,7 @@ class TestHumanAuthoredArtifactsStayTracked:
         _git(repo, "commit", "-m", "add artifacts and gitignore")
 
         tracked = _git(repo, "ls-files", "--", "apps/*/directions/*/artifacts/.gitkeep")
-        assert ".gitkeep" in tracked, (
-            "artifacts/.gitkeep must remain tracked"
-        )
+        assert ".gitkeep" in tracked, "artifacts/.gitkeep must remain tracked"
 
 
 # ---------------------------------------------------------------------------
@@ -464,8 +430,7 @@ class TestCombinedTickSimulation:
 
         # Apply the gitignore rules (the production change).
         (repo / ".gitignore").write_text(
-            "apps/*/directions/*/state.yaml\n"
-            "apps/*/stories/*.md\n",
+            "apps/*/directions/*/state.yaml\napps/*/stories/*.md\n",
             encoding="utf-8",
         )
         _git(repo, "add", ".")
@@ -498,8 +463,7 @@ class TestCombinedTickSimulation:
         stories_dir.mkdir(parents=True)
 
         (repo / ".gitignore").write_text(
-            "apps/*/directions/*/state.yaml\n"
-            "apps/*/stories/*.md\n",
+            "apps/*/directions/*/state.yaml\napps/*/stories/*.md\n",
             encoding="utf-8",
         )
         _git(repo, "add", ".")
@@ -508,9 +472,7 @@ class TestCombinedTickSimulation:
         # Simulate tick output.
         state_yaml_path = direction_dir / "state.yaml"
         state = {"status": "pm-validated"}
-        state_yaml_path.write_text(
-            yaml.safe_dump(state, sort_keys=False), encoding="utf-8"
-        )
+        state_yaml_path.write_text(yaml.safe_dump(state, sort_keys=False), encoding="utf-8")
 
         story_path = stories_dir / "42-test-story.md"
         story_path.write_text("# Story: Test\n\nAC: test\n", encoding="utf-8")
