@@ -92,5 +92,19 @@ state/issue_hygiene/
 apps/*/directions/*/artifacts/**
 !apps/*/directions/*/artifacts/.gitkeep
 
+# Machine-written direction state — the directions table is the source of truth;
+# state.yaml is a best-effort projection written for operator convenience. Keep
+# it on disk so an operator can read it without querying the database, but NEVER
+# track it in git. A tick that changes a direction's status must leave the tree
+# clean.
+#
+# Human-authored siblings (direction.md, flow.md, api_spec.md) stay tracked.
+apps/*/directions/*/state.yaml
+
+# Machine-written story markdown — the story table is the source of truth; the
+# rendered markdown under apps/<app>/stories/ is a projection for operator
+# convenience. Same policy as state.yaml: written to disk, gitignored.
+apps/*/stories/*.md
+
 # coverage.py data file (never commit)
 .coverage
