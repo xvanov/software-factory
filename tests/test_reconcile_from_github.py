@@ -23,7 +23,12 @@ from factory.app_config import AppConfig
 from factory.chain.event_log import read_story_events
 from factory.chain.handlers import persist_story
 from factory.chain.orchestrator import reconcile_from_github
-from factory.chain.state_machine import StoryRecord, StoryState
+from factory.chain.state_machine import (
+    EVENT_DEPLOY_SUCCEEDED,
+    StoryRecord,
+    StoryState,
+    advance,
+)
 
 _CFG = AppConfig(name="sacrifice", repo="acme/sacrifice")
 
@@ -1044,7 +1049,15 @@ def test_full_path_block_ci_merge_revive_dependent(
     ) in out
     assert _reload(db, blocker.id).state == StoryState.DEPLOY_PENDING.value
 
-    # AC6.2: Dependent unblocked.
+    # AC6.2: The dependent is dispatchable again after the blocker proceeds to
+    # deployed on the normal path.
+    blocker_after_reconcile = _reload(db, blocker.id)
+    blocker_after_reconcile.state = advance(
+        blocker_after_reconcile, EVENT_DEPLOY_SUCCEEDED
+    ).value
+    persist_story(blocker_after_reconcile, db)
+    assert _reload(db, blocker.id).state == StoryState.DEPLOYED.value
+
     dep = _reload(db, dependent.id)
     assert dep.state == StoryState.STORY_CREATED.value
     assert dep.error is None

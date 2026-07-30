@@ -36,31 +36,33 @@ Add regression coverage for the blocked-CI recovery path: a story blocked at `bl
 Complete
 
 ## Completion Notes
-The regression tests were already present in `tests/test_reconcile_from_github.py` (added alongside the backend implementation in PR #134). This pass augmented the existing tests to close coverage gaps:
+The D013 coverage lives in `tests/test_reconcile_from_github.py`. This pass kept the existing regression shape and tightened assertions so each acceptance criterion is explicit:
 
-- **AC2.2 (merge-action row)**: Added `_merged_rows` + `_deploy_queue` assertions to `test_blocked_ci_unresolved_revives_dependents` and `test_full_path_block_ci_merge_revive_dependent`.
-- **AC5.1 (drift event)**: Added `_drift_events` assertions to `test_full_path_block_ci_merge_revive_dependent`, verifying the event payload carries the expected `story_id`, `local_state_before`, `authoritative_pr_state`, and `pr_number` fields.
+- Added/kept merged-path side-effect checks (`merged=True` merge-action row and deploy-queue entry) for revived `blocked_ci_unresolved` stories.
+- Kept drift-anomaly checks (`state_drift_reconciled`) with payload assertions on the full-path test.
+- Extended the full-path regression to advance the revived blocker from `deploy_pending` to `deployed` through the state-machine path, then assert the dependent remains dispatchable (`story_created`).
 
-All 27 tests in `test_reconcile_from_github.py` pass green.
+`uv run pytest -q tests/test_reconcile_from_github.py` passes green.
 
 ### AC coverage map
 | AC | Test(s) |
 |----|---------|
-| AC1.1 (blocked_ci in candidates) | Implicit in all blocked_ci tests; explicit in `test_blocked_ci_unresolved_closed_is_noop`, `test_terminal_and_no_pr_stories_are_skipped` |
-| AC2.1 (MERGED → deploy_pending) | `test_blocked_ci_unresolved_revives_dependents`, `test_full_path_block_ci_merge_revive_dependent` |
-| AC2.2 (merge-action row merged=True) | `test_blocked_ci_unresolved_revives_dependents`, `test_full_path_block_ci_merge_revive_dependent` |
-| AC2.3 (deploy enqueued) | `test_blocked_ci_unresolved_revives_dependents`, `test_full_path_block_ci_merge_revive_dependent` |
-| AC2.4 (outcome matches normal path) | `test_merged_records_merge_action_and_enqueues_deploy` (normal) vs blocked_ci tests (same side effects) |
-| AC3.1 (CLOSED-unmerged stays blocked) | `test_blocked_ci_unresolved_closed_is_noop` |
-| AC3.2 (no time-based revival) | Architectural invariant — CLOSED branch only applies EVENT_PR_UNMERGEABLE to mergeable states |
+| AC1.1 (blocked_ci in candidates) | `test_blocked_ci_unresolved_merged_pr_revives_to_deploy_pending`, `test_blocked_ci_unresolved_closed_unmerged_stays_blocked` |
+| AC2.1 (MERGED → deploy_pending) | `test_blocked_ci_unresolved_merged_pr_revives_to_deploy_pending`, `test_full_path_block_ci_merge_revive_dependent` |
+| AC2.2 (merge-action row merged=True) | `test_blocked_ci_unresolved_merged_pr_revives_to_deploy_pending`, `test_blocked_ci_unresolved_revives_dependents`, `test_full_path_block_ci_merge_revive_dependent` |
+| AC2.3 (deploy enqueued) | `test_blocked_ci_unresolved_merged_pr_revives_to_deploy_pending`, `test_blocked_ci_unresolved_revives_dependents`, `test_full_path_block_ci_merge_revive_dependent` |
+| AC2.4 (outcome matches normal path) | `test_merged_records_merge_action_and_enqueues_deploy` (normal) vs blocked-ci merged tests (same side effects) |
+| AC3.1 (CLOSED-unmerged stays blocked) | `test_blocked_ci_unresolved_closed_unmerged_stays_blocked` |
+| AC3.2 (no time-based revival) | `test_blocked_ci_unresolved_closed_unmerged_stays_blocked`, `test_blocked_ci_unresolved_open_pr_is_noop` |
 | AC4.1 (dependent revived) | `test_blocked_ci_unresolved_revives_dependents`, `test_full_path_block_ci_merge_revive_dependent` |
 | AC4.1 edge (multiple blockers) | `test_blocked_ci_unresolved_does_not_revive_when_other_blocker_still_dead` |
-| AC5.1 (state_drift_reconciled) | `test_blocked_ci_unresolved_revives_dependents`, `test_full_path_block_ci_merge_revive_dependent` |
+| AC5.1 (state_drift_reconciled) | `test_blocked_ci_unresolved_merged_pr_revives_to_deploy_pending`, `test_full_path_block_ci_merge_revive_dependent` |
 | AC6.1 (full path deploy_pending) | `test_full_path_block_ci_merge_revive_dependent` |
 | AC6.2 (full path dependent unblocked) | `test_full_path_block_ci_merge_revive_dependent` |
 
 ## Files Touched
-- `tests/test_reconcile_from_github.py` — augmented assertions in `test_blocked_ci_unresolved_revives_dependents` and `test_full_path_block_ci_merge_revive_dependent`
+- `tests/test_reconcile_from_github.py` — added deploy progression assertion in `test_full_path_block_ci_merge_revive_dependent`; retained merged/deploy/anomaly assertions across D013 regression tests.
+- `apps/factory/stories/133-d013-regression-test-for-blocked-ci-revival-and-dependent-re.md` — refreshed Dev Agent Record to match current coverage and file changes.
 
 # Senior Developer Review
 
