@@ -820,18 +820,124 @@ def _build_ux_auditor_context(app: str, software_factory_root: Path) -> str:
     return "".join(parts)
 
 
+def _ux_auditor_fixture_run(
+    app: str, software_factory_root: Path
+) -> dict[str, Any]:
+    """Consume recorded CLI audit fixtures for the UX auditor.
+
+    Used when live execution is unavailable (Deploy: disabled, text_run
+    transport). Loads recorded fixtures matching the flow artifacts for
+    ``app``, validates them, and returns them as audit findings.
+
+    Returns a dict shaped like the UX auditor's JSON output schema so the
+    direction-filing path works unchanged.
+    """
+    from factory.testing.ux_fixtures import (
+        CliAuditFixture,
+        load_fixtures_for_flow,
+        validate_fixture_or_raise,
+    )
+
+    flow_artifacts = _collect_flow_artifacts(app, software_factory_root)
+    if not flow_artifacts:
+        raise ValueError(
+            f"fixture-based ux_auditor run for app '{app}' requires "
+            f"at least one flow.md artifact"
+        )
+
+    all_fixtures: list[CliAuditFixture] = []
+    for label, _content in flow_artifacts:
+        # label is like "012-persist-direction-status-in-the-database/flow.md"
+        all_fixtures.extend(load_fixtures_for_flow(label))
+
+    if not all_fixtures:
+        # No recorded fixtures — fall back to the LLM path.
+        raise ValueError(
+            f"No recorded fixtures found for flow artifacts in app '{app}'; "
+            f"cannot perform fixture-based audit"
+        )
+
+    findings: list[dict[str, Any]] = []
+    for fixture in all_fixtures:
+        # Validate the fixture — raises ValueError on malformed evidence.
+        validate_fixture_or_raise(fixture)
+        for step in fixture.steps:
+            findings.append(
+                {
+                    "flow": fixture.flow_source,
+                    "step": step.step,
+                    "kind": "cli_audit",
+                    "evidence": (
+                        f"Recorded fixture: command `{step.command}` "
+                        f"(exit {step.command_output.exit_code}). "
+                        f"stdout: {step.command_output.stdout[:200].strip()}"
+                    ),
+                    "suggestion": (
+                        f"Step {step.step}: {step.description} — "
+                        f"verified via recorded fixture evidence"
+                    ),
+                    "suggested_direction": {
+                        "title": (
+                            f"CLI audit step {step.step} verified from "
+                            f"recorded fixture for {fixture.flow_source}"
+                        ),
+                        "type": "ux",
+                        "why": (
+                            f"Recorded fixture evidence confirms step {step.step} "
+                            f"({step.command}) completes with exit "
+                            f"{step.command_output.exit_code} and "
+                            f"{len(step.state_evidence)} state evidence item(s)."
+                        ),
+                        "acceptance": [
+                            f"Step {step.step} ({step.command}) completes with "
+                            f"exit {step.command_output.exit_code}",
+                            *[
+                                f"State evidence ({se.kind}): {se.description}"
+                                for se in step.state_evidence
+                            ],
+                        ],
+                    },
+                }
+            )
+
+    return {
+        "findings": findings,
+        "fixture_mode": True,
+        "duration_s": 0.0,
+    }
+
+
 def _live_run(persona: str, app: str, software_factory_root: Path) -> dict[str, Any]:
     """Compose context + persona prompt + dispatch via runner.
 
     Ralph/bug_hunter/security/ux_auditor all use ``text_run`` for v1; the
     sandbox path (browser tool) is reserved for a future ux_auditor
     enhancement when the live deploy URL exists.
+
+    For the UX auditor, when live execution is unavailable (Deploy: disabled,
+    text_run transport), the runtime consumes recorded CLI audit fixtures
+    instead of making an LLM call. When the deploy IS enabled (AC1.4), the
+    live LLM path is preserved.
     """
     from factory.app_config import load_app_config, resolve_app_repo_path
     from factory.context.loader import compose_context_prelude
     from factory.runner import text_run
 
     cfg = load_app_config(app, software_factory_root)
+
+    # UX auditor: attempt fixture-based consumption when live execution is
+    # unavailable (Deploy: disabled). This satisfies AC1.1 (consume recorded
+    # fixtures when live execution unavailable) and preserves AC1.4 (live
+    # execution when capability exists).
+    if persona == "ux_auditor" and not cfg.deploy.enabled:
+        try:
+            return _ux_auditor_fixture_run(app, software_factory_root)
+        except ValueError:
+            # No fixtures available — fall through to the LLM path so the
+            # persona can still produce findings from text analysis of flow
+            # artifacts alone.
+            pass
+
     prelude = compose_context_prelude(
         persona,
         app_repo_path=resolve_app_repo_path(cfg, software_factory_root),

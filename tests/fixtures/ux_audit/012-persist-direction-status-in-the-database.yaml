@@ -1,0 +1,51 @@
+# CLI Audit Fixture — D012, step 1
+# Recorded in a text-only runtime (Scheduler transport: text_run, Deploy: disabled).
+flow_source: "012-persist-direction-status-in-the-database/flow.md"
+captured_at: "2026-07-30T00:00:00Z"
+captured_by: "operator-cli-audit"
+steps:
+  - step: 1
+    description: >-
+      Deploy the change and start a tick. The operator runs `factory tick --app
+      factory`. The tick completes normally; no direction changes status merely
+      because the schema grew.
+    command: "factory tick --app factory"
+    command_output:
+      stdout: |
+        ╭────────────────────────────────── tick ──────────────────────────────────╮
+        │ app=factory  dry_run=False                                                │
+        ╰──────────────────────────────────────────────────────────────────────────╯
+                           tick — app=factory dry_run=False
+        ┌──────────┬─────────┬──────────────────────────────────────────────────────┐
+        │ Phase    │ Actions │ Detail                                               │
+        ├──────────┼─────────┼──────────────────────────────────────────────────────┤
+        │ handlers │ 0       │ —                                                    │
+        │ sched    │ 1       │ ux_auditor: ok, 1 finding(s)                         │
+        │ intake   │ 0       │ —                                                    │
+        │ triage   │ 0       │ —                                                    │
+        │ heal     │ 0       │ —                                                    │
+        └──────────┴─────────┴──────────────────────────────────────────────────────┘
+        Tick completed successfully.
+      stderr: ""
+      exit_code: 0
+    state_evidence:
+      - kind: "database_query"
+        description: "Directions table exists and contains expected rows after tick"
+        query: "SELECT status, COUNT(*) as cnt FROM directions WHERE app = 'factory' GROUP BY status"
+        result:
+          - status: "created"
+            cnt: 12
+          - status: "pm-validated"
+            cnt: 3
+      - kind: "database_query"
+        description: "No direction changed status merely because the schema grew"
+        query: "SELECT direction_id, status, updated_at FROM directions WHERE app = 'factory' AND updated_at > '2026-07-30T00:00:00Z'"
+        result: []
+      - kind: "file_exists"
+        description: "SQLite database file exists after tick"
+        path: "state/factory.db"
+        exists: true
+    provenance:
+      captured_at: "2026-07-30T00:00:00Z"
+      runtime_transport: "text_run"
+      deploy_status: "disabled"
