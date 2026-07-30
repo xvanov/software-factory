@@ -11,7 +11,6 @@ from factory.directions.creator import create_direction
 from factory.directions.schema import upsert_direction
 from factory.directions.watcher import pending_directions
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -74,9 +74,7 @@ def pending_directions(
     engine = _engine(state_db_path)  # ensure tables exist for callers downstream
     out: list[Direction] = []
     for dir_path in list_direction_dirs(app, software_factory_root):
-        d = parse_direction_dir(
-            app, dir_path, software_factory_root=software_factory_root
-        )
+        d = parse_direction_dir(app, dir_path, software_factory_root=software_factory_root)
         # Resolve status from DB first, falling back to state.yaml / created.
         d.status = _resolve_status(app, d.id, d.status, engine)
         if d.status in {"created", "needs-direction"}:
