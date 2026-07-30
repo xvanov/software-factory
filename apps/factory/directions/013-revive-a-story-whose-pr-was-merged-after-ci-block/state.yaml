@@ -1,0 +1,90 @@
+status: pm-validated
+source: operator
+created_at: '2026-07-30T02:28:11.043462+00:00'
+audit:
+- ts: '2026-07-30T02:28:11.043462+00:00'
+  by: operator
+  event: created
+  details:
+    source: hand-written
+- ts: '2026-07-30T02:30:34.015642+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.95
+pm_result:
+  type: bug
+  priority: p1
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D013 revive blocked_ci_unresolved after merged PR
+  tracker_body: "## Summary\nDirection D013 fixes a state-machine dead end: when a\
+    \ story is sunk to `blocked_ci_unresolved`, an operator can fix the branch, get\
+    \ CI green, and merge the PR, but the factory never accepts that remediation because\
+    \ `reconcile_from_github` ignores that blocked state. WHY does this matter? Because\
+    \ a merged-and-live story remains blocked forever, and every dependent story stays\
+    \ `blocked_dependency` forever too.\n\n## Problem\nObserved on direction 012:\
+    \ story 148's PR was fixed, all checks passed, and the PR was squash-merged to\
+    \ `main`, yet the story remained `blocked_ci_unresolved` and dependents 149\u2013\
+    153 remained blocked. The system detected the issue, escalated correctly, then\
+    \ could not consume the human fix.\n\n## Desired outcome\nTreat an operator-merged\
+    \ PR as a valid recovery path for `blocked_ci_unresolved`:\n- reconciliation must\
+    \ inspect blocked stories that have a positive PR number\n- if GitHub says the\
+    \ PR is merged, advance through the same merged outcome as the normal reconciliation\
+    \ path\n- if the PR is merely closed-unmerged, do nothing\n- log the recovery\
+    \ as `state_drift_reconciled`\n- re-evaluate dependent stories so blocked work\
+    \ can resume once the blocker reaches `deployed`\n\n## Acceptance criteria from\
+    \ direction\n- `reconcile_from_github` considers stories in `blocked_ci_unresolved`\
+    \ that carry a positive `github_pr_number`, in addition to the current mergeable\
+    \ states.\n- A story in `blocked_ci_unresolved` whose PR is MERGED on GitHub advances\
+    \ to `deploy_pending`, records a `merged=True` merge-action row, and enqueues\
+    \ the deploy \u2014 the same outcome as the normal reconciled-merge path.\n- A\
+    \ story in `blocked_ci_unresolved` whose PR is still CLOSED-unmerged stays blocked,\
+    \ so reviving is driven by the real artifact and never by the mere passage of\
+    \ time.\n- Reviving a story re-evaluates its dependents: a story in `blocked_dependency`\
+    \ whose blocker reached `deployed` becomes dispatchable again.\n- The revival\
+    \ is logged as a `state_drift_reconciled` anomaly, like every other reconciliation,\
+    \ so it is never silent.\n- A test asserts the full path: block a story on CI,\
+    \ merge its PR out of band, run reconcile, and observe `deploy_pending` plus an\
+    \ unblocked dependent.\n\n## Out of scope\n- changing CI-fix retry caps or give-up\
+    \ behavior\n- auto-reopening PRs\n- touching other blocked sink states like `blocked_deploy_failed`\n\
+    \n## PM cut-through / WHY notes\n- WHY one state only? Keep the state-machine\
+    \ change reviewable.\n- WHY gate on GitHub merge artifact? Prevent time-based\
+    \ or accidental revival.\n- WHY mention default-branch ancestry? Cheap safety\
+    \ check if available; otherwise preserve the core merged-artifact behavior first.\n\
+    \n## Proposed implementation slices\nThe smallest safe path is to land the reconciliation\
+    \ eligibility and merged revival first, then add the dependent-release regression\
+    \ coverage as a separate slice so each PR stays dev-completable."
+  child_stories:
+  - title: D013 reconcile blocked_ci_unresolved merged PR to deploy_pending
+    scope: backend
+    chain_kind: tdd
+    rationale: 'Vertical slice: teach `reconcile_from_github` to inspect `blocked_ci_unresolved`
+      stories with a positive PR number and revive only when GitHub reports the PR
+      as merged. WHY first? This is the core bug; without it, the factory can never
+      accept the operator remediation. Include merge-action persistence, deploy enqueue
+      behavior, and anomaly logging so the blocked story follows the same reconciled-merge
+      path as existing mergeable states. Keep closed-unmerged PRs unchanged in this
+      slice.'
+    estimated_new_files: 0
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 5
+  - title: D013 regression test for blocked CI revival and dependent release
+    scope: test
+    chain_kind: tdd
+    rationale: 'Vertical validation slice: add the end-to-end regression test that
+      blocks a story on CI, merges its PR out of band, runs reconcile, observes `deploy_pending`,
+      and verifies a dependent blocked on it becomes dispatchable again after the
+      blocker reaches `deployed`. WHY separate? The full-path fixture/setup is likely
+      the fiddliest part and can land cleanly after the reconciliation behavior exists,
+      without overstuffing the first PR.'
+    estimated_new_files: 1
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 180
+    points: 5
+  labels:
+  - bug
+  - priority/p1
+  confidence: 0.95
+tracker_issue: 131
