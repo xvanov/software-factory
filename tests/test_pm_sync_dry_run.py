@@ -248,3 +248,107 @@ def test_pm_sync_dry_run_no_directions_empty_summary(tmp_path: Path) -> None:
     assert summary.processed == 0
     assert summary.validated == 0
     assert summary.needs_direction == 0
+
+
+# ---------------------------------------------------------------------------
+# D012 regression: deleted state.yaml does not cause re-triage
+# ---------------------------------------------------------------------------
+
+
+def test_deleted_state_yaml_survives_pm_sync_without_retriage(tmp_path: Path) -> None:
+    """AC1.1 + AC1.2 + AC2.1 + AC2.2 — Integration regression test.
+
+    Proves that a direction whose ``state.yaml`` is deleted keeps its status
+    across a fresh read-path (factory restart simulation), ``pm_sync`` does
+    NOT re-triage it, and ``state.yaml`` is regenerated from the database
+    without status drift.
+    """
+    import sqlite3
+
+    from factory.directions.parser import parse_direction_dir
+    from factory.directions.watcher import mark_direction_status, pending_directions
+
+    def _db_status(db_path: Path, *, app: str, direction_id: str) -> str | None:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            row = conn.execute(
+                "SELECT status FROM directions WHERE app=? AND direction_id=?",
+                (app, direction_id),
+            ).fetchone()
+        finally:
+            conn.close()
+        return None if row is None else str(row[0])
+
+    _seed_app_config(tmp_path)
+
+    # -- create direction on disk and set an authoritative non-pending status
+    created = create_direction(
+        app="sacrifice",
+        title="Add healthz endpoint",
+        type_tag="feature",
+        why="Smoke test wants a stable endpoint.",
+        has_ui=False,
+        flow_steps=None,
+        has_api=True,
+        api_spec_lines=['- `POST /healthz` -> 200 {"status":"ok"}'],
+        acceptance=["Returns 200", "JSON body has status"],
+        explore=False,
+        attach_files=None,
+        software_factory_root=tmp_path,
+    )
+    dir_id = created.direction.id
+    state_yaml = created.dir_path / "state.yaml"
+    state_db = tmp_path / "state" / "factory.db"
+    assert state_yaml.exists()
+
+    mark_direction_status(created.direction, "pm-validated", by="regression-test-seed")
+    assert _db_status(state_db, app="sacrifice", direction_id=dir_id) == "pm-validated"
+
+    # -- delete state.yaml (simulate operator action from flow step 5)
+    state_yaml.unlink()
+    assert not state_yaml.exists()
+
+    # -- simulate restart/fresh read path: pending_directions re-resolves from DB
+    after_restart = pending_directions("sacrifice", tmp_path, state_db)
+    assert dir_id not in {d.id for d in after_restart}
+    assert _db_status(state_db, app="sacrifice", direction_id=dir_id) == "pm-validated", (
+        "AC1.1: status must survive state.yaml deletion across fresh read-path"
+    )
+
+    # -- run pm-sync twice to prove no re-triage and repeat stability
+    first = pm_sync(
+        app="sacrifice",
+        software_factory_root=tmp_path,
+        dry_run=True,
+        state_db_path=state_db,
+    )
+    second = pm_sync(
+        app="sacrifice",
+        software_factory_root=tmp_path,
+        dry_run=True,
+        state_db_path=state_db,
+    )
+
+    # AC1.2: pm-sync must not see this direction as pending after deletion
+    assert first.processed == 0 and second.processed == 0, (
+        "AC1.2: pm-sync re-triaged a direction whose DB status is pm-validated"
+    )
+    assert _db_status(state_db, app="sacrifice", direction_id=dir_id) == "pm-validated"
+
+    # -- regenerate state.yaml from DB (AC2.1 + AC2.2)
+    status_from_db = _db_status(state_db, app="sacrifice", direction_id=dir_id)
+    assert status_from_db is not None
+    fresh_direction = parse_direction_dir(
+        "sacrifice",
+        created.dir_path,
+        software_factory_root=tmp_path,
+    )
+    mark_direction_status(fresh_direction, status_from_db, by="regression-test-regenerate")
+
+    # AC2.1: state.yaml is rewritten for human inspection
+    assert state_yaml.exists(), "AC2.1: state.yaml must be regenerated for human inspection"
+
+    # AC2.2: regenerated state.yaml carries the same status as the DB row
+    regenerated = yaml.safe_load(state_yaml.read_text(encoding="utf-8"))
+    assert regenerated["status"] == status_from_db
+    assert _db_status(state_db, app="sacrifice", direction_id=dir_id) == status_from_db
