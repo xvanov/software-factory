@@ -83,23 +83,20 @@ AC1.3: WHEN the UX audit observes the revival step scenario before and after the
 - openhands (dev persona)
 
 ## Debug Log References
-- All tests pass in `tests/test_audit_seed_blocked_story.py` (8 tests, 0 failures)
+- `uv run pytest -q tests/test_audit_seed_blocked_story.py`
+- `uv run pytest -q`
 
 ## Completion Notes
-- Created `tests/test_audit_seed_blocked_story.py` with a deterministic seeded fixture for a blocked story + merged-PR state
-- Fixture identifiers are stable and discoverable:
-  - `AUDIT_FIXTURE_DIRECTION_ID = "099"`
-  - `AUDIT_FIXTURE_SLUG = "audit-seed-blocked-ci"`
-  - `AUDIT_FIXTURE_PR_NUMBER = 142`
-  - `AUDIT_FIXTURE_APP = "sacrifice"`
-  - `AUDIT_FIXTURE_MERGE_SHA = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"`
-- The `_seed_blocked_story_with_merged_pr` helper seeds: a `StoryRecord` in `blocked_ci_unresolved` state, a `MergeActionRecord` (merged=True), and a `DeployQueueEntry`
-- The fixture supports `tick()` without error (story is terminal and skipped, no crash)
-- Before/after state evidence is capturable as plain dicts
-- All 8 tests pass green. Pre-existing failures in `test_acceptance_oracle.py` and `test_cli_audit.py` are unrelated to this change
-- Full test suite excluding those two pre-existing failures: 726 passed
+- Added production fixture entrypoint `factory.chain.audit_seed_fixtures` with stable identifier contract:
+  - `AUDIT_REVIVAL_FIXTURE.fixture_id = "ux-audit-revival-blocked-story-v1"`
+  - `direction_id="099"`, `slug="audit-seed-blocked-ci"`, `app="sacrifice"`, `pr_number=142`
+- Implemented `seed_recoverable_blocked_story_fixture(db_path)` as deterministic/idempotent setup for a blocked story plus merged-PR context (`merge_actions` + `deploy_queue`).
+- Implemented `capture_revival_step_evidence(db_path)` so revival-step before/after status can be captured programmatically.
+- Reworked `tests/test_audit_seed_blocked_story.py` into an integration-style smoke suite that verifies AC1.1/AC1.2/AC1.3 and idempotent re-runs.
+- Full repository suite is green after the change (`uv run pytest -q`).
 
 ## File List
+- `factory/chain/audit_seed_fixtures.py`
 - `tests/test_audit_seed_blocked_story.py`
 
 # Senior Developer Review
