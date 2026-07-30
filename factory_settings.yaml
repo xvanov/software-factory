@@ -55,11 +55,18 @@ auto_merge:
   delete_branch_after_merge: true
   wait_for_ci: true
 # Auto PM-sync. When enabled, ``factory tick`` triages any direction still
-# in ``status: created`` / ``needs-direction`` into stories (same pipeline
-# as ``factory pm-sync``), so directions filed by scheduled personas or
-# ``factory tell`` never rot waiting for an operator. Bounded by
-# ``rate_limits.pm_invocations_per_hour`` counted from real pm rows in the
-# runs table.
+# in ``status: created`` into stories (same pipeline as ``factory pm-sync``),
+# so directions filed by a human never rot waiting for an operator to
+# remember the command. Bounded by ``rate_limits.pm_invocations_per_hour``
+# counted from real pm rows in the runs table.
+#
+# NOT a blank cheque since 2026-07-30: a MACHINE-FILED direction (any
+# ``scheduled-<persona>`` source, any other machine filer, or a direction
+# whose source cannot be determined) is NOT auto-triaged. It parks until an
+# operator runs ``factory approve-direction`` (``factory inbox`` lists what
+# is waiting). See ``factory/directions/approval.py`` — this is the
+# structural fix for the auditor treadmill described under
+# ``schedules: ux_audit`` below.
 auto_pm_sync:
   enabled: true
 # Post-merge main-branch CI-health monitor (D004). When enabled, ``factory
@@ -99,6 +106,12 @@ schedules:
     # is self-justifying. Re-enable only alongside a rule that an auto-filed
     # direction needs operator approval before auto_pm_sync triages it — otherwise
     # throttling just slows the treadmill down.
+    #
+    # That rule now EXISTS (2026-07-30, ``factory/directions/approval.py``): a
+    # ``scheduled-*`` direction parks until ``factory approve-direction``, and
+    # ``factory inbox`` lists what is waiting. Re-enabling this cron is still an
+    # OPERATOR decision — the gate bounds the cost of the treadmill (no PM calls,
+    # no stories, no PRs), it does not make the findings worth reviewing.
     #
     # Yearly (1 Jan 09:00) is "effectively off" while staying a VALID cron.
     # Do NOT use an impossible date like 31 February to disable a schedule:

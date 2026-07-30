@@ -259,6 +259,97 @@ def _default_patch_provider(
     return proc.stdout or ""
 
 
+def _self_edit_escalation_proposal(
+    *,
+    story: StoryRecord | None,
+    app_config: AppConfig,
+    pr_number: int,
+    classification: str,
+    detail: str,
+    staging_status: str,
+    patch: str = "",
+) -> dict[str, Any]:
+    """Build the escalation proposal for a refused factory self-edit.
+
+    An escalation that names no concern, no target and no diagnosis is a
+    notification that *something, somewhere* wants attention — worthless to the
+    operator. GitHub issue #179 was exactly that: ``concern_id: ?``,
+    ``target: ?``, "Concern / diagnosis: _(none provided)_". The cause is a
+    CONTRACT MISMATCH, not a rendering bug: ``manager.escalation._build_issue_body``
+    renders ``concern_id`` / ``proposal.target`` / ``diagnosis`` /
+    ``proposal.rationale`` / ``escalation_reason``, and this caller used to pass
+    only ``concern_title``, ``proposal.suggested_patch`` and a ``detail`` key the
+    renderer never reads.
+
+    Every field the renderer reads is populated here, so the issue body always
+    carries the concrete ``staging_status``, the reason the change could not be
+    validated, and the PR + story it concerns.
+    """
+    story_id = getattr(story, "id", None)
+    story_slug = getattr(story, "slug", None) or "?"
+    story_title = getattr(story, "title", None) or ""
+    status = staging_status or classification
+
+    subject = f"factory self-edit PR #{pr_number} refused ({status})"
+
+    # Stable per-PR ids. ``concern_id`` is the escalation channel's PREFERRED
+    # dedup key, so it must identify the thing a human would fix — this PR —
+    # and nothing coarser (a shared id across PRs would over-dedup and hide
+    # every refusal after the first).
+    concern_id = f"chain-selfedit:{app_config.repo}:pr-{pr_number}"
+    proposal_id = f"chain-selfedit-story-{story_id}-pr-{pr_number}"
+
+    diagnosis = "\n".join(
+        [
+            f"The chain-side staging gate REFUSED to merge factory self-edit PR #{pr_number}.",
+            "",
+            f"- repo: `{app_config.repo}`",
+            f"- pull request: #{pr_number}",
+            f"- story: {story_id if story_id is not None else '?'} (`{story_slug}`)"
+            + (f" — {story_title}" if story_title else ""),
+            f"- classification: `{classification}`",
+            f"- staging_status: `{status}`",
+            "",
+            "Why it could not be validated / merged:",
+            "",
+            detail or "(no detail recorded)",
+        ]
+    )
+
+    if classification == "forbidden":
+        rationale = (
+            f"Do NOT merge PR #{pr_number} as-is: it edits a path the chain may never "
+            "touch (`factory/manager/**` or `bench/**`). Split the forbidden files out "
+            "into an operator-authored PR and let the chain keep the remainder."
+        )
+    else:
+        rationale = (
+            f"Operator action: inspect PR #{pr_number} on `{app_config.repo}`, reproduce "
+            f"the staging failure (`staging_status={status}`), then either fix the story "
+            "and re-run the gate or close the PR. The live factory was left untouched."
+        )
+
+    return {
+        "proposal_id": proposal_id,
+        "concern_id": concern_id,
+        "concern_title": subject,
+        # Read by manager.escalation._build_issue_body:
+        "diagnosis": diagnosis,
+        "escalation_reason": detail,
+        "proposal": {
+            "target": f"{app_config.repo}#{pr_number}",
+            "rationale": rationale,
+            "suggested_patch": patch,
+        },
+        # Machine-readable extras for anything else consuming the proposal.
+        "detail": detail,
+        "staging_status": status,
+        "pr_number": pr_number,
+        "story_id": story_id,
+        "app": app_config.name,
+    }
+
+
 def _escalate_self_edit(
     escalate: Any,
     *,
@@ -268,6 +359,7 @@ def _escalate_self_edit(
     pr_number: int,
     classification: str,
     detail: str,
+    staging_status: str = "",
     patch: str = "",
 ) -> None:
     """Best-effort escalation for a refused factory self-edit. Never raises.
@@ -275,21 +367,31 @@ def _escalate_self_edit(
     Reuses the WS3.1 ``escalation.notify_escalation`` channel (the same one the
     manager proposal path uses) so a chain-built self-edit that fails staging or
     hits a forbidden path is surfaced to a human exactly like a manager-proposed
-    one.
+    one — and, since the #179 fix, with the same actionable content.
     """
-    proposal = {
-        "proposal_id": (f"chain-selfedit-story-{getattr(story, 'id', None)}-pr-{pr_number}"),
-        "concern_title": f"chain factory self-edit PR #{pr_number}",
-        "proposal": {"suggested_patch": patch},
-        "detail": detail,
-    }
+    proposal = _self_edit_escalation_proposal(
+        story=story,
+        app_config=app_config,
+        pr_number=pr_number,
+        classification=classification,
+        detail=detail,
+        staging_status=staging_status,
+        patch=patch,
+    )
     try:
         escalate(
             proposal,
             root=root,
             repo=app_config.repo,
             classification=classification,
-            result={"detail": detail, "pr_number": pr_number},
+            # ``error`` is the key the escalation renderer falls back to for the
+            # failure evidence; ``detail`` is kept for existing consumers.
+            result={
+                "error": detail,
+                "detail": detail,
+                "pr_number": pr_number,
+                "staging_status": proposal["staging_status"],
+            },
         )
     except Exception:  # noqa: BLE001 - escalation is best-effort; never block the tick
         pass
@@ -363,6 +465,7 @@ def _evaluate_self_edit_gate(
             pr_number=pr_number,
             classification="escalate_to_human",
             detail=reason,
+            staging_status="diff_unavailable",
         )
         return _SelfEditDecision(allow=False, status="diff_unavailable", logs_tail=reason)
 
@@ -387,6 +490,7 @@ def _evaluate_self_edit_gate(
             pr_number=pr_number,
             classification="escalate_to_human",
             detail=reason,
+            staging_status="unparseable_diff",
             patch=patch,
         )
         return _SelfEditDecision(allow=False, status="unparseable_diff", logs_tail=reason)
@@ -409,6 +513,7 @@ def _evaluate_self_edit_gate(
             pr_number=pr_number,
             classification="forbidden",
             detail=reason,
+            staging_status="forbidden",
             patch=patch,
         )
         return _SelfEditDecision(allow=False, status="forbidden", forbidden=True, logs_tail=reason)
@@ -439,6 +544,7 @@ def _evaluate_self_edit_gate(
             pr_number=pr_number,
             classification="escalate_to_human",
             detail=reason,
+            staging_status="staging_infra_failed",
             patch=patch,
         )
         return _SelfEditDecision(allow=False, status="staging_infra_failed", logs_tail=reason)
@@ -458,7 +564,11 @@ def _evaluate_self_edit_gate(
         root=root,
         pr_number=pr_number,
         classification="escalate_to_human",
-        detail=f"factory self-edit failed staging ({status}): {logs_tail[:500]}",
+        detail=(
+            f"factory self-edit failed staging (status={status}): "
+            f"{logs_tail[:500] or '(no staging logs captured)'}"
+        ),
+        staging_status=status,
         patch=patch,
     )
     return _SelfEditDecision(allow=False, status=status, logs_tail=logs_tail)

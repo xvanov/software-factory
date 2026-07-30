@@ -2,6 +2,11 @@
 
 For each pending direction in ``apps/<app>/directions/``:
 
+0. Operator-approval gate: a MACHINE-FILED direction (any
+   ``scheduled-<persona>`` source, any other machine filer, or a direction
+   whose source cannot be determined) is skipped until an operator approves
+   it — see ``factory.directions.approval`` and ``factory approve-direction``.
+   Human-filed directions skip straight to step 1, exactly as before.
 1. Parse the directory → ``Direction`` record.
 2. Fast pre-check via ``backpressure.validator.validate_direction``.
 3. Insufficient → ``record_needs_direction`` + status = ``needs-direction``.
@@ -38,6 +43,7 @@ from factory.app_config import (
 )
 from factory.backpressure.validator import ValidationResult, validate_direction
 from factory.context.loader import compose_context_prelude
+from factory.directions.approval import approval_blocked_reason, is_auto_buildable
 from factory.directions.parser import Direction, MissingDirection, resolve_direction_chain
 from factory.directions.tracker_issue import (
     open_or_update_tracker_issue,
@@ -133,6 +139,12 @@ class PMSyncSummary:
     # ``factory.directions.gc``) this pm-sync run. Empty unless one or more
     # scheduler-filed directions crossed the GC threshold.
     gc_closed: list[str] = field(default_factory=list)
+    # ``(direction_id, reason)`` for every pending direction this pass REFUSED
+    # to triage because it was machine-filed and no operator has approved it
+    # (see ``factory.directions.approval``). These are not errors and not
+    # ``processed`` — they are parked, and surfaced to the operator by
+    # ``factory inbox`` / ``factory approve-direction``.
+    awaiting_approval: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _build_pm_prompt(direction: Direction, context_prelude: str) -> str:
@@ -524,9 +536,26 @@ def pm_sync(
         return PMSyncSummary()
 
     summary = PMSyncSummary()
-    pending = [
+    candidates = [
         d for d in pending_directions(app, root, db_path) if d.status in pending_statuses
     ]
+
+    # Operator-approval gate (2026-07-30). A direction the FACTORY filed for
+    # itself — every ``scheduled-<persona>`` source, any other machine filer,
+    # and (fail-safe) any direction whose source cannot be determined — does
+    # not enter the build pipeline until an operator approves it. This is the
+    # single door from direction → stories, so gating here covers the automated
+    # tick (``maybe_auto_pm_sync``) AND a manual ``factory pm-sync``: a habit of
+    # running pm-sync by hand must not be a way around the gate. Human-filed
+    # directions are unaffected. See ``factory.directions.approval``.
+    pending: list[Direction] = []
+    for direction in candidates:
+        if is_auto_buildable(direction):
+            pending.append(direction)
+            continue
+        summary.awaiting_approval.append(
+            (direction.id or direction.slug, approval_blocked_reason(direction))
+        )
     summary.processed = len(pending)
 
     # App repo path for the context prelude. Phase 7 resolves this via the
@@ -725,8 +754,12 @@ def maybe_auto_pm_sync(
     with nothing fresh alongside meant GC never fired on the automated tick
     (audit 2026-07-18).
 
+    Machine-filed directions (``scheduled-<persona>`` and friends) are NOT
+    auto-triaged: they wait for ``factory approve-direction``. See
+    ``factory.directions.approval`` and the gate inside ``pm_sync``.
+
     Returns ``(summary_or_None, reason)`` with reason in
-    {"disabled", "no_pending", "rate_limited", "synced"}.
+    {"disabled", "no_pending", "awaiting_approval", "rate_limited", "synced"}.
     """
     from datetime import UTC, datetime
 
@@ -771,8 +804,18 @@ def maybe_auto_pm_sync(
             pass
 
     auto_statuses = frozenset({"created"})
-    if not any(d.status in auto_statuses for d in pending):
+    fresh = [d for d in pending if d.status in auto_statuses]
+    if not fresh:
         return None, "no_pending"
+
+    # Operator-approval gate. ``pm_sync`` re-applies this (it is the
+    # authoritative choke point) — repeating it here buys two things: no LLM
+    # budget is consumed and no GitHub client is constructed for a tick whose
+    # only pending work is parked, and the tick reports a DISTINCT
+    # ``awaiting_approval`` reason instead of a silent ``synced`` with zero
+    # processed, so the park is visible in the tick output.
+    if not any(is_auto_buildable(d) for d in fresh):
+        return None, "awaiting_approval"
 
     if _pm_runs_last_hour(db_path) >= settings.rate_limits.pm_invocations_per_hour:
         return None, "rate_limited"

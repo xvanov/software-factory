@@ -151,6 +151,48 @@ def test_wrong_status_never_eligible() -> None:
     assert is_gc_eligible(d, now=NOW) is False
 
 
+# --------------------------------------------------------------------------- #
+# created + parked at the operator-approval gate (2026-07-30)
+# --------------------------------------------------------------------------- #
+
+
+def test_stale_unapproved_created_direction_is_eligible() -> None:
+    """A scheduled direction parked at the approval gate for >14 days is reaped.
+
+    Without this the approval gate would trade one rot (auto-built junk PRs) for
+    another (an inbox that only ever grows).
+    """
+    old = NOW - timedelta(days=MAX_AGE_DAYS + 1)
+    d = _mk_direction(status="created", created_at=old.isoformat())
+    assert is_gc_eligible(d, now=NOW) is True
+
+
+def test_fresh_unapproved_created_direction_is_not_eligible() -> None:
+    d = _mk_direction(status="created", created_at=NOW.isoformat())
+    assert is_gc_eligible(d, now=NOW) is False
+
+
+def test_created_direction_with_no_created_at_is_not_eligible() -> None:
+    """No age evidence → leave it alone (never guess a direction into the bin)."""
+    d = _mk_direction(status="created", created_at=None)
+    assert is_gc_eligible(d, now=NOW) is False
+
+
+def test_approved_created_direction_is_never_eligible() -> None:
+    """Once an operator says yes, GC must not reap the work out from under them."""
+    old = NOW - timedelta(days=100)
+    d = _mk_direction(status="created", created_at=old.isoformat())
+    d.state["operator_approval"] = {"approved": True, "approved_by": "kalin"}
+    assert is_gc_eligible(d, now=NOW) is False
+
+
+def test_operator_filed_created_direction_is_never_eligible() -> None:
+    """A human's own direction at ``created`` is never reaped, however old."""
+    old = NOW - timedelta(days=100)
+    d = _mk_direction(status="created", source="operator", created_at=old.isoformat())
+    assert is_gc_eligible(d, now=NOW) is False
+
+
 def test_non_consecutive_needs_direction_entries_dont_count() -> None:
     """A direction that went needs-direction -> pm-validated -> needs-direction
     again only counts the TRAILING run, not the total historical count."""

@@ -20,8 +20,17 @@ apps/<app>/directions/<NNN>-<slug>/
   chars** (`slugify`, `parser.py:287`) — long titles get truncated mid-word in the
   directory name, which is normal and harmless.
 - `state.yaml` is written by the creator/ingester and updated by `pm_sync`. Creating
-  a direction by hand means writing it once with `status: created`; the chain takes
-  over from there.
+  a direction by hand means writing it once with `status: created` **and
+  `source: operator`**; the chain takes over from there.
+- `source` is what the **operator-approval gate** reads
+  (`factory/directions/approval.py`). A human/deterministic source
+  (`operator*`, `cli*`, `user*`, `human*`, `github`, `github_issue`, `ci-health`,
+  `flake-quarantine`) auto-triages as always. Anything else — every
+  `scheduled-<persona>` direction, and **any direction whose `source` cannot be
+  determined** (missing `state.yaml`, no `source` key) — is parked until
+  `factory approve-direction <NNN> --app <app>`. So omitting `source` does not
+  lose the direction, it just costs you a manual approval; `factory inbox` lists
+  everything parked.
 
 ## `direction.md` frontmatter
 
