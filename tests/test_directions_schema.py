@@ -29,9 +29,7 @@ def _tables(db: Path) -> set[str]:
     try:
         return {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
     finally:
         conn.close()
@@ -41,9 +39,7 @@ def _indexes(db: Path, table: str) -> list[tuple[str, bool]]:
     """Return [(index_name, unique), ...] for a table."""
     conn = sqlite3.connect(str(db))
     try:
-        rows = conn.execute(
-            f"PRAGMA index_list({table})"
-        ).fetchall()
+        rows = conn.execute(f"PRAGMA index_list({table})").fetchall()
         return [(row[1], bool(row[2])) for row in rows]
     finally:
         conn.close()
@@ -57,7 +53,6 @@ def _indexes(db: Path, table: str) -> list[tuple[str, bool]]:
 def test_directions_table_exists_after_sqlmodel_create_all(tmp_path: Path) -> None:
     """AC1.1: WHEN the application schema is initialized, THE database SHALL
     contain a ``directions`` table."""
-    from factory.directions.schema import DirectionRecord
 
     db = tmp_path / "factory.db"
     engine = create_engine(f"sqlite:///{db}", echo=False)
@@ -70,15 +65,23 @@ def test_directions_table_exists_after_sqlmodel_create_all(tmp_path: Path) -> No
 def test_directions_table_has_minimum_columns(tmp_path: Path) -> None:
     """AC1.3: Minimum columns — id, app, direction_id, slug, status,
     tracker_issue, created_at, updated_at, updated_by — are present."""
-    from factory.directions.schema import DirectionRecord
 
     db = tmp_path / "factory.db"
     engine = create_engine(f"sqlite:///{db}", echo=False)
     SQLModel.metadata.create_all(engine)
 
     cols = _columns(db, "directions")
-    assert {"id", "app", "direction_id", "slug", "status", "tracker_issue",
-            "created_at", "updated_at", "updated_by"} <= cols
+    assert {
+        "id",
+        "app",
+        "direction_id",
+        "slug",
+        "status",
+        "tracker_issue",
+        "created_at",
+        "updated_at",
+        "updated_by",
+    } <= cols
 
 
 def test_directions_unique_constraint_on_app_and_direction_id(tmp_path: Path) -> None:
@@ -90,16 +93,24 @@ def test_directions_unique_constraint_on_app_and_direction_id(tmp_path: Path) ->
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:
-        session.add(DirectionRecord(
-            app="factory", direction_id="012", slug="test-slug",
-            status="created", created_at=BASE_TS,
-            updated_at=BASE_TS,
-        ))
+        session.add(
+            DirectionRecord(
+                app="factory",
+                direction_id="012",
+                slug="test-slug",
+                status="created",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
+            )
+        )
         session.commit()
 
         dup = DirectionRecord(
-            app="factory", direction_id="012", slug="test-slug-2",
-            status="created", created_at=BASE_TS,
+            app="factory",
+            direction_id="012",
+            slug="test-slug-2",
+            status="created",
+            created_at=BASE_TS,
             updated_at=BASE_TS,
         )
         session.add(dup)
@@ -109,7 +120,6 @@ def test_directions_unique_constraint_on_app_and_direction_id(tmp_path: Path) ->
 
 def test_directions_index_on_app_and_status(tmp_path: Path) -> None:
     """Index on (app, status) is present."""
-    from factory.directions.schema import DirectionRecord
 
     db = tmp_path / "factory.db"
     engine = create_engine(f"sqlite:///{db}", echo=False)
@@ -118,8 +128,9 @@ def test_directions_index_on_app_and_status(tmp_path: Path) -> None:
     idxs = _indexes(db, "directions")
     idx_names = [name for name, _unique in idxs]
     # SQLModel auto-names indexes; look for one on app+status
-    assert any("app" in name and "status" in name for name in idx_names), \
+    assert any("app" in name and "status" in name for name in idx_names), (
         f"No (app, status) index found among: {idx_names}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +140,6 @@ def test_directions_index_on_app_and_status(tmp_path: Path) -> None:
 
 def test_directions_not_null_columns(tmp_path: Path) -> None:
     """app, direction_id, slug, status, created_at, updated_at are NOT NULL."""
-    from factory.directions.schema import DirectionRecord
 
     db = tmp_path / "factory.db"
     engine = create_engine(f"sqlite:///{db}", echo=False)
@@ -209,22 +219,32 @@ def test_different_apps_same_direction_id_is_allowed(tmp_path: Path) -> None:
     engine = _seeded_engine(db)
 
     with Session(engine) as session:
-        session.add(DirectionRecord(
-            app="factory", direction_id="001", slug="alpha",
-            status="created", created_at=BASE_TS,
-            updated_at=BASE_TS,
-        ))
-        session.add(DirectionRecord(
-            app="sacrifice", direction_id="001", slug="beta",
-            status="created", created_at=BASE_TS,
-            updated_at=BASE_TS,
-        ))
+        session.add(
+            DirectionRecord(
+                app="factory",
+                direction_id="001",
+                slug="alpha",
+                status="created",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
+            )
+        )
+        session.add(
+            DirectionRecord(
+                app="sacrifice",
+                direction_id="001",
+                slug="beta",
+                status="created",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
+            )
+        )
         session.commit()
 
     with Session(engine) as session:
-        count = len(session.exec(
-            select(DirectionRecord).where(DirectionRecord.direction_id == "001")
-        ).all())
+        count = len(
+            session.exec(select(DirectionRecord).where(DirectionRecord.direction_id == "001")).all()
+        )
         assert count == 2
 
 
@@ -292,8 +312,11 @@ def test_update_direction_row(tmp_path: Path) -> None:
 
     with Session(engine) as session:
         row = DirectionRecord(
-            app="factory", direction_id="010", slug="test-update",
-            status="created", created_at=BASE_TS,
+            app="factory",
+            direction_id="010",
+            slug="test-update",
+            status="created",
+            created_at=BASE_TS,
             updated_at=BASE_TS,
         )
         session.add(row)
@@ -324,8 +347,11 @@ def test_direction_row_with_nullable_fields_none(tmp_path: Path) -> None:
 
     with Session(engine) as session:
         row = DirectionRecord(
-            app="factory", direction_id="011", slug="no-tracker",
-            status="needs-direction", created_at=BASE_TS,
+            app="factory",
+            direction_id="011",
+            slug="no-tracker",
+            status="needs-direction",
+            created_at=BASE_TS,
             updated_at=BASE_TS,
         )
         session.add(row)
@@ -351,11 +377,16 @@ def test_get_direction_by_app_and_direction_id(tmp_path: Path) -> None:
     engine = _seeded_engine(db)
 
     with Session(engine) as session:
-        session.add(DirectionRecord(
-            app="factory", direction_id="012", slug="my-dir",
-            status="created", created_at=BASE_TS,
-            updated_at=BASE_TS,
-        ))
+        session.add(
+            DirectionRecord(
+                app="factory",
+                direction_id="012",
+                slug="my-dir",
+                status="created",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
+            )
+        )
         session.commit()
 
     with Session(engine) as session:
@@ -377,8 +408,12 @@ def test_upsert_direction_creates_new_row(tmp_path: Path) -> None:
 
     with Session(engine) as session:
         row = upsert_direction(
-            session, app="factory", direction_id="013", slug="new-dir",
-            status="pm-validated", tracker_issue=99,
+            session,
+            app="factory",
+            direction_id="013",
+            slug="new-dir",
+            status="pm-validated",
+            tracker_issue=99,
             updated_by="test-runner",
         )
         assert row.id is not None
@@ -407,18 +442,27 @@ def test_upsert_direction_updates_existing_row(tmp_path: Path) -> None:
 
     # Seed a row
     with Session(engine) as session:
-        session.add(DirectionRecord(
-            app="factory", direction_id="014", slug="before",
-            status="created", created_at=BASE_TS,
-            updated_at=BASE_TS,
-        ))
+        session.add(
+            DirectionRecord(
+                app="factory",
+                direction_id="014",
+                slug="before",
+                status="created",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
+            )
+        )
         session.commit()
 
     # Upsert it
     with Session(engine) as session:
         row = upsert_direction(
-            session, app="factory", direction_id="014", slug="after",
-            status="closed", tracker_issue=77,
+            session,
+            app="factory",
+            direction_id="014",
+            slug="after",
+            status="closed",
+            tracker_issue=77,
             updated_by="test-runner",
         )
         assert row.slug == "after"
@@ -443,8 +487,14 @@ def test_upsert_direction_idempotent(tmp_path: Path) -> None:
     db = tmp_path / "factory.db"
     engine = _seeded_engine(db)
 
-    args = dict(app="factory", direction_id="015", slug="idem",
-                status="needs-direction", tracker_issue=5, updated_by="x")
+    args = dict(
+        app="factory",
+        direction_id="015",
+        slug="idem",
+        status="needs-direction",
+        tracker_issue=5,
+        updated_by="x",
+    )
 
     with Session(engine) as session:
         upsert_direction(session, **args)
@@ -453,12 +503,14 @@ def test_upsert_direction_idempotent(tmp_path: Path) -> None:
         upsert_direction(session, **args)
 
     with Session(engine) as session:
-        count = len(session.exec(
-            _select(DirectionRecord).where(
-                DirectionRecord.app == "factory",
-                DirectionRecord.direction_id == "015",
-            )
-        ).all())
+        count = len(
+            session.exec(
+                _select(DirectionRecord).where(
+                    DirectionRecord.app == "factory",
+                    DirectionRecord.direction_id == "015",
+                )
+            ).all()
+        )
         assert count == 1
 
 
@@ -470,21 +522,36 @@ def test_list_directions_by_app(tmp_path: Path) -> None:
     engine = _seeded_engine(db)
 
     with Session(engine) as session:
-        session.add(DirectionRecord(
-            app="factory", direction_id="001", slug="a",
-            status="created", created_at=BASE_TS,
-            updated_at=BASE_TS,
-        ))
-        session.add(DirectionRecord(
-            app="factory", direction_id="002", slug="b",
-            status="closed", created_at=BASE_TS,
-            updated_at=BASE_TS,
-        ))
-        session.add(DirectionRecord(
-            app="sacrifice", direction_id="001", slug="c",
-            status="created", created_at=BASE_TS,
-            updated_at=BASE_TS,
-        ))
+        session.add(
+            DirectionRecord(
+                app="factory",
+                direction_id="001",
+                slug="a",
+                status="created",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
+            )
+        )
+        session.add(
+            DirectionRecord(
+                app="factory",
+                direction_id="002",
+                slug="b",
+                status="closed",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
+            )
+        )
+        session.add(
+            DirectionRecord(
+                app="sacrifice",
+                direction_id="001",
+                slug="c",
+                status="created",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
+            )
+        )
         session.commit()
 
     with Session(engine) as session:
@@ -504,21 +571,36 @@ def test_list_directions_by_app_and_status(tmp_path: Path) -> None:
     engine = _seeded_engine(db)
 
     with Session(engine) as session:
-        session.add(DirectionRecord(
-            app="factory", direction_id="001", slug="a",
-            status="created", created_at=BASE_TS,
-            updated_at=BASE_TS,
-        ))
-        session.add(DirectionRecord(
-            app="factory", direction_id="002", slug="b",
-            status="pm-validated", created_at=BASE_TS,
-            updated_at=BASE_TS,
-        ))
-        session.add(DirectionRecord(
-            app="factory", direction_id="003", slug="c",
-            status="pm-validated", created_at=BASE_TS,
-            updated_at=BASE_TS,
-        ))
+        session.add(
+            DirectionRecord(
+                app="factory",
+                direction_id="001",
+                slug="a",
+                status="created",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
+            )
+        )
+        session.add(
+            DirectionRecord(
+                app="factory",
+                direction_id="002",
+                slug="b",
+                status="pm-validated",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
+            )
+        )
+        session.add(
+            DirectionRecord(
+                app="factory",
+                direction_id="003",
+                slug="c",
+                status="pm-validated",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
+            )
+        )
         session.commit()
 
     with Session(engine) as session:

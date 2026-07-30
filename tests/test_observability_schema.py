@@ -21,9 +21,7 @@ def _tables(db: Path) -> set[str]:
     try:
         return {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
     finally:
         conn.close()
@@ -156,8 +154,7 @@ def test_migrate_preserves_existing_data(tmp_path: Path, call_count: int) -> Non
     migrate(db)
     conn = sqlite3.connect(str(db))
     conn.execute(
-        "INSERT INTO live_handlers (started_at, persona, model, mode, pid) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO live_handlers (started_at, persona, model, mode, pid) VALUES (?, ?, ?, ?, ?)",
         ("2026-05-26T00:00:00+00:00", "dev", "claude-opus-4-7", "sandbox", 999),
     )
     conn.commit()
