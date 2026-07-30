@@ -102,11 +102,11 @@ def _seed_direction(
 {yaml.safe_dump(fm, sort_keys=False).strip()}
 ---
 
-# {fm['title']}
+# {fm["title"]}
 
 ## Why
 
-{body or 'Because reasons.'}
+{body or "Because reasons."}
 
 ## Acceptance Criteria
 
@@ -169,7 +169,8 @@ def test_no_chain_prelude_when_none_passed(tmp_path: Path) -> None:
 
 def _db_engine(db_path: Path):
     """Return a SQLModel engine and ensure tables exist."""
-    from sqlmodel import SQLModel, create_engine as _ce
+    from sqlmodel import SQLModel
+    from sqlmodel import create_engine as _ce
 
     # Ensure tables are registered in SQLModel.metadata
     from factory.chain.state_machine import StoryRecord  # noqa: F401
@@ -224,14 +225,22 @@ def test_db_ancestor_appends_merged_section(tmp_path: Path) -> None:
     _seed_repo(tmp_path)
     db = tmp_path / "state" / "factory.db"
     # direction_id in DB is ancestor.id (just "011"), not id_slug ("011-parent")
-    _seed_db_with_story(db, direction_id="011", state="deployed",
-                        story_file_path="stories/1-shipped.md")
-    _seed_story_file(tmp_path, "sacrifice", "stories/1-shipped.md",
-                     "# Shipped story\n\nThis story was deployed.\n")
+    _seed_db_with_story(
+        db, direction_id="011", state="deployed", story_file_path="stories/1-shipped.md"
+    )
+    _seed_story_file(
+        tmp_path,
+        "sacrifice",
+        "stories/1-shipped.md",
+        "# Shipped story\n\nThis story was deployed.\n",
+    )
 
     _seed_direction(tmp_path, "011-parent", title="Parent", body="Parent body.")
     child = _seed_direction(
-        tmp_path, "012-iter", title="Iteration", parent_direction="011-parent",
+        tmp_path,
+        "012-iter",
+        title="Iteration",
+        parent_direction="011-parent",
     )
     chain = resolve_direction_chain(child, tmp_path)
 
@@ -256,14 +265,19 @@ def test_db_ancestor_omits_when_no_deployed_story(tmp_path: Path) -> None:
     _seed_repo(tmp_path)
     db = tmp_path / "state" / "factory.db"
     # Story exists but is NOT deployed — direction_id matches ancestor.id ("011")
-    _seed_db_with_story(db, direction_id="011", state="dev_in_progress",
-                        story_file_path="stories/1-wip.md")
-    _seed_story_file(tmp_path, "sacrifice", "stories/1-wip.md",
-                     "# WIP story\n\nNot deployed yet.\n")
+    _seed_db_with_story(
+        db, direction_id="011", state="dev_in_progress", story_file_path="stories/1-wip.md"
+    )
+    _seed_story_file(
+        tmp_path, "sacrifice", "stories/1-wip.md", "# WIP story\n\nNot deployed yet.\n"
+    )
 
     _seed_direction(tmp_path, "011-parent", title="Parent", body="Parent body.")
     child = _seed_direction(
-        tmp_path, "012-iter", title="Iteration", parent_direction="011-parent",
+        tmp_path,
+        "012-iter",
+        title="Iteration",
+        parent_direction="011-parent",
     )
     chain = resolve_direction_chain(child, tmp_path)
 
@@ -284,14 +298,19 @@ def test_db_ancestor_omits_when_no_db_path(tmp_path: Path) -> None:
     """AC5.3: no db_path → no DB-backed ancestor-story context."""
     _seed_repo(tmp_path)
     db = tmp_path / "state" / "factory.db"
-    _seed_db_with_story(db, direction_id="011", state="deployed",
-                        story_file_path="stories/1-shipped.md")
-    _seed_story_file(tmp_path, "sacrifice", "stories/1-shipped.md",
-                     "# Shipped story\n\nDeployed.\n")
+    _seed_db_with_story(
+        db, direction_id="011", state="deployed", story_file_path="stories/1-shipped.md"
+    )
+    _seed_story_file(
+        tmp_path, "sacrifice", "stories/1-shipped.md", "# Shipped story\n\nDeployed.\n"
+    )
 
     _seed_direction(tmp_path, "011-parent", title="Parent", body="Parent body.")
     child = _seed_direction(
-        tmp_path, "012-iter", title="Iteration", parent_direction="011-parent",
+        tmp_path,
+        "012-iter",
+        title="Iteration",
+        parent_direction="011-parent",
     )
     chain = resolve_direction_chain(child, tmp_path)
 
@@ -314,11 +333,15 @@ def test_db_ancestor_omits_when_ancestor_is_missing(tmp_path: Path) -> None:
     _seed_repo(tmp_path)
     db = tmp_path / "state" / "factory.db"
     # MissingDirection has empty id, so "999-noexist" won't match
-    _seed_db_with_story(db, direction_id="999-noexist", state="deployed",
-                        story_file_path="stories/1-orphan.md")
+    _seed_db_with_story(
+        db, direction_id="999-noexist", state="deployed", story_file_path="stories/1-orphan.md"
+    )
 
     child = _seed_direction(
-        tmp_path, "012-iter", title="Iteration", parent_direction="999-noexist",
+        tmp_path,
+        "012-iter",
+        title="Iteration",
+        parent_direction="999-noexist",
     )
     chain = resolve_direction_chain(child, tmp_path)
     assert len(chain) == 2
@@ -341,19 +364,30 @@ def test_db_ancestor_multiple_deployed_stories(tmp_path: Path) -> None:
     """Multiple deployed stories for one ancestor → all appended."""
     _seed_repo(tmp_path)
     db = tmp_path / "state" / "factory.db"
-    _seed_db_with_story(db, direction_id="011", state="deployed",
-                        story_file_path="stories/1-first.md")
-    _seed_db_with_story(db, direction_id="011", state="deployed",
-                        story_file_path="stories/2-second.md",
-                        title="Second Story", slug="second-story")
-    _seed_story_file(tmp_path, "sacrifice", "stories/1-first.md",
-                     "# First shipped\n\nFirst body.\n")
-    _seed_story_file(tmp_path, "sacrifice", "stories/2-second.md",
-                     "# Second shipped\n\nSecond body.\n")
+    _seed_db_with_story(
+        db, direction_id="011", state="deployed", story_file_path="stories/1-first.md"
+    )
+    _seed_db_with_story(
+        db,
+        direction_id="011",
+        state="deployed",
+        story_file_path="stories/2-second.md",
+        title="Second Story",
+        slug="second-story",
+    )
+    _seed_story_file(
+        tmp_path, "sacrifice", "stories/1-first.md", "# First shipped\n\nFirst body.\n"
+    )
+    _seed_story_file(
+        tmp_path, "sacrifice", "stories/2-second.md", "# Second shipped\n\nSecond body.\n"
+    )
 
     _seed_direction(tmp_path, "011-parent", title="Parent", body="Parent body.")
     child = _seed_direction(
-        tmp_path, "012-iter", title="Iteration", parent_direction="011-parent",
+        tmp_path,
+        "012-iter",
+        title="Iteration",
+        parent_direction="011-parent",
     )
     chain = resolve_direction_chain(child, tmp_path)
 

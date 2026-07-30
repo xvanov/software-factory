@@ -150,15 +150,11 @@ def compose_context_prelude(
             for ancestor in ancestors:
                 if isinstance(ancestor, MissingDirection):
                     parts.append(f"\n### Parent direction: {ancestor.id_slug}\n")
-                    parts.append(
-                        f"_(parent direction not found: {ancestor.id_slug})_\n"
-                    )
+                    parts.append(f"_(parent direction not found: {ancestor.id_slug})_\n")
                 else:
                     parts.append(f"\n### Parent direction: {ancestor.id_slug}\n")
                     parts.append(ancestor.raw_body.rstrip() + "\n")
-                    _append_merged_story_section(
-                        parts, ancestor, db_path, software_factory_root
-                    )
+                    _append_merged_story_section(parts, ancestor, db_path, software_factory_root)
 
     if task_scope:
         sections = parse_navigation(navigation_md)
