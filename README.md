@@ -24,7 +24,7 @@
 | factory/chain/factory\_improver\_apply.py              |      355 |       39 |     89% |120, 204, 240, 253, 321, 386-387, 458-459, 469, 498-499, 546, 553-554, 577-578, 600, 637, 693-694, 722, 782, 815-824, 921-922, 925, 935-944, 958, 1031-1035 |
 | factory/chain/factory\_status.py                       |      144 |        8 |     94% |85-86, 118-119, 121, 264, 286-288 |
 | factory/chain/gates/\_\_init\_\_.py                    |        3 |        0 |    100% |           |
-| factory/chain/gates/acceptance\_verified.py            |       39 |        2 |     95% |   138-139 |
+| factory/chain/gates/acceptance\_verified.py            |       40 |        2 |     95% |   161-162 |
 | factory/chain/gates/canonical\_paths\_only.py          |       10 |        0 |    100% |           |
 | factory/chain/gates/docs\_current.py                   |       23 |        3 |     87% | 19, 24-25 |
 | factory/chain/gates/evaluator.py                       |       55 |        5 |     91% |128, 158-163 |
@@ -126,7 +126,7 @@
 | factory/webhook/\_\_init\_\_.py                        |        0 |        0 |    100% |           |
 | factory/webhook/github.py                              |      190 |       40 |     79% |56, 60, 63-64, 96, 126, 162-167, 191-207, 253, 308-312, 355-356, 379-391, 395 |
 | factory/webhook/openhands\_events.py                   |       36 |        7 |     81% |69, 84-123 |
-| **TOTAL**                                              | **17106** | **3501** | **80%** |           |
+| **TOTAL**                                              | **17107** | **3501** | **80%** |           |
 
 
 ## Setup coverage badge
