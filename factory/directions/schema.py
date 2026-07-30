@@ -41,12 +41,12 @@ class DirectionRecord(SQLModel, table=True):
     slug: str = Field(nullable=False)
     status: str = Field(nullable=False)
     tracker_issue: int | None = Field(default=None, nullable=True)
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(UTC).isoformat(),
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
         nullable=False,
     )
-    updated_at: str = Field(
-        default_factory=lambda: datetime.now(UTC).isoformat(),
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
         nullable=False,
     )
     updated_by: str | None = Field(default=None, nullable=True)
@@ -94,7 +94,7 @@ def upsert_direction(
     """
     status = _validated_status(status)
     existing = get_direction(session, app, direction_id)
-    now = datetime.now(UTC).isoformat()
+    now = datetime.now(UTC)
 
     if existing is not None:
         existing.slug = slug

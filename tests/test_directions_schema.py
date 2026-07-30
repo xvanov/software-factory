@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select
+
+BASE_TS = datetime(2025, 1, 1)
+CREATED_TS = datetime(2025, 6, 1, 10, 0)
+UPDATED_TS = datetime(2025, 6, 15, 12, 0)
+TRANSITION_TS = datetime(2025, 6, 20, 10, 0)
 
 
 def _columns(db: Path, table: str) -> set[str]:
@@ -86,18 +92,18 @@ def test_directions_unique_constraint_on_app_and_direction_id(tmp_path: Path) ->
     with Session(engine) as session:
         session.add(DirectionRecord(
             app="factory", direction_id="012", slug="test-slug",
-            status="created", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="created", created_at=BASE_TS,
+            updated_at=BASE_TS,
         ))
         session.commit()
 
         dup = DirectionRecord(
             app="factory", direction_id="012", slug="test-slug-2",
-            status="created", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="created", created_at=BASE_TS,
+            updated_at=BASE_TS,
         )
         session.add(dup)
-        with pytest.raises(Exception):
+        with pytest.raises(IntegrityError):
             session.commit()
 
 
@@ -172,8 +178,8 @@ def test_insert_and_read_direction_row(tmp_path: Path) -> None:
             slug="pushup-counter",
             status="pm-validated",
             tracker_issue=42,
-            created_at="2025-06-01T10:00:00Z",
-            updated_at="2025-06-15T12:00:00Z",
+            created_at=CREATED_TS,
+            updated_at=UPDATED_TS,
             updated_by="factory.chain.pm_sync",
         )
         session.add(row)
@@ -189,8 +195,8 @@ def test_insert_and_read_direction_row(tmp_path: Path) -> None:
         assert fetched.slug == "pushup-counter"
         assert fetched.status == "pm-validated"
         assert fetched.tracker_issue == 42
-        assert fetched.created_at == "2025-06-01T10:00:00Z"
-        assert fetched.updated_at == "2025-06-15T12:00:00Z"
+        assert fetched.created_at == CREATED_TS
+        assert fetched.updated_at == UPDATED_TS
         assert fetched.updated_by == "factory.chain.pm_sync"
 
 
@@ -205,13 +211,13 @@ def test_different_apps_same_direction_id_is_allowed(tmp_path: Path) -> None:
     with Session(engine) as session:
         session.add(DirectionRecord(
             app="factory", direction_id="001", slug="alpha",
-            status="created", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="created", created_at=BASE_TS,
+            updated_at=BASE_TS,
         ))
         session.add(DirectionRecord(
             app="sacrifice", direction_id="001", slug="beta",
-            status="created", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="created", created_at=BASE_TS,
+            updated_at=BASE_TS,
         ))
         session.commit()
 
@@ -238,8 +244,8 @@ def test_status_check_constraint_enforces_documented_set(tmp_path: Path) -> None
                     direction_id=f"099-{idx}",
                     slug=f"test-{status}",
                     status=status,
-                    created_at="2025-01-01T00:00:00Z",
-                    updated_at="2025-01-01T00:00:00Z",
+                    created_at=BASE_TS,
+                    updated_at=BASE_TS,
                 )
             )
         session.commit()
@@ -251,8 +257,8 @@ def test_status_check_constraint_enforces_documented_set(tmp_path: Path) -> None
                 direction_id="199",
                 slug="unsupported-status",
                 status="completed",
-                created_at="2025-01-01T00:00:00Z",
-                updated_at="2025-01-01T00:00:00Z",
+                created_at=BASE_TS,
+                updated_at=BASE_TS,
             )
         )
         with pytest.raises(IntegrityError):
@@ -287,8 +293,8 @@ def test_update_direction_row(tmp_path: Path) -> None:
     with Session(engine) as session:
         row = DirectionRecord(
             app="factory", direction_id="010", slug="test-update",
-            status="created", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="created", created_at=BASE_TS,
+            updated_at=BASE_TS,
         )
         session.add(row)
         session.commit()
@@ -297,7 +303,7 @@ def test_update_direction_row(tmp_path: Path) -> None:
     with Session(engine) as session:
         row = session.get(DirectionRecord, pk)
         row.status = "pm-validated"
-        row.updated_at = "2025-06-20T10:00:00Z"
+        row.updated_at = TRANSITION_TS
         row.updated_by = "factory.chain.pm_sync"
         session.add(row)
         session.commit()
@@ -305,7 +311,7 @@ def test_update_direction_row(tmp_path: Path) -> None:
     with Session(engine) as session:
         fetched = session.get(DirectionRecord, pk)
         assert fetched.status == "pm-validated"
-        assert fetched.updated_at == "2025-06-20T10:00:00Z"
+        assert fetched.updated_at == TRANSITION_TS
         assert fetched.updated_by == "factory.chain.pm_sync"
 
 
@@ -319,8 +325,8 @@ def test_direction_row_with_nullable_fields_none(tmp_path: Path) -> None:
     with Session(engine) as session:
         row = DirectionRecord(
             app="factory", direction_id="011", slug="no-tracker",
-            status="needs-direction", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="needs-direction", created_at=BASE_TS,
+            updated_at=BASE_TS,
         )
         session.add(row)
         session.commit()
@@ -347,8 +353,8 @@ def test_get_direction_by_app_and_direction_id(tmp_path: Path) -> None:
     with Session(engine) as session:
         session.add(DirectionRecord(
             app="factory", direction_id="012", slug="my-dir",
-            status="created", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="created", created_at=BASE_TS,
+            updated_at=BASE_TS,
         ))
         session.commit()
 
@@ -403,8 +409,8 @@ def test_upsert_direction_updates_existing_row(tmp_path: Path) -> None:
     with Session(engine) as session:
         session.add(DirectionRecord(
             app="factory", direction_id="014", slug="before",
-            status="created", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="created", created_at=BASE_TS,
+            updated_at=BASE_TS,
         ))
         session.commit()
 
@@ -466,18 +472,18 @@ def test_list_directions_by_app(tmp_path: Path) -> None:
     with Session(engine) as session:
         session.add(DirectionRecord(
             app="factory", direction_id="001", slug="a",
-            status="created", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="created", created_at=BASE_TS,
+            updated_at=BASE_TS,
         ))
         session.add(DirectionRecord(
             app="factory", direction_id="002", slug="b",
-            status="closed", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="closed", created_at=BASE_TS,
+            updated_at=BASE_TS,
         ))
         session.add(DirectionRecord(
             app="sacrifice", direction_id="001", slug="c",
-            status="created", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="created", created_at=BASE_TS,
+            updated_at=BASE_TS,
         ))
         session.commit()
 
@@ -500,18 +506,18 @@ def test_list_directions_by_app_and_status(tmp_path: Path) -> None:
     with Session(engine) as session:
         session.add(DirectionRecord(
             app="factory", direction_id="001", slug="a",
-            status="created", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="created", created_at=BASE_TS,
+            updated_at=BASE_TS,
         ))
         session.add(DirectionRecord(
             app="factory", direction_id="002", slug="b",
-            status="pm-validated", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="pm-validated", created_at=BASE_TS,
+            updated_at=BASE_TS,
         ))
         session.add(DirectionRecord(
             app="factory", direction_id="003", slug="c",
-            status="pm-validated", created_at="2025-01-01T00:00:00Z",
-            updated_at="2025-01-01T00:00:00Z",
+            status="pm-validated", created_at=BASE_TS,
+            updated_at=BASE_TS,
         ))
         session.commit()
 
