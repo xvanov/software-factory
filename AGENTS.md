@@ -35,4 +35,6 @@ about the orchestrator.
 - Full-suite runs rely on extras being installed (`uv sync --all-extras`). Without it, acceptance-oracle subprocesses (`python -m pytest`) and runtime deps like `litellm`/`textual` can fail with `ModuleNotFoundError`, even if targeted tests pass.
 - D012 deleted-`state.yaml` regression coverage lives in `tests/test_pm_sync_dry_run.py::test_deleted_state_yaml_survives_pm_sync_without_retriage`; it intentionally seeds status through `mark_direction_status` + `sqlite3` assertions (not direct test-time `create_engine`/`create_all`).
 - D014 schema-test cleanup: `direct_db_bootstrap` is evaluated only inside `test_*` functions; helper-level engine setup can avoid false positives, but preferred cleanup is routing setup through `migrate(...)`. Use `# noqa: slop` only on the specific test definition when raw-engine behavior is the actual subject.
+- D015 fixture-first UX-audit evidence contract lives in `factory/testing/fixtures.py` (`load_audit_fixture`), with sample artifact at `apps/factory/directions/012-persist-direction-status-in-the-database/fixture.json`; both command output and state evidence are mandatory per step.
+
 

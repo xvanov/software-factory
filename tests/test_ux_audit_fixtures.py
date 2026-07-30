@@ -12,6 +12,7 @@ from factory.testing.fixtures import (
     StateEvidence,
     StepEvidence,
     load_audit_fixture,
+    load_audit_fixture_for_flow,
 )
 
 
@@ -80,6 +81,56 @@ def test_valid_fixture_loads_real_sample() -> None:
     # state_evidence must include description and snapshot
     assert len(result.steps[0].state_evidence.description) > 0
     assert isinstance(result.steps[0].state_evidence.state_snapshot, dict)
+
+
+def test_load_fixture_for_flow_reads_repository_fixture() -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+
+    result = load_audit_fixture_for_flow(
+        repo_root,
+        app="factory",
+        flow="012-persist-direction-status-in-the-database/flow.md",
+    )
+
+    assert result.flow == "012-persist-direction-status-in-the-database/flow.md"
+    assert result.source_path == (
+        repo_root
+        / "apps"
+        / "factory"
+        / "directions"
+        / "012-persist-direction-status-in-the-database"
+        / "fixture.json"
+    )
+    assert result.steps[0].step == 1
+
+
+def test_load_fixture_for_flow_missing_fixture_rejected(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="fixture file not found"):
+        load_audit_fixture_for_flow(
+            tmp_path,
+            app="factory",
+            flow="012-persist-direction-status-in-the-database/flow.md",
+        )
+
+
+def test_load_fixture_for_flow_rejects_non_flow_identity(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="flow.md"):
+        load_audit_fixture_for_flow(
+            tmp_path,
+            app="factory",
+            flow="012-persist-direction-status-in-the-database/not-flow.txt",
+        )
+
+
+def test_load_fixture_for_flow_rejects_parent_traversal(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="invalid flow path"):
+        load_audit_fixture_for_flow(
+            tmp_path,
+            app="factory",
+            flow="../012-persist-direction-status-in-the-database/flow.md",
+        )
+
+
 
 
 def test_multiple_steps_preserve_order(tmp_path: Path) -> None:

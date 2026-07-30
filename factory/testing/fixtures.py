@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -136,6 +136,48 @@ def _require_list(raw: dict[str, Any], key: str, *, path: Path) -> list[Any]:
 # --------------------------------------------------------------------------- #
 
 
+def fixture_path_for_flow(
+    software_factory_root: Path,
+    *,
+    app: str,
+    flow: str,
+) -> Path:
+    """Resolve the canonical recorded-fixture path for ``app`` + ``flow``.
+
+    ``flow`` is the flow identity label used by the UX-auditor context
+    (for example ``012-persist-direction-status-in-the-database/flow.md``).
+    """
+    app_name = app.strip()
+    if not app_name:
+        raise ValueError("app must not be empty")
+
+    flow_path = PurePosixPath(flow)
+    if flow_path.is_absolute() or ".." in flow_path.parts:
+        raise ValueError(f"invalid flow path: {flow!r}")
+    if flow_path.name != "flow.md":
+        raise ValueError(f"flow identity must end with 'flow.md', got: {flow!r}")
+
+    return (
+        Path(software_factory_root)
+        / "apps"
+        / app_name
+        / "directions"
+        / Path(*flow_path.parent.parts)
+        / "fixture.json"
+    )
+
+
+def load_audit_fixture_for_flow(
+    software_factory_root: Path,
+    *,
+    app: str,
+    flow: str,
+) -> RecordedFixture:
+    """Load recorded fixture data for a documented flow identity."""
+    return load_audit_fixture(fixture_path_for_flow(software_factory_root, app=app, flow=flow))
+
+
+
 def load_audit_fixture(path: Path) -> RecordedFixture:
     """Load and validate a recorded CLI audit fixture from *path*.
 
@@ -194,5 +236,7 @@ __all__ = [
     "RecordedFixture",
     "StepEvidence",
     "StateEvidence",
+    "fixture_path_for_flow",
     "load_audit_fixture",
+    "load_audit_fixture_for_flow",
 ]

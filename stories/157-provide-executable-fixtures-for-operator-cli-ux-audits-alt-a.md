@@ -90,19 +90,22 @@ AC1.3: WHEN recorded fixtures are consumed for a documented `factory` CLI flow, 
 - openhands/OpenHands (via agent-sdk)
 
 ## Debug Log References
-- N/A (all tests pass cleanly)
+- `uv run pytest tests/test_acceptance_oracle.py::test_gate_fails_on_ac_violation_even_when_dev_tests_green tests/test_ears_property_oracle.py::test_property_oracle_fails_on_violation_even_when_dev_tests_green tests/test_gates_evaluation.py::test_tests_meaningful_ablation_fails_on_unexercised_symbol tests/test_ux_audit_fixtures.py -q`
+- `uv run pytest -q`
 
 ## Completion Notes List
-- Created `factory/testing/fixtures.py`: defines the fixture contract (RecordedFixture, StepEvidence, StateEvidence dataclasses), validation helpers, and `load_audit_fixture()` loader. Loader validates required fields (flow, steps, step number, command, command_output, state_evidence with description and state_snapshot) and fails closed with ValueError on malformed/incomplete input.
-- Created `apps/factory/directions/012-persist-direction-status-in-the-database/fixture.json`: sample fixture capturing step 1 of the blocked operator flow (`factory tick --app factory`) with command output and state evidence including direction status, database schema columns, and app identity.
-- Created `tests/test_ux_audit_fixtures.py`: 20 automated tests covering valid fixture loading (single step, multi-step, real sample file), flow/step mapping preservation, rejection of missing command_output, rejection of missing state_evidence fields, malformed JSON, and edge cases (null snapshot, empty dict snapshot).
-- All 32 UX-audit-related tests pass (20 new + 12 existing).
-- No live CLI execution required — fixtures are pure recorded artifacts.
+- Implemented `factory/testing/fixtures.py` fixture contract dataclasses and strict validation loaders: `load_audit_fixture(path)` for direct fixture files plus `load_audit_fixture_for_flow(software_factory_root, app, flow)` and `fixture_path_for_flow(...)` for deterministic repository-path loading from documented flow identity.
+- Captured `apps/factory/directions/012-persist-direction-status-in-the-database/fixture.json` for flow `012-persist-direction-status-in-the-database/flow.md`, step `1`, including both `factory tick --app factory` command output and structured state evidence.
+- Expanded `tests/test_ux_audit_fixtures.py` to 24 tests covering valid loads, malformed/incomplete fixture rejection, flow/step identity preservation, repository-path fixture discovery via flow identity, and failure modes for invalid flow path inputs.
+- Verified targeted oracle regressions and UX-audit tests, then verified the full test suite is green with `uv run pytest -q`.
+- No live CLI execution was introduced; the implementation remains fixture-first and loader-only.
 
 ## File List
 - `factory/testing/fixtures.py` (new)
 - `apps/factory/directions/012-persist-direction-status-in-the-database/fixture.json` (new)
 - `tests/test_ux_audit_fixtures.py` (new)
+- `stories/157-provide-executable-fixtures-for-operator-cli-ux-audits-alt-a.md` (updated Dev Agent Record)
+- `AGENTS.md` (added repository memory note for D015 fixture contract)
 
 # Senior Developer Review
 
