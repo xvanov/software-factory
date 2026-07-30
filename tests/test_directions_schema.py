@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select
 
 
@@ -221,31 +222,59 @@ def test_different_apps_same_direction_id_is_allowed(tmp_path: Path) -> None:
         assert count == 2
 
 
-def test_status_values_match_contract(tmp_path: Path) -> None:
-    """Only the documented status values are used in the persistence skeleton."""
+def test_status_check_constraint_enforces_documented_set(tmp_path: Path) -> None:
+    """Only the documented status set is accepted by the table contract."""
     from factory.directions.schema import DirectionRecord
 
     db = tmp_path / "factory.db"
     engine = _seeded_engine(db)
 
-    allowed = {"created", "pm-validated", "needs-direction", "closed"}
-    for status in allowed:
-        with Session(engine) as session:
-            row = DirectionRecord(
+    allowed = ["created", "pm-validated", "needs-direction", "closed"]
+    with Session(engine) as session:
+        for idx, status in enumerate(allowed, start=1):
+            session.add(
+                DirectionRecord(
+                    app="factory",
+                    direction_id=f"099-{idx}",
+                    slug=f"test-{status}",
+                    status=status,
+                    created_at="2025-01-01T00:00:00Z",
+                    updated_at="2025-01-01T00:00:00Z",
+                )
+            )
+        session.commit()
+
+    with Session(engine) as session:
+        session.add(
+            DirectionRecord(
                 app="factory",
-                direction_id=f"099-{status}",
-                slug=f"test-{status}",
-                status=status,
+                direction_id="199",
+                slug="unsupported-status",
+                status="completed",
                 created_at="2025-01-01T00:00:00Z",
                 updated_at="2025-01-01T00:00:00Z",
             )
-            session.add(row)
+        )
+        with pytest.raises(IntegrityError):
             session.commit()
 
+
+def test_upsert_direction_rejects_unsupported_status(tmp_path: Path) -> None:
+    """upsert_direction rejects statuses outside the documented contract set."""
+    from factory.directions.schema import upsert_direction
+
+    db = tmp_path / "factory.db"
+    engine = _seeded_engine(db)
+
     with Session(engine) as session:
-        rows = session.exec(select(DirectionRecord)).all()
-        for row in rows:
-            assert row.status in allowed, f"unexpected status: {row.status}"
+        with pytest.raises(ValueError, match="unsupported direction status"):
+            upsert_direction(
+                session,
+                app="factory",
+                direction_id="016",
+                slug="invalid",
+                status="completed",
+            )
 
 
 def test_update_direction_row(tmp_path: Path) -> None:

@@ -8,8 +8,22 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint
 from sqlmodel import Field, SQLModel, select as _select
+
+DIRECTION_STATUSES: tuple[str, ...] = (
+    "created",
+    "pm-validated",
+    "needs-direction",
+    "closed",
+)
+
+
+def _validated_status(status: str) -> str:
+    if status not in DIRECTION_STATUSES:
+        allowed = ", ".join(DIRECTION_STATUSES)
+        raise ValueError(f"unsupported direction status '{status}'; expected one of: {allowed}")
+    return status
 
 
 class DirectionRecord(SQLModel, table=True):
@@ -40,6 +54,10 @@ class DirectionRecord(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("app", "direction_id", name="uq_directions_app_direction_id"),
         Index("ix_directions_app_status", "app", "status"),
+        CheckConstraint(
+            "status IN ('created', 'pm-validated', 'needs-direction', 'closed')",
+            name="ck_directions_status",
+        ),
     )
 
 
@@ -74,6 +92,7 @@ def upsert_direction(
     If a row for *(app, direction_id)* already exists its fields are
     overwritten; otherwise a new row is created.
     """
+    status = _validated_status(status)
     existing = get_direction(session, app, direction_id)
     now = datetime.now(UTC).isoformat()
 
@@ -112,5 +131,5 @@ def list_directions(
     """Return direction rows for *app*, optionally filtered by *status*."""
     stmt = _select(DirectionRecord).where(DirectionRecord.app == app)
     if status is not None:
-        stmt = stmt.where(DirectionRecord.status == status)
+        stmt = stmt.where(DirectionRecord.status == _validated_status(status))
     return list(session.exec(stmt).all())
