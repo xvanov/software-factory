@@ -820,9 +820,7 @@ def _build_ux_auditor_context(app: str, software_factory_root: Path) -> str:
     return "".join(parts)
 
 
-def _ux_auditor_fixture_run(
-    app: str, software_factory_root: Path
-) -> dict[str, Any]:
+def _ux_auditor_fixture_run(app: str, software_factory_root: Path) -> dict[str, Any]:
     """Consume recorded CLI audit fixtures for the UX auditor.
 
     Used when live execution is unavailable (Deploy: disabled, text_run
@@ -841,8 +839,7 @@ def _ux_auditor_fixture_run(
     flow_artifacts = _collect_flow_artifacts(app, software_factory_root)
     if not flow_artifacts:
         raise ValueError(
-            f"fixture-based ux_auditor run for app '{app}' requires "
-            f"at least one flow.md artifact"
+            f"fixture-based ux_auditor run for app '{app}' requires at least one flow.md artifact"
         )
 
     all_fixtures: list[CliAuditFixture] = []

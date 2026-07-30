@@ -126,8 +126,17 @@ def test_fixture_multiple_state_evidence_items(tmp_path):
     """A step can carry multiple state evidence items."""
     step = _minimal_step_dict(
         state_evidence=[
-            {"kind": "database_query", "description": "rows after tick", "result": [{"status": "created"}]},
-            {"kind": "file_exists", "description": "DB file", "path": "state/factory.db", "exists": True},
+            {
+                "kind": "database_query",
+                "description": "rows after tick",
+                "result": [{"status": "created"}],
+            },
+            {
+                "kind": "file_exists",
+                "description": "DB file",
+                "path": "state/factory.db",
+                "exists": True,
+            },
         ]
     )
     fixture_path = _make_fixture_file(tmp_path, steps=[step])
@@ -146,9 +155,7 @@ def test_fixture_multiple_state_evidence_items(tmp_path):
 
 def test_validate_missing_command_output(tmp_path):
     """A step with empty command output (stdout, stderr, exit_code=0) is invalid."""
-    step = _minimal_step_dict(
-        command_output={"stdout": "", "stderr": "", "exit_code": 0}
-    )
+    step = _minimal_step_dict(command_output={"stdout": "", "stderr": "", "exit_code": 0})
     fixture_path = _make_fixture_file(tmp_path, steps=[step])
     fixture = load_fixture(fixture_path)
 
@@ -160,9 +167,7 @@ def test_validate_missing_command_output(tmp_path):
 
 def test_validate_or_raise_missing_command_output(tmp_path):
     """validate_fixture_or_raise raises ValueError for missing command output."""
-    step = _minimal_step_dict(
-        command_output={"stdout": "", "stderr": "", "exit_code": 0}
-    )
+    step = _minimal_step_dict(command_output={"stdout": "", "stderr": "", "exit_code": 0})
     fixture_path = _make_fixture_file(tmp_path, steps=[step])
     fixture = load_fixture(fixture_path)
 
@@ -418,7 +423,14 @@ def test_ux_auditor_fixture_run_produces_findings(tmp_path):
     (root / "apps" / "myapp" / "directions" / "012-persist-direction-status-in-the-database").mkdir(
         parents=True
     )
-    (root / "apps" / "myapp" / "directions" / "012-persist-direction-status-in-the-database" / "flow.md").write_text(
+    (
+        root
+        / "apps"
+        / "myapp"
+        / "directions"
+        / "012-persist-direction-status-in-the-database"
+        / "flow.md"
+    ).write_text(
         "# User flow\n\n1. Run `factory tick --app factory`\n",
         encoding="utf-8",
     )
@@ -458,7 +470,14 @@ def test_ux_auditor_fixture_run_validates_before_returning(tmp_path):
     (root / "apps" / "myapp" / "directions" / "012-persist-direction-status-in-the-database").mkdir(
         parents=True
     )
-    (root / "apps" / "myapp" / "directions" / "012-persist-direction-status-in-the-database" / "flow.md").write_text(
+    (
+        root
+        / "apps"
+        / "myapp"
+        / "directions"
+        / "012-persist-direction-status-in-the-database"
+        / "flow.md"
+    ).write_text(
         "# User flow\n",
         encoding="utf-8",
     )

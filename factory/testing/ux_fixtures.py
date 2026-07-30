@@ -281,10 +281,8 @@ def validate_fixture_or_raise(fixture: CliAuditFixture) -> None:
     errors = validate_fixture(fixture)
     if errors:
         messages = [
-            f"step {e.step_number} (idx {e.step_index}): {e.field}: {e.message}"
-            for e in errors
+            f"step {e.step_number} (idx {e.step_index}): {e.field}: {e.message}" for e in errors
         ]
         raise ValueError(
-            f"Fixture validation failed for {fixture.flow_source}:\n  "
-            + "\n  ".join(messages)
+            f"Fixture validation failed for {fixture.flow_source}:\n  " + "\n  ".join(messages)
         )
