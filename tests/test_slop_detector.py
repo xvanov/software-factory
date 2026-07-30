@@ -549,6 +549,26 @@ assert "directions" in _tables(db)
     assert all(f.kind != "direct_db_bootstrap" for f in findings), findings
 
 
+def test_schema_related_repo_tests_have_no_unsuppressed_direct_bootstrap_findings() -> None:
+    """AC1.1: repo-owned schema-coverage tests are clean or intentionally suppressed."""
+    repo_root = Path(__file__).resolve().parents[1]
+    checked = [
+        repo_root / "tests" / "test_observability_schema.py",
+        repo_root / "tests" / "test_directions_schema.py",
+        repo_root / "tests" / "test_usage_honesty.py",
+    ]
+
+    unsuppressed: dict[str, list[tuple[int, str]]] = {}
+    for path in checked:
+        findings = [f for f in scan_file(path) if f.kind == "direct_db_bootstrap"]
+        if findings:
+            unsuppressed[str(path.relative_to(repo_root))] = [
+                (f.line, f.code_excerpt) for f in findings
+            ]
+
+    assert unsuppressed == {}, unsuppressed
+
+
 def test_noqa_slop_does_not_block_other_ast_detectors(tmp_path: Path) -> None:
     """# noqa: slop suppresses ONLY direct_db_bootstrap; unrelated AST rules
     still fire for the same test body."""

@@ -421,7 +421,7 @@ def test_legacy_runs_table_gains_the_columns(tmp_path: Path) -> None:
     assert legacy == (None, None)
 
 
-def test_both_stories_migration_paths_apply_the_same_columns(tmp_path: Path) -> None:
+def test_both_stories_migration_paths_apply_the_same_columns(tmp_path: Path) -> None:  # noqa: slop
     """The two independent migrators for ``stories`` must not diverge.
 
     ``observability.schema.migrate`` and ``chain.handlers._ensure_story_columns``

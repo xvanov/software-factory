@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, create_engine, select
 
 from factory.observability.schema import migrate
 
@@ -95,9 +95,7 @@ def test_directions_unique_constraint_on_app_and_direction_id(tmp_path: Path) ->
     from factory.directions.schema import DirectionRecord
 
     db = tmp_path / "factory.db"
-    engine = create_engine(f"sqlite:///{db}", echo=False)
-    SQLModel.metadata.create_all(engine)
-
+    engine = _seeded_engine(db)
     with Session(engine) as session:
         session.add(
             DirectionRecord(
@@ -128,8 +126,7 @@ def test_directions_index_on_app_and_status(tmp_path: Path) -> None:
     """Index on (app, status) is present."""
 
     db = tmp_path / "factory.db"
-    engine = create_engine(f"sqlite:///{db}", echo=False)
-    SQLModel.metadata.create_all(engine)
+    migrate(db)
 
     idxs = _indexes(db, "directions")
     idx_names = [name for name, _unique in idxs]
@@ -148,8 +145,7 @@ def test_directions_not_null_columns(tmp_path: Path) -> None:
     """app, direction_id, slug, status, created_at, updated_at are NOT NULL."""
 
     db = tmp_path / "factory.db"
-    engine = create_engine(f"sqlite:///{db}", echo=False)
-    SQLModel.metadata.create_all(engine)
+    migrate(db)
 
     conn = sqlite3.connect(str(db))
     try:
@@ -174,10 +170,9 @@ def test_directions_not_null_columns(tmp_path: Path) -> None:
 
 
 def _seeded_engine(db_path: Path):
-    """Create engine + tables, return engine."""
-    engine = create_engine(f"sqlite:///{db_path}", echo=False)
-    SQLModel.metadata.create_all(engine)
-    return engine
+    """Create a migrated DB and return a SQLModel engine for sessions."""
+    migrate(db_path)
+    return create_engine(f"sqlite:///{db_path}", echo=False)
 
 
 def test_insert_and_read_direction_row(tmp_path: Path) -> None:
