@@ -503,32 +503,47 @@ def test_noqa_slop_is_single_test_granularity(tmp_path: Path) -> None:
 
 
 def test_story148_bad_form_is_flagged(tmp_path: Path) -> None:
-    """AC7.1: exact story-148 test body — create_engine + create_all — is flagged."""
+    """AC1.1 / AC7.1: exact story-148 test body is flagged.
+
+    The fixture body is intentionally kept as the exact multiline snippet from
+    the direction so this remains a byte-faithful regression.
+    """
+    bad_body = """db = tmp_path / "factory.db"
+engine = create_engine(f"sqlite:///{db}", echo=False)
+SQLModel.metadata.create_all(engine)
+assert "directions" in _tables(db)
+"""
     src = (
+        "from pathlib import Path\n"
         "from sqlmodel import SQLModel, create_engine\n"
-        "def test_tables_exist():\n"
-        "    engine = create_engine('sqlite:///test.db')\n"
-        "    SQLModel.metadata.create_all(engine)\n"
-        "    assert True  # trivial\n"
+        "\n"
+        "\n"
+        "def test_tables_exist(tmp_path):\n"
+        + "".join(f"    {line}\n" for line in bad_body.rstrip("\n").splitlines())
     )
     findings = scan_file(_write_py(tmp_path, src))
     kinds = _kinds(findings)
-    assert "direct_db_bootstrap" in kinds
-    # The file has two calls: one create_engine and one create_all
+    assert "direct_db_bootstrap" in kinds, f"Expected direct_db_bootstrap in {kinds}"
     db_findings = [f for f in findings if f.kind == "direct_db_bootstrap"]
     assert len(db_findings) >= 2, (
-        f"Expected >=2 bootstrap findings, got {len(db_findings)}: {db_findings}"
+        f"Expected >=2 bootstrap findings (create_engine + create_all), "
+        f"got {len(db_findings)}: {db_findings}"
     )
 
 
 def test_story148_fixed_form_is_not_flagged(tmp_path: Path) -> None:
-    """AC7.2: the fixed form — driving migrate() — produces no finding."""
+    """AC1.2 / AC7.2: fixed form drives migrate() and stays clean."""
+    fixed_body = """db = tmp_path / "factory.db"
+migrate(db)
+assert "directions" in _tables(db)
+"""
     src = (
+        "from pathlib import Path\n"
         "from factory.observability.schema import migrate\n"
+        "\n"
+        "\n"
         "def test_tables_exist(tmp_path):\n"
-        "    db = tmp_path / 'factory.db'\n"
-        "    migrate(db)\n"
-        "    # now assert on the migrated schema...\n"
+        + "".join(f"    {line}\n" for line in fixed_body.rstrip("\n").splitlines())
     )
     findings = scan_file(_write_py(tmp_path, src))
     assert all(f.kind != "direct_db_bootstrap" for f in findings), findings
