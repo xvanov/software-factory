@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import importlib
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
-from sqlmodel import Session, SQLModel, create_engine, select as _select
 from typer.testing import CliRunner
 
 from factory.directions.backfill import BackfillResult, directions_backfill
-from factory.directions.schema import DirectionRecord
+from factory.observability.schema import migrate
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# helpers
 
 
 def _setup_cli_runner(tmp_path: Path) -> tuple[CliRunner, object]:
@@ -35,14 +35,43 @@ def _setup_cli_runner(tmp_path: Path) -> tuple[CliRunner, object]:
     return CliRunner(), cli_mod
 
 
-def _count_rows(engine, app: str = "factory") -> int:
-    with Session(engine) as s:
-        return len(s.exec(
-            _select(DirectionRecord).where(DirectionRecord.app == app)
-        ).all())
+def _rows_for_app(db_path: Path, app: str = "factory") -> list[sqlite3.Row]:
+    migrate(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return conn.execute(
+            """
+            SELECT app, direction_id, slug, status, tracker_issue, created_at, updated_at, updated_by
+            FROM directions
+            WHERE app = ?
+            ORDER BY direction_id
+            """,
+            (app,),
+        ).fetchall()
+    finally:
+        conn.close()
 
 
-# ── CLI command invocation tests ─────────────────────────────────────────────
+def _count_rows(db_path: Path, app: str = "factory") -> int:
+    return len(_rows_for_app(db_path, app))
+
+
+def _row_for_direction(db_path: Path, app: str, direction_id: str) -> sqlite3.Row:
+    rows = _rows_for_app(db_path, app)
+    matches = [row for row in rows if row["direction_id"] == direction_id]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _parse_db_utc(raw: str) -> datetime:
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+# CLI command invocation tests
 
 
 def test_cli_dry_run_default_reports_no_writes(tmp_path):
@@ -58,7 +87,7 @@ def test_cli_dry_run_default_reports_no_writes(tmp_path):
     assert "imported=1" in result.output
     assert "skipped=0" in result.output
     assert "DRY-RUN" in result.output
-    # Nothing was actually written — DB file should not exist
+
     db = tmp_path / "state" / "factory.db"
     assert not db.exists()
 
@@ -77,41 +106,35 @@ def test_cli_real_run_writes_rows(tmp_path):
     assert "skipped=0" in result.output
     assert "REAL RUN" in result.output
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state' / 'factory.db'}")
-    assert _count_rows(engine, "myapp") == 1
+    assert _count_rows(tmp_path / "state" / "factory.db", "myapp") == 1
 
 
 def test_cli_idempotent_second_run(tmp_path):
-    """AC1.3: running twice is safe — second run imports=0 skipped=N."""
+    """AC1.3: running twice is safe; second run imports=0 skipped=N."""
     runner, cli_mod = _setup_cli_runner(tmp_path)
 
     directions_dir = tmp_path / "apps" / "myapp" / "directions" / "001-test-dir"
     directions_dir.mkdir(parents=True)
     (directions_dir / "direction.md").write_text("# Test\n")
 
-    # First run — real
     r1 = runner.invoke(cli_mod.app, ["directions-backfill", "--app", "myapp", "--real-run"])
     assert r1.exit_code == 0, r1.output
     assert "imported=1" in r1.output
     assert "skipped=0" in r1.output
 
-    # Second run — real
     r2 = runner.invoke(cli_mod.app, ["directions-backfill", "--app", "myapp", "--real-run"])
     assert r2.exit_code == 0, r2.output
     assert "imported=0" in r2.output
     assert "skipped=1" in r2.output
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state' / 'factory.db'}")
-    assert _count_rows(engine, "myapp") == 1
+    assert _count_rows(tmp_path / "state" / "factory.db", "myapp") == 1
 
 
-# ── Backfill logic unit tests ────────────────────────────────────────────────
+# Backfill logic unit tests
 
 
-def test_dry_run_returns_counts_no_db_write(tmp_path, monkeypatch):
+def test_dry_run_returns_counts_no_db_write(tmp_path):
     """Dry-run returns import/skip counts but writes nothing."""
-    from factory.directions.parser import list_direction_dirs, parse_direction_dir
-
     root = tmp_path
     db = root / "state" / "factory.db"
     apps_dir = root / "apps" / "myapp" / "directions"
@@ -125,11 +148,10 @@ def test_dry_run_returns_counts_no_db_write(tmp_path, monkeypatch):
     result = directions_backfill("myapp", root, db, dry_run=True)
     assert result.imported == 2
     assert result.skipped == 0
-    # DB was not created or is empty
-    assert not db.exists() or _count_rows(create_engine(f"sqlite:///{db}"), "myapp") == 0
+    assert not db.exists()
 
 
-def test_real_run_inserts_and_reports(tmp_path, monkeypatch):
+def test_real_run_inserts_and_reports(tmp_path):
     """Real run inserts rows and reports correct counts."""
     root = tmp_path
     db = root / "state" / "factory.db"
@@ -144,12 +166,10 @@ def test_real_run_inserts_and_reports(tmp_path, monkeypatch):
     result = directions_backfill("myapp", root, db, dry_run=False)
     assert result.imported == 2
     assert result.skipped == 0
-
-    engine = create_engine(f"sqlite:///{db}")
-    assert _count_rows(engine, "myapp") == 2
+    assert _count_rows(db, "myapp") == 2
 
 
-def test_real_run_idempotent(tmp_path, monkeypatch):
+def test_real_run_idempotent(tmp_path):
     """Second real run imports nothing, skips all."""
     root = tmp_path
     db = root / "state" / "factory.db"
@@ -166,11 +186,10 @@ def test_real_run_idempotent(tmp_path, monkeypatch):
     assert r2.imported == 0
     assert r2.skipped == 1
 
-    engine = create_engine(f"sqlite:///{db}")
-    assert _count_rows(engine, "myapp") == 1
+    assert _count_rows(db, "myapp") == 1
 
 
-def test_imported_row_field_mapping(tmp_path, monkeypatch):
+def test_imported_row_field_mapping(tmp_path):
     """AC2.1 + AC2.2: imported row has correct fields."""
     root = tmp_path
     db = root / "state" / "factory.db"
@@ -182,23 +201,16 @@ def test_imported_row_field_mapping(tmp_path, monkeypatch):
     result = directions_backfill("myapp", root, db, dry_run=False)
     assert result.imported == 1
 
-    engine = create_engine(f"sqlite:///{db}")
-    with Session(engine) as s:
-        row = s.exec(
-            _select(DirectionRecord).where(
-                DirectionRecord.app == "myapp",
-                DirectionRecord.direction_id == "001",
-            )
-        ).one()
-        assert row.slug == "first"
-        assert row.status == "created"
-        assert row.app == "myapp"
-        assert row.direction_id == "001"
-        # Created-at is set automatically
-        assert row.created_at is not None
+    row = _row_for_direction(db, "myapp", "001")
+    assert row["slug"] == "first"
+    assert row["status"] == "created"
+    assert row["app"] == "myapp"
+    assert row["direction_id"] == "001"
+    assert row["created_at"] is not None
+    assert row["updated_at"] is not None
 
 
-def test_imported_row_with_state_yaml_status(tmp_path, monkeypatch):
+def test_imported_row_with_state_yaml_status(tmp_path):
     """Status from state.yaml is used when present."""
     root = tmp_path
     db = root / "state" / "factory.db"
@@ -211,18 +223,11 @@ def test_imported_row_with_state_yaml_status(tmp_path, monkeypatch):
     result = directions_backfill("myapp", root, db, dry_run=False)
     assert result.imported == 1
 
-    engine = create_engine(f"sqlite:///{db}")
-    with Session(engine) as s:
-        row = s.exec(
-            _select(DirectionRecord).where(
-                DirectionRecord.app == "myapp",
-                DirectionRecord.direction_id == "001",
-            )
-        ).one()
-        assert row.status == "pm-validated"
+    row = _row_for_direction(db, "myapp", "001")
+    assert row["status"] == "pm-validated"
 
 
-def test_imported_row_with_tracker_issue(tmp_path, monkeypatch):
+def test_imported_row_with_tracker_issue(tmp_path):
     """Tracker issue is pulled from state.yaml when present."""
     root = tmp_path
     db = root / "state" / "factory.db"
@@ -235,18 +240,11 @@ def test_imported_row_with_tracker_issue(tmp_path, monkeypatch):
     result = directions_backfill("myapp", root, db, dry_run=False)
     assert result.imported == 1
 
-    engine = create_engine(f"sqlite:///{db}")
-    with Session(engine) as s:
-        row = s.exec(
-            _select(DirectionRecord).where(
-                DirectionRecord.app == "myapp",
-                DirectionRecord.direction_id == "001",
-            )
-        ).one()
-        assert row.tracker_issue == 42
+    row = _row_for_direction(db, "myapp", "001")
+    assert row["tracker_issue"] == 42
 
 
-def test_imported_row_with_last_updated_by(tmp_path, monkeypatch):
+def test_imported_row_with_last_updated_by(tmp_path):
     """Last audit 'by' is pulled from state.yaml into updated_by."""
     root = tmp_path
     db = root / "state" / "factory.db"
@@ -261,18 +259,11 @@ def test_imported_row_with_last_updated_by(tmp_path, monkeypatch):
     result = directions_backfill("myapp", root, db, dry_run=False)
     assert result.imported == 1
 
-    engine = create_engine(f"sqlite:///{db}")
-    with Session(engine) as s:
-        row = s.exec(
-            _select(DirectionRecord).where(
-                DirectionRecord.app == "myapp",
-                DirectionRecord.direction_id == "001",
-            )
-        ).one()
-        assert row.updated_by == "amelia"
+    row = _row_for_direction(db, "myapp", "001")
+    assert row["updated_by"] == "amelia"
 
 
-def test_dry_run_then_real_run_counts_match(tmp_path, monkeypatch):
+def test_dry_run_then_real_run_counts_match(tmp_path):
     """Dry-run counts match real-run counts for a first import."""
     root = tmp_path
     db = root / "state" / "factory.db"
@@ -303,9 +294,7 @@ def test_dry_run_reports_existing_rows_as_skipped(tmp_path):
 
     dry = directions_backfill("myapp", root, db, dry_run=True)
     assert dry == BackfillResult(imported=0, skipped=1)
-
-    engine = create_engine(f"sqlite:///{db}")
-    assert _count_rows(engine, "myapp") == 1
+    assert _count_rows(db, "myapp") == 1
 
 
 def test_imported_row_maps_transition_timestamp_and_actor(tmp_path):
@@ -337,16 +326,8 @@ def test_imported_row_maps_transition_timestamp_and_actor(tmp_path):
     result = directions_backfill("myapp", root, db, dry_run=False)
     assert result == BackfillResult(imported=1, skipped=0)
 
-    engine = create_engine(f"sqlite:///{db}")
-    with Session(engine) as s:
-        row = s.exec(
-            _select(DirectionRecord).where(
-                DirectionRecord.app == "myapp",
-                DirectionRecord.direction_id == "001",
-            )
-        ).one()
-
-    assert row.status == "needs-direction"
-    assert row.updated_by == "reviewer"
-    assert row.created_at.replace(tzinfo=UTC) == datetime.fromisoformat(created_ts).astimezone(UTC)
-    assert row.updated_at.replace(tzinfo=UTC) == datetime.fromisoformat(last_ts).astimezone(UTC)
+    row = _row_for_direction(db, "myapp", "001")
+    assert row["status"] == "needs-direction"
+    assert row["updated_by"] == "reviewer"
+    assert _parse_db_utc(row["created_at"]) == datetime.fromisoformat(created_ts).astimezone(UTC)
+    assert _parse_db_utc(row["updated_at"]) == datetime.fromisoformat(last_ts).astimezone(UTC)

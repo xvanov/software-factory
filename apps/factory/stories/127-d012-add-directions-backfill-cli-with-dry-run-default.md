@@ -152,13 +152,14 @@ does and can observe the result of.
 - Branch: factory/story-127-d012-add-directions-backfill-cli-with-dry-run-default
 - Completion Notes:
   - Implemented explicit `factory directions-backfill --app <app> [--dry-run/--real-run]` wiring in `factory/cli.py`, with dry-run as the default operator path.
-  - Updated backfill import logic to enumerate on-disk directions, read existing `(app, direction_id)` rows, insert only missing rows, and keep reruns idempotent.
-  - Dry-run now reports accurate `imported=<n> skipped=<n>` counts by checking existing rows in read-only mode while performing zero writes.
-  - Imported row mapping now carries status, tracker issue, created-at, and last-transition metadata (`updated_at`/`updated_by`) from on-disk state/audit when present, with contract fallback to `created` status.
-  - Added coverage for dry-run skip accounting against pre-existing rows and timestamp/actor field mapping; full test suite is green.
+  - Backfill imports only missing `(app, direction_id)` rows, is safe to re-run, and reports stable `imported=<n> skipped=<n>` counts in dry-run and real-run modes.
+  - Imported row mapping preserves status, tracker issue, created-at, and last-transition metadata (`updated_at`/`updated_by`) from on-disk state when present, with contract fallback to `created`.
+  - Reworked `tests/test_directions_backfill.py` to remove direct test DB bootstrap calls and validate persisted rows via `factory.observability.schema.migrate`, matching the production initializer path.
+  - Full suite is green after the reviewer-requested test-quality refactor.
 - File List:
   - `factory/directions/backfill.py` (modified)
   - `tests/test_directions_backfill.py` (modified)
+  - `apps/factory/stories/127-d012-add-directions-backfill-cli-with-dry-run-default.md` (modified)
 
 # Senior Developer Review
 
