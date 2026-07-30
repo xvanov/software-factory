@@ -49,7 +49,7 @@
 | factory/context/\_\_init\_\_.py                        |        0 |        0 |    100% |           |
 | factory/context/canonical\_paths.py                    |       36 |        2 |     94% |     90-91 |
 | factory/context/enforcer.py                            |       49 |        0 |    100% |           |
-| factory/context/loader.py                              |       58 |        1 |     98% |       133 |
+| factory/context/loader.py                              |       87 |        5 |     94% |97, 101-102, 106, 179 |
 | factory/context/navigator.py                           |       39 |        2 |     95% |     65-66 |
 | factory/context/updater.py                             |       29 |        1 |     97% |        77 |
 | factory/deploy/\_\_init\_\_.py                         |        4 |        0 |    100% |           |
@@ -126,7 +126,7 @@
 | factory/webhook/\_\_init\_\_.py                        |        0 |        0 |    100% |           |
 | factory/webhook/github.py                              |      190 |       40 |     79% |56, 60, 63-64, 96, 126, 162-167, 191-207, 253, 308-312, 355-356, 379-391, 395 |
 | factory/webhook/openhands\_events.py                   |       36 |        7 |     81% |69, 84-123 |
-| **TOTAL**                                              | **17107** | **3501** | **80%** |           |
+| **TOTAL**                                              | **17136** | **3505** | **80%** |           |
 
 
 ## Setup coverage badge
