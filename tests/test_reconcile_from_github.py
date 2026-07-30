@@ -908,6 +908,16 @@ def test_blocked_ci_unresolved_revives_dependents(
     assert "dependent_revived:blocker_1_no_longer_dead" in actions
     assert f"advanced_to:{StoryState.DEPLOY_PENDING.value}" in actions
 
+    # AC2.2: A merged=True merge-action row was recorded for the revived blocker.
+    merged = _merged_rows(db)
+    assert [r.head_sha for r in merged] == [f"local-{blocker.id}"]
+    assert merged[0].pr_number == 300
+
+    # AC2.3: A deploy was enqueued for the revived blocker.
+    q = _deploy_queue(db)
+    assert [e.sha for e in q] == [f"local-{blocker.id}"]
+    assert q[0].merged_pr_number == 300
+
 
 def test_blocked_ci_unresolved_does_not_revive_when_other_blocker_still_dead(
     tmp_path: Path,
@@ -1039,11 +1049,25 @@ def test_full_path_block_ci_merge_revive_dependent(
     assert dep.state == StoryState.STORY_CREATED.value
     assert dep.error is None
 
-    # Full set of side effects: deploy enqueued for blocker (DB row).
-    from factory.deploy.orchestrator import DeployQueueEntry
+    # AC5.1: Drift events logged for the revival — both the blocker advance and
+    # the dependent revival are represented in the anomaly stream.
+    drift = _drift_events(tmp_path)
+    drift_actions = {e["action"] for e in drift}
+    assert f"advanced_to:{StoryState.DEPLOY_PENDING.value}" in drift_actions
+    assert f"dependent_revived:blocker_{blocker.id}_no_longer_dead" in drift_actions
+    # Verify the event payload carries the expected fields.
+    blocker_drift = [e for e in drift if e["action"] == f"advanced_to:{StoryState.DEPLOY_PENDING.value}"][0]
+    assert blocker_drift["story_id"] == blocker.id
+    assert blocker_drift["local_state_before"] == StoryState.BLOCKED_CI_UNRESOLVED.value
+    assert blocker_drift["authoritative_pr_state"] == "MERGED"
+    assert blocker_drift["pr_number"] == 500
 
-    with Session(create_engine(f"sqlite:///{db}")) as ses:
-        queue_rows = ses.exec(
-            select(DeployQueueEntry).where(DeployQueueEntry.merged_pr_number == 500)
-        ).all()
-    assert len(queue_rows) >= 1
+    # AC2.2: A merged=True merge-action row was recorded for the revived blocker.
+    merged = _merged_rows(db)
+    assert [r.head_sha for r in merged] == [f"local-{blocker.id}"]
+    assert merged[0].pr_number == 500
+
+    # AC2.3: Deploy enqueued for blocker.
+    q = _deploy_queue(db)
+    assert [e.sha for e in q] == [f"local-{blocker.id}"]
+    assert q[0].merged_pr_number == 500
