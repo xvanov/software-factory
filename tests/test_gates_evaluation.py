@@ -247,8 +247,74 @@ def test_tests_meaningful_fails_on_direct_db_bootstrap_diff(
     r = tests_meaningful.evaluate(pr, app_cfg_empty)
     assert not r.passed
     assert r.label == "tests-meaningful"
-    kinds = {finding["kind"] for finding in r.details["findings"]}
+    findings = r.details["findings"]
+    kinds = {finding["kind"] for finding in findings}
     assert "direct_db_bootstrap" in kinds
+    # AC6.1 / AC6.2: operator-visible output is tied to the finding.
+    db_findings = [fnd for fnd in findings if fnd["kind"] == "direct_db_bootstrap"]
+    assert len(db_findings) >= 1, f"Expected >=1 direct_db_bootstrap, got {db_findings}"
+    fnd = db_findings[0]
+    assert fnd["path"].endswith("tests/test_bootstrap.py"), f"path={fnd['path']}"
+    assert fnd["line"] == 3
+    assert "create_engine" in fnd["code_excerpt"]
+    assert "factory.observability.schema.migrate" in fnd["why_slop"], (
+        f"why_slop must teach the fix: {fnd['why_slop']}"
+    )
+    # AC6.2: no new gate label.
+    assert r.label == "tests-meaningful"
+
+
+def test_tests_meaningful_fails_on_SQLModel_metadata_create_all(
+    tmp_path: Path, app_cfg_empty: AppConfig
+) -> None:
+    """AC1.1 at gate level: SQLModel.metadata.create_all also trips the gate."""
+    f = tmp_path / "tests" / "test_create_all.py"
+    f.parent.mkdir(parents=True)
+    f.write_text(
+        "from sqlmodel import SQLModel\n"
+        "def test_creates():\n"
+        "    SQLModel.metadata.create_all(engine)\n",
+        encoding="utf-8",
+    )
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        files_changed=["tests/test_create_all.py"],
+        repo_root=tmp_path,
+    )
+    r = tests_meaningful.evaluate(pr, app_cfg_empty)
+    assert not r.passed
+    db_findings = [f for f in r.details["findings"] if f["kind"] == "direct_db_bootstrap"]
+    assert len(db_findings) >= 1
+    assert "SQLModel.metadata.create_all" in db_findings[0]["code_excerpt"]
+
+
+def test_tests_meaningful_passes_on_app_initializer_diff(
+    tmp_path: Path, app_cfg_empty: AppConfig
+) -> None:
+    """AC3.1 at gate level: a test driving migrate() produces no finding."""
+    f = tmp_path / "tests" / "test_good.py"
+    f.parent.mkdir(parents=True)
+    f.write_text(
+        "from factory.observability.schema import migrate\n"
+        "def test_good(tmp_path):\n"
+        "    db = tmp_path / 'db'\n"
+        "    migrate(db)\n",
+        encoding="utf-8",
+    )
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        files_changed=["tests/test_good.py"],
+        repo_root=tmp_path,
+    )
+    r = tests_meaningful.evaluate(pr, app_cfg_empty)
+    assert r.passed, r.reason
+    assert all(
+        fnd["kind"] != "direct_db_bootstrap" for fnd in r.details.get("findings", [])
+    )
 
 
 def test_tests_meaningful_mutation_status_skipped_by_default(
