@@ -149,21 +149,16 @@ does and can observe the result of.
 
 - Status: Complete
 - Agent: openhands (Amelia)
-- Branch: factory-127-d012-add-directions-backfill-cli-with-dry-run-default
+- Branch: factory/story-127-d012-add-directions-backfill-cli-with-dry-run-default
 - Completion Notes:
-  - Created `factory/directions/backfill.py` with `BackfillResult` dataclass and `directions_backfill()` function.
-  - Added `directions-backfill` CLI command to `factory/cli.py` between `edit-direction` and `pm-sync`.
-  - CLI supports `--app <app>` (required), `--dry-run` (default=True), `--real-run` (default=False).
-  - Dry-run early-returns before any database connection — no DB file created.
-  - Real-run inserts only missing rows; queries existing `(app, direction_id)` pairs to preserve idempotency.
-  - Output format: `DRY-RUN | imported=<n> skipped=<n>` or `REAL RUN | imported=<n> skipped=<n>`.
-  - Status resolved from on-disk `state.yaml` when present; falls back to `created`.
-  - Fields imported: `app`, `direction_id`, `slug`, `status`, `tracker_issue`, `updated_by`, `created_at`, `updated_at`.
-  - No automatic migration paths touched; no runtime read/write paths changed.
+  - Implemented explicit `factory directions-backfill --app <app> [--dry-run/--real-run]` wiring in `factory/cli.py`, with dry-run as the default operator path.
+  - Updated backfill import logic to enumerate on-disk directions, read existing `(app, direction_id)` rows, insert only missing rows, and keep reruns idempotent.
+  - Dry-run now reports accurate `imported=<n> skipped=<n>` counts by checking existing rows in read-only mode while performing zero writes.
+  - Imported row mapping now carries status, tracker issue, created-at, and last-transition metadata (`updated_at`/`updated_by`) from on-disk state/audit when present, with contract fallback to `created` status.
+  - Added coverage for dry-run skip accounting against pre-existing rows and timestamp/actor field mapping; full test suite is green.
 - File List:
-  - `factory/directions/backfill.py` (new): core import logic
-  - `factory/cli.py` (modified): `directions-backfill` command registration
-  - `tests/test_directions_backfill.py` (new): 11 tests — 3 CLI invocation tests + 8 unit tests
+  - `factory/directions/backfill.py` (modified)
+  - `tests/test_directions_backfill.py` (modified)
 
 # Senior Developer Review
 

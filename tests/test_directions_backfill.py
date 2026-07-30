@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -286,3 +287,66 @@ def test_dry_run_then_real_run_counts_match(tmp_path, monkeypatch):
     assert dry.imported == real.imported
     assert dry.skipped == real.skipped
     assert dry.imported == 3
+
+
+def test_dry_run_reports_existing_rows_as_skipped(tmp_path):
+    """Dry-run reads existing DB rows for accurate imported/skipped counts."""
+    root = tmp_path
+    db = root / "state" / "factory.db"
+    apps_dir = root / "apps" / "myapp" / "directions"
+    d001_dir = apps_dir / "001-first"
+    d001_dir.mkdir(parents=True)
+    (d001_dir / "direction.md").write_text("# First\n")
+
+    first = directions_backfill("myapp", root, db, dry_run=False)
+    assert first == BackfillResult(imported=1, skipped=0)
+
+    dry = directions_backfill("myapp", root, db, dry_run=True)
+    assert dry == BackfillResult(imported=0, skipped=1)
+
+    engine = create_engine(f"sqlite:///{db}")
+    assert _count_rows(engine, "myapp") == 1
+
+
+def test_imported_row_maps_transition_timestamp_and_actor(tmp_path):
+    """Backfill preserves created_at plus last audit ts/by into the row."""
+    root = tmp_path
+    db = root / "state" / "factory.db"
+    apps_dir = root / "apps" / "myapp" / "directions"
+    d001_dir = apps_dir / "001-first"
+    d001_dir.mkdir(parents=True)
+    (d001_dir / "direction.md").write_text("# First\n")
+
+    created_ts = "2026-07-20T12:00:00+00:00"
+    last_ts = "2026-07-21T15:45:33+00:00"
+    (d001_dir / "state.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "status": "needs-direction",
+                "created_at": created_ts,
+                "audit": [
+                    {"ts": "2026-07-20T12:00:00+00:00", "by": "pm"},
+                    {"ts": last_ts, "by": "reviewer"},
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = directions_backfill("myapp", root, db, dry_run=False)
+    assert result == BackfillResult(imported=1, skipped=0)
+
+    engine = create_engine(f"sqlite:///{db}")
+    with Session(engine) as s:
+        row = s.exec(
+            _select(DirectionRecord).where(
+                DirectionRecord.app == "myapp",
+                DirectionRecord.direction_id == "001",
+            )
+        ).one()
+
+    assert row.status == "needs-direction"
+    assert row.updated_by == "reviewer"
+    assert row.created_at.replace(tzinfo=UTC) == datetime.fromisoformat(created_ts).astimezone(UTC)
+    assert row.updated_at.replace(tzinfo=UTC) == datetime.fromisoformat(last_ts).astimezone(UTC)
