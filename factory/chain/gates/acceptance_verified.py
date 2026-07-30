@@ -45,13 +45,36 @@ Resolution
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 from factory.app_config import AppConfig
 from factory.chain.acceptance import ref_is_readable
 from factory.chain.gates.evaluator import GateResult, PRContext, _run_command
 
-_DEFAULT_ACCEPTANCE_COMMAND = "python -m pytest {test_file} -q"
+# THIS interpreter, not a bare ``python`` resolved through PATH.
+#
+# The oracle authors Hypothesis PROPERTY tests from EARS-form acceptance criteria
+# (WS4.3), so a generated test opens with ``from hypothesis import given`` — and
+# ``hypothesis`` is a DEV EXTRA of this project. Bare ``python`` resolves through
+# PATH to whatever the caller inherited; inside the dev sandbox that is a sibling
+# app's venv (an interactive shell's rc file prepends it), which has no
+# hypothesis. Collection then died with ModuleNotFoundError and the gate returned
+# exit_code=2.
+#
+# That is a FALSE BLOCK, and an expensive one: the gate is required, so the story
+# was re-dispatched to dev with an IDENTICAL failure signature until it exhausted
+# its retries and sank to blocked_tests_need_clarification. Observed on stories
+# 148 and 157 (2026-07-30); in both cases the dev's code was fine and the harness
+# was broken.
+#
+# ``sys.executable`` is the fix rather than ``uv run``: the oracle runs the test in
+# a bare temp directory with no ``pyproject.toml``, so ``uv run`` would find no
+# project, build an ephemeral env, and still lack hypothesis. The interpreter
+# already running the factory is by construction the one whose env satisfies the
+# factory's own dev extras. An app overriding ``gates.acceptance_test_command``
+# must likewise guarantee hypothesis in the env it names.
+_DEFAULT_ACCEPTANCE_COMMAND = f"{sys.executable} -m pytest {{test_file}} -q"
 
 
 def evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:
