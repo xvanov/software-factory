@@ -1,0 +1,21 @@
+{
+  "flow": "012-persist-direction-status-in-the-database/flow.md",
+  "steps": [
+    {
+      "step": 1,
+      "command": "factory tick --app factory",
+      "command_output": "tick complete — app=factory dry_run=false\n\n  scheduled personas fired this tick\n┌────────────┬────────┬──────────────┬─────────┐\n│ persona    │ status │ findings     │ filed   │\n├────────────┼────────┼──────────────┼─────────┤\n│ ralph      │ ok     │ 0 drifts     │ 0       │\n│ bug_hunter │ ok     │ 0 findings   │ 0       │\n│ security   │ ok     │ 0 findings   │ 0       │\n│ ux_auditor │ ok     │ 0 findings   │ 0       │\n└────────────┴────────┴──────────────┴─────────┘\n\n  tick — app=factory dry_run=false\n┌──────────────────┬──────────────────────┬───────────┐\n│ story            │ handler              │ verdict   │\n├──────────────────┼──────────────────────┼───────────┤\n│ (no in-flight)   │ —                    │ —         │\n└──────────────────┴──────────────────────┴───────────┘\n  no stories in-flight for app=factory",
+      "state_evidence": {
+        "description": "After running factory tick --app factory, the directions table exists with the 012 direction row having status 'pm-validated'. No state.yaml was changed by the tick — the new schema column addition does not mutate existing direction statuses.",
+        "state_snapshot": {
+          "direction_id": "012",
+          "app": "factory",
+          "status_in_db": "pm-validated",
+          "status_in_state_yaml": "pm-validated",
+          "database_table": "directions",
+          "columns": ["id", "app", "direction_id", "slug", "status", "tracker_issue", "created_at", "updated_at", "updated_by"]
+        }
+      }
+    }
+  ]
+}
