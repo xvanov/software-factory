@@ -177,7 +177,6 @@ def load_audit_fixture_for_flow(
     return load_audit_fixture(fixture_path_for_flow(software_factory_root, app=app, flow=flow))
 
 
-
 def load_audit_fixture(path: Path) -> RecordedFixture:
     """Load and validate a recorded CLI audit fixture from *path*.
 
@@ -205,9 +204,7 @@ def load_audit_fixture(path: Path) -> RecordedFixture:
     steps: list[StepEvidence] = []
     for i, step_raw in enumerate(steps_raw):
         if not isinstance(step_raw, dict):
-            raise ValueError(
-                f"{path}: steps[{i}] must be a dict, got {type(step_raw).__name__}"
-            )
+            raise ValueError(f"{path}: steps[{i}] must be a dict, got {type(step_raw).__name__}")
         step_num = _require_int(step_raw, "step", path=path)
         command = _require_str(step_raw, "command", path=path)
         command_output = _require_str(step_raw, "command_output", path=path)
@@ -215,7 +212,9 @@ def load_audit_fixture(path: Path) -> RecordedFixture:
         se_description = _require_str(se_raw, "description", path=path)
         # state_snapshot is required but can be any JSON value (including null).
         if "state_snapshot" not in se_raw:
-            raise ValueError(f"{path}: steps[{i}].state_evidence missing required field 'state_snapshot'")
+            raise ValueError(
+                f"{path}: steps[{i}].state_evidence missing required field 'state_snapshot'"
+            )
 
         steps.append(
             StepEvidence(

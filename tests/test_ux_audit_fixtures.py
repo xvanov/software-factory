@@ -64,11 +64,14 @@ def test_valid_fixture_loads_all_fields(tmp_path: Path) -> None:
 
 def test_valid_fixture_loads_real_sample() -> None:
     """The real sample fixture under apps/factory/directions/012-.../ parses cleanly."""
-    fixture_path = Path(
-        __file__
-    ).resolve().parent.parent / "apps" / "factory" / "directions" / (
-        "012-persist-direction-status-in-the-database"
-    ) / "fixture.json"
+    fixture_path = (
+        Path(__file__).resolve().parent.parent
+        / "apps"
+        / "factory"
+        / "directions"
+        / ("012-persist-direction-status-in-the-database")
+        / "fixture.json"
+    )
 
     result = load_audit_fixture(fixture_path)
 
@@ -129,8 +132,6 @@ def test_load_fixture_for_flow_rejects_parent_traversal(tmp_path: Path) -> None:
             app="factory",
             flow="../012-persist-direction-status-in-the-database/flow.md",
         )
-
-
 
 
 def test_multiple_steps_preserve_order(tmp_path: Path) -> None:
