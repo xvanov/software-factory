@@ -833,9 +833,7 @@ def _build_ux_auditor_context(app: str, software_factory_root: Path) -> str:
                 f"  - **Remediation**: {fnd['why_slop']}\n"
             )
     else:
-        parts.append(
-            "_No `tests-meaningful` slop findings detected in the app's test files._\n"
-        )
+        parts.append("_No `tests-meaningful` slop findings detected in the app's test files._\n")
 
     # -- App URL context (AC1.2) --
     parts.append("\n### App URL Context\n")

@@ -273,7 +273,9 @@ def _write_app_with_slop_tests(
     health_check_command: str | None = None,
 ) -> Path:
     """Write app config + flow artifacts + a sloppy test file under the app repo."""
-    root = _write_app(tmp_path, app=app, with_flow=with_flow, health_check_command=health_check_command)
+    root = _write_app(
+        tmp_path, app=app, with_flow=with_flow, health_check_command=health_check_command
+    )
     # Place a sloppy test file under the app's repo checkout area.
     # The repo checkout is at apps/<app>/repo/ by convention.
     repo_dir = root / "apps" / app / "repo"
@@ -287,6 +289,7 @@ def _write_app_with_slop_tests(
 
 # -- AC1.1: audit input includes reproducible tests-meaningful finding artifacts --
 
+
 def test_collect_tests_meaningful_findings_finds_slop(tmp_path: Path) -> None:
     root = _write_app_with_slop_tests(tmp_path)
 
@@ -296,7 +299,6 @@ def test_collect_tests_meaningful_findings_finds_slop(tmp_path: Path) -> None:
     finding = findings[0]
     assert finding["kind"] == "assert True"
     assert "test_sloppy.py" in finding["path"]
-
 
 
 def test_collect_tests_meaningful_findings_uses_repo_relative_paths(tmp_path: Path) -> None:
@@ -326,6 +328,7 @@ def test_collect_tests_meaningful_findings_empty_when_no_slop(tmp_path: Path) ->
 
 
 # -- AC1.1: audit input includes finding artifacts --
+
 
 def test_build_ux_context_includes_gate_findings_section(tmp_path: Path) -> None:
     root = _write_app_with_slop_tests(tmp_path)
@@ -358,6 +361,7 @@ def test_build_ux_context_graceful_when_no_repo_dir(tmp_path: Path) -> None:
 
 
 # -- AC1.2-1.5: artifact fields --
+
 
 def test_finding_artifact_shows_rule_id(tmp_path: Path) -> None:
     """AC1.2: Artifact shows rule id (kind)."""
