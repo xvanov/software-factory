@@ -1,0 +1,121 @@
+status: closed
+source: scheduled-ux_auditor
+created_at: '2026-07-30T12:29:08.352368+00:00'
+audit:
+- ts: '2026-07-30T12:29:08.352371+00:00'
+  by: factory.directions.creator
+  event: created
+  details:
+    source: scheduled-ux_auditor
+- ts: '2026-07-30T12:29:54.599348+00:00'
+  by: factory.chain.pm_sync
+  event: status -> pm-validated
+  details:
+    confidence: 0.82
+- ts: '2026-07-30T14:13:26.577857+00:00'
+  by: operator
+  event: status -> closed
+  details:
+    reason: 'auditor self-serving direction: asks for better inputs for the ux_auditor
+      itself, no product or factory capability value. Closed by operator 2026-07-30
+      to stop auto-spawn.'
+pm_result:
+  type: ux
+  priority: p2
+  has_sufficient_backpressure: true
+  missing: []
+  tracker_title: D017 attach gate findings to UX audit inputs
+  tracker_body: '## Summary
+
+    Attach reproducible `tests-meaningful` finding artifacts to the scheduled UX audit
+    inputs so the audit can assess the actual operator-facing message quality, not
+    a placeholder invocation.
+
+
+    ## Why
+
+    The current audit input path does not include the real gate output surface. That
+    blocks evaluation of whether the message is understandable and actionable when
+    the gate goes red.
+
+
+    ## Direction evidence
+
+    - Acceptance criteria require scheduled UX audit input to include reproducible
+    `tests-meaningful` finding artifacts with rule id, file, line, and remediation
+    text.
+
+    - Flow points to Direction 014 step 2 and states the audit currently uses `text_run`
+    without CI/PR surface, browser access, or a captured gate artifact.
+
+    - Suggested path is to expose CI finding artifacts or reproducible local gate
+    command output to the audit.
+
+
+    ## PM triage
+
+    WHY does this matter? Because the audit cannot judge clarity without the exact
+    finding text.
+
+    WHY now? Because the documented flow expects PR gate output with file/line evidence,
+    and the current audit input omits that evidence.
+
+    WHY this scope? Smallest validating change is to get reproducible artifacts into
+    the scheduled audit inputs first; any richer UX interpretation can happen after
+    the audit sees the real payload.
+
+
+    ## Acceptance criteria from direction
+
+    - Scheduled UX audit input includes reproducible `tests-meaningful` finding artifacts
+    showing rule id, file, line, and remediation text.
+
+
+    ## Proposed slices
+
+    1. Add a reproducible artifact producer for `tests-meaningful` findings that captures
+    the required fields.
+
+    2. Wire the scheduled UX audit input builder to attach or include that artifact.
+
+    3. Document the artifact shape and audit-input path for future operators.
+
+    '
+  child_stories:
+  - title: D017 add reproducible tests-meaningful finding artifact fixture
+    scope: test
+    chain_kind: tdd
+    rationale: First land the smallest verifiable artifact source the audit can consume.
+      WHY first? Because without a reproducible finding payload containing rule id,
+      file, line, and remediation text, downstream audit-input wiring still has nothing
+      concrete to attach.
+    estimated_new_files: 2
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 140
+    points: 3
+  - title: D017 attach tests-meaningful artifact to scheduled UX audit input
+    scope: backend
+    chain_kind: tdd
+    rationale: After the artifact exists, wire the scheduled audit input path to include
+      it. WHY separate? This isolates integration risk to the audit-input assembly
+      path and keeps the story within one dev pass while delivering the actual user-visible
+      value.
+    estimated_new_files: 1
+    estimated_modified_files: 2
+    estimated_sandbox_iterations: 170
+    points: 5
+  - title: D017 document gate artifact fields for UX audit consumers
+    scope: docs
+    chain_kind: docs
+    rationale: Docs are a separate deliverable. WHY include docs? Because operators
+      and future personas need to know where the audit artifact comes from and what
+      fields are guaranteed, but docs should not be bundled with code changes.
+    estimated_new_files: 1
+    estimated_modified_files: 1
+    estimated_sandbox_iterations: 60
+    points: 2
+  labels:
+  - ux
+  - priority/p2
+  confidence: 0.82
+tracker_issue: 162
