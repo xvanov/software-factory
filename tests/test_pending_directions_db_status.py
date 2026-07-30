@@ -8,7 +8,7 @@ import yaml
 from sqlmodel import Session, SQLModel, create_engine
 
 from factory.directions.creator import create_direction
-from factory.directions.schema import DirectionRecord, upsert_direction
+from factory.directions.schema import upsert_direction
 from factory.directions.watcher import pending_directions
 
 
@@ -82,12 +82,6 @@ def _insert_db_row(
             slug=slug,
             status=status,
         )
-
-
-def _directions_in_app_dir(tmp_path: Path, app: str = "sacrifice") -> list[str]:
-    """Return the direction ids on disk for *app*."""
-    from factory.directions.parser import list_direction_dirs
-    return [p.name.split("-")[0] for p in list_direction_dirs(app, tmp_path)]
 
 
 # ---------------------------------------------------------------------------
