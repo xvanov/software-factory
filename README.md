@@ -61,6 +61,7 @@
 | factory/directions/gc.py                               |       73 |       10 |     86% |59, 63, 76, 79-80, 82, 136-137, 165-166 |
 | factory/directions/ingester.py                         |       77 |        2 |     97% |   55, 131 |
 | factory/directions/parser.py                           |      242 |       21 |     91% |58, 148, 158-159, 173, 201-203, 258, 264-265, 269, 291, 297, 307, 333, 346, 358, 383, 396-398 |
+| factory/directions/schema.py                           |       49 |        0 |    100% |           |
 | factory/directions/tracker\_issue.py                   |      226 |       23 |     90% |70-72, 110, 116, 120, 195-199, 325, 329, 346, 353-354, 420-422, 446-447, 450, 487 |
 | factory/directions/watcher.py                          |       76 |       25 |     67% |77-81, 86, 110-114, 122-132, 137-142 |
 | factory/events/\_\_init\_\_.py                         |        1 |        0 |    100% |           |
@@ -98,7 +99,7 @@
 | factory/observability/estimator.py                     |      185 |       31 |     83% |170-185, 219, 242-244, 331, 333, 337, 384, 417, 450, 470, 489, 491, 493, 498 |
 | factory/observability/heartbeat.py                     |       60 |        7 |     88% |69, 74-77, 129-130 |
 | factory/observability/queries.py                       |      321 |       62 |     81% |150-151, 153, 205-208, 261-266, 273, 325-326, 340, 368-369, 463, 465-489, 537-540, 546, 594-597, 643-652, 655-661 |
-| factory/observability/schema.py                        |       57 |        2 |     96% |   118-119 |
+| factory/observability/schema.py                        |       58 |        2 |     97% |   118-119 |
 | factory/observability/state\_trace.py                  |       99 |       22 |     78% |111-112, 125-127, 139-140, 189, 195-196, 200-201, 218-219, 248, 251-252, 254, 256, 258, 260-261 |
 | factory/personas/\_\_init\_\_.py                       |        0 |        0 |    100% |           |
 | factory/personas/loader.py                             |       86 |        5 |     94% |124-125, 151-152, 187 |
@@ -124,7 +125,7 @@
 | factory/webhook/\_\_init\_\_.py                        |        0 |        0 |    100% |           |
 | factory/webhook/github.py                              |      190 |       40 |     79% |56, 60, 63-64, 96, 126, 162-167, 191-207, 253, 308-312, 355-356, 379-391, 395 |
 | factory/webhook/openhands\_events.py                   |       36 |        7 |     81% |69, 84-123 |
-| **TOTAL**                                              | **16845** | **3488** | **79%** |           |
+| **TOTAL**                                              | **16895** | **3488** | **79%** |           |
 
 
 ## Setup coverage badge
