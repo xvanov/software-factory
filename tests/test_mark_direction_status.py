@@ -10,9 +10,8 @@ import yaml
 from sqlmodel import Session
 
 from factory.directions.parser import Direction
-from factory.directions.schema import DirectionRecord, get_direction
+from factory.directions.schema import get_direction
 from factory.directions.watcher import _engine, mark_direction_status
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -109,9 +108,7 @@ def test_db_write_preserves_existing_state_yaml_keys(tmp_path: Path) -> None:
 def test_db_write_persists_transition_fields(tmp_path: Path) -> None:
     """DB row carries status, tracker_issue, created_at, updated_at, updated_by."""
     apps_dir = tmp_path / "apps" / "factory" / "directions" / "012-test-direction"
-    direction = _make_direction(
-        dir_path=apps_dir, state={"tracker_issue": 7}
-    )
+    direction = _make_direction(dir_path=apps_dir, state={"tracker_issue": 7})
 
     mark_direction_status(direction, "pm-validated", by="pm-sync")
 
