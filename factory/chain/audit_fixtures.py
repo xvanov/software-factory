@@ -34,6 +34,7 @@ FIXTURE_PR_NUMBER = 999
 @dataclass
 class AuditEvidence:
     """Before/after snapshot of a single story's observable state."""
+
     slug: str
     state_before: str
     state_after: str
