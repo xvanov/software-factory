@@ -91,17 +91,17 @@ This story is gate-plumbing proof only. Detector mechanics, suppression behavior
 - openhands
 
 ### Debug Log References
-- `python -m pytest tests/test_gates_evaluation.py -v`
-- `python -m pytest tests/test_gates_evaluation.py tests/test_slop_detector.py tests/test_observability_schema.py -v`
-- `python -m pytest -q` (2010 passed, 3 skipped, 12 pre-existing failures unrelated to this story)
+- `uv sync --all-extras`
+- `uv run pytest -q tests/test_acceptance_oracle.py::test_gate_fails_on_ac_violation_even_when_dev_tests_green tests/test_ears_property_oracle.py::test_property_oracle_fails_on_violation_even_when_dev_tests_green tests/test_gates_evaluation.py::test_tests_meaningful_ablation_fails_on_unexercised_symbol`
+- `uv run pytest -q tests/test_gates_evaluation.py tests/test_slop_detector.py tests/test_observability_schema.py`
+- `uv run pytest -q`
 
 ### Completion Notes
-- Enhanced `test_tests_meaningful_fails_on_direct_db_bootstrap_diff` with operator-visible output assertions: `why_slop` naming `factory.observability.schema.migrate`, file/line identification, code excerpt containing `create_engine`.
-- Added `test_tests_meaningful_fails_on_SQLModel_metadata_create_all` gate-level test for AC1.1 (SQLModel.metadata.create_all variant).
-- Added `test_tests_meaningful_passes_on_app_initializer_diff` gate-level test for AC3.1 (app initializer produces no finding).
-- Verified all 91 targeted tests pass across gate evaluation, slop detector, and schema tests.
-- Confirmed the full test suite is green (2010 passed, 3 skipped) with 12 pre-existing failures in unrelated modules (Azure runner, CLI TUI, settings audit, EARS oracle).
-- Gate path remains `tests-meaningful` with no new label; finding carries `direct_db_bootstrap` kind plus teaching `why_slop`.
+- Verified the existing `tests-meaningful` gate path is still the enforcement route for slop findings and preserved label/routing behavior.
+- Enhanced `test_tests_meaningful_fails_on_direct_db_bootstrap_diff` to assert operator-visible structured finding output: stable `kind`, `why_slop` naming `factory.observability.schema.migrate`, and file/line/code excerpt details.
+- Added `test_tests_meaningful_fails_on_SQLModel_metadata_create_all` and `test_tests_meaningful_passes_on_app_initializer_diff` to prove blocking on direct bootstrap and clean pass via app initializer through the same gate path.
+- Confirmed full repository safety with green targeted suites and a green full `uv run pytest -q` run.
 
 ### File List
-- `tests/test_gates_evaluation.py` — enhanced existing gate test, added two new gate-level tests
+- `tests/test_gates_evaluation.py` — enhanced existing gate test and added two focused gate-path tests
+- `stories/142-d014-verify-tests-meaningful-gate-blocks-new-bypass-findings.md` — updated Dev Agent Record for this run
