@@ -21,16 +21,15 @@ def _tables(db: Path) -> set[str]:
     try:
         return {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
     finally:
         conn.close()
 
 
 def test_migrate_creates_new_tables_from_scratch(tmp_path: Path) -> None:
-    """Calling migrate() on an empty file creates the new observability tables."""
+    """Calling migrate() on an empty file creates the new observability and
+    directions tables."""
     from factory.observability.schema import migrate
 
     db = tmp_path / "factory.db"
@@ -39,6 +38,7 @@ def test_migrate_creates_new_tables_from_scratch(tmp_path: Path) -> None:
     tables = _tables(db)
     assert "live_handlers" in tables
     assert "handler_baselines" in tables
+    assert "directions" in tables
 
 
 def test_migrate_is_idempotent(tmp_path: Path) -> None:
@@ -154,8 +154,7 @@ def test_migrate_preserves_existing_data(tmp_path: Path, call_count: int) -> Non
     migrate(db)
     conn = sqlite3.connect(str(db))
     conn.execute(
-        "INSERT INTO live_handlers (started_at, persona, model, mode, pid) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO live_handlers (started_at, persona, model, mode, pid) VALUES (?, ?, ?, ?, ?)",
         ("2026-05-26T00:00:00+00:00", "dev", "claude-opus-4-7", "sandbox", 999),
     )
     conn.commit()

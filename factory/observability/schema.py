@@ -157,5 +157,13 @@ def migrate(db_path: Path) -> None:
 
     from sqlmodel import create_engine
 
+    # Import every model module for its SIDE EFFECT before create_all: a
+    # SQLModel subclass registers itself in ``SQLModel.metadata`` at class-
+    # definition time, so a table whose module was never imported is silently
+    # ABSENT from the metadata and therefore never created. No error is raised —
+    # the table is simply missing, and the failure surfaces later at the first
+    # write. Keep this list in step with new tables.
+    from factory.directions import schema as _directions_schema  # noqa: F401
+
     eng = create_engine(f"sqlite:///{db_path}", echo=False)
     SQLModel.metadata.create_all(eng)
