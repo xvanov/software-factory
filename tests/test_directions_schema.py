@@ -10,6 +10,8 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from factory.observability.schema import migrate
+
 BASE_TS = datetime(2025, 1, 1)
 CREATED_TS = datetime(2025, 6, 1, 10, 0)
 UPDATED_TS = datetime(2025, 6, 15, 12, 0)
@@ -50,13 +52,18 @@ def _indexes(db: Path, table: str) -> list[tuple[str, bool]]:
 # ---------------------------------------------------------------------------
 
 
-def test_directions_table_exists_after_sqlmodel_create_all(tmp_path: Path) -> None:
+def test_directions_table_exists_after_schema_init(tmp_path: Path) -> None:
     """AC1.1: WHEN the application schema is initialized, THE database SHALL
-    contain a ``directions`` table."""
+    contain a ``directions`` table.
+
+    Drives ``migrate()`` — what every CLI entry point calls — rather than a
+    hand-rolled ``SQLModel.metadata.create_all``. That distinction IS the test:
+    a bare create_all would pass or fail on this file's own imports and prove
+    nothing about production, where the table was in fact never created.
+    """
 
     db = tmp_path / "factory.db"
-    engine = create_engine(f"sqlite:///{db}", echo=False)
-    SQLModel.metadata.create_all(engine)
+    migrate(db)
 
     tables = _tables(db)
     assert "directions" in tables
@@ -67,8 +74,7 @@ def test_directions_table_has_minimum_columns(tmp_path: Path) -> None:
     tracker_issue, created_at, updated_at, updated_by — are present."""
 
     db = tmp_path / "factory.db"
-    engine = create_engine(f"sqlite:///{db}", echo=False)
-    SQLModel.metadata.create_all(engine)
+    migrate(db)
 
     cols = _columns(db, "directions")
     assert {
