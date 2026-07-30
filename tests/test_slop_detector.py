@@ -486,6 +486,22 @@ def test_noqa_slop_suppresses_create_all_finding(tmp_path: Path) -> None:
     assert all(f.kind != "direct_db_bootstrap" for f in findings), findings
 
 
+def test_noqa_slop_is_single_test_granularity(tmp_path: Path) -> None:
+    """AC4.1: suppression applies only to the annotated test in a file."""
+    src = (
+        "from sqlmodel import create_engine\n"
+        f"def test_raw_engine_subject():{_NOQA_SLOP}\n"
+        "    create_engine('sqlite:///raw.db')\n"
+        "\n"
+        "def test_unsuppressed_neighbor():\n"
+        "    create_engine('sqlite:///unsuppressed.db')\n"
+    )
+    findings = scan_file(_write_py(tmp_path, src))
+    db_findings = [f for f in findings if f.kind == "direct_db_bootstrap"]
+    assert len(db_findings) == 1, db_findings
+    assert db_findings[0].line == 6
+
+
 def test_story148_bad_form_is_flagged(tmp_path: Path) -> None:
     """AC7.1: exact story-148 test body — create_engine + create_all — is flagged."""
     src = (
