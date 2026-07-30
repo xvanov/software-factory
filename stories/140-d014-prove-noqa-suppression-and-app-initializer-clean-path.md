@@ -138,38 +138,28 @@ AC7.2: WHEN the detector analyzes the fixed form of the story-148 test, THE dete
 # Dev Agent Record
 
 ## Implementation Log
-- [x] All tests were implemented as part of the sibling story PR #146 (commit `85bc4ac`)
-- [x] This story's scope (suppression + clean-path proof) is covered by the following test functions:
-  - `test_noqa_slop_suppresses_direct_db_bootstrap_finding` — proves `# noqa: slop` on def line suppresses `create_engine` finding
-  - `test_noqa_slop_suppresses_create_all_finding` — proves `# noqa: slop` inline suppresses `create_all` finding
-  - `test_noqa_slop_does_not_block_other_ast_detectors` — proves suppression is scoped to `direct_db_bootstrap` only
-  - `test_migrate_call_produces_no_finding` — proves app-initializer path produces no finding (AC3.1)
-  - `test_story148_fixed_form_is_not_flagged` — proves fixed story-148 test is clean (AC3.2, AC7.2)
-  - `test_story148_bad_form_is_flagged` — proves exact story-148 bad body is flagged (AC7.1)
-  - `test_direct_db_bootstrap_why_slop_names_migrate` — proves why_slop teaching message (AC2.1)
-  - All detection tests prove stable `kind` = `direct_db_bootstrap` (AC1.1, AC1.2)
-- [x] AC5.1 and AC6.1 are marked UNTESTABLE-AS-WRITTEN in the acceptance criteria
+- [x] Added `test_noqa_slop_is_single_test_granularity` in `tests/test_slop_detector.py` to prove `# noqa: slop` suppresses only the annotated test function while an unsuppressed neighboring test in the same file is still flagged.
+- [x] Verified existing story-scoped regression coverage remains intact for:
+  - stable `kind` = `direct_db_bootstrap` on direct `create_all`/`create_engine` usage (AC1.1, AC1.2)
+  - `why_slop` guidance naming `factory.observability.schema.migrate` (AC2.1)
+  - no-finding path when tests call `migrate` (AC3.1, AC3.2, AC7.2)
+  - exact story-148 bad body flagged (AC7.1)
+- [x] AC5.1 and AC6.1 remain UNTESTABLE-AS-WRITTEN in this story scope.
 
 ## Commands Run
-- `python -m pytest tests/test_slop_detector.py -v` — 49 passed
-- `python -m pytest tests/test_slop_detector.py tests/test_gates_evaluation.py -v` — 82 passed
-- `python -m pytest tests/test_slop_detector.py tests/test_gates_evaluation.py tests/test_observability_schema.py -v` — 88 passed
-- Full suite (`python -m pytest tests/ -q`) has pre-existing failures unrelated to this story (Azure runner, audit, TUI, EARS oracle)
+- `python -m pytest tests/test_slop_detector.py::test_noqa_slop_is_single_test_granularity -q` - passed
+- `python -m pytest tests/test_slop_detector.py tests/test_gates_evaluation.py tests/test_observability_schema.py -q` - passed
+- `python -m pytest tests/test_acceptance_oracle.py::test_gate_passes_when_code_satisfies_acs tests/test_acceptance_oracle.py::test_gate_fails_on_ac_violation_even_when_dev_tests_green tests/test_acceptance_oracle.py::test_gate_blocks_then_passes_after_reauthor tests/test_ears_property_oracle.py::test_property_oracle_passes_on_correct_code tests/test_ears_property_oracle.py::test_property_oracle_fails_on_violation_even_when_dev_tests_green tests/test_gates_evaluation.py::test_tests_meaningful_ablation_fails_on_unexercised_symbol -q` - 5 passed, 1 failed (`test_property_oracle_fails_on_violation_even_when_dev_tests_green`, unrelated to this story)
+- `python -m pytest -q` - failed with pre-existing unrelated issues in optional dependency/runtime-oracle areas (`litellm`/`textual` import tests and estimated-cost audit assertions)
 
 ## Files Touched
-- `tests/test_slop_detector.py` — contains all story-scoped tests (implemented in sibling PR #146)
-- `factory/chain/slop_detector.py` — detector implementation (implemented in sibling PR #146)
-- `tests/test_gates_evaluation.py` — gate-level coverage (implemented in sibling PR #146)
-- `stories/140-d014-prove-noqa-suppression-and-app-initializer-clean-path.md` — this story file
+- `tests/test_slop_detector.py` - added single-test-granularity suppression regression test
+- `stories/140-d014-prove-noqa-suppression-and-app-initializer-clean-path.md` - refreshed Dev Agent Record for this run
 
 ## Result
-- All 88 story-related tests pass green
-- `direct_db_bootstrap` kind is stable and reused from detector story
-- `# noqa: slop` suppression works at single-test granularity
-- `factory.observability.schema.migrate` path produces no finding
-- Story-148 bad form flagged, fixed form clean
-- No new gate label introduced
-- Tests remain isolated from gate-plumbing assertions owned by sibling stories
+- Story edges are proven by executable tests: direct-bootstrap detection remains active, `# noqa: slop` works at single-test granularity, and `factory.observability.schema.migrate` path remains clean.
+- Targeted D014-related suite is green after changes.
+- Broader suite currently contains unrelated failures outside this story's scope (acceptance/property oracle expectation text and optional dependencies).
 
 # Senior Developer Review
 
