@@ -157,5 +157,7 @@ def migrate(db_path: Path) -> None:
 
     from sqlmodel import create_engine
 
+    from factory.directions.schema import DirectionRecord  # noqa: F811 - register table
+
     eng = create_engine(f"sqlite:///{db_path}", echo=False)
     SQLModel.metadata.create_all(eng)

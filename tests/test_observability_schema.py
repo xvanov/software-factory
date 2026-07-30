@@ -30,7 +30,8 @@ def _tables(db: Path) -> set[str]:
 
 
 def test_migrate_creates_new_tables_from_scratch(tmp_path: Path) -> None:
-    """Calling migrate() on an empty file creates the new observability tables."""
+    """Calling migrate() on an empty file creates the new observability and
+    directions tables."""
     from factory.observability.schema import migrate
 
     db = tmp_path / "factory.db"
@@ -39,6 +40,7 @@ def test_migrate_creates_new_tables_from_scratch(tmp_path: Path) -> None:
     tables = _tables(db)
     assert "live_handlers" in tables
     assert "handler_baselines" in tables
+    assert "directions" in tables
 
 
 def test_migrate_is_idempotent(tmp_path: Path) -> None:
