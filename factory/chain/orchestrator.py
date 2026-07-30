@@ -1126,9 +1126,7 @@ def reconcile_closed_trackers(
     candidates = [
         s
         for s in rows
-        if s.state in _PENDING_HUMAN_STATES
-        and s.github_issue_number
-        and s.github_issue_number > 0
+        if s.state in _PENDING_HUMAN_STATES and s.github_issue_number and s.github_issue_number > 0
     ]
 
     settled: list[tuple[str, str, str]] = []
@@ -1273,9 +1271,7 @@ def _write_drift_event(
         pass
 
 
-def _revive_dependents_of_revived_blocker(
-    *, blocker: StoryRecord, db: Path, root: Path
-) -> None:
+def _revive_dependents_of_revived_blocker(*, blocker: StoryRecord, db: Path, root: Path) -> None:
     """Re-evaluate dependents parked in ``blocked_dependency_unmet`` whose blocker
     has been revived out of a dead-end sink (e.g. ``blocked_ci_unresolved``).
 
@@ -1680,9 +1676,7 @@ def reconcile_from_github(
             # ``blocked_dependency_unmet`` because this blocker was dead may now
             # be buildable. Best-effort; never raises out of reconcile.
             if from_state == StoryState.BLOCKED_CI_UNRESOLVED.value:
-                _revive_dependents_of_revived_blocker(
-                    blocker=story, db=db, root=root
-                )
+                _revive_dependents_of_revived_blocker(blocker=story, db=db, root=root)
         reconciled.append((story.slug, from_state, new_state.value))
         _write_drift_event(
             root=root,

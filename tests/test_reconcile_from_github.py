@@ -743,9 +743,7 @@ def test_blocked_ci_unresolved_merged_pr_revives_to_deploy_pending(
     from factory.chain.auto_merge import _MERGEABLE_STATES
 
     db = _seed(tmp_path)
-    s = _story(
-        db, state=StoryState.BLOCKED_CI_UNRESOLVED.value, slug="ci-revived", pr_number=99
-    )
+    s = _story(db, state=StoryState.BLOCKED_CI_UNRESOLVED.value, slug="ci-revived", pr_number=99)
 
     out = reconcile_from_github(
         db,
@@ -779,9 +777,7 @@ def test_blocked_ci_unresolved_merged_pr_revives_to_deploy_pending(
     from factory.chain.auto_merge import MergeActionRecord
 
     with Session(create_engine(f"sqlite:///{db}")) as ses:
-        rows = ses.exec(
-            select(MergeActionRecord).where(MergeActionRecord.pr_number == 99)
-        ).all()
+        rows = ses.exec(select(MergeActionRecord).where(MergeActionRecord.pr_number == 99)).all()
     assert len(rows) >= 1
     assert any(row.merged is True for row in rows)
 
@@ -831,9 +827,7 @@ def test_blocked_ci_unresolved_open_pr_is_noop(tmp_path: Path) -> None:
     """A ``blocked_ci_unresolved`` story with an OPEN PR (operator re-opened it
     but hasn't merged yet) is a no-op — reconcile should not advance."""
     db = _seed(tmp_path)
-    s = _story(
-        db, state=StoryState.BLOCKED_CI_UNRESOLVED.value, slug="reopened", pr_number=150
-    )
+    s = _story(db, state=StoryState.BLOCKED_CI_UNRESOLVED.value, slug="reopened", pr_number=150)
 
     out = reconcile_from_github(
         db,
@@ -896,7 +890,11 @@ def test_blocked_ci_unresolved_revives_dependents(
     )
 
     # Blocker revived.
-    assert (blocker.slug, StoryState.BLOCKED_CI_UNRESOLVED.value, StoryState.DEPLOY_PENDING.value) in out
+    assert (
+        blocker.slug,
+        StoryState.BLOCKED_CI_UNRESOLVED.value,
+        StoryState.DEPLOY_PENDING.value,
+    ) in out
     assert _reload(db, blocker.id).state == StoryState.DEPLOY_PENDING.value
 
     # Dependent revived — moved from blocked_dependency_unmet back to story_created.
@@ -1029,7 +1027,11 @@ def test_full_path_block_ci_merge_revive_dependent(
     )
 
     # AC6.1: Blocker in deploy_pending.
-    assert (blocker.slug, StoryState.BLOCKED_CI_UNRESOLVED.value, StoryState.DEPLOY_PENDING.value) in out
+    assert (
+        blocker.slug,
+        StoryState.BLOCKED_CI_UNRESOLVED.value,
+        StoryState.DEPLOY_PENDING.value,
+    ) in out
     assert _reload(db, blocker.id).state == StoryState.DEPLOY_PENDING.value
 
     # AC6.2: Dependent unblocked.
