@@ -94,12 +94,12 @@ AC6.1: WHEN evaluating this story in isolation, THE requirement targets `state.y
 ## Dev Agent Record
 - Status: Complete
 - Agent: openhands
-- Branch: factory-129-d012-restore-ancestor-deployed-story-context-via-directions
-- Notes: Implemented `_append_merged_story_section` in `factory/context/loader.py` with DB-backed ancestor-story lookup. Added optional `db_path` parameter to `compose_context_prelude`. Query uses `ancestor.id` (not `id_slug`) to match `handlers.py:479` production behavior. All 13 new tests pass. Full suite: 741 pass, 1 pre-existing failure unrelated to changes (`test_audit_flags_estimated_cache_rate_spend`).
+- Branch: factory/story-129-d012-restore-ancestor-deployed-story-context-via-directions
+- Notes: Implemented DB-backed ancestor-story merge in `compose_context_prelude` via optional `db_path`, reusing the existing "Merged Story / Dev Agent Record" section shape. Added ancestor lookup restricted to deployed `stories.direction_id == ancestor.id` rows, then read each `story_file_path` and append content when present. Preserved no-op behavior when `db_path` is omitted or when no deployed ancestor stories exist. Added focused tests for append/omit behavior and edge cases (multiple deployed stories, missing ancestor, empty or unreadable story file paths). Verified with `uv run pytest tests/test_context_loader.py -q` and full suite `uv run pytest -q` (green).
 
 ## File List
-- `factory/context/loader.py` — Modified: added `_append_merged_story_section`, `_read_story_content`, `db_path` parameter to `compose_context_prelude`
-- `tests/test_context_loader.py` — Modified: added 13 tests covering AC5.1-5.3, multiple deployed stories, missing ancestor, empty story_file_path
+- `factory/context/loader.py` — Modified: added DB-backed ancestor deployed-story merge helper and optional `db_path` in `compose_context_prelude`
+- `tests/test_context_loader.py` — Modified: added focused AC5.1–AC5.3 tests and DB-driven ancestor resolution coverage
 
 ## Senior Developer Review
 - Status: Pending
