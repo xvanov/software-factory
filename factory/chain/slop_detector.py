@@ -703,3 +703,40 @@ def scan_diff(
             continue
         out.extend(scan_file(path))
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Reproducible finding artifact fixture (D017 narrow-read)
+# --------------------------------------------------------------------------- #
+
+# Stable sentinel values for the tests-meaningful finding fixture. These are
+# intentionally deterministic so downstream consumers (scheduled UX audit
+# input attachment) can assert on exact field values without flaking.
+_TESTS_MEANINGFUL_FIXTURE_RULE_ID = "direct_db_bootstrap"
+_TESTS_MEANINGFUL_FIXTURE_FILE = "tests/test_example.py"
+_TESTS_MEANINGFUL_FIXTURE_LINE = 3
+_TESTS_MEANINGFUL_FIXTURE_CODE_EXCERPT = "SQLModel.metadata.create_all(engine)"
+_TESTS_MEANINGFUL_FIXTURE_REMEDIATION = (
+    "Test bypasses the application initializer by calling "
+    "SQLModel.metadata.create_all directly. Drive "
+    "factory.observability.schema.migrate instead so the test exercises the "
+    "same code path as production."
+)
+
+
+def make_tests_meaningful_fixture_finding() -> SlopFinding:
+    """Return a stable, reproducible ``tests-meaningful`` red finding.
+
+    The returned artifact carries all four fields required by the scheduled
+    UX audit input attachment contract: rule id (``kind``), file (``path``),
+    line, and remediation text (``why_slop``). Callers can rely on exact
+    field values — the function is deterministic and never reads external
+    state.
+    """
+    return SlopFinding(
+        path=_TESTS_MEANINGFUL_FIXTURE_FILE,
+        line=_TESTS_MEANINGFUL_FIXTURE_LINE,
+        kind=_TESTS_MEANINGFUL_FIXTURE_RULE_ID,
+        code_excerpt=_TESTS_MEANINGFUL_FIXTURE_CODE_EXCERPT,
+        why_slop=_TESTS_MEANINGFUL_FIXTURE_REMEDIATION,
+    )

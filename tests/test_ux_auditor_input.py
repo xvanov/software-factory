@@ -251,3 +251,75 @@ def test_dry_run_does_not_require_flow_md_artifacts(tmp_path: Path) -> None:
 
     assert out.status == "dry_run"
     assert out.findings_count == 1
+
+
+# --------------------------------------------------------------------------- #
+# tests-meaningful finding artifact fixture (D017 narrow-read)
+# --------------------------------------------------------------------------- #
+
+
+def test_tests_meaningful_fixture_exposes_rule_id() -> None:
+    """AC1.1: the reproducible fixture SHALL show rule id."""
+    from factory.chain.slop_detector import make_tests_meaningful_fixture_finding
+
+    finding = make_tests_meaningful_fixture_finding()
+    assert finding.kind == "direct_db_bootstrap"
+
+
+def test_tests_meaningful_fixture_exposes_file() -> None:
+    """AC1.2: the reproducible fixture SHALL show file."""
+    from factory.chain.slop_detector import make_tests_meaningful_fixture_finding
+
+    finding = make_tests_meaningful_fixture_finding()
+    assert finding.path == "tests/test_example.py"
+
+
+def test_tests_meaningful_fixture_exposes_line() -> None:
+    """AC1.3: the reproducible fixture SHALL show line."""
+    from factory.chain.slop_detector import make_tests_meaningful_fixture_finding
+
+    finding = make_tests_meaningful_fixture_finding()
+    assert finding.line == 3
+
+
+def test_tests_meaningful_fixture_exposes_remediation_text() -> None:
+    """AC1.4: the reproducible fixture SHALL show remediation text."""
+    from factory.chain.slop_detector import make_tests_meaningful_fixture_finding
+
+    finding = make_tests_meaningful_fixture_finding()
+    assert "factory.observability.schema.migrate" in finding.why_slop
+    assert len(finding.why_slop) > 50, "remediation text must be substantive"
+
+
+def test_tests_meaningful_fixture_is_reproducible() -> None:
+    """The fixture returns identical values across repeated calls."""
+    from factory.chain.slop_detector import make_tests_meaningful_fixture_finding
+
+    a = make_tests_meaningful_fixture_finding()
+    b = make_tests_meaningful_fixture_finding()
+    assert a.as_dict() == b.as_dict()
+
+
+def test_tests_meaningful_fixture_field_set_is_complete() -> None:
+    """The artifact SHALL contain all four required fields and nothing less."""
+    from factory.chain.slop_detector import make_tests_meaningful_fixture_finding
+
+    finding = make_tests_meaningful_fixture_finding()
+    d = finding.as_dict()
+    required_fields = {"path", "line", "kind", "why_slop"}
+    assert required_fields <= d.keys(), f"missing required fields: {required_fields - d.keys()}"
+
+
+def test_tests_meaningful_fixture_dict_is_json_serializable() -> None:
+    """The artifact dict form must be suitable for serialization to the UX audit input."""
+    import json
+
+    from factory.chain.slop_detector import make_tests_meaningful_fixture_finding
+
+    finding = make_tests_meaningful_fixture_finding()
+    d = finding.as_dict()
+    serialized = json.dumps(d)
+    assert isinstance(serialized, str)
+    # Round-trip: deserialized values match the original dict
+    rt = json.loads(serialized)
+    assert rt == d
