@@ -84,8 +84,8 @@ AC1.4: WHEN the UX audit runtime has execution capability for documented `factor
 - `tests/test_ux_fixtures.py` (new) — 24 test cases
 
 ## Test Evidence
-- 24/24 new tests pass
-- All pre-existing tests continue to pass (pre-existing failures in test_runner_azure, test_runner_cached_tokens, test_settings_audit, test_ears_property_oracle, test_cli_tui are unrelated)
+- `uv run pytest tests/test_ux_fixtures.py tests/test_ux_auditor.py tests/test_scheduled_persona.py -q` passed.
+- `uv run pytest -q` passed (full suite green).
 
 ## Notes
 - Fixture files in `tests/fixtures/ux_audit/` are keyed by flow source in the YAML `flow_source` field
