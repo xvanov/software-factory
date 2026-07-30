@@ -34,3 +34,12 @@ audit:
     - user_flow
     - api_spec
     - explore_tag_or_artifacts
+- ts: '2026-07-29T23:49:50.418348+00:00'
+  by: factory.chain.pm_sync
+  event: status -> needs-direction
+  details:
+    missing:
+    - user_flow
+    - api_spec
+    - explore_tag_or_artifacts
+tracker_issue: 122
