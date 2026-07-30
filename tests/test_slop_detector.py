@@ -333,11 +333,7 @@ def test_detects_self_constructed_fstring_compare(tmp_path: Path) -> None:
 
 
 def test_detects_inline_fstring_tautology(tmp_path: Path) -> None:
-    src = (
-        "def test_x():\n"
-        "    gid = 'abc'\n"
-        "    assert f'media/{gid}' == f'media/{gid}'\n"
-    )
+    src = "def test_x():\n    gid = 'abc'\n    assert f'media/{gid}' == f'media/{gid}'\n"
     findings = scan_file(_write_py(tmp_path, src))
     assert "self_constructed_compare" in _kinds(findings)
 
@@ -388,9 +384,7 @@ _NOQA_SLOP = "  # noqa: slop"
 
 def test_detects_SQLModel_metadata_create_all(tmp_path: Path) -> None:
     src = (
-        "from sqlmodel import SQLModel\n"
-        "def test_foo():\n"
-        "    SQLModel.metadata.create_all(engine)\n"
+        "from sqlmodel import SQLModel\ndef test_foo():\n    SQLModel.metadata.create_all(engine)\n"
     )
     findings = scan_file(_write_py(tmp_path, src))
     kinds = _kinds(findings)
@@ -429,11 +423,7 @@ def test_detects_sqlalchemy_create_engine_bare(tmp_path: Path) -> None:
 
 
 def test_detects_sqlmodel_create_engine_qualified(tmp_path: Path) -> None:
-    src = (
-        "import sqlmodel\n"
-        "def test_qux():\n"
-        "    sqlmodel.create_engine('sqlite:///x')\n"
-    )
+    src = "import sqlmodel\ndef test_qux():\n    sqlmodel.create_engine('sqlite:///x')\n"
     findings = scan_file(_write_py(tmp_path, src))
     kinds = _kinds(findings)
     assert "direct_db_bootstrap" in kinds, kinds
@@ -443,11 +433,7 @@ def test_detects_sqlmodel_create_engine_qualified(tmp_path: Path) -> None:
 
 
 def test_detects_sqlalchemy_create_engine_qualified(tmp_path: Path) -> None:
-    src = (
-        "import sqlalchemy\n"
-        "def test_quux():\n"
-        "    sqlalchemy.create_engine('sqlite:///x')\n"
-    )
+    src = "import sqlalchemy\ndef test_quux():\n    sqlalchemy.create_engine('sqlite:///x')\n"
     findings = scan_file(_write_py(tmp_path, src))
     kinds = _kinds(findings)
     assert "direct_db_bootstrap" in kinds, kinds
@@ -458,11 +444,7 @@ def test_detects_sqlalchemy_create_engine_qualified(tmp_path: Path) -> None:
 
 def test_direct_db_bootstrap_why_slop_names_migrate(tmp_path: Path) -> None:
     """AC2.1: the why_slop text must name factory.observability.schema.migrate."""
-    src = (
-        "from sqlmodel import create_engine\n"
-        "def test_x():\n"
-        "    create_engine('sqlite:///x')\n"
-    )
+    src = "from sqlmodel import create_engine\ndef test_x():\n    create_engine('sqlite:///x')\n"
     findings = scan_file(_write_py(tmp_path, src))
     assert len(findings) >= 1
     for f in findings:
@@ -518,7 +500,9 @@ def test_story148_bad_form_is_flagged(tmp_path: Path) -> None:
     assert "direct_db_bootstrap" in kinds
     # The file has two calls: one create_engine and one create_all
     db_findings = [f for f in findings if f.kind == "direct_db_bootstrap"]
-    assert len(db_findings) >= 2, f"Expected >=2 bootstrap findings, got {len(db_findings)}: {db_findings}"
+    assert len(db_findings) >= 2, (
+        f"Expected >=2 bootstrap findings, got {len(db_findings)}: {db_findings}"
+    )
 
 
 def test_story148_fixed_form_is_not_flagged(tmp_path: Path) -> None:

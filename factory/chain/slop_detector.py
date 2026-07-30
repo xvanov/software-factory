@@ -169,9 +169,7 @@ def _param_names(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     return names
 
 
-def _is_pure_constructed(
-    expr: ast.expr, local_pure: dict[str, ast.expr], params: set[str]
-) -> bool:
+def _is_pure_constructed(expr: ast.expr, local_pure: dict[str, ast.expr], params: set[str]) -> bool:
     """True if ``expr`` is built ENTIRELY inside the test from literals / f-strings
     / string concat / local names that are themselves pure — i.e. it involves NO
     call to production code, no fixture/param reference, no attribute/subscript on
@@ -226,8 +224,10 @@ def _eq_operands(node: ast.AST) -> tuple[ast.expr, ast.expr, int] | None:
         return None
     if isinstance(node, ast.Call) and len(node.args) >= 2:
         func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else (
-            func.id if isinstance(func, ast.Name) else ""
+        name = (
+            func.attr
+            if isinstance(func, ast.Attribute)
+            else (func.id if isinstance(func, ast.Name) else "")
         )
         if name in ("assertEqual", "assertEquals"):
             return node.args[0], node.args[1], getattr(node, "lineno", 0)
@@ -259,8 +259,10 @@ def _self_constructed_compare(
     local_pure: dict[str, ast.expr] = {}
     seen: set[str] = set()
     for stmt in ast.walk(fn):
-        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(
-            stmt.targets[0], ast.Name
+        if (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
         ):
             nm = stmt.targets[0].id
             if nm in seen:
@@ -279,10 +281,7 @@ def _self_constructed_compare(
         if (
             _is_pure_constructed(lhs, local_pure, params)
             and _is_pure_constructed(rhs, local_pure, params)
-            and (
-                _contains_stringish(lhs, local_pure)
-                or _contains_stringish(rhs, local_pure)
-            )
+            and (_contains_stringish(lhs, local_pure) or _contains_stringish(rhs, local_pure))
         ):
             try:
                 excerpt = f"assert {ast.unparse(lhs)} == {ast.unparse(rhs)}"[:120]
@@ -479,9 +478,7 @@ def _direct_db_bootstrap(
     return out
 
 
-def _match_db_bootstrap_call(
-    call: ast.Call, db_bootstrap_names: set[str]
-) -> str | None:
+def _match_db_bootstrap_call(call: ast.Call, db_bootstrap_names: set[str]) -> str | None:
     """Return a code excerpt string if ``call`` matches a direct DB bootstrap
     pattern, else None."""
     # SQLModel.metadata.create_all(...)

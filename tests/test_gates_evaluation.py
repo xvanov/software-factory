@@ -226,7 +226,6 @@ def test_tests_meaningful_fails_on_slop_diff(tmp_path: Path, app_cfg_empty: AppC
     assert r.details["findings"]
 
 
-
 def test_tests_meaningful_fails_on_direct_db_bootstrap_diff(
     tmp_path: Path, app_cfg_empty: AppConfig
 ) -> None:
@@ -366,9 +365,7 @@ def test_changed_public_symbols_skips_test_and_private(tmp_path: Path) -> None:
     )
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_svc.py").write_text("def test_x():\n    assert True\n", "utf-8")
-    syms = tests_meaningful._changed_public_symbols(
-        ["svc.py", "tests/test_svc.py"], tmp_path
-    )
+    syms = tests_meaningful._changed_public_symbols(["svc.py", "tests/test_svc.py"], tmp_path)
     quals = {q for _, q in syms}
     assert quals == {"public", "Widget.render"}
 
