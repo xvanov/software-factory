@@ -226,6 +226,32 @@ def test_tests_meaningful_fails_on_slop_diff(tmp_path: Path, app_cfg_empty: AppC
     assert r.details["findings"]
 
 
+
+def test_tests_meaningful_fails_on_direct_db_bootstrap_diff(
+    tmp_path: Path, app_cfg_empty: AppConfig
+) -> None:
+    f = tmp_path / "tests" / "test_bootstrap.py"
+    f.parent.mkdir(parents=True)
+    f.write_text(
+        "from sqlmodel import create_engine\n"
+        "def test_bootstrap():\n"
+        "    create_engine('sqlite:///tmp.db')\n",
+        encoding="utf-8",
+    )
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        files_changed=["tests/test_bootstrap.py"],
+        repo_root=tmp_path,
+    )
+    r = tests_meaningful.evaluate(pr, app_cfg_empty)
+    assert not r.passed
+    assert r.label == "tests-meaningful"
+    kinds = {finding["kind"] for finding in r.details["findings"]}
+    assert "direct_db_bootstrap" in kinds
+
+
 def test_tests_meaningful_mutation_status_skipped_by_default(
     app_cfg_empty: AppConfig,
 ) -> None:
