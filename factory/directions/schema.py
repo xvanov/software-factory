@@ -32,6 +32,25 @@ DIRECTION_STATUSES: tuple[str, ...] = (
 RESOLVED_DIRECTION_STATUSES: frozenset[str] = frozenset({"closed"})
 
 
+class _Unset:
+    """Sentinel for "caller did not supply this field" in :func:`upsert_direction`.
+
+    ``upsert_direction`` OVERWRITES every field it is given, and the one
+    production caller (``watcher.mark_direction_status``) only knows about
+    ``status``. If "not supplied" meant ``None``, every status transition would
+    silently NULL out ``source`` (and ``tracker_issue``) — re-creating the
+    outage this column exists to prevent, one transition at a time. With the
+    sentinel, an omitted field keeps whatever the row already holds; passing an
+    explicit ``None`` still clears it.
+    """
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid only
+        return "<unset>"
+
+
+UNSET = _Unset()
+
+
 def _validated_status(status: str) -> str:
     if status not in DIRECTION_STATUSES:
         allowed = ", ".join(DIRECTION_STATUSES)
@@ -54,6 +73,24 @@ class DirectionRecord(SQLModel, table=True):
     slug: str = Field(nullable=False)
     status: str = Field(nullable=False)
     tracker_issue: int | None = Field(default=None, nullable=True)
+    #: WHO filed this direction (``operator``, ``cli-tell``, ``github_issue``,
+    #: ``scheduled-ux_auditor``, …). Read by
+    #: :func:`factory.directions.approval.requires_operator_approval` to decide
+    #: auto-build vs. park-for-approval.
+    #:
+    #: This column exists because the gate's only source of truth used to be
+    #: ``state.yaml`` — which direction 018 then gitignored. The documented
+    #: recovery path (``factory directions-regenerate-state``) could not write a
+    #: field the table did not have, so every regenerated direction came back
+    #: with no source, the gate's fail-safe fired, and the whole build pipeline
+    #: parked (reproduced: 18 of 18 factory directions).
+    #:
+    #: NULLable on purpose: ``NULL`` means "this row predates the column", which
+    #: a reader must be able to tell apart from a recorded value. ``NULL`` is
+    #: treated as unknown by the gate, i.e. it parks — so heal it from disk with
+    #: ``factory directions-backfill --real-run`` while the projections still
+    #: exist, or approve with ``factory approve-direction``.
+    source: str | None = Field(default=None, nullable=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         nullable=False,
@@ -95,13 +132,19 @@ def upsert_direction(
     direction_id: str,
     slug: str,
     status: str,
-    tracker_issue: int | None = None,
+    tracker_issue: int | None | _Unset = UNSET,
     updated_by: str | None = None,
+    source: str | None | _Unset = UNSET,
 ) -> DirectionRecord:
     """Insert-or-update a direction row, returning the row.
 
     If a row for *(app, direction_id)* already exists its fields are
     overwritten; otherwise a new row is created.
+
+    ``tracker_issue`` and ``source`` are sentinel-defaulted (:data:`UNSET`):
+    OMITTING one preserves whatever the existing row holds, while passing an
+    explicit ``None`` clears it. See :class:`_Unset` — a status transition that
+    does not know the source must not erase it.
     """
     status = _validated_status(status)
     existing = get_direction(session, app, direction_id)
@@ -110,7 +153,10 @@ def upsert_direction(
     if existing is not None:
         existing.slug = slug
         existing.status = status
-        existing.tracker_issue = tracker_issue
+        if not isinstance(tracker_issue, _Unset):
+            existing.tracker_issue = tracker_issue
+        if not isinstance(source, _Unset):
+            existing.source = source
         existing.updated_at = now
         existing.updated_by = updated_by
         session.add(existing)
@@ -123,7 +169,8 @@ def upsert_direction(
         direction_id=direction_id,
         slug=slug,
         status=status,
-        tracker_issue=tracker_issue,
+        tracker_issue=None if isinstance(tracker_issue, _Unset) else tracker_issue,
+        source=None if isinstance(source, _Unset) else source,
         created_at=now,
         updated_at=now,
         updated_by=updated_by,

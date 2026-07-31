@@ -160,6 +160,8 @@ def test_file_projection_failure_does_not_fail_transition(tmp_path: Path) -> Non
 
 def test_db_write_failure_fails_transition(tmp_path: Path) -> None:
     """When the DB write fails, the exception propagates — transition fails."""
+    import sqlite3
+
     from sqlalchemy.exc import SQLAlchemyError
 
     apps_dir = tmp_path / "apps" / "factory" / "directions" / "012-test-direction"
@@ -170,7 +172,12 @@ def test_db_write_failure_fails_transition(tmp_path: Path) -> None:
     db_dir.mkdir(parents=True, exist_ok=True)
     (db_dir / "factory.db").mkdir()
 
-    with pytest.raises((SQLAlchemyError, OSError)):
+    # ``sqlite3.Error`` is in the tuple because ``watcher._engine`` now runs
+    # ``observability.schema.migrate`` (raw sqlite3) before handing back an
+    # engine, so an unopenable DB surfaces one layer earlier as sqlite's own
+    # ``OperationalError`` rather than as a SQLAlchemy wrapper. The assertion
+    # itself is unchanged: it must RAISE, and it must not write state.yaml.
+    with pytest.raises((SQLAlchemyError, OSError, sqlite3.Error)):
         mark_direction_status(direction, "pm-validated", by="test-runner")
 
     # state.yaml must NOT have been written (DB is authoritative)

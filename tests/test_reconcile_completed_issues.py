@@ -440,3 +440,199 @@ def test_issue_hygiene_gate(tmp_path: Path) -> None:
     assert _should_run_issue_hygiene(tmp_path, "sacrifice", now=_t.time() + 7200) is True
     # Per-app: a different app with no marker still runs.
     assert _should_run_issue_hygiene(tmp_path, "factory") is True
+
+
+# ─── DB-authoritative resolution with the projection ABSENT (bug 2) ────────────
+#
+# The compose-bug: D018 gitignored + untracked ``apps/*/directions/*/state.yaml``
+# because "the DB is authoritative" — but the issue-closing paths still resolved a
+# direction's tracker-issue NUMBER (and, before D012's read-path landed, its
+# status) from that very file. With no file, the number came back ``None`` and
+# every close became a silent no-op: no exception, nothing in ``errors``, the
+# tracker just stayed open. Observed live on trackers #156 and #159, which closed
+# immediately once the files were restored by hand.
+#
+# "No file" is the NORMAL state of a fresh clone now, so these tests assert the
+# absent-file case specifically.
+
+
+def _direction_row(
+    root: Path,
+    direction_id: str,
+    slug: str,
+    *,
+    status: str,
+    tracker_issue: int | None,
+    app: str = "factory",
+) -> None:
+    """Write an authoritative ``directions`` row (no ``state.yaml`` involved)."""
+    from sqlmodel import Session
+
+    from factory.directions.schema import upsert_direction
+    from factory.directions.watcher import _engine
+
+    with Session(_engine(root / "state" / "factory.db")) as session:
+        upsert_direction(
+            session,
+            app=app,
+            direction_id=direction_id,
+            slug=slug,
+            status=status,
+            tracker_issue=tracker_issue,
+            updated_by="operator",
+        )
+
+
+def _make_direction_md_only(root: Path, id_slug: str, *, app: str = "factory") -> Path:
+    """A direction dir as a FRESH CLONE has it: ``direction.md``, no ``state.yaml``."""
+    base = root / "apps" / app / "directions" / id_slug
+    base.mkdir(parents=True)
+    (base / "direction.md").write_text(
+        f"---\ntitle: {id_slug}\ntype: feature\n---\n\n# {id_slug}\n\n"
+        "## Why\n\nBecause.\n\n## Acceptance Criteria\n\n- AC1\n",
+        encoding="utf-8",
+    )
+    assert not (base / "state.yaml").exists()
+    return base
+
+
+def test_reconcile_closes_tracker_for_closed_db_row_with_no_state_yaml(tmp_path: Path) -> None:
+    """THE regression test for bug 2.
+
+    File ABSENT + a ``closed`` ``directions`` row ⇒ the tracker issue closes.
+    Before the fix this returned an empty report with no errors and left the
+    issue open (trackers #156 / #159 in production).
+    """
+    _make_direction_md_only(tmp_path, "156-operator-closed")
+    _direction_row(tmp_path, "156", "operator-closed", status="closed", tracker_issue=156)
+
+    issues = {156: _Issue(156)}
+    client = _Client(_Repo(issues))
+    report = reconcile_completed_issues(_app_config(), client, software_factory_root=tmp_path)
+
+    assert issues[156].state == "closed"
+    assert report["trackers_closed"] == [("156", 156)]
+    assert not report["errors"]
+
+
+def test_reconcile_closes_child_story_issues_with_no_state_yaml(tmp_path: Path) -> None:
+    """The closed direction's child story issues close too, file or no file."""
+    _make_direction_md_only(tmp_path, "159-operator-closed")
+    _direction_row(tmp_path, "159", "operator-closed", status="closed", tracker_issue=159)
+    _persist(
+        tmp_path, direction_id="159", title="child", slug="child-a", scope="backend",
+        state=StoryState.BLOCKED_DEPLOY_FAILED.value, github_issue_number=160,
+    )
+
+    issues = {159: _Issue(159), 160: _Issue(160)}
+    client = _Client(_Repo(issues))
+    report = reconcile_completed_issues(_app_config(), client, software_factory_root=tmp_path)
+
+    assert issues[159].state == "closed"
+    assert issues[160].state == "closed"
+    assert not report["errors"]
+
+
+def test_reconcile_keeps_open_tracker_for_pending_db_row_with_no_state_yaml(
+    tmp_path: Path,
+) -> None:
+    """Fail-safe intact: an absent file must not make a PENDING direction closable.
+
+    A fix that resolved "absent" to "resolved" would close trackers for live work.
+    """
+    _make_direction_md_only(tmp_path, "160-still-going")
+    _direction_row(tmp_path, "160", "still-going", status="pm-validated", tracker_issue=161)
+    _persist(
+        tmp_path, direction_id="160", title="child", slug="child-a", scope="backend",
+        state=StoryState.PR_OPEN.value, github_issue_number=162,
+    )
+
+    issues = {161: _Issue(161), 162: _Issue(162)}
+    client = _Client(_Repo(issues))
+    report = reconcile_completed_issues(_app_config(), client, software_factory_root=tmp_path)
+
+    assert issues[161].state == "open"
+    assert issues[162].state == "open"
+    assert report["trackers_closed"] == [] and report["stories_closed"] == []
+
+
+def test_reconcile_falls_back_to_state_yaml_when_there_is_no_db_row(tmp_path: Path) -> None:
+    """A hand-written direction between clones has no row — the file must still work.
+
+    This is why the resolution is row-FIRST rather than row-ONLY.
+    """
+    _make_direction(tmp_path, "200-hand-written", tracker_issue=201)
+    # Complete-by-children (no ``directions`` row exists at all).
+    _persist(
+        tmp_path, direction_id="200", title="child", slug="child-a", scope="backend",
+        state=StoryState.DEPLOYED.value, github_issue_number=202,
+    )
+
+    issues = {201: _Issue(201), 202: _Issue(202)}
+    client = _Client(_Repo(issues))
+    report = reconcile_completed_issues(_app_config(), client, software_factory_root=tmp_path)
+
+    assert issues[201].state == "closed", "file fallback must still close the tracker"
+    assert not report["errors"]
+
+
+def test_open_or_update_tracker_issue_does_not_duplicate_without_state_yaml(
+    tmp_path: Path,
+) -> None:
+    """Idempotency must not rest on the gitignored projection.
+
+    ``open_or_update_tracker_issue`` used to decide create-vs-update purely from
+    ``state.yaml::tracker_issue``. On a tree without the projection every call
+    looked like a first call, so it would open a DUPLICATE tracker issue per
+    direction per clone.
+    """
+    from factory.directions.parser import parse_direction_dir
+    from factory.directions.tracker_issue import open_or_update_tracker_issue
+
+    base = _make_direction_md_only(tmp_path, "300-already-tracked")
+    _direction_row(tmp_path, "300", "already-tracked", status="pm-validated", tracker_issue=301)
+
+    created: list[str] = []
+
+    class _CountingRepo(_Repo):
+        def create_issue(self, **kw: Any) -> _Issue:
+            created.append(str(kw.get("title")))
+            return _Issue(999)
+
+    repo = _CountingRepo({301: _Issue(301)})
+    direction = parse_direction_dir("factory", base, software_factory_root=tmp_path)
+
+    number = open_or_update_tracker_issue(direction, _app_config(), _Client(repo))
+
+    assert number == 301, "must re-use the tracker recorded on the authoritative row"
+    assert created == [], "must NOT open a second tracker issue"
+
+
+def test_open_or_update_tracker_issue_persists_the_number_to_the_row(tmp_path: Path) -> None:
+    """A newly created tracker number must reach the DB, not only the projection.
+
+    ``state.yaml`` is gitignored, so a number written only there is lost at the
+    next clone — and then nothing can find, or avoid re-creating, the issue.
+    """
+    from sqlmodel import Session
+
+    from factory.directions.parser import parse_direction_dir
+    from factory.directions.schema import get_direction
+    from factory.directions.tracker_issue import open_or_update_tracker_issue
+    from factory.directions.watcher import _engine
+
+    base = _make_direction_md_only(tmp_path, "400-fresh")
+    _direction_row(tmp_path, "400", "fresh", status="created", tracker_issue=None)
+
+    class _CreatingRepo(_Repo):
+        def create_issue(self, **_: Any) -> _Issue:
+            return _Issue(4242)
+
+    direction = parse_direction_dir("factory", base, software_factory_root=tmp_path)
+    number = open_or_update_tracker_issue(direction, _app_config(), _Client(_CreatingRepo({})))
+
+    assert number == 4242
+    with Session(_engine(tmp_path / "state" / "factory.db")) as session:
+        row = get_direction(session, "factory", "400")
+    assert row is not None
+    assert row.tracker_issue == 4242

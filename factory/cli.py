@@ -318,7 +318,9 @@ def _awaiting_approval_rows(apps: list[str]) -> list[tuple[str, str, str, str]]:
     operator-approval gate. Shared by ``inbox`` and ``approve-direction``."""
     from factory.directions.approval import approval_blocked_reason, awaiting_operator_approval
     from factory.directions.parser import list_direction_dirs, parse_direction_dir
+    from factory.directions.watcher import hydrate_direction_source
 
+    state_db = _FACTORY_ROOT / "state" / "factory.db"
     rows: list[tuple[str, str, str, str]] = []
     for a in apps:
         for ddir in list_direction_dirs(a, _FACTORY_ROOT):
@@ -326,6 +328,10 @@ def _awaiting_approval_rows(apps: list[str]) -> list[tuple[str, str, str, str]]:
                 d = parse_direction_dir(a, ddir)
             except Exception:  # noqa: BLE001 - a malformed sibling must not hide the rest
                 continue
+            # Resolve ``source`` DB-first, exactly as the pm-sync gate does —
+            # otherwise this listing and the gate could disagree about which
+            # directions are parked.
+            hydrate_direction_source(d, state_db)
             if awaiting_operator_approval(d):
                 rows.append((a, ddir.name, d.title[:60], approval_blocked_reason(d)))
     return rows
@@ -398,6 +404,12 @@ def approve_direction_cmd(
     except Exception as exc:  # noqa: BLE001 - surface the parse failure, don't traceback
         console.print(f"[red]error:[/red] cannot parse {target}: {exc!r}")
         raise typer.Exit(code=2) from None
+
+    # Same DB-first ``source`` resolution the pm-sync gate uses, so this command
+    # never disagrees with the gate about whether approval is even needed.
+    from factory.directions.watcher import hydrate_direction_source
+
+    hydrate_direction_source(direction, _FACTORY_ROOT / "state" / "factory.db")
 
     if reject:
         from factory.directions.watcher import mark_direction_status
@@ -472,12 +484,17 @@ def directions_backfill_cmd(
     )
 
     mode_label = "[yellow]DRY-RUN[/yellow]" if dry_run else "[green]REAL RUN[/green]"
-    console.print(
-        Panel.fit(
-            f"imported={result.imported} skipped={result.skipped}\nmode={mode_label}",
-            title=f"directions-backfill — app={app_name}",
-        )
+    body = (
+        f"imported={result.imported} skipped={result.skipped} "
+        f"source-healed={result.source_healed}\nmode={mode_label}"
     )
+    if result.source_healed:
+        body += (
+            f"\n[green]{result.source_healed} existing row(s) gained a `source` from disk — "
+            "those directions keep their auto-build/park verdict across a "
+            "`directions-regenerate-state` round trip.[/green]"
+        )
+    console.print(Panel.fit(body, title=f"directions-backfill — app={app_name}"))
 
 
 @app.command("directions-regenerate-state")
@@ -519,6 +536,19 @@ def directions_regenerate_state_cmd(
         body += (
             f"\n[yellow]{result.no_row} direction(s) have no database row — run "
             f"`factory directions-backfill --app {app_name} --real-run` first.[/yellow]"
+        )
+    if result.no_source:
+        # The outage this command caused, made loud. A regenerated direction with
+        # no recorded source PARKS at the operator-approval gate, so the operator
+        # must hear about it here rather than discover a silently idle factory.
+        body += (
+            f"\n[red]{result.no_source} regenerated direction(s) have NO recorded "
+            "`source` and will PARK at the operator-approval gate (fail-safe: an "
+            "unprovable source is treated as machine-filed).[/red]\n"
+            f"[yellow]Fix:[/yellow] run `factory directions-backfill --app {app_name} "
+            "--real-run` BEFORE deleting state.yaml to heal `source` from disk, or "
+            "approve them with `factory approve-direction <id> --app "
+            f"{app_name}`."
         )
     console.print(Panel.fit(body, title=f"directions-regenerate-state — app={app_name}"))
 

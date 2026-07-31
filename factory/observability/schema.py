@@ -94,6 +94,18 @@ _STORIES_NEW_COLUMNS: list[tuple[str, str]] = [
 ]
 
 
+_DIRECTIONS_NEW_COLUMNS: list[tuple[str, str]] = [
+    # WHO filed the direction. The ``directions`` table shipped (D012) without
+    # it, then D018 gitignored the ``state.yaml`` that was the only other place
+    # it lived, then the operator-approval gate started reading it — so the
+    # documented ``directions-regenerate-state`` recovery path silently dropped
+    # it and parked every direction. ALTERed in (not create_all'd) so the live
+    # ``state/factory.db`` gains it without a rebuild; NULL = "row predates the
+    # column", which the gate treats as unknown-and-therefore-parked.
+    ("source", "VARCHAR"),
+]
+
+
 def stories_migration_columns() -> list[tuple[str, str]]:
     """Every ``ALTER TABLE stories ADD COLUMN`` this codebase knows about.
 
@@ -151,6 +163,8 @@ def migrate(db_path: Path) -> None:
             _ensure_columns(conn, "runs", _RUNS_NEW_COLUMNS)
         if "stories" in existing_tables:
             _ensure_columns(conn, "stories", stories_migration_columns())
+        if "directions" in existing_tables:
+            _ensure_columns(conn, "directions", _DIRECTIONS_NEW_COLUMNS)
         conn.commit()
     finally:
         conn.close()

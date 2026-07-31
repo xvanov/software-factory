@@ -80,9 +80,19 @@ PENDING_STATUSES: frozenset[str] = frozenset({"created", "needs-direction"})
 def direction_source(direction: Direction) -> str:
     """Return the recorded ``source`` for ``direction``, or ``""`` when unknown.
 
-    ``state.yaml`` is the only place a direction's source is recorded today
-    (the ``directions`` DB table has no source column). A missing or corrupt
-    ``state.yaml`` therefore yields ``""`` — which
+    Reads ``direction.state``, i.e. the ``state.yaml`` projection. That file is
+    gitignored (D018), so callers that want the AUTHORITATIVE value must resolve
+    it from the ``directions`` row first — see
+    :func:`factory.directions.watcher.hydrate_direction_source`, which
+    ``pending_directions`` (and therefore the pm-sync gate) applies before this
+    predicate ever runs.
+
+    Reading the file alone was the whole of the outage: D012 gave the table no
+    ``source`` column, D018 stopped tracking the file, and this gate's
+    "unknown ⇒ park" fail-safe then parked EVERY direction as soon as an operator
+    followed the documented ``directions-regenerate-state`` recovery path.
+
+    A genuinely unknown source still yields ``""`` — which
     :func:`requires_operator_approval` treats as "needs a human", never as
     "safe to build".
     """

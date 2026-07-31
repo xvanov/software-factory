@@ -69,7 +69,13 @@ def test_regenerates_missing_state_yaml_from_the_database(tmp_path: Path) -> Non
     root = _setup_root(tmp_path)
     db = root / "state" / "factory.db"
     direction_dir = _write_direction(
-        root, "001", "first", state={"status": "pm-validated", "tracker_issue": 7}
+        root,
+        "001",
+        "first",
+        # ``source`` is part of every real direction (``creator.py`` writes it at
+        # creation) and the operator-approval gate reads it, so the fixture must
+        # carry one — see tests/test_directions_source_roundtrip.py.
+        state={"status": "pm-validated", "tracker_issue": 7, "source": "cli"},
     )
     directions_backfill("factory", root, db, dry_run=False)
 
@@ -79,10 +85,11 @@ def test_regenerates_missing_state_yaml_from_the_database(tmp_path: Path) -> Non
 
     result = regenerate_state_files("factory", root, db)
 
-    assert result == RegenerateResult(written=1, present=0, no_row=0)
+    assert result == RegenerateResult(written=1, present=0, no_row=0, no_source=0)
     loaded = yaml.safe_load((direction_dir / "state.yaml").read_text(encoding="utf-8"))
     assert loaded["status"] == "pm-validated"
     assert loaded["tracker_issue"] == 7
+    assert loaded["source"] == "cli"
     assert loaded["regenerated_from"] == "database"
     assert loaded["audit"][-1]["event"] == "status -> pm-validated"
 
@@ -147,14 +154,14 @@ def test_direction_without_a_row_is_reported_not_invented(tmp_path: Path) -> Non
     """No row means nothing to project from — say so instead of faking a status."""
     root = _setup_root(tmp_path)
     db = root / "state" / "factory.db"
-    _write_direction(root, "001", "imported", state={"status": "created"})
+    _write_direction(root, "001", "imported", state={"status": "created", "source": "cli"})
     directions_backfill("factory", root, db, dry_run=False)
     hand_written = _write_direction(root, "002", "hand-written")
     (root / "apps" / "factory" / "directions" / "001-imported" / "state.yaml").unlink()
 
     result = regenerate_state_files("factory", root, db)
 
-    assert result == RegenerateResult(written=1, present=0, no_row=1)
+    assert result == RegenerateResult(written=1, present=0, no_row=1, no_source=0)
     assert not (hand_written / "state.yaml").exists()
 
 
@@ -172,13 +179,15 @@ def test_missing_database_writes_nothing(tmp_path: Path) -> None:
 def test_dry_run_touches_no_disk(tmp_path: Path) -> None:
     root = _setup_root(tmp_path)
     db = root / "state" / "factory.db"
-    direction_dir = _write_direction(root, "001", "first", state={"status": "created"})
+    direction_dir = _write_direction(
+        root, "001", "first", state={"status": "created", "source": "cli"}
+    )
     directions_backfill("factory", root, db, dry_run=False)
     (direction_dir / "state.yaml").unlink()
 
     result = regenerate_state_files("factory", root, db, dry_run=True)
 
-    assert result == RegenerateResult(written=1, present=0, no_row=0)
+    assert result == RegenerateResult(written=1, present=0, no_row=0, no_source=0)
     assert not (direction_dir / "state.yaml").exists()
 
 
