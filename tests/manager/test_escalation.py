@@ -162,6 +162,41 @@ def test_forbidden_also_escalates(tmp_path: Path) -> None:
     assert any(a.get("kind") == "fms_escalation" for a in _alerts(tmp_path))
 
 
+def test_contentless_proposal_dumps_raw_payload_instead_of_going_silent(
+    tmp_path: Path,
+) -> None:
+    """Regression for issue #179: a producer that populates fields under keys
+    this renderer doesn't read must not yield a `?` / `(none provided)`
+    issue with no forensic trail. Every recognised field empty -> the raw
+    proposal/result dicts are dumped verbatim into the issue body."""
+    runner, calls = _make_gh_runner()
+    contentless = {
+        "schema_version": 1,
+        # No concern_id, no proposal_id, no diagnosis, no escalation_reason —
+        # but the caller DID pass something, just under keys the renderer
+        # never reads (the historical #179 producer/renderer mismatch).
+        "concern_title": "chain factory self-edit PR #178",
+        "proposal": {},
+        "detail": "some detail the renderer does not look at",
+    }
+    outcome = notify_escalation(
+        contentless,
+        root=tmp_path,
+        repo="owner/repo",
+        classification="escalate_to_human",
+        result={"pr_number": 178, "staging_status": "diff_unavailable"},
+        runner=runner,
+    )
+    assert outcome["notified"] is True
+    create = [c for c in calls if c[:3] == ["gh", "issue", "create"]]
+    assert create
+    body = create[0][create[0].index("--body") + 1]
+    assert "renderer/producer contract mismatch" in body.lower()
+    # The unrendered fields are preserved verbatim so nothing is lost.
+    assert "some detail the renderer does not look at" in body
+    assert "diff_unavailable" in body
+
+
 # ---------------------------------------------------------------------------
 # A. Idempotency — re-firing the same id does not open a duplicate
 # ---------------------------------------------------------------------------

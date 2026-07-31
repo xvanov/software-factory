@@ -49,6 +49,15 @@ _TERMINAL_STATES = frozenset(
         "blocked_budget_exceeded",
         # Operator-closed sink — aging here is the intended end state, not a stall.
         "closed_by_operator",
+        # Dependency-deferral CAP park (a blocked foundation can't idle its
+        # dependents forever, so the capped dependent lands here to await a
+        # human). Its whole design is to park capped stories here rather than
+        # loop, which turned this into a NORMAL destination rather than a
+        # rarity — without this entry a parked story stays a "stalled"
+        # candidate and re-alarms on every watcher cycle even though nothing
+        # will ever move it (same rationale as ``blocked_deploy_failed`` and
+        # the other three human-pending sinks above).
+        "blocked_dependency_unmet",
     }
 )
 

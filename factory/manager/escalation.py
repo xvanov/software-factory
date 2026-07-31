@@ -188,6 +188,16 @@ def _build_issue_body(
         or ""
     ).strip()
 
+    # Contract-mismatch guard (issue #179): a producer that populates fields
+    # under keys this renderer doesn't read (rather than the ones above)
+    # otherwise yields an issue that says only "?" / "(none provided)"
+    # everywhere — visible, but worthless. When every field we know how to
+    # render came back empty, the escalation is not actually contentless (the
+    # caller passed SOMETHING, or it would never have gotten this far) — the
+    # renderer just doesn't recognise the keys. Dump the raw payload verbatim
+    # so a human can still see what was passed, instead of losing it.
+    is_contract_mismatch = not (concern_id or diagnosis or rationale or target or reason)
+
     why = (
         "The proposal explicitly requested human escalation."
         if classification == "escalate_to_human"
@@ -216,6 +226,19 @@ def _build_issue_body(
     lines += ["", "### Proposed action", "", rationale or "_(none provided)_"]
     if patch:
         lines += ["", "### Suggested patch", "", "```diff", patch, "```"]
+    if is_contract_mismatch:
+        lines += [
+            "",
+            "### ⚠️ Renderer/producer contract mismatch",
+            "",
+            "Every field above is empty, but the escalation still fired — the "
+            "producer likely populated this proposal under keys this renderer "
+            "does not read. Raw payload, so nothing is silently lost:",
+            "",
+            "```json",
+            json.dumps({"proposal": proposal, "result": result or {}}, indent=2, default=str),
+            "```",
+        ]
     lines += [
         "",
         "---",
