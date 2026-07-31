@@ -234,12 +234,22 @@ class _SelfEditDecision:
 
 
 def _default_patch_provider(
-    app_config: AppConfig, pr_number: int
+    app_config: AppConfig, pr_number: int, *, root: Path | None = None
 ) -> str | None:  # pragma: no cover - real-run gh shell-out
     """Fetch a PR's unified diff via ``gh pr diff``. ``None`` on any failure.
 
-    A ``None`` return is treated as fail-safe by the caller (a factory self-edit
-    whose diff cannot be read is never merged).
+    ``gh pr diff`` (and the GitHub diff view it wraps) refuses any PR whose
+    diff exceeds 20,000 lines (``HTTP 406: Sorry, the diff exceeded the
+    maximum number of lines``). That is a GitHub-side rendering cap, not a
+    property of the change — a large-but-legitimate factory self-edit (e.g.
+    direction 018's ~226-file, ~25,600-line untracking) trips it and would
+    otherwise be PERMANENTLY unmergeable, forever, with a message that says
+    nothing about the change's health. When ``root`` is given (the local
+    checkout of ``app_config.repo``), fall back to fetching the PR head ref
+    directly and diffing it with local ``git``, which has no such cap.
+
+    A ``None`` return is still treated as fail-safe by the caller (a factory
+    self-edit whose diff cannot be read, by either path, is never merged).
     """
     import subprocess
 
@@ -254,9 +264,74 @@ def _default_patch_provider(
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
-    if proc.returncode != 0:
+    if proc.returncode == 0:
+        return proc.stdout or ""
+    return _local_git_patch_fallback(app_config, pr_number, root=root)
+
+
+def _local_git_patch_fallback(
+    app_config: AppConfig, pr_number: int, *, root: Path | None
+) -> str | None:  # pragma: no cover - real-run git shell-out
+    """Diff a PR locally by fetching its head ref straight from GitHub.
+
+    Recovery path for PRs ``gh pr diff`` refuses to serve (most commonly
+    GitHub's 20,000-line diff cap). Fetches ``refs/pull/<pr>/head`` into a
+    scratch local ref, diffs it against the fetched base branch with
+    ``git diff <base>...<head>`` (the same merge-base semantics as the GitHub
+    PR diff view), and always deletes the scratch ref afterward. ``None`` on
+    any failure — this is a recovery path, not a second fail-safe hole.
+    """
+    import subprocess
+
+    if root is None:
         return None
-    return proc.stdout or ""
+    base = app_config.default_branch or "main"
+    tmp_ref = f"refs/tmp/self-edit-gate-pr-{pr_number}"
+    try:
+        base_fetch = subprocess.run(
+            ["git", "fetch", "origin", base],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if base_fetch.returncode != 0:
+            return None
+        head_fetch = subprocess.run(
+            [
+                "git",
+                "fetch",
+                "origin",
+                f"pull/{pr_number}/head:{tmp_ref}",
+                "--force",
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if head_fetch.returncode != 0:
+            return None
+        diff = subprocess.run(
+            ["git", "diff", f"origin/{base}...{tmp_ref}"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if diff.returncode != 0:
+            return None
+        return diff.stdout or ""
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    finally:
+        subprocess.run(
+            ["git", "update-ref", "-d", tmp_ref],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
 
 def _self_edit_escalation_proposal(
@@ -441,7 +516,9 @@ def _evaluate_self_edit_gate(
     from factory.manager.apply import _any_path_is_forbidden_in_patch
 
     if patch_provider is None:
-        patch_provider = _default_patch_provider
+        import functools
+
+        patch_provider = functools.partial(_default_patch_provider, root=root)
     if self_edit_gate is None:
         self_edit_gate = staging.gate_self_edit
     if escalate is None:
