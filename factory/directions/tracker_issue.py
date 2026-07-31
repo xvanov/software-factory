@@ -1,9 +1,17 @@
 """Direction Tracker GitHub issue — open/update + needs-direction comments.
 
 The tracker is the *one issue per direction* the factory keeps current with
-links to child stories, current status, and any blockers. Idempotent: a
-direction's ``state.yaml`` carries ``tracker_issue: <number>`` once an issue
-exists, and subsequent calls update that issue in place.
+links to child stories, current status, and any blockers. Idempotent: the issue
+number is recorded on the direction's ``directions`` ROW once the issue exists,
+and subsequent calls update that issue in place.
+
+The row — not the file — because ``apps/*/directions/*/state.yaml`` is gitignored
+(D018). Every resolution here goes through :func:`resolve_tracker_issue`, which
+is row-first and falls back to the ``state.yaml`` projection only for a direction
+that has no row yet (hand-written between clones). Reading the file first was a
+silent-no-op bug: on a fresh clone the number came back ``None``, so "close this
+direction's issues" closed nothing and reported no error (trackers #156 / #159),
+and "open or update the tracker" would have opened a DUPLICATE.
 
 The ``github_client`` parameter is the ``pygithub.Github`` object (or a
 duck-type mock for tests). We don't construct it here — the caller wires
@@ -97,8 +105,15 @@ def open_or_update_tracker_issue(
 ) -> int:
     """Idempotently open or update the Direction Tracker issue.
 
-    Returns the issue number. Persists the number into ``state.yaml`` under
-    ``tracker_issue`` on first creation; subsequent calls re-use it.
+    Returns the issue number. On first creation the number is persisted BOTH to
+    the authoritative ``directions`` row and to the ``state.yaml`` projection;
+    subsequent calls re-use it.
+
+    Idempotency is the whole point of this function, and it used to rest solely
+    on ``state.yaml`` — which D018 then gitignored. On a tree without the
+    projection every call looked like a first call, so this would have opened a
+    DUPLICATE tracker issue per direction per clone. Resolution is now
+    row-first (:func:`resolve_tracker_issue`).
     """
     repo = github_client.get_repo(app_config.repo)
     pm_result = pm_result or {}
@@ -128,16 +143,66 @@ def open_or_update_tracker_issue(
     )
     labels = _build_labels(direction, pm_labels)
 
-    existing_number = direction.state.get("tracker_issue") if direction.state else None
-    if isinstance(existing_number, int) and existing_number > 0:
+    existing_number = resolve_tracker_issue(direction, _db_for_direction(direction))
+    if existing_number:
         issue = repo.get_issue(existing_number)
         issue.edit(title=title, body=body, labels=labels)
         return existing_number
 
     issue = repo.create_issue(title=title, body=body, labels=labels)
     number = int(issue.number)
+    _persist_tracker_issue(direction, number)
     merge_state(direction, {"tracker_issue": number})
     return number
+
+
+def _db_for_direction(direction: Direction) -> Path | None:
+    """``state/factory.db`` for the repo owning *direction*, or ``None``.
+
+    Derived from ``dir_path`` (``<root>/apps/<app>/directions/<id>-<slug>/``).
+    Returns ``None`` rather than raising when the path is not that shape — every
+    caller treats ``None`` as "no DB, use the projection".
+    """
+    try:
+        return _root_from_direction(direction) / "state" / "factory.db"
+    except Exception:  # noqa: BLE001 - an unusual dir_path must not raise
+        return None
+
+
+def _persist_tracker_issue(direction: Direction, number: int) -> None:
+    """Record the tracker number on the AUTHORITATIVE ``directions`` row.
+
+    Best-effort: this is bookkeeping, and the caller has already created the
+    GitHub issue. Only ever fills in ``tracker_issue`` on an EXISTING row — it
+    never inserts one and never touches ``status``, because ``direction.status``
+    here comes from the projection and must not be allowed to overwrite the
+    row's authoritative value.
+
+    Needed because ``state.yaml`` is gitignored (D018): a number written only to
+    the file is lost at the next clone, and then nothing can find — or avoid
+    re-creating — the tracker issue.
+    """
+    db = _db_for_direction(direction)
+    if db is None or not direction.id or not db.exists():
+        # No DB ⇒ no row to update. Never CREATE one from here: ``dir_path`` is
+        # caller-supplied and a relative/odd path would resolve to a wrong root,
+        # scattering empty ``state/factory.db`` files around the filesystem.
+        return
+    try:
+        from sqlmodel import Session
+
+        from factory.directions.schema import get_direction
+        from factory.directions.watcher import _engine
+
+        with Session(_engine(db)) as session:
+            row = get_direction(session, direction.app, direction.id)
+            if row is None or row.tracker_issue == number:
+                return
+            row.tracker_issue = number
+            session.add(row)
+            session.commit()
+    except Exception:  # noqa: BLE001 - bookkeeping must never fail issue creation
+        pass
 
 
 def record_needs_direction(
@@ -252,6 +317,50 @@ def _close_issue_if_open(
     return True
 
 
+def _tracker_from_state(direction: Direction) -> int | None:
+    """Tracker-issue number as recorded in the ``state.yaml`` PROJECTION."""
+    raw = (direction.state or {}).get("tracker_issue")
+    if isinstance(raw, int) and raw > 0:
+        return raw
+    return None
+
+
+def resolve_tracker_issue(direction: Direction, db_path: Path | None) -> int | None:
+    """Tracker-issue number for *direction*, resolved DB-row-first.
+
+    Precedence mirrors ``watcher._resolve_status`` — the ``directions`` row is
+    authoritative, the on-disk ``state.yaml`` is a projection:
+
+    1. ``directions.tracker_issue`` for this ``(app, direction_id)``
+    2. ``state.yaml::tracker_issue`` (a direction hand-written between clones has
+       no row yet, and must still work)
+    3. ``None``
+
+    Reading only the file was the second half of the D018 compose-bug: D018
+    gitignored ``state.yaml``, so on a fresh clone there is no file, the number
+    came back ``None``, and every "close this direction's issues" path became a
+    silent no-op — no error, nothing in the report, the tracker just stayed open
+    (observed live on trackers #156 and #159).
+
+    Never raises, and never CREATES a database: a missing/locked/corrupt DB simply
+    falls through to the file.
+    """
+    if db_path is not None and direction.id and Path(db_path).exists():
+        try:
+            from sqlmodel import Session
+
+            from factory.directions.schema import get_direction
+            from factory.directions.watcher import _engine
+
+            with Session(_engine(Path(db_path))) as session:
+                row = get_direction(session, direction.app, direction.id)
+            if row is not None and row.tracker_issue and int(row.tracker_issue) > 0:
+                return int(row.tracker_issue)
+        except Exception:  # noqa: BLE001 - a bad DB must fall back, never raise
+            pass
+    return _tracker_from_state(direction)
+
+
 def _child_story_issues(app: str, direction_id: str, db_path: Path) -> list[tuple[str, int]]:
     """Return ``(story key, github issue number)`` for every child story of a direction."""
     from sqlmodel import Session, select
@@ -330,17 +439,9 @@ def close_direction_issues(
         "Re-file the direction to resume the work."
     )
 
-    tracker = (direction.state or {}).get("tracker_issue")
-    if isinstance(tracker, int) and tracker > 0:
-        try:
-            if _close_issue_if_open(repo, tracker, tracker_body, state_reason=state_reason):
-                report["tracker_closed"] = int(tracker)
-        except Exception as exc:  # noqa: BLE001 - one bad issue must not abort the rest
-            report["errors"].append(("tracker", tracker, str(exc)))
-
-    if not direction.id:
-        return report
-
+    # Resolve the DB path FIRST: it is what makes the tracker number resolvable
+    # from the authoritative row rather than only from the gitignored projection.
+    db: Path | None
     try:
         if db_path is not None:
             db = Path(db_path)
@@ -351,6 +452,22 @@ def close_direction_issues(
                 else _root_from_direction(direction)
             )
             db = root / "state" / "factory.db"
+    except Exception as exc:  # noqa: BLE001 - an underivable root must not raise
+        report["errors"].append(("db", str(db_path or ""), str(exc)))
+        db = None
+
+    tracker = resolve_tracker_issue(direction, db)
+    if tracker:
+        try:
+            if _close_issue_if_open(repo, tracker, tracker_body, state_reason=state_reason):
+                report["tracker_closed"] = int(tracker)
+        except Exception as exc:  # noqa: BLE001 - one bad issue must not abort the rest
+            report["errors"].append(("tracker", tracker, str(exc)))
+
+    if not direction.id or db is None:
+        return report
+
+    try:
         children = _child_story_issues(direction.app, direction.id, db)
     except Exception as exc:  # noqa: BLE001 - a bad DB must not raise, tracker is already closed
         report["errors"].append(("db", str(db_path or ""), str(exc)))
@@ -443,8 +560,9 @@ def maybe_close_tracker_issue(
 ) -> bool:
     """Close a direction's tracker issue once the direction is complete.
 
-    Reads the tracker number from the direction's ``state.yaml`` and checks the
-    ``stories`` table via :func:`_direction_is_complete`: the tracker closes
+    Resolves the tracker number row-first via :func:`resolve_tracker_issue`
+    (``state.yaml`` is only the fallback) and checks the ``stories`` table via
+    :func:`_direction_is_complete`: the tracker closes
     when at least one child story DEPLOYED and every child is resolved
     (deployed / superseded / invalidated), never while active or ``BLOCKED_*``
     work remains. Best-effort; returns True on close.
@@ -462,11 +580,12 @@ def maybe_close_tracker_issue(
         if not dirs:
             return False
         direction = parse_direction_dir(app_config.name, dirs[0], software_factory_root=root)
-        tracker = (direction.state or {}).get("tracker_issue")
+        db = db_path or (root / "state" / "factory.db")
+        # DB row first, gitignored ``state.yaml`` projection second — see
+        # ``resolve_tracker_issue``.
+        tracker = resolve_tracker_issue(direction, db)
         if not tracker:
             return False
-
-        db = db_path or (root / "state" / "factory.db")
         with Session(_engine(db)) as session:
             rows = session.exec(
                 select(StoryRecord).where(
@@ -555,10 +674,19 @@ def reconcile_completed_issues(
             story_rows = list(
                 session.exec(select(StoryRecord).where(StoryRecord.app == app_config.name)).all()
             )
-            # Authoritative direction statuses (the ``directions`` table wins
-            # over the ``state.yaml`` projection, per watcher._resolve_status).
-            direction_status: dict[str, str] = {
-                r.direction_id: r.status for r in list_directions(session, app_config.name)
+            # Authoritative direction rows: the ``directions`` table wins over the
+            # ``state.yaml`` projection for BOTH facts this sweep needs — the
+            # status AND the tracker-issue number. Reading the tracker number from
+            # the file was the live bug: D018 gitignored ``state.yaml``, so on a
+            # normal (fresh-clone) tree there is no file, the number resolved to
+            # ``None``, and a genuinely ``closed`` direction's tracker was never
+            # closed — silently, with an empty ``errors`` list.
+            direction_rows = list_directions(session, app_config.name)
+            direction_status: dict[str, str] = {r.direction_id: r.status for r in direction_rows}
+            direction_tracker: dict[str, int] = {
+                r.direction_id: int(r.tracker_issue)
+                for r in direction_rows
+                if r.tracker_issue and int(r.tracker_issue) > 0
             }
     except Exception as exc:  # noqa: BLE001 - a bad DB must not break the sweep
         # FAIL SAFE: without the DB we cannot tell resolved work from in-flight
@@ -605,7 +733,7 @@ def reconcile_completed_issues(
             direction = parse_direction_dir(app_config.name, d, software_factory_root=root)
         except Exception:  # noqa: BLE001 - skip unparseable direction dirs
             continue
-        tracker = (direction.state or {}).get("tracker_issue")
+        tracker = direction_tracker.get(direction_id) or _tracker_from_state(direction)
         rows = by_direction.get(direction_id, [])
 
         # Two independent reasons a tracker may close. The DB row wins over the

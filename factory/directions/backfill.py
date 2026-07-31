@@ -12,6 +12,17 @@ Two commands, one per data direction:
   projection, so there is nothing to lose.
 
 Both are idempotent — safe to run twice.
+
+``source`` and the round trip
+-----------------------------
+These two commands are inverses, so anything the gate depends on has to survive
+a full disk → DB → disk lap. It did not: the ``directions`` table shipped
+without a ``source`` column, so ``regenerate-state`` could not write one, and
+the operator-approval gate (PR #182) reads ``state.yaml::source`` with a
+"unknown ⇒ park" fail-safe. Following the documented recovery procedure
+therefore parked EVERY direction (reproduced: 18 of 18). ``source`` is now a
+column, backfill populates it (and heals a NULL one from disk), and regenerate
+projects it back out — so the round trip preserves the auto-build/park verdict.
 """
 
 from __future__ import annotations
@@ -31,8 +42,22 @@ from factory.directions.schema import DirectionRecord
 
 @dataclass
 class BackfillResult:
+    """Outcome of a disk → DB backfill pass.
+
+    imported: direction dirs that had no row and now do.
+    skipped: direction dirs whose row already existed.
+    source_healed: EXISTING rows whose ``source`` was NULL and which disk could
+        fill in. This is the migration path for rows written before the
+        ``source`` column existed: without it every pre-existing direction would
+        park at the operator-approval gate forever, because ``--real-run``
+        skips rows that already exist and would never touch their ``source``.
+        Only ever fills a NULL — a recorded source is never overwritten from a
+        projection, since the row is the authority.
+    """
+
     imported: int
     skipped: int
+    source_healed: int = 0
 
 
 @dataclass
@@ -48,6 +73,7 @@ class RegenerateResult:
     written: int
     present: int
     no_row: int
+    no_source: int = 0
 
 
 def _resolve_tracker_issue(state: dict[str, Any]) -> int | None:
@@ -55,6 +81,19 @@ def _resolve_tracker_issue(state: dict[str, Any]) -> int | None:
     if isinstance(raw, int) and raw > 0:
         return raw
     return None
+
+
+def _resolve_source(state: dict[str, Any]) -> str | None:
+    """Return the ``source`` recorded in a ``state.yaml`` dict, or ``None``.
+
+    Mirrors ``approval.direction_source`` (same normalisation) so a round trip
+    through the DB cannot change the gate's verdict.
+    """
+    raw = state.get("source")
+    if raw in (None, ""):
+        return None
+    text = str(raw).strip()
+    return text or None
 
 
 def _resolve_updated_by(state: dict[str, Any]) -> str | None:
@@ -103,18 +142,22 @@ def _resolve_updated_at(state: dict[str, Any], *, fallback: datetime) -> datetim
     return fallback
 
 
-def _existing_direction_ids(session: Session, app: str) -> set[str]:
+def _existing_rows_by_id(session: Session, app: str) -> dict[str, DirectionRecord]:
     from sqlmodel import select
 
-    rows = session.exec(
-        select(DirectionRecord.direction_id).where(DirectionRecord.app == app)
-    ).all()
-    return {str(direction_id) for direction_id in rows if direction_id is not None}
+    rows = session.exec(select(DirectionRecord).where(DirectionRecord.app == app)).all()
+    return {str(row.direction_id): row for row in rows if row.direction_id is not None}
 
 
-def _existing_direction_ids_read_only(db_path: Path, app: str) -> set[str]:
+def _existing_direction_sources_read_only(db_path: Path, app: str) -> dict[str, str | None]:
+    """``{direction_id: source}`` for *app*, read WITHOUT writing to the DB.
+
+    Dry-run must not migrate or create anything, so this reads sqlite directly
+    and tolerates a DB whose ``directions`` table predates the ``source`` column
+    (reported as all-NULL, i.e. "would be healed").
+    """
     if not db_path.exists():
-        return set()
+        return {}
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
@@ -122,12 +165,24 @@ def _existing_direction_ids_read_only(db_path: Path, app: str) -> set[str]:
             "SELECT name FROM sqlite_master WHERE type='table' AND name='directions'"
         ).fetchone()
         if table is None:
-            return set()
-        rows = conn.execute(
-            "SELECT direction_id FROM directions WHERE app = ?",
-            (app,),
-        ).fetchall()
-        return {str(row[0]) for row in rows if row and row[0] is not None}
+            return {}
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(directions)").fetchall()}
+        if "source" in columns:
+            rows = conn.execute(
+                "SELECT direction_id, source FROM directions WHERE app = ?", (app,)
+            ).fetchall()
+        else:
+            rows = [
+                (row[0], None)
+                for row in conn.execute(
+                    "SELECT direction_id FROM directions WHERE app = ?", (app,)
+                ).fetchall()
+            ]
+        return {
+            str(row[0]): (str(row[1]) if row[1] not in (None, "") else None)
+            for row in rows
+            if row and row[0] is not None
+        }
     finally:
         conn.close()
 
@@ -159,23 +214,48 @@ def directions_backfill(
     ]
 
     if dry_run:
-        existing_ids = _existing_direction_ids_read_only(db_path, app)
-        imported = sum(1 for direction in directions if direction.id not in existing_ids)
+        existing_sources = _existing_direction_sources_read_only(db_path, app)
+        imported = sum(1 for d in directions if d.id not in existing_sources)
         skipped = len(directions) - imported
-        return BackfillResult(imported=imported, skipped=skipped)
+        healed = sum(
+            1
+            for d in directions
+            if d.id in existing_sources
+            and existing_sources[d.id] is None
+            and _resolve_source(d.state) is not None
+        )
+        return BackfillResult(imported=imported, skipped=skipped, source_healed=healed)
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    # ``migrate`` owns ADD COLUMN; ``create_all`` alone would leave a pre-existing
+    # ``directions`` table without the ``source`` column and every read below
+    # would fail with "no such column".
+    from factory.observability.schema import migrate
+
+    migrate(db_path)
     engine = create_engine(f"sqlite:///{db_path}", echo=False)
     SQLModel.metadata.create_all(engine)
 
     imported = 0
     skipped = 0
+    source_healed = 0
     with Session(engine) as session:
-        existing_ids = _existing_direction_ids(session, app)
+        existing = _existing_rows_by_id(session, app)
 
         for direction in directions:
-            if direction.id in existing_ids:
+            disk_source = _resolve_source(direction.state)
+            row = existing.get(direction.id)
+            if row is not None:
                 skipped += 1
+                # HEAL, do not overwrite: rows written before the ``source``
+                # column exists carry NULL, and nothing else will ever fill them
+                # (the row already exists, so the import below is skipped). Left
+                # NULL, the approval gate parks the direction forever. A row that
+                # already HAS a source is authoritative and untouched.
+                if row.source is None and disk_source is not None:
+                    row.source = disk_source
+                    session.add(row)
+                    source_healed += 1
                 continue
 
             tracker_issue = _resolve_tracker_issue(direction.state)
@@ -183,33 +263,47 @@ def directions_backfill(
             created_at = _resolve_created_at(direction.state)
             updated_at = _resolve_updated_at(direction.state, fallback=created_at)
 
-            session.add(
-                DirectionRecord(
-                    app=app,
-                    direction_id=direction.id,
-                    slug=direction.slug,
-                    status=direction.status,
-                    tracker_issue=tracker_issue,
-                    created_at=created_at,
-                    updated_at=updated_at,
-                    updated_by=updated_by,
-                )
+            new_row = DirectionRecord(
+                app=app,
+                direction_id=direction.id,
+                slug=direction.slug,
+                status=direction.status,
+                tracker_issue=tracker_issue,
+                source=disk_source,
+                created_at=created_at,
+                updated_at=updated_at,
+                updated_by=updated_by,
             )
+            session.add(new_row)
             imported += 1
-            existing_ids.add(direction.id)
+            existing[direction.id] = new_row
 
         session.commit()
 
-    return BackfillResult(imported=imported, skipped=skipped)
+    return BackfillResult(imported=imported, skipped=skipped, source_healed=source_healed)
 
 
 def _projection_from_row(row: DirectionRecord) -> dict[str, Any]:
     """Render the ``state.yaml`` projection of a ``directions`` row.
 
     Only what the row actually holds. The richer keys a live transition
-    accumulates (``pm_result``, the full ``audit`` history, ``source``) are not
-    in the table and are NOT invented here — ``regenerated_from: database``
-    tells the operator reading the file that this is the reduced projection.
+    accumulates (``pm_result``, the full ``audit`` history) are not in the table
+    and are NOT invented here — ``regenerated_from: database`` tells the operator
+    reading the file that this is the reduced projection.
+
+    ``source`` IS projected, and that is load-bearing rather than cosmetic: the
+    operator-approval gate
+    (:func:`factory.directions.approval.requires_operator_approval`) reads
+    ``state.yaml::source`` to decide auto-build vs. park. Omitting it made this
+    command a pipeline-wide kill switch — regenerate, and every direction looked
+    machine-filed, so the gate's fail-safe parked all of them.
+
+    A row with ``source is None`` still projects NO ``source`` key. That is
+    deliberate: inventing one (``"operator"``, say) would forge human intent, and
+    the gate must not be talked into building something no human asked for.
+    Such rows park — see the ``no_source`` counter on :class:`RegenerateResult`,
+    which the CLI surfaces with the two ways out (heal from disk via
+    ``directions-backfill``, or ``factory approve-direction``).
     """
     state: dict[str, Any] = {
         "status": row.status,
@@ -226,6 +320,8 @@ def _projection_from_row(row: DirectionRecord) -> dict[str, Any]:
     }
     if row.tracker_issue is not None:
         state["tracker_issue"] = row.tracker_issue
+    if row.source:
+        state["source"] = row.source
     return state
 
 
@@ -266,6 +362,7 @@ def regenerate_state_files(
     written = 0
     present = 0
     no_row = 0
+    no_source = 0
 
     if not db_path.exists():
         # No database at all: nothing to project from. Every direction dir that
@@ -278,6 +375,11 @@ def regenerate_state_files(
                 no_row += 1
         return RegenerateResult(written=written, present=present, no_row=no_row)
 
+    # ``migrate`` before reading: a live DB whose ``directions`` table predates
+    # the ``source`` column must gain it, or the SELECT below raises.
+    from factory.observability.schema import migrate
+
+    migrate(db_path)
     engine = create_engine(f"sqlite:///{db_path}", echo=False)
     SQLModel.metadata.create_all(engine)
 
@@ -297,6 +399,12 @@ def regenerate_state_files(
                 continue
 
             written += 1
+            if not row.source:
+                # Regenerated with no recorded source ⇒ the operator-approval
+                # gate will PARK it. Counted (and shouted about by the CLI) so
+                # this is a visible, actionable state instead of the silent
+                # factory-wide stall it used to be.
+                no_source += 1
             if dry_run:
                 continue
             state_path.write_text(
@@ -304,4 +412,6 @@ def regenerate_state_files(
                 encoding="utf-8",
             )
 
-    return RegenerateResult(written=written, present=present, no_row=no_row)
+    return RegenerateResult(
+        written=written, present=present, no_row=no_row, no_source=no_source
+    )
