@@ -282,6 +282,14 @@ class StoryRecord(SQLModel, table=True):
     # poisoned historical count, while a stuck/oscillating story still exhausts
     # it. Default 0 so a story's first real state always registers.
     max_progress_ordinal: int = 0
+    # Dependency-deferral cap counter. Incremented once per tick that defers
+    # this story behind foundations which are ALL human-blocked (see
+    # ``orchestrator._STALLED_DEP_STATES``) and reset the moment any blocker is
+    # live again, so a story waiting out its foundation's real work never
+    # accumulates a count. At ``orchestrator._MAX_DEPENDENCY_DEFERRALS`` the
+    # dependent is parked in ``BLOCKED_DEPENDENCY_UNMET`` and surfaced in
+    # ``factory inbox`` instead of deferring silently forever.
+    dependency_defer_count: int = 0
     current_model_tier: str = "standard"  # standard | hard
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())

@@ -1032,6 +1032,10 @@ def tick_cmd(
         and not summary.errors
         and not summary.skipped
         and not summary.rejected
+        # A tick that DEFERRED stories is not an empty queue — saying "No
+        # in-flight stories" there is what hid the D018 deferral deadlock for
+        # hours (2026-07-28). Fall through to the tables below instead.
+        and not summary.deferred
         and not summary.merges
         and (summary.ci_health is None or summary.ci_health.state in ("unknown", "green"))
     ):
@@ -1059,6 +1063,13 @@ def tick_cmd(
         for slug, reason in summary.rejected:
             rej_table.add_row(slug, reason)
         console.print(rej_table)
+    if summary.deferred:
+        def_table = Table(title="deferred by dependency ordering")
+        def_table.add_column("story")
+        def_table.add_column("waiting on")
+        for slug, reason in summary.deferred:
+            def_table.add_row(slug, reason)
+        console.print(def_table)
     if summary.merges:
         merge_table = Table(title="auto-merge decisions this tick")
         merge_table.add_column("pr")
@@ -1090,6 +1101,7 @@ def tick_cmd(
         f"advanced={summary.stories_advanced} "
         f"blocked_by_caps={summary.blocked_by_caps} "
         f"blocked={summary.stories_blocked} "
+        f"deferred={len(summary.deferred)} "
         f"merges={sum(1 for m in summary.merges if m.merged)}/{len(summary.merges)} "
         f"skipped={len(summary.skipped)} "
         f"errors={len(summary.errors)}"
@@ -1173,7 +1185,8 @@ def inbox_cmd(
     from sqlmodel import Session, create_engine, select
 
     from factory.chain.handlers import _engine
-    from factory.chain.state_machine import StoryRecord
+    from factory.chain.orchestrator import DEP_DEFER_CAP_REASON_PREFIX
+    from factory.chain.state_machine import StoryRecord, StoryState
     from factory.directions.parser import list_direction_dirs, parse_direction_dir
     from factory.settings.loader import load_settings
     from factory.settings.modes import get_mode
@@ -1223,7 +1236,19 @@ def inbox_cmd(
                 # genuinely-parked ones). Reuse the same resolved-states ALLOWLIST
                 # the tracker-issue closer uses, so "the tracker closed" and "the
                 # inbox is quiet" can never disagree.
-                if r.state in _RESOLVED_STORY_STATES:
+                # ...with ONE carve-out: a story parked by the dependency-deferral
+                # CAP. It lands in ``blocked_dependency_unmet`` (a resolved state,
+                # because the DEADLOCK park that state was built for really is
+                # abandoned-for-good), but the cap park is different in kind — its
+                # foundation is only HUMAN-blocked and may still be revived, and
+                # the dependent was abandoned solely because it had waited past
+                # the cap. That is precisely a decision awaiting a human, so it
+                # must be visible here; the marker prefix keeps deadlock parks
+                # (and every other resolved row) hidden exactly as before.
+                _dep_cap_parked = r.state == StoryState.BLOCKED_DEPENDENCY_UNMET.value and (
+                    r.last_rejection_reason or ""
+                ).startswith(DEP_DEFER_CAP_REASON_PREFIX)
+                if r.state in _RESOLVED_STORY_STATES and not _dep_cap_parked:
                     continue
                 if r.last_rejection_reason:
                     reason = r.last_rejection_reason
@@ -1823,7 +1848,29 @@ def why_cmd(
             exclude_story_id=story.id,
         )
         decision = can_dispatch(job_kind, story.app, state_dict, settings)
-        if decision.allowed:
+        # The dependency-ordering gate runs BEFORE the enforcer in the tick, so a
+        # story waiting on a lower-id sibling is deferred no matter what
+        # ``can_dispatch`` says. Reporting "would dispatch" for such a story is a
+        # proxy≠real answer to the operator's actual question.
+        from factory.chain.orchestrator import (
+            _MAX_DEPENDENCY_DEFERRALS,
+            _deps_all_stalled,
+            _direction_deps_pending,
+        )
+
+        deps_pending = _direction_deps_pending(db, story)
+        if deps_pending:
+            _stalled = _deps_all_stalled(db, deps_pending)
+            projection_line = (
+                f"next-tick projection: [bold yellow]would DEFER[/bold yellow] — "
+                f"dependency ordering: waiting on story_ids={deps_pending[:10]} in "
+                f"direction {story.direction_id} "
+                f"({'human-blocked' if _stalled else 'still in progress'}; "
+                f"stalled deferrals {story.dependency_defer_count}/"
+                f"{_MAX_DEPENDENCY_DEFERRALS} before it parks in "
+                f"blocked_dependency_unmet and surfaces in `factory inbox`)"
+            )
+        elif decision.allowed:
             projection_line = (
                 f"next-tick projection: [bold green]would dispatch[/bold green] "
                 f"job_kind=[bold]{job_kind}[/bold]"

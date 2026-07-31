@@ -236,6 +236,10 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     # a story mid-flight simply gets its first decay when it next advances to a
     # state above its (freshly-recorded) mark — never retroactively tripped.
     "max_progress_ordinal": "INTEGER NOT NULL DEFAULT 0",
+    # Dependency-deferral cap counter (see StoryRecord.dependency_defer_count).
+    # Pre-existing rows gain it as 0 and start counting from their next stalled
+    # deferral — none is retroactively parked.
+    "dependency_defer_count": "INTEGER NOT NULL DEFAULT 0",
 }
 
 
