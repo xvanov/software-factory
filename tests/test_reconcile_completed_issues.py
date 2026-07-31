@@ -465,7 +465,12 @@ def _direction_row(
     tracker_issue: int | None,
     app: str = "factory",
 ) -> None:
-    """Write an authoritative ``directions`` row (no ``state.yaml`` involved)."""
+    """Write an authoritative ``directions`` row (no ``state.yaml`` involved).
+
+    Goes through ``watcher._engine``, which is the production write path for this
+    table and which itself calls ``observability.schema.migrate`` — so the DB is
+    bootstrapped by the application initializer, not by a hand-rolled engine.
+    """
     from sqlmodel import Session
 
     from factory.directions.schema import upsert_direction
@@ -614,12 +619,10 @@ def test_open_or_update_tracker_issue_persists_the_number_to_the_row(tmp_path: P
     ``state.yaml`` is gitignored, so a number written only there is lost at the
     next clone — and then nothing can find, or avoid re-creating, the issue.
     """
-    from sqlmodel import Session
+    import sqlite3
 
     from factory.directions.parser import parse_direction_dir
-    from factory.directions.schema import get_direction
     from factory.directions.tracker_issue import open_or_update_tracker_issue
-    from factory.directions.watcher import _engine
 
     base = _make_direction_md_only(tmp_path, "400-fresh")
     _direction_row(tmp_path, "400", "fresh", status="created", tracker_issue=None)
@@ -632,7 +635,13 @@ def test_open_or_update_tracker_issue_persists_the_number_to_the_row(tmp_path: P
     number = open_or_update_tracker_issue(direction, _app_config(), _Client(_CreatingRepo({})))
 
     assert number == 4242
-    with Session(_engine(tmp_path / "state" / "factory.db")) as session:
-        row = get_direction(session, "factory", "400")
-    assert row is not None
-    assert row.tracker_issue == 4242
+    # Read the row back with plain sqlite3: the assertion must not depend on the
+    # same ORM layer the write went through.
+    conn = sqlite3.connect(str(tmp_path / "state" / "factory.db"))
+    try:
+        stored = conn.execute(
+            "SELECT tracker_issue FROM directions WHERE app = 'factory' AND direction_id = '400'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert stored == (4242,)

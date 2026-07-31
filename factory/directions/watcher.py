@@ -69,7 +69,12 @@ def _resolve_status(
     return state_yaml_status
 
 
-def hydrate_direction_source(direction: Direction, state_db_path: Path) -> Direction:
+def hydrate_direction_source(
+    direction: Direction,
+    state_db_path: Path,
+    *,
+    engine: Any | None = None,
+) -> Direction:
     """Resolve ``direction.state['source']`` from the authoritative row.
 
     Same DB-first precedence as :func:`_resolve_status` (see the module
@@ -90,12 +95,19 @@ def hydrate_direction_source(direction: Direction, state_db_path: Path) -> Direc
     Never raises, and never CREATES a database: a missing/unreadable DB leaves the
     record exactly as parsed, which the gate treats as unknown and parks — the
     fail-safe direction.
+
+    Pass ``engine`` when hydrating in a loop. ``_engine`` runs ``migrate`` (a raw
+    sqlite connect plus a ``PRAGMA table_info`` per table) and ``create_all`` on
+    every call, so building one per direction turns a listing into O(directions)
+    redundant migrations on the tick / CLI path.
     """
-    if not direction.id or not Path(state_db_path).exists():
+    if not direction.id:
+        return direction
+    if engine is None and not Path(state_db_path).exists():
         return direction
     state = direction.state if isinstance(direction.state, dict) else {}
     try:
-        with Session(_engine(state_db_path)) as session:
+        with Session(engine if engine is not None else _engine(state_db_path)) as session:
             row = get_direction(session, direction.app, direction.id)
         if row is not None and row.source and str(row.source).strip():
             state = dict(state)
@@ -124,7 +136,8 @@ def pending_directions(
         # Resolve status from DB first, falling back to state.yaml / created.
         d.status = _resolve_status(app, d.id, d.status, engine)
         if d.status in {"created", "needs-direction"}:
-            out.append(hydrate_direction_source(d, state_db_path))
+            # Reuse the engine built above — one migrate, not one per direction.
+            out.append(hydrate_direction_source(d, state_db_path, engine=engine))
     return out
 
 

@@ -318,9 +318,12 @@ def _awaiting_approval_rows(apps: list[str]) -> list[tuple[str, str, str, str]]:
     operator-approval gate. Shared by ``inbox`` and ``approve-direction``."""
     from factory.directions.approval import approval_blocked_reason, awaiting_operator_approval
     from factory.directions.parser import list_direction_dirs, parse_direction_dir
-    from factory.directions.watcher import hydrate_direction_source
+    from factory.directions.watcher import _engine, hydrate_direction_source
 
     state_db = _FACTORY_ROOT / "state" / "factory.db"
+    # One engine for the whole listing: ``_engine`` runs ``migrate`` every call,
+    # so building one per direction would be O(directions) redundant migrations.
+    engine = _engine(state_db) if state_db.exists() else None
     rows: list[tuple[str, str, str, str]] = []
     for a in apps:
         for ddir in list_direction_dirs(a, _FACTORY_ROOT):
@@ -331,7 +334,7 @@ def _awaiting_approval_rows(apps: list[str]) -> list[tuple[str, str, str, str]]:
             # Resolve ``source`` DB-first, exactly as the pm-sync gate does —
             # otherwise this listing and the gate could disagree about which
             # directions are parked.
-            hydrate_direction_source(d, state_db)
+            hydrate_direction_source(d, state_db, engine=engine)
             if awaiting_operator_approval(d):
                 rows.append((a, ddir.name, d.title[:60], approval_blocked_reason(d)))
     return rows

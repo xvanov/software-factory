@@ -148,8 +148,8 @@ def _ensure_columns(conn: sqlite3.Connection, table: str, columns: list[tuple[st
 def migrate(db_path: Path) -> None:
     """Run idempotent schema migrations against ``db_path``.
 
-    Adds new columns onto ``runs`` and ``stories`` if missing, and ensures
-    the new ``live_handlers`` / ``handler_baselines`` tables exist via
+    Adds new columns onto ``runs``, ``stories`` and ``directions`` if missing,
+    and ensures the new ``live_handlers`` / ``handler_baselines`` tables exist via
     ``SQLModel.metadata.create_all``. Safe to call on every CLI entry.
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)

@@ -560,8 +560,9 @@ def maybe_close_tracker_issue(
 ) -> bool:
     """Close a direction's tracker issue once the direction is complete.
 
-    Reads the tracker number from the direction's ``state.yaml`` and checks the
-    ``stories`` table via :func:`_direction_is_complete`: the tracker closes
+    Resolves the tracker number row-first via :func:`resolve_tracker_issue`
+    (``state.yaml`` is only the fallback) and checks the ``stories`` table via
+    :func:`_direction_is_complete`: the tracker closes
     when at least one child story DEPLOYED and every child is resolved
     (deployed / superseded / invalidated), never while active or ``BLOCKED_*``
     work remains. Best-effort; returns True on close.
