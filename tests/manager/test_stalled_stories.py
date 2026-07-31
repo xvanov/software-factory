@@ -93,6 +93,10 @@ def test_terminal_states_never_alarm(tmp_path: Path) -> None:
             # aging in them must NOT raise a stall alarm (else concern-spam).
             (4, "superseded_by_sibling", ancient),
             (5, "blocked_budget_exceeded", ancient),
+            # A dependency-deferral CAP park: the cap's whole design is to park
+            # a capped dependent here to await a human, so it is now a NORMAL
+            # destination, not a rarity. Aging here must not re-alarm either.
+            (6, "blocked_dependency_unmet", ancient),
         ],
     )
     _write_tick(tmp_path, now - timedelta(minutes=1))
