@@ -270,6 +270,35 @@ def test_deadlock_parked_dependent_is_not_revived_by_the_cap_pass(
     assert _get(db, dep_id).state == StoryState.BLOCKED_DEPENDENCY_UNMET.value
 
 
+def test_merged_dependent_is_never_cap_parked(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dependent already at DEPLOY_PENDING has MERGED code: parking it would
+    strand merged work undeployed (and its sink counts as resolved, so the
+    tracker would close over it). It keeps deferring — visibly."""
+    db = factory_root / "factory.db"
+    _blocker_id, dep_id = _seed_pair(
+        db,
+        direction="025",
+        blocker_state=StoryState.BLOCKED_DEPLOY_FAILED.value,
+        dependent_state=StoryState.DEPLOY_PENDING.value,
+    )
+
+    def _loud_deploy(*_a: object, **_k: object) -> H.HandlerResult:
+        raise AssertionError("deferred story must not be dispatched to deploy")
+
+    monkeypatch.setattr(H, "handle_deploy", _loud_deploy)
+
+    for _ in range(O._MAX_DEPENDENCY_DEFERRALS + 2):
+        summary = O.tick(factory_root, "sacrifice", db_path=db, max_advances_per_story=1)
+        assert summary.errors == []
+
+    dep = _get(db, dep_id)
+    assert dep.state == StoryState.DEPLOY_PENDING.value
+    assert (dep.last_rejection_reason or "") == ""
+    assert summary.deferred, "the deferral must still be visible to the operator"
+
+
 def test_deps_all_stalled_fails_safe_on_missing_row(factory_root: Path) -> None:
     """Ambiguous evidence must never cap a dependent."""
     db = factory_root / "factory.db"

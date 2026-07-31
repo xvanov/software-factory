@@ -2592,7 +2592,19 @@ def tick(
                         ):
                             story.last_rejection_reason = None
                         H.persist_story(story, db)
-                    if _deps_stalled and story.dependency_defer_count >= _MAX_DEPENDENCY_DEFERRALS:
+                    if (
+                        _deps_stalled
+                        and story.dependency_defer_count >= _MAX_DEPENDENCY_DEFERRALS
+                        # NEVER cap-park a story whose code is already MERGED. The
+                        # ordering gate exists to stop code being CONSTRUCTED before
+                        # its foundations are on main; a story at DEPLOY_PENDING is
+                        # past that — abandoning it would strand merged work
+                        # undeployed AND (since the sink counts as resolved) let its
+                        # tracker close over it. Such a row keeps the pre-existing
+                        # defer behaviour, now at least visible in the tick summary
+                        # and in ``factory why``.
+                        and story.state != StoryState.DEPLOY_PENDING.value
+                    ):
                         _cap_from = story.state
                         _cap_reason = (
                             f"{DEP_DEFER_CAP_REASON_PREFIX}: deferred "
