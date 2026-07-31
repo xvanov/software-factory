@@ -149,6 +149,48 @@ def test_creates_issue_on_first_call(tmp_path: Path) -> None:
     assert re_parsed.state["tracker_issue"] == 100
 
 
+def test_state_yaml_write_failure_after_issue_creation_does_not_raise(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A state.yaml write failure right after GitHub issue creation must be
+    best-effort, matching ``_persist_tracker_issue``'s guard on the DB write.
+
+    Before this hardening, an uncaught exception from ``merge_state`` here
+    would propagate out of ``open_or_update_tracker_issue`` and abort the rest
+    of the caller's pm-sync iteration — including the ``mark_direction_status``
+    call that is the only other place a brand-new direction's tracker_issue
+    gets persisted — leaving a real, already-created GitHub issue recorded
+    nowhere in factory state (the D018 shape).
+    """
+    direction = _seed(tmp_path)
+    gh = _FakeGithub()
+    cfg = _app_config()
+
+    import factory.directions.tracker_issue as ti_mod
+
+    def _boom(*args: Any, **kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(ti_mod, "merge_state", _boom)
+
+    pm_result = {
+        "type": "feature",
+        "priority": "p2",
+        "has_sufficient_backpressure": True,
+        "missing": [],
+        "tracker_title": "Add healthz endpoint",
+        "tracker_body": "We need /healthz for smoke tests.",
+        "child_stories": [],
+        "labels": ["feature", "priority/p2"],
+        "confidence": 0.8,
+    }
+    # Must not raise, and must still return the real issue number — the
+    # GitHub issue was already created before the failing write.
+    number = open_or_update_tracker_issue(direction, cfg, gh, pm_result=pm_result)
+    assert number == 100
+    assert len(gh.repo.create_calls) == 1
+
+
 def test_idempotent_no_duplicate_issue(tmp_path: Path) -> None:
     direction = _seed(tmp_path)
     gh = _FakeGithub()

@@ -11,6 +11,7 @@ Phase-1 additions:
   * ``factory edit-direction --app <app> <id-or-slug>``
   * ``factory directions-backfill --app <app> [--dry-run]``
   * ``factory directions-regenerate-state --app <app> [--dry-run]``
+  * ``factory directions-backfill-tracker-issue --app <app> [--dry-run]``
   * ``factory pm-sync --app <app> [--dry-run]``
   * ``factory ingest-issue --app <app> <issue-number>``
 """
@@ -554,6 +555,65 @@ def directions_regenerate_state_cmd(
             f"{app_name}`."
         )
     console.print(Panel.fit(body, title=f"directions-regenerate-state — app={app_name}"))
+
+
+@app.command("directions-backfill-tracker-issue")
+def directions_backfill_tracker_issue_cmd(
+    app_name: str = typer.Option(..., "--app", help="App name"),
+    dry_run: bool = typer.Option(True, "--dry-run/--real-run", help="Dry-run (default)"),
+) -> None:
+    """Find + persist a direction's tracker-issue number from GitHub when missing.
+
+    ``resolve_tracker_issue`` only has two sources for a direction's tracker
+    number (the ``directions`` row, then ``state.yaml``) — both are populated
+    by ``open_or_update_tracker_issue`` the first time it creates the issue.
+    A direction whose tracker/stories were created OUTSIDE that path (e.g. a
+    hand-managed infra direction) has no source to resolve from, ever, even
+    though a real tracker issue exists on GitHub — so `reconcile-issues` can
+    never find it to close. This searches every issue in the app's repo for
+    the exact ``**Direction:** `id-slug` `` marker every tracker body embeds,
+    and persists an unambiguous match to the `directions` row.
+
+    Dry-run is the default — reports what would be persisted without writing.
+    Use ``--real-run`` to perform the actual write.
+    """
+    load_dotenv()
+    load_dotenv(_FACTORY_ROOT / ".env", override=False)
+
+    from factory.app_config import load_app_config
+    from factory.directions.tracker_backfill import backfill_tracker_issues
+
+    app_config = load_app_config(app_name, _FACTORY_ROOT)
+    github_client = _ensure_github_client()
+
+    result = backfill_tracker_issues(
+        app_config,
+        github_client,
+        software_factory_root=_FACTORY_ROOT,
+        dry_run=dry_run,
+    )
+
+    mode_label = "[yellow]DRY-RUN[/yellow]" if dry_run else "[green]REAL RUN[/green]"
+    body = (
+        f"found={len(result.found)} already-set={result.already_set} "
+        f"not-found={len(result.not_found)} ambiguous={len(result.ambiguous)}\n"
+        f"mode={mode_label}"
+    )
+    console.print(Panel.fit(body, title=f"directions-backfill-tracker-issue — app={app_name}"))
+
+    if result.found:
+        verb = "would persist" if dry_run else "persisted"
+        for direction_id, number in result.found:
+            console.print(f"  [green]{verb}[/green] {direction_id} -> #{number}")
+    if result.ambiguous:
+        console.print("[yellow]ambiguous (skipped, resolve by hand):[/yellow]")
+        for direction_id, numbers in result.ambiguous:
+            console.print(f"  - {direction_id}: {numbers}")
+    if result.errors:
+        console.print("[red]errors:[/red]")
+        for key, msg in result.errors:
+            console.print(f"  - {key}: {msg}")
+        raise typer.Exit(code=1)
 
 
 @app.command("pm-sync")

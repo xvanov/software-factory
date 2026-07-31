@@ -152,7 +152,23 @@ def open_or_update_tracker_issue(
     issue = repo.create_issue(title=title, body=body, labels=labels)
     number = int(issue.number)
     _persist_tracker_issue(direction, number)
-    merge_state(direction, {"tracker_issue": number})
+    # Best-effort, same as ``_persist_tracker_issue`` immediately above: the
+    # GitHub issue already exists, so a state.yaml write failure (disk full,
+    # permission error, a stale/removed dir_path) must never raise back into
+    # the caller. An uncaught exception here used to abort the REST of this
+    # direction's pm-sync iteration too — including the ``mark_direction_status``
+    # call that is the ONLY other place a brand-new direction's row (and thus
+    # its tracker_issue) gets written — leaving the real issue number recorded
+    # NOWHERE in factory state. The next pm-sync pass would then resolve
+    # ``existing_number`` as None and create a DUPLICATE issue. Swallowing here
+    # keeps the number resolvable from ``state.yaml`` even when the DB row
+    # doesn't exist yet, and — a level up — ``reconcile_completed_issues``/
+    # ``directions-backfill-tracker-issue`` recover from a case where BOTH
+    # writes were lost.
+    try:
+        merge_state(direction, {"tracker_issue": number})
+    except Exception:  # noqa: BLE001 - bookkeeping must never fail issue creation
+        pass
     return number
 
 
