@@ -537,6 +537,36 @@ def is_terminal(state: StoryState) -> bool:
     return not any(s == state for (s, _) in _TRANSITIONS)
 
 
+# Marker prefix the orchestrator writes into ``StoryRecord.last_rejection_reason``
+# when the dependency-deferral CAP parks a dependent (see
+# ``orchestrator._MAX_DEPENDENCY_DEFERRALS``). Two DIFFERENT situations land in
+# ``BLOCKED_DEPENDENCY_UNMET`` and must be told apart everywhere:
+#
+#   * DEADLOCK park — every blocker is a definitive dead end. The work is
+#     abandoned for good; resolved for tracker/issue purposes.
+#   * CAP park — the blockers are only HUMAN-blocked and may still be revived.
+#     The dependent is waiting on an operator DECISION, so it must stay visible
+#     (``factory inbox``), keep its GitHub issue OPEN, keep its direction's
+#     tracker open, and be settleable by the operator closing that issue.
+#
+# Lives here (a leaf module) rather than in the orchestrator so ``factory/cli.py``
+# and ``factory/directions/tracker_issue.py`` can key off it without importing the
+# orchestrator.
+DEP_DEFER_CAP_REASON_PREFIX = "dependency_deferral_cap_exhausted"
+
+
+def is_dependency_cap_parked(state: str | None, last_rejection_reason: str | None) -> bool:
+    """True for a story parked by the dependency-deferral CAP (not a deadlock park).
+
+    Single predicate so the inbox, the tracker-issue sweep and the
+    closed-tracker reconciler can never disagree about which parks are
+    "abandoned" and which are "awaiting a human".
+    """
+    return (state or "") == StoryState.BLOCKED_DEPENDENCY_UNMET.value and (
+        last_rejection_reason or ""
+    ).startswith(DEP_DEFER_CAP_REASON_PREFIX)
+
+
 def list_transitions_from(state: StoryState) -> list[tuple[str, StoryState]]:
     """Return ``[(event, next_state)]`` for all transitions out of ``state``.
 

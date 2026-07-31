@@ -23,6 +23,7 @@ The mechanism under test:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -57,8 +58,16 @@ def _seed_pair(
     direction: str,
     blocker_state: str,
     dependent_state: str = StoryState.STORY_CREATED.value,
+    blocker_age_seconds: int = 3 * 60 * 60,
 ) -> tuple[int, int]:
-    """Seed a (lower-id blocker, higher-id dependent) pair in one direction."""
+    """Seed a (lower-id blocker, higher-id dependent) pair in one direction.
+
+    ``blocker_age_seconds`` backdates the blocker's ``updated_at``: the cap needs
+    BOTH a tick count and a stall age (``_MIN_DEP_STALL_SECONDS``), so the default
+    puts the blocker well past the age gate. Pass a small value to exercise the
+    "blocked only moments ago" case.
+    """
+    stale = (datetime.now(UTC) - timedelta(seconds=blocker_age_seconds)).isoformat()
     eng = create_engine(f"sqlite:///{db}", echo=False)
     SQLModel.metadata.create_all(eng)
     blocker = StoryRecord(
@@ -69,6 +78,8 @@ def _seed_pair(
         scope="backend",
         state=blocker_state,
         chain_kind="tdd",
+        created_at=stale,
+        updated_at=stale,
     )
     dependent = StoryRecord(
         direction_id=direction,
@@ -170,7 +181,12 @@ def test_live_blocker_defers_without_ever_capping(
     real foundation work takes many ticks and must never be cap-parked."""
     db = factory_root / "factory.db"
     _blocker_id, dep_id = _seed_pair(
-        db, direction="019", blocker_state=StoryState.DEV_IN_PROGRESS.value
+        db,
+        direction="019",
+        blocker_state=StoryState.DEV_IN_PROGRESS.value,
+        # Freshly updated: a backdated ``*_in_progress`` row is (correctly) treated
+        # as stranded by ``_prune_stale_in_progress``, which is a different test.
+        blocker_age_seconds=0,
     )
     _no_dispatch(monkeypatch)
 
@@ -299,6 +315,163 @@ def test_merged_dependent_is_never_cap_parked(
     assert summary.deferred, "the deferral must still be visible to the operator"
 
 
+def test_freshly_blocked_foundation_is_not_parked_on_a_tick_count_alone(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cap needs an AGE as well as a count. Tick cadence is 30 s in
+    ``drive_chain.sh``, so a pure count would abandon dependents ~90 s after the
+    foundation blocked — long before the FMS revival playbook (30 min cooldown)
+    even runs."""
+    db = factory_root / "factory.db"
+    _blocker_id, dep_id = _seed_pair(
+        db,
+        direction="026",
+        blocker_state=StoryState.BLOCKED_DEPLOY_FAILED.value,
+        blocker_age_seconds=60,  # blocked one minute ago
+    )
+    _no_dispatch(monkeypatch)
+
+    for _ in range(O._MAX_DEPENDENCY_DEFERRALS + 2):
+        O.tick(factory_root, "sacrifice", db_path=db, max_advances_per_story=1)
+
+    dep = _get(db, dep_id)
+    assert dep.state == StoryState.STORY_CREATED.value
+    # Counter is clamped at the cap; it is the age gate holding the park back.
+    assert dep.dependency_defer_count == O._MAX_DEPENDENCY_DEFERRALS
+
+
+def test_paused_mode_never_abandons_dependents(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An operator pauses the factory precisely to investigate a blocker like
+    this; pausing must not be what abandons its dependents."""
+    db = factory_root / "factory.db"
+    _blocker_id, dep_id = _seed_pair(
+        db, direction="027", blocker_state=StoryState.BLOCKED_DEPLOY_FAILED.value
+    )
+    _no_dispatch(monkeypatch)
+    monkeypatch.setattr("factory.chain.orchestrator.get_mode", lambda *_a, **_k: "paused")
+
+    for _ in range(O._MAX_DEPENDENCY_DEFERRALS + 2):
+        O.tick(factory_root, "sacrifice", db_path=db, max_advances_per_story=1)
+
+    assert _get(db, dep_id).state == StoryState.STORY_CREATED.value
+
+
+def test_deferral_does_not_refresh_updated_at(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The counter bump must NOT stamp ``updated_at``.
+
+    ``manager/detectors/stalled_stories.py`` alarms on ``now - updated_at`` and
+    computes a factory-wide ``draining`` flag from the MINIMUM over all rows — a
+    per-tick heartbeat on a deferred row would hide this very stall AND silence the
+    aged-backlog alarm for every other story.
+    """
+    db = factory_root / "factory.db"
+    _blocker_id, dep_id = _seed_pair(
+        db,
+        direction="028",
+        blocker_state=StoryState.BLOCKED_DEPLOY_FAILED.value,
+        blocker_age_seconds=60,  # stay deferred (age gate) so we keep counting
+    )
+    _no_dispatch(monkeypatch)
+    before = _get(db, dep_id).updated_at
+
+    for _ in range(3):
+        O.tick(factory_root, "sacrifice", db_path=db, max_advances_per_story=1)
+
+    dep = _get(db, dep_id)
+    assert dep.dependency_defer_count >= 1, "the deferral must still be counted"
+    assert dep.updated_at == before, "a deferral is a stall, not activity"
+
+
+def test_revival_resumes_at_the_parked_from_state(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dependent capped out of ``reviewer_done`` must not be rewound to
+    ``story_created`` — that re-runs SM+dev+review and discards the verdict."""
+    db = factory_root / "factory.db"
+    blocker_id, dep_id = _seed_pair(
+        db,
+        direction="029",
+        blocker_state=StoryState.BLOCKED_DEPLOY_FAILED.value,
+        dependent_state=StoryState.REVIEWER_DONE.value,
+    )
+
+    def _loud(*_a: object, **_k: object) -> H.HandlerResult:
+        raise AssertionError("must not dispatch while deferred")
+
+    monkeypatch.setattr(H, "handle_tech_writer", _loud)
+
+    for _ in range(O._MAX_DEPENDENCY_DEFERRALS):
+        O.tick(factory_root, "sacrifice", db_path=db, max_advances_per_story=1)
+    assert _get(db, dep_id).state == StoryState.BLOCKED_DEPENDENCY_UNMET.value
+
+    _set_state(db, blocker_id, StoryState.DEPLOY_PENDING.value)
+    O.tick(factory_root, "sacrifice", db_path=db, max_advances_per_story=1)
+    assert _get(db, dep_id).state == StoryState.REVIEWER_DONE.value
+
+
+def test_dry_run_never_parks(factory_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dry run previews; it must not assert a state transition."""
+    db = factory_root / "factory.db"
+    _blocker_id, dep_id = _seed_pair(
+        db, direction="030", blocker_state=StoryState.BLOCKED_DEPLOY_FAILED.value
+    )
+    _no_dispatch(monkeypatch)
+
+    for _ in range(O._MAX_DEPENDENCY_DEFERRALS + 2):
+        summary = O.tick(
+            factory_root, "sacrifice", db_path=db, max_advances_per_story=1, dry_run=True
+        )
+
+    assert _get(db, dep_id).state == StoryState.STORY_CREATED.value
+    assert summary.deferred, "the deferral is still previewed"
+    assert not any(
+        e.get("event") == "dependency_deferral_capped"
+        for e in _events(factory_root, dep_id, "d030-dependent")
+    )
+
+
+def test_cap_bookkeeping_failure_leaves_the_story_deferred(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """This path used to be read-only. A failed write must not abort the tick —
+    that would leave the rest of the queue undispatched and exit non-zero."""
+    db = factory_root / "factory.db"
+    _blocker_id, dep_id = _seed_pair(
+        db, direction="031", blocker_state=StoryState.BLOCKED_DEPLOY_FAILED.value
+    )
+    _no_dispatch(monkeypatch)
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(O, "_bump_dependency_defer_count", _boom)
+
+    summary = O.tick(factory_root, "sacrifice", db_path=db, max_advances_per_story=1)
+
+    assert summary.errors == []
+    assert _get(db, dep_id).state == StoryState.STORY_CREATED.value
+    assert any(
+        e.get("event") == "dependency_deferral_cap_error"
+        for e in _events(factory_root, dep_id, "d031-dependent")
+    )
+
+
+def test_quarantined_blocker_is_treated_as_stalled(factory_root: Path) -> None:
+    """A poisoned/quarantined foundation moves only when an operator repairs it,
+    so a dependent behind one must be capped, not deferred forever."""
+    db = factory_root / "factory.db"
+    blocker_id, _dep_id = _seed_pair(
+        db, direction="032", blocker_state=StoryState.QUARANTINED_INVALID_STATE.value
+    )
+    assert O._deps_all_stalled(db, [blocker_id]) is True
+    # ...but not a DEAD end: repairing it must be able to revive the dependent.
+    assert StoryState.QUARANTINED_INVALID_STATE.value not in O._DEAD_END_DEP_STATES
+
+
 def test_deps_all_stalled_fails_safe_on_missing_row(factory_root: Path) -> None:
     """Ambiguous evidence must never cap a dependent."""
     db = factory_root / "factory.db"
@@ -387,6 +560,103 @@ def test_tick_output_reports_deferrals_instead_of_no_in_flight_stories(
     assert "d018-dependent" in result.stdout
     assert "167" in result.stdout
     assert "deferred=1" in result.stdout
+
+
+def test_cap_park_keeps_its_github_issue_and_tracker_open(factory_root: Path) -> None:
+    """A cap-parked story is NOT abandoned: its issue must not be auto-closed as
+    "terminally abandoned", and its direction's tracker must stay open.
+
+    Otherwise the row is in ``factory inbox`` as "awaiting a human" while GitHub
+    says the work was abandoned — the exact disagreement the shared resolved-states
+    allowlist exists to prevent.
+    """
+    from factory.chain.state_machine import DEP_DEFER_CAP_REASON_PREFIX
+    from factory.directions.tracker_issue import _direction_is_complete, _story_is_resolved
+
+    cap_parked = StoryRecord(
+        direction_id="018",
+        app="sacrifice",
+        title="t",
+        slug="capped",
+        scope="backend",
+        state=StoryState.BLOCKED_DEPENDENCY_UNMET.value,
+        last_rejection_reason=f"{DEP_DEFER_CAP_REASON_PREFIX}: deferred 3x behind [167]",
+    )
+    deadlocked = StoryRecord(
+        direction_id="018",
+        app="sacrifice",
+        title="t",
+        slug="deadlocked",
+        scope="backend",
+        state=StoryState.BLOCKED_DEPENDENCY_UNMET.value,
+    )
+    shipped = StoryRecord(
+        direction_id="018",
+        app="sacrifice",
+        title="t",
+        slug="shipped",
+        scope="backend",
+        state=StoryState.DEPLOYED.value,
+    )
+
+    assert _story_is_resolved(cap_parked) is False
+    assert _story_is_resolved(deadlocked) is True  # unchanged
+    assert _story_is_resolved(shipped) is True
+    # A direction with a cap-parked child is NOT complete...
+    assert _direction_is_complete([shipped, cap_parked]) is False
+    # ...while the deadlock-abandoned shape still closes exactly as before.
+    assert _direction_is_complete([shipped, deadlocked]) is True
+
+
+def test_operator_can_settle_a_cap_park_by_closing_its_issue(factory_root: Path) -> None:
+    """The cap park is routed into the inbox as "awaiting a human", so it needs the
+    same exit the other awaiting-a-human states have: closing the tracker issue on
+    GitHub settles it. Without this the inbox entry can only be cleared by hand."""
+    from factory.app_config import load_app_config
+    from factory.chain.state_machine import DEP_DEFER_CAP_REASON_PREFIX
+
+    db = factory_root / "factory.db"
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+    SQLModel.metadata.create_all(eng)
+    with Session(eng) as session:
+        row = StoryRecord(
+            direction_id="018",
+            app="sacrifice",
+            title="t",
+            slug="capped",
+            scope="backend",
+            state=StoryState.BLOCKED_DEPENDENCY_UNMET.value,
+            github_issue_number=4242,
+            last_rejection_reason=f"{DEP_DEFER_CAP_REASON_PREFIX}: deferred 3x behind [167]",
+        )
+        deadlock_row = StoryRecord(
+            direction_id="018",
+            app="sacrifice",
+            title="t",
+            slug="deadlocked",
+            scope="backend",
+            state=StoryState.BLOCKED_DEPENDENCY_UNMET.value,
+            github_issue_number=4243,
+        )
+        session.add(row)
+        session.add(deadlock_row)
+        session.commit()
+        session.refresh(row)
+        session.refresh(deadlock_row)
+        capped_id, deadlock_id = row.id, deadlock_row.id
+
+    settled = O.reconcile_closed_trackers(
+        db,
+        "sacrifice",
+        cfg=load_app_config("sacrifice", factory_root),
+        root=factory_root,
+        query_issue_state=lambda **_k: "CLOSED",
+    )
+
+    assert [s[0] for s in settled] == ["capped"]
+    assert _get(db, capped_id).state == StoryState.CLOSED_BY_OPERATOR.value
+    # A deadlock park is abandoned-for-good, not awaiting anyone — untouched.
+    assert _get(db, deadlock_id).state == StoryState.BLOCKED_DEPENDENCY_UNMET.value
 
 
 def test_why_projects_the_deferral_instead_of_would_dispatch(

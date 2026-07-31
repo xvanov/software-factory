@@ -1185,8 +1185,7 @@ def inbox_cmd(
     from sqlmodel import Session, create_engine, select
 
     from factory.chain.handlers import _engine
-    from factory.chain.orchestrator import DEP_DEFER_CAP_REASON_PREFIX
-    from factory.chain.state_machine import StoryRecord, StoryState
+    from factory.chain.state_machine import StoryRecord
     from factory.directions.parser import list_direction_dirs, parse_direction_dir
     from factory.settings.loader import load_settings
     from factory.settings.modes import get_mode
@@ -1212,7 +1211,7 @@ def inbox_cmd(
     apps = [app_name] if app_name else _list_apps()
 
     # Stories with last_rejection_reason or in BLOCKED state -> needs human.
-    from factory.directions.tracker_issue import _RESOLVED_STORY_STATES
+    from factory.directions.tracker_issue import _story_is_resolved
 
     eng = create_engine(f"sqlite:///{db}", echo=False)
     needs_human_table = Table(title="Needs human action (stories)")
@@ -1236,19 +1235,13 @@ def inbox_cmd(
                 # genuinely-parked ones). Reuse the same resolved-states ALLOWLIST
                 # the tracker-issue closer uses, so "the tracker closed" and "the
                 # inbox is quiet" can never disagree.
-                # ...with ONE carve-out: a story parked by the dependency-deferral
-                # CAP. It lands in ``blocked_dependency_unmet`` (a resolved state,
-                # because the DEADLOCK park that state was built for really is
-                # abandoned-for-good), but the cap park is different in kind — its
-                # foundation is only HUMAN-blocked and may still be revived, and
-                # the dependent was abandoned solely because it had waited past
-                # the cap. That is precisely a decision awaiting a human, so it
-                # must be visible here; the marker prefix keeps deadlock parks
-                # (and every other resolved row) hidden exactly as before.
-                _dep_cap_parked = r.state == StoryState.BLOCKED_DEPENDENCY_UNMET.value and (
-                    r.last_rejection_reason or ""
-                ).startswith(DEP_DEFER_CAP_REASON_PREFIX)
-                if r.state in _RESOLVED_STORY_STATES and not _dep_cap_parked:
+                # The dependency-deferral CAP park is the one carve-out: it lands in
+                # ``blocked_dependency_unmet`` but is awaiting a human DECISION, not
+                # abandoned-for-good. ``_story_is_resolved`` (the tracker closer's
+                # own predicate) encodes that carve-out, so this table and the
+                # issue/tracker sweeps still cannot disagree — the reason the
+                # allowlist is shared in the first place.
+                if _story_is_resolved(r):
                     continue
                 if r.last_rejection_reason:
                     reason = r.last_rejection_reason
@@ -1855,21 +1848,52 @@ def why_cmd(
         from factory.chain.orchestrator import (
             _MAX_DEPENDENCY_DEFERRALS,
             _deps_all_stalled,
+            _deps_permanently_dead,
+            _deps_stalled_long_enough,
             _direction_deps_pending,
         )
 
         deps_pending = _direction_deps_pending(db, story)
         if deps_pending:
-            _stalled = _deps_all_stalled(db, deps_pending)
-            projection_line = (
-                f"next-tick projection: [bold yellow]would DEFER[/bold yellow] — "
+            _waiting_on = (
                 f"dependency ordering: waiting on story_ids={deps_pending[:10]} in "
-                f"direction {story.direction_id} "
-                f"({'human-blocked' if _stalled else 'still in progress'}; "
-                f"stalled deferrals {story.dependency_defer_count}/"
-                f"{_MAX_DEPENDENCY_DEFERRALS} before it parks in "
-                f"blocked_dependency_unmet and surfaces in `factory inbox`)"
+                f"direction {story.direction_id}"
             )
+            if _deps_permanently_dead(db, deps_pending):
+                # The pre-existing deadlock guard fires FIRST and parks immediately;
+                # quoting a deferral countdown here would be fiction.
+                projection_line = (
+                    f"next-tick projection: [bold red]would PARK[/bold red] "
+                    f"(dependency deadlock — every blocker is a definitive dead end) "
+                    f"— {_waiting_on}"
+                )
+            elif not _deps_all_stalled(db, deps_pending):
+                # A blocker can still move on its own: this defers indefinitely and
+                # the cap counter does not advance. Do not imply a deadline.
+                projection_line = (
+                    f"next-tick projection: [bold yellow]would DEFER[/bold yellow] — "
+                    f"{_waiting_on} (blockers still in progress; the deferral cap does "
+                    f"not count while any blocker is live)"
+                )
+            else:
+                _aged = _deps_stalled_long_enough(db, deps_pending)
+                _left = max(0, _MAX_DEPENDENCY_DEFERRALS - story.dependency_defer_count)
+                _park_when = (
+                    "parks on this tick"
+                    if _aged and _left == 0
+                    else (
+                        f"parks after {_left} more stalled tick(s)"
+                        if _aged
+                        else "holding until the blockers' stall window elapses"
+                    )
+                )
+                projection_line = (
+                    f"next-tick projection: [bold yellow]would DEFER[/bold yellow] — "
+                    f"{_waiting_on} (blockers human-blocked; stalled deferrals "
+                    f"{story.dependency_defer_count}/{_MAX_DEPENDENCY_DEFERRALS}; "
+                    f"{_park_when} → blocked_dependency_unmet, surfaced in "
+                    f"`factory inbox`)"
+                )
         elif decision.allowed:
             projection_line = (
                 f"next-tick projection: [bold green]would dispatch[/bold green] "
