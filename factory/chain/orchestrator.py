@@ -34,10 +34,12 @@ from factory.chain.auto_merge import MergeAction, auto_merge_tick
 from factory.chain.ci_health import CiHealthResult, main_ci_health_tick
 from factory.chain.event_log import log_story_event
 from factory.chain.state_machine import (
+    DEP_DEFER_CAP_REASON_PREFIX,
     EVENT_BUDGET_EXCEEDED,
     StoryRecord,
     StoryState,
     advance,
+    is_dependency_cap_parked,
 )
 from factory.chain.step_events import emit_chain_step
 from factory.directions.parser import Direction
@@ -664,7 +666,16 @@ _PENDING_HUMAN_STATES: frozenset[str] = frozenset(
 # playbook ``retry-mergeable-blocked-story`` really does revive it), so a
 # dependent behind one deferred every tick forever with nothing surfaced.
 # Deferring is right; deferring UNBOUNDEDLY is the bug.
-_STALLED_DEP_STATES: frozenset[str] = _DEAD_END_DEP_STATES | _PENDING_HUMAN_STATES
+_STALLED_DEP_STATES: frozenset[str] = (
+    _DEAD_END_DEP_STATES
+    | _PENDING_HUMAN_STATES
+    # A poisoned row quarantined by the operational reconciler stays parked until
+    # an operator repairs it — no tick moves it either, so a dependent behind one
+    # must be capped and surfaced rather than deferring forever. Deliberately NOT
+    # added to ``_DEAD_END_DEP_STATES``: the repair is routine, so the dependent
+    # should be revivable, not abandoned.
+    | {StoryState.QUARANTINED_INVALID_STATE.value}
+)
 
 # How many CONSECUTIVE ticks a dependent may be deferred while EVERY pending
 # dependency sits in ``_STALLED_DEP_STATES`` before the dependent is parked in
@@ -678,13 +689,20 @@ _STALLED_DEP_STATES: frozenset[str] = _DEAD_END_DEP_STATES | _PENDING_HUMAN_STAT
 # by this cap, however long that work takes.
 _MAX_DEPENDENCY_DEFERRALS = 3
 
-# Marker prefix written to ``StoryRecord.last_rejection_reason`` when the cap
-# above fires. It distinguishes a CAP park (blocker may yet be revived → the
-# operator must decide → shown in ``factory inbox``) from a DEADLOCK park
-# (blocker definitively dead → genuinely resolved-abandoned → hidden), even
-# though both land in ``BLOCKED_DEPENDENCY_UNMET``. ``factory inbox`` and
-# ``_revive_capped_dependents`` both key off it.
-DEP_DEFER_CAP_REASON_PREFIX = "dependency_deferral_cap_exhausted"
+# ...AND the blockers must have been stalled for at least this long. The tick
+# cadence is an implementation detail (30 s in ``drive_chain.sh``, 5 min on the
+# systemd timer), so a pure tick COUNT is not a human-response window: three
+# 30-second ticks would park a dependent 90 seconds after its foundation blocked.
+# The revival paths this cap defers to are all slower than that — the FMS
+# ``retry-mergeable-blocked-story`` playbook runs on a 30-minute cooldown
+# (``manager/recovery.py``) — so the cap must give them their shot first or the
+# park becomes the normal path instead of the last resort. 45 minutes clears that
+# cooldown with margin while still surfacing the wedge inside the hour.
+#
+# Measured against each blocker's ``updated_at``: any write to a blocker row (a
+# state change, a reconcile, a recovery) restarts the clock, which is exactly the
+# "something is still happening" signal we want to wait on.
+_MIN_DEP_STALL_SECONDS = 45 * 60
 
 
 def _deps_all_stalled(db: Path, dep_ids: list[int]) -> bool:
@@ -705,6 +723,68 @@ def _deps_all_stalled(db: Path, dep_ids: list[int]) -> bool:
     if len(rows) != len(set(dep_ids)):
         return False  # a dep row is missing → can't prove stalled → keep waiting
     return all(row.state in _STALLED_DEP_STATES for row in rows)
+
+
+def _deps_stalled_long_enough(
+    db: Path,
+    dep_ids: list[int],
+    *,
+    min_seconds: int = _MIN_DEP_STALL_SECONDS,
+    now: datetime | None = None,
+) -> bool:
+    """True iff EVERY pending dependency has been untouched for ``min_seconds``.
+
+    The age half of the cap (see ``_MIN_DEP_STALL_SECONDS``): it is not enough for
+    the blockers to be human-blocked *right now*, they must have been sitting
+    still long enough that the automatic revival paths have already had their
+    chance. Keyed on the most-recently-written blocker, so any activity on any
+    blocker keeps the dependent waiting.
+
+    Fail-safe in the direction of NOT capping: empty ids, a missing row, or an
+    unparseable/absent timestamp all return False.
+    """
+    if not dep_ids:
+        return False
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+    with Session(eng) as session:
+        rows = session.exec(
+            select(StoryRecord).where(StoryRecord.id.in_(dep_ids))  # type: ignore[union-attr]
+        ).all()
+    if len(rows) != len(set(dep_ids)):
+        return False
+    now_ts = (now or datetime.now(UTC)).timestamp()
+    for row in rows:
+        stamp = row.updated_at or row.created_at
+        if not stamp:
+            return False  # no clock to reason about → don't cap
+        try:
+            age = now_ts - datetime.fromisoformat(stamp).timestamp()
+        except (TypeError, ValueError):
+            return False  # unparseable → don't cap
+        if age < min_seconds:
+            return False
+    return True
+
+
+def _bump_dependency_defer_count(db: Path, story_id: int | None, value: int) -> None:
+    """Persist ``dependency_defer_count`` WITHOUT touching ``updated_at``.
+
+    Deliberately not ``persist_story``: that stamps ``updated_at`` on every write,
+    and a counter bumped on every tick would (a) make the deferred row look freshly
+    worked-on to ``manager/detectors/stalled_stories.py`` — the one detector that
+    would have alarmed on the original 2+ hour idle — and (b) pin that detector's
+    ``minutes_since_any_story_update`` (a MINIMUM over all rows) near zero, which
+    marks the whole factory as "draining" and suppresses the aged-backlog alarm for
+    every other story too. The deferral must age like the stall it is.
+    """
+    if story_id is None:
+        return
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+    with eng.begin() as conn:
+        conn.exec_driver_sql(
+            "UPDATE stories SET dependency_defer_count = ? WHERE id = ?",
+            (int(value), int(story_id)),
+        )
 
 
 def _revive_capped_dependents(db: Path, app: str, *, root: Path) -> list[tuple[str, str, str]]:
@@ -729,9 +809,15 @@ def _revive_capped_dependents(db: Path, app: str, *, root: Path) -> list[tuple[s
         capped.
       * The deferral counter is reset on revival, so the dependent gets a fresh
         (bounded) grace window if its blockers stall again.
+      * The dependent resumes at the state it was parked FROM (recorded in the
+        ``dependency_deferral_capped`` event), not at ``story_created``: a story
+        capped out of ``reviewer_done`` must not re-run SM + dev + review from
+        scratch, which would burn the spend again and discard a reviewer verdict
+        the operator may still want.
 
-    Pure DB rewrite, no LLM/git work, idempotent. Returns
-    ``(slug, from_state, to_state)`` tuples for the TickSummary.
+    Pure DB rewrite, no LLM/git work, idempotent. Ordered by id so a cascade of
+    dependents (each one's blocker being the previous one) unwinds in a single
+    pass. Returns ``(slug, from_state, to_state)`` tuples for the TickSummary.
     """
     from factory.chain.event_log import log_story_event
     from factory.chain.handlers import persist_story
@@ -740,19 +826,21 @@ def _revive_capped_dependents(db: Path, app: str, *, root: Path) -> list[tuple[s
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
         rows = session.exec(
-            select(StoryRecord).where(
+            select(StoryRecord)
+            .where(
                 StoryRecord.app == app,
                 StoryRecord.state == StoryState.BLOCKED_DEPENDENCY_UNMET.value,
             )
+            .order_by(StoryRecord.id)  # type: ignore[arg-type]
         ).all()
     for story in rows:
-        if not (story.last_rejection_reason or "").startswith(DEP_DEFER_CAP_REASON_PREFIX):
+        if not is_dependency_cap_parked(story.state, story.last_rejection_reason):
             continue
         pending = _direction_deps_pending(db, story)
         if _deps_all_stalled(db, pending) or not _deps_none_permanently_dead(db, pending):
             continue  # a blocker is still human-blocked (or dead) → stay parked
         from_state = story.state
-        story.state = StoryState.STORY_CREATED.value
+        story.state = _dep_cap_resume_state(story, root=root)
         story.error = None
         story.last_rejection_reason = None
         story.dependency_defer_count = 0
@@ -772,6 +860,38 @@ def _revive_capped_dependents(db: Path, app: str, *, root: Path) -> list[tuple[s
             slug_hint=story.slug,
         )
     return revived
+
+
+def _dep_cap_resume_state(story: StoryRecord, *, root: Path) -> str:
+    """The state a cap-parked ``story`` should resume at.
+
+    Reads the ``from_state`` recorded by the most recent
+    ``dependency_deferral_capped`` event and accepts it only if it is still a
+    DISPATCHABLE state (present in ``_DISPATCH``). Anything else — no event, an
+    unknown/renamed state, a state the chain no longer drives, or an unreadable
+    log — falls back to ``story_created``, which is always safe (the chain simply
+    rebuilds the story) if wasteful. No new schema: the event log already holds
+    the fact.
+    """
+    fallback = StoryState.STORY_CREATED.value
+    if story.id is None:
+        return fallback
+    try:
+        from factory.chain.event_log import read_story_events
+
+        events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+    except Exception:  # noqa: BLE001 - a bad log must never block a revival
+        return fallback
+    for ev in reversed(events):
+        if ev.get("event") != "dependency_deferral_capped":
+            continue
+        candidate = str(ev.get("from_state") or "")
+        try:
+            resume = StoryState(candidate)
+        except ValueError:
+            return fallback
+        return resume.value if resume in _DISPATCH else fallback
+    return fallback
 
 
 # Mapping from a stranded ``*_in_progress`` state back to its
@@ -1260,10 +1380,23 @@ def reconcile_closed_trackers(
     with Session(eng) as session:
         rows = session.exec(select(StoryRecord).where(StoryRecord.app == app)).all()
 
+    def _awaits_human(story: StoryRecord) -> bool:
+        """States this pass may settle: the four recoverable-pending-human blocks,
+        plus a dependency-deferral CAP park.
+
+        The cap park is here because it is routed into ``factory inbox`` on the
+        grounds that it "awaits a human decision" — so it needs the same exit the
+        other awaiting-a-human rows have. Without it the operator's documented
+        lever (close the tracker issue) does nothing for a cap-parked row and the
+        inbox entry can only be cleared by hand-editing the DB. A DEADLOCK park is
+        excluded, unchanged: it is abandoned-for-good, not awaiting anyone.
+        """
+        return story.state in _PENDING_HUMAN_STATES or is_dependency_cap_parked(
+            story.state, story.last_rejection_reason
+        )
+
     candidates = [
-        s
-        for s in rows
-        if s.state in _PENDING_HUMAN_STATES and s.github_issue_number and s.github_issue_number > 0
+        s for s in rows if _awaits_human(s) and s.github_issue_number and s.github_issue_number > 0
     ]
 
     settled: list[tuple[str, str, str]] = []
@@ -1279,7 +1412,11 @@ def reconcile_closed_trackers(
         # cleanup) may already have moved this row.
         live_state = _current_story_state(db, story.id)
         if live_state is not None:
-            if live_state not in _PENDING_HUMAN_STATES:
+            # Re-check against the SAME predicate the candidate list used, reading
+            # the marker from the live row (the cap park is state+marker, not state
+            # alone).
+            live_row = H.get_story(story.id, db) if story.id is not None else None
+            if not _awaits_human(live_row if live_row is not None else story):
                 continue
             story.state = live_state
 
@@ -1441,8 +1578,12 @@ def _revive_dependents_of_revived_blocker(*, blocker: StoryRecord, db: Path, roo
             if dep.id is None or dep.id <= (blocker.id or 0):
                 continue
             pending = _direction_deps_pending(db, dep)
-            if _deps_none_permanently_dead(db, pending):
-                dep.state = StoryState.STORY_CREATED.value
+            # Both revival paths must share ONE predicate. Requiring only "no dep
+            # is DEAD" un-parked a dependent while another blocker was still
+            # human-blocked: it re-deferred, hit the cap again, and its
+            # operator-visible marker was deleted and re-created in between.
+            if _deps_none_permanently_dead(db, pending) and not _deps_all_stalled(db, pending):
+                dep.state = _dep_cap_resume_state(dep, root=root)
                 dep.error = None
                 # A revived dependent starts a FRESH deferral window, and any
                 # cap-park marker it carried is now stale (it would otherwise keep
@@ -2168,6 +2309,24 @@ def tick(
     settings = load_settings(root)
     summary = TickSummary(app=app, dry_run=dry_run)
 
+    # Open a MIGRATING engine before anything reads the ``stories`` table. Every
+    # pass below this line except ``H.*`` uses a raw ``create_engine`` +
+    # ``select(StoryRecord)``, and SQLModel emits an explicit column list — so on a
+    # live DB that predates a new StoryRecord column, the reconcile passes would
+    # each raise ``no such column`` into ``summary.errors`` (and ``factory tick``
+    # exits 1 on any error) until something happened to call ``H._engine`` first.
+    # ``_engine`` runs ``_ensure_story_columns`` and is idempotent.
+    try:
+        H._engine(db)
+    except Exception as exc:  # noqa: BLE001 - never fail the tick on a migration probe
+        summary.errors.append((app, f"schema migration probe failed (non-fatal): {exc!r}"))
+
+    # Factory mode, read once per tick. The dependency-deferral cap consults it:
+    # the dependency gate runs BEFORE ``can_dispatch`` (which is what implements
+    # the modes), so without this the cap would keep abandoning dependents while
+    # the operator had the factory paused to investigate their blocker.
+    _tick_mode = get_mode(root, db_path=db)
+
     # ---- Signal: tick_start ------------------------------------------------
     try:
         from factory.manager.signals import write_tick_event
@@ -2571,38 +2730,98 @@ def tick(
                     # detect-without-remediate.
                     #
                     # So: count consecutive STALLED deferrals (all blockers
-                    # human-blocked) and, at the cap, park the dependent in the
-                    # existing BLOCKED_DEPENDENCY_UNMET sink with a marker reason
-                    # that puts it in ``factory inbox``. Waiting on a LIVE blocker
-                    # is normal and resets the counter, so ordinary
-                    # foundation-waiting is never capped however long it takes.
+                    # human-blocked) and, once the count AND the stall age are both
+                    # past their bounds, park the dependent in the existing
+                    # BLOCKED_DEPENDENCY_UNMET sink with a marker reason that puts it
+                    # in ``factory inbox``. Waiting on a LIVE blocker is normal and
+                    # resets the counter, so ordinary foundation-waiting is never
+                    # capped however long it takes.
+                    #
+                    # EVERY write below is best-effort: this path used to be
+                    # read-only, and a locked-DB write must not abort a whole tick
+                    # (the queue behind this story would go undispatched, and a
+                    # non-zero exit crash-loops the systemd unit). On any failure we
+                    # fall through to the plain deferral, exactly as before.
                     _deps_stalled = _deps_all_stalled(db, _deps_pending)
-                    if _deps_stalled:
-                        story.dependency_defer_count += 1
-                        H.persist_story(story, db)
-                    elif story.dependency_defer_count or (
-                        story.last_rejection_reason or ""
-                    ).startswith(DEP_DEFER_CAP_REASON_PREFIX):
-                        # A blocker is live again: fresh window, and drop any stale
-                        # cap marker so the operator's inbox doesn't keep showing a
-                        # park that has already been undone.
-                        story.dependency_defer_count = 0
-                        if (story.last_rejection_reason or "").startswith(
-                            DEP_DEFER_CAP_REASON_PREFIX
+                    _cap_park = False
+                    try:
+                        if _deps_stalled:
+                            # Clamp at the cap: once the ceiling is reached the count
+                            # carries no more information, and for a story the cap
+                            # deliberately never parks (DEPLOY_PENDING below) an
+                            # unclamped counter would write on every tick forever.
+                            if story.dependency_defer_count < _MAX_DEPENDENCY_DEFERRALS:
+                                story.dependency_defer_count += 1
+                                # NOT persist_story: see _bump_dependency_defer_count
+                                # (stamping updated_at here would hide this very
+                                # stall from the stalled-story detector).
+                                _bump_dependency_defer_count(
+                                    db, story.id, story.dependency_defer_count
+                                )
+                        elif story.dependency_defer_count or is_dependency_cap_parked(
+                            StoryState.BLOCKED_DEPENDENCY_UNMET.value,
+                            story.last_rejection_reason,
                         ):
-                            story.last_rejection_reason = None
-                        H.persist_story(story, db)
-                    if _deps_stalled and story.dependency_defer_count >= _MAX_DEPENDENCY_DEFERRALS:
-                        _cap_from = story.state
-                        _cap_reason = (
-                            f"{DEP_DEFER_CAP_REASON_PREFIX}: deferred "
-                            f"{story.dependency_defer_count}x behind human-blocked "
-                            f"story_ids={_deps_pending[:10]} in direction "
-                            f"{story.direction_id}"
+                            # A blocker is live again: fresh window, and drop any stale
+                            # cap marker so the operator's inbox doesn't keep showing a
+                            # park that has already been undone.
+                            story.dependency_defer_count = 0
+                            if (story.last_rejection_reason or "").startswith(
+                                DEP_DEFER_CAP_REASON_PREFIX
+                            ):
+                                story.last_rejection_reason = None
+                            H.persist_story(story, db)
+
+                        _cap_park = (
+                            _deps_stalled
+                            and story.dependency_defer_count >= _MAX_DEPENDENCY_DEFERRALS
+                            # NEVER cap-park a story whose code is already MERGED. The
+                            # ordering gate exists to stop code being CONSTRUCTED before
+                            # its foundations are on main; a story at DEPLOY_PENDING is
+                            # past that — abandoning it would strand merged work
+                            # undeployed AND (since the sink counts as resolved) let its
+                            # tracker close over it. Such a row keeps the pre-existing
+                            # defer behaviour, now at least visible in the tick summary
+                            # and in ``factory why``.
+                            and story.state != StoryState.DEPLOY_PENDING.value
+                            # A dry run must not assert a transition (nor write the
+                            # event that claims one) — it previews, it does not park.
+                            and not dry_run
+                            # An operator who PAUSED the factory is usually
+                            # investigating exactly this kind of blocker. Abandoning
+                            # its dependents while paused would make "pause to look at
+                            # it" the cause of the abandonment.
+                            and _tick_mode not in {"paused", "drain-reviews"}
+                            # ...and the blockers must have been sitting still long
+                            # enough that the automatic revival paths (FMS recovery on
+                            # its 30-minute cooldown, reconcile) have had their shot.
+                            and _deps_stalled_long_enough(db, _deps_pending)
                         )
-                        story.state = StoryState.BLOCKED_DEPENDENCY_UNMET.value
-                        story.last_rejection_reason = _cap_reason
-                        H.persist_story(story, db)
+                        if _cap_park:
+                            _cap_from = story.state
+                            _cap_reason = (
+                                f"{DEP_DEFER_CAP_REASON_PREFIX}: deferred "
+                                f"{story.dependency_defer_count}x behind human-blocked "
+                                f"story_ids={_deps_pending[:10]} in direction "
+                                f"{story.direction_id}"
+                            )
+                            story.state = StoryState.BLOCKED_DEPENDENCY_UNMET.value
+                            story.last_rejection_reason = _cap_reason
+                            H.persist_story(story, db)
+                    except Exception as _cap_exc:  # noqa: BLE001
+                        _cap_park = False
+                        log_story_event(
+                            story.id,
+                            "dependency_deferral_cap_error",
+                            {
+                                "direction": story.direction_id,
+                                "error": repr(_cap_exc)[:300],
+                                "note": "cap bookkeeping failed; story stays deferred",
+                            },
+                            software_factory_root=root,
+                            slug_hint=story.slug,
+                        )
+                    if _cap_park:
                         log_story_event(
                             story.id,
                             "dependency_deferral_capped",
@@ -2613,6 +2832,7 @@ def tick(
                                 "to_state": story.state,
                                 "deferrals": story.dependency_defer_count,
                                 "cap": _MAX_DEPENDENCY_DEFERRALS,
+                                "min_stall_seconds": _MIN_DEP_STALL_SECONDS,
                                 "reason": _cap_reason,
                             },
                             software_factory_root=root,
@@ -2646,7 +2866,15 @@ def tick(
                             f"waiting_on={_deps_pending[:10]} "
                             f"({'human-blocked' if _deps_stalled else 'in progress'}, "
                             f"deferrals {story.dependency_defer_count}/"
-                            f"{_MAX_DEPENDENCY_DEFERRALS})",
+                            f"{_MAX_DEPENDENCY_DEFERRALS}"
+                            + (
+                                f", holding for the {_MIN_DEP_STALL_SECONDS // 60}m "
+                                "stall window"
+                                if _deps_stalled
+                                and story.dependency_defer_count >= _MAX_DEPENDENCY_DEFERRALS
+                                else ""
+                            )
+                            + ")",
                         )
                     )
                     break

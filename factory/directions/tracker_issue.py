@@ -520,6 +520,28 @@ _RESOLVED_STORY_STATES = frozenset(
 )
 
 
+def _story_is_resolved(row: Any) -> bool:
+    """Is this story row settled, for issue/tracker-closing purposes?
+
+    ``state in _RESOLVED_STORY_STATES`` with ONE carve-out: a story parked by the
+    dependency-deferral CAP. It lands in ``blocked_dependency_unmet``, but unlike
+    the DEADLOCK park that sink was built for, its blockers are only HUMAN-blocked
+    and may still be revived — the dependent is awaiting an operator DECISION, and
+    is listed as such in ``factory inbox``. Treating it as resolved would (a) close
+    its story issue with "🛑 Terminally abandoned", (b) let ``_direction_is_complete``
+    declare the direction finished over never-built work, and (c) put the inbox and
+    GitHub into permanent disagreement — the exact invariant the inbox's
+    resolved-states reuse exists to preserve.
+    """
+    from factory.chain.state_machine import is_dependency_cap_parked
+
+    if is_dependency_cap_parked(
+        getattr(row, "state", None), getattr(row, "last_rejection_reason", None)
+    ):
+        return False
+    return (getattr(row, "state", "") or "") in _RESOLVED_STORY_STATES
+
+
 def _direction_is_complete(rows: list[Any]) -> bool:
     """True when EVERY child story is in a resolved state — nothing is left to do
     on this direction, whether it SHIPPED or was fully ABANDONED.
@@ -547,7 +569,7 @@ def _direction_is_complete(rows: list[Any]) -> bool:
     """
     if not rows:
         return False
-    return all((r.state or "") in _RESOLVED_STORY_STATES for r in rows)
+    return all(_story_is_resolved(r) for r in rows)
 
 
 def maybe_close_tracker_issue(
@@ -781,7 +803,7 @@ def reconcile_completed_issues(
         # issue is handled or reported twice.
         for r in rows:
             num = getattr(r, "github_issue_number", None)
-            if not num or (r.state or "") in _RESOLVED_STORY_STATES:
+            if not num or _story_is_resolved(r):
                 continue
             comment = (
                 f"🚪 Parent direction closed (status `{status}`) — closing this story issue "
@@ -808,7 +830,7 @@ def reconcile_completed_issues(
     }
     for r in story_rows:
         num = getattr(r, "github_issue_number", None)
-        if not num or (r.state or "") not in _RESOLVED_STORY_STATES:
+        if not num or not _story_is_resolved(r):
             continue
         if r.state == StoryState.DEPLOYED.value:
             comment = "✅ Deployed — closing automatically (reconcile: story reached DEPLOYED)."
