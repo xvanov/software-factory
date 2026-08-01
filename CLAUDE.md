@@ -69,7 +69,7 @@ Always `uv`, always the `dev` extras, always `uv run` (no manual venv activate):
 
 ```bash
 uv sync --all-extras
-uv run pytest -q          # ~1950 tests (the README's badge is stale)
+uv run pytest -q          # 2182 tests, ~5 min
 uv run ruff check . && uv run mypy factory
 ```
 
@@ -137,6 +137,11 @@ that have burned us are in Guardrails):
 8. **Restart and re-verify**: `factory on`, then check `systemctl --user status`
    Result + `errors=` across two runs. "Services up" ≠ "sustains".
 9. **Record the class** as a memory file if it is new.
+10. **Refresh the touched subsystem's context doc.** Manual loop-3 PRs (this
+    playbook) bypass the chain's `tech_writer` step, which is the only thing
+    that keeps `apps/factory/context/modules/*.md` current — that's why they
+    went stale for 2+ months despite ~180 merges. If your fix materially
+    changed a documented subsystem, hand-update its module doc in the same PR.
 
 ## Hard guardrails
 
@@ -177,8 +182,7 @@ that have burned us are in Guardrails):
 |------|------|
 | product overview, benchmarks | `README.md` |
 | every diagnosed failure + its fix | `…/memory/MEMORY.md` → the linked files |
-| detailed hardening history + open issues | `HANDOFF.md`, `HANDOFF-selfsufficiency.md` |
-| SOTA gap analysis / roadmap | `AUDIT-2026-07-24-sota-harness.md` |
+| SOTA research reference (external literature, not internal status) | `SOTA-RESEARCH-2026-07.md` |
 | generated subsystem deep-dives | `apps/factory/context/modules/*.md` |
 | how to write a direction | `.claude/skills/new-direction/` (skill), `apps/<app>/directions/` |
 | factory-vs-Claude-Code benchmark | `bench/README.md` |

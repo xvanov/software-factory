@@ -5,11 +5,18 @@
 ![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
 ![Tests](https://github.com/xvanov/software-factory/actions/workflows/test.yml/badge.svg)
 ![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/xvanov/software-factory/python-coverage-comment-action-data/endpoint.json)
-![Test count](https://img.shields.io/badge/tests-1086%20passing-brightgreen)
+![Test count](https://img.shields.io/badge/tests-2182%20passing-brightgreen)
 ![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)
 ![Typed](https://img.shields.io/badge/types-mypy-blue)
 
 The thesis: **harness quality beats model size.** A well-instrumented pipeline of small, verifiable steps — each gated by real tests and a live runtime smoke check — ships production code on models ~10× cheaper than frontier subscriptions. In a head-to-head benchmark against one-shot Claude Code on the same backlog, the factory passed the merge gates on **7/7 tasks at $0.65/task** vs 5/7 at $8.19 ([full campaign report](bench/CAMPAIGN-2026-07-17.md)).
+
+> **An LLM agent working in this repo?** Read [`CLAUDE.md`](CLAUDE.md) first (or
+> [`AGENTS.md`](AGENTS.md) if you're on a non-Claude tool) — it is the short,
+> maintained orientation doc: the three loops, the 60-second health check, where
+> truth lives, the operator command surface, and the hard guardrails. This
+> README is the human-facing pitch; the deep per-subsystem docs live at
+> `apps/factory/context/modules/*.md`.
 
 ---
 
@@ -43,13 +50,13 @@ A four-tier management pipeline (FMS) watches the factory's own telemetry:
 | L3 Diagnostician | root-cause + unified-diff proposal | on escalation |
 | L4 Apply | classify safe/forbidden, branch, test, PR | on proposal |
 
-Blocked stories auto-recover (bounded), stale worktrees get pruned, and a halted factory refuses to burn spend until an operator runs `factory resume`.
+Blocked stories auto-recover (bounded), stale worktrees get pruned, and a halted factory refuses to burn spend until an operator runs `factory resume`. Every factory self-edit is validated on a cloned staging copy — full suite + import/CLI smoke — before it can touch the live tree; `factory/manager/**` and `bench/**` stay forbidden to self-edit (operator PR only).
 
 ## Quickstart
 
 ```bash
 uv sync --all-extras          # dev extras included — bare `uv sync` omits pytest
-uv run pytest -q              # 1000+ tests, ~30s
+uv run pytest -q              # 2182 tests, ~5 min (not the ~30s of the early repo)
 uv run factory --help
 ```
 

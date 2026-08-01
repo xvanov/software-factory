@@ -144,7 +144,7 @@ _FORBIDDEN_PATH_PATTERNS = (
     # factory run", not "is the bench still honest".
     re.compile(r"^bench/.+$"),  # bench/** (the grader)
     # The tracer and the verifiers. Weng's rule (cited in
-    # AUDIT-2026-07-24-sota-harness.md): a self-improving agent must not be able
+    # SOTA-RESEARCH-2026-07.md): a self-improving agent must not be able
     # to edit the runs directory, the tracer, the verifier, or the LLM config
     # that judge it. A loop that can weaken its own integrity check is
     # unfalsifiable in exactly the way an editable grader is.
