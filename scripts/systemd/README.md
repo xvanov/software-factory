@@ -1,7 +1,7 @@
 # Factory self-deploy units (G4)
 
 Automates the surgical sync of the running factory tree to `origin/main`
-so merged loop-1 self-improvements reach the live ticks/manager without a
+so merged loop-2 self-improvements reach the live ticks/manager without a
 human running `git checkout origin/main -- factory/...` by hand.
 
 Install (user services, same as the tick/manager units):

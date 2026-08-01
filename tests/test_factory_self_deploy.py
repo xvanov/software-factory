@@ -1,6 +1,6 @@
 """``scripts/deploy-factory-from-main.sh`` — factory self-deploy (G4).
 
-Merged loop-1 self-improvements must reach the RUNNING factory tree, but the
+Merged loop-2 self-improvements must reach the RUNNING factory tree, but the
 live tree is a long-lived deploy branch with local-only commits + uncommitted
 runtime state, so a ff/reset is unsafe. The script instead does a surgical
 per-file sync of only the changed factory source, NEVER touching
