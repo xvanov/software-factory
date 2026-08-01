@@ -308,9 +308,13 @@ def test_route_returns_azure_model_under_default_provider(
     ):
         model_id = model_router.route(persona)
         assert model_id.startswith("azure/"), f"{persona} routed to {model_id!r}"
-    for persona in ("reviewer", "security"):
-        model_id = model_router.route(persona)
-        assert model_id == "azure/gpt-5.3-codex", f"{persona} routed to {model_id!r}"
+    # security stays on the code specialist. The reviewer moved to gpt-5.4 on
+    # 2026-08-01: dev.hard is gpt-5.3-codex, so a gpt-5.3-codex reviewer would
+    # be grading its own model on exactly the stories that escalated to the
+    # hard tier. Enforced by model_router.check_review_independence.
+    assert model_router.route("security") == "azure/gpt-5.3-codex"
+    assert model_router.route("reviewer") == "azure/gpt-5.4"
+    assert model_router.route("reviewer") != model_router.route("dev", "hard")
 
 
 def test_route_dev_uses_deepseek_v4_pro(monkeypatch: pytest.MonkeyPatch) -> None:

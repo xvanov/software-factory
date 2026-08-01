@@ -43,7 +43,9 @@ routes:
     # Hard tier: different family + code-specialist tier (see azure_routes).
     hard: azure/gpt-5.3-codex
   test_implementer: deepseek/deepseek-coder
-  reviewer: azure/gpt-5.3-codex
+  # Same reviewer-independence constraint as azure_routes: dev.hard above is
+  # gpt-5.3-codex, so the reviewer must not be. See the azure_routes comment.
+  reviewer: azure/gpt-5.4
   # WS1.2 independent acceptance oracle. Deliberately a DIFFERENT model family
   # than dev (deepseek) so the test author and the implementer never share a
   # model — reinforces independence. gpt-5.4 is JSON-reliable (schema mode).
@@ -110,9 +112,16 @@ azure_routes:
   # the code specialist.
   manager_diagnostician: azure/gpt-5.3-codex
 
-  # Code-judgment work → gpt-5.3-codex, the ORIGINAL intent, now reachable.
-  # reviewer ≠ dev holds: dev/test_implementer run on deepseek-v4-pro.
-  reviewer: azure/gpt-5.3-codex
+  # Reviewer independence must hold at BOTH dev tiers, so the reviewer cannot
+  # be gpt-5.3-codex: dev.hard is gpt-5.3-codex, and the hard tier is exactly
+  # where a story lands when it is difficult — the moment independent review
+  # matters most. Operator decision 2026-08-01: move the reviewer to gpt-5.4
+  # rather than move dev.hard, which would blunt the content-filter escape
+  # hatch that tier exists for. This is also what the reviewer historically ran
+  # on: 701 of 936 all-time reviewer runs were gpt-5.4 vs 235 on gpt-5.3-codex,
+  # at near-identical cost per call (~$0.029 vs ~$0.021).
+  # Enforced at router load by ``model_router.check_review_independence``.
+  reviewer: azure/gpt-5.4
   security: azure/gpt-5.3-codex
 
   # Heavy implementation → deepseek-v4-pro

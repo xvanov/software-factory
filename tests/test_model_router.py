@@ -29,7 +29,7 @@ def _force_direct_provider(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_static_persona_returns_string() -> None:
     assert route("pm") == "deepseek/deepseek-chat"
-    assert route("reviewer") == "azure/gpt-5.3-codex"
+    assert route("reviewer") == "azure/gpt-5.4"
 
 
 def test_dev_difficulty_branches() -> None:
@@ -87,7 +87,9 @@ _DEGRADATION_ROUTES = (
     "  reviewer: openrouter/some-vendor/some-model\n"
     "  dev:\n"
     "    standard: azure/deepseek-v4-pro\n"
-    "    hard: openrouter/some-vendor/some-model\n"
+    # Distinct from reviewer above: same key-less provider, so degradation
+    # behaves identically, but reviewer independence is preserved.
+    "    hard: openrouter/some-vendor/dev-model\n"
     "routes:\n"
     "  reviewer: openrouter/some-vendor/some-model\n"
     "defaults:\n"
@@ -125,7 +127,7 @@ class TestKeyAwareDegradation:
         monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
         monkeypatch.setenv("AZURE_API_KEY", "test-key")
         assert route("reviewer", routes_path=routes) == "openrouter/some-vendor/some-model"
-        assert route("dev", "hard", routes_path=routes) == "openrouter/some-vendor/some-model"
+        assert route("dev", "hard", routes_path=routes) == "openrouter/some-vendor/dev-model"
 
     def test_keeps_route_when_fallback_key_also_missing(
         self, monkeypatch: pytest.MonkeyPatch, routes: Path
@@ -159,7 +161,7 @@ class TestKeyAwareDegradation:
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         assert route("manager_watcher") == "azure/deepseek-v4-pro"
         assert route("manager_diagnostician") == "azure/gpt-5.3-codex"
-        assert route("reviewer") == "azure/gpt-5.3-codex"
+        assert route("reviewer") == "azure/gpt-5.4"
         assert route("security") == "azure/gpt-5.3-codex"
         assert route("dev", "hard") == "azure/gpt-5.3-codex"
         assert route("dev", "standard") == "azure/deepseek-v4-pro"

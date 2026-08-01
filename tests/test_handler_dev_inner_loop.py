@@ -81,13 +81,20 @@ def _story(temp_root: Path, *, dev_retries: int = 0) -> StoryRecord:
     )
 
 
-def _red() -> RunResult:
+def _red(marker: str = "expected 1 got 2") -> RunResult:
+    """A red run. ``marker`` varies the failure tail, and therefore the
+    normalized failure SIGNATURE.
+
+    Tests about the inner convergence loop must pass DISTINCT markers: two
+    consecutive identical signatures trip ``_MAX_DEV_SAME_SIGNATURE`` (2) and
+    escalate the story, which would pre-empt the behaviour under test.
+    """
     return RunResult(
         success=False,
         files_changed=["src/x.py"],
         test_run_passed=False,
         error="tests not green after run",
-        summary="AssertionError: expected 1 got 2",
+        summary=f"AssertionError: {marker}",
         cost_usd=0.01,
         tokens_out=100,
     )
@@ -124,23 +131,32 @@ def _script_sandbox(
     return calls
 
 
-def test_red_red_green_converges_in_one_invocation(
+def test_red_then_green_converges_in_one_invocation(
     temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The inner loop retries a red attempt and reaches green without waiting
+    for the next tick.
+
+    Was red->red->green. At _MAX_DEV_RETRIES=3 (lowered from 6 on 2026-08-01)
+    the retry-headroom guard stops the inner loop once ``dev_retries + 1 >=``
+    the cap, so the loop now gets at most TWO sandbox attempts per invocation
+    and a third could never run. That is a real reduction in inner-loop power,
+    not a test artefact.
+    """
     _enable_convergence(temp_root)
     story = _story(temp_root)
-    calls = _script_sandbox(monkeypatch, [_red(), _red(), _green()])
+    calls = _script_sandbox(monkeypatch, [_red("first"), _green()])
 
     result = handle_dev(story, app_config, temp_root, dry_run=False,
                         db_path=temp_root / "state" / "factory.db")
 
-    assert calls[0] == 3
-    assert story.dev_retries == 2
+    assert calls[0] == 2
+    assert story.dev_retries == 1
     assert StoryState(story.state) is StoryState.TESTS_GREEN
     assert result.payload["test_run_passed"] is True
     # Attempt memory carried forward across inner attempts.
     attempts = json.loads(story.dev_attempts_json)
-    assert [a["test_run_passed"] for a in attempts] == [False, False, True]
+    assert [a["test_run_passed"] for a in attempts] == [False, True]
 
 
 def test_disabled_config_means_single_attempt(
@@ -163,7 +179,10 @@ def test_attempts_cap_stops_loop_with_event(
 ) -> None:
     _enable_convergence(temp_root, max_inner_attempts=2)
     story = _story(temp_root)
-    calls = _script_sandbox(monkeypatch, [_red()])
+    # Distinct signatures: this test is about the inner ATTEMPTS cap, not the
+    # same-signature stall, which at _MAX_DEV_SAME_SIGNATURE=2 would otherwise
+    # fire first and block the story.
+    calls = _script_sandbox(monkeypatch, [_red("one"), _red("two")])
 
     handle_dev(story, app_config, temp_root, dry_run=False,
                db_path=temp_root / "state" / "factory.db")
@@ -179,17 +198,17 @@ def test_attempts_cap_stops_loop_with_event(
 def test_retry_headroom_leaves_last_attempt_to_tick_path(
     temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # dev_retries=4, cap 6: one attempt -> retries 5; 5+1 >= 6 stops the loop
+    # dev_retries=1, cap 3: one attempt -> retries 2; 2+1 >= 3 stops the loop
     # so exhaustion bookkeeping never runs inside a loop iteration.
     _enable_convergence(temp_root)
-    story = _story(temp_root, dev_retries=4)
+    story = _story(temp_root, dev_retries=1)
     calls = _script_sandbox(monkeypatch, [_red()])
 
     handle_dev(story, app_config, temp_root, dry_run=False,
                db_path=temp_root / "state" / "factory.db")
 
     assert calls[0] == 1
-    assert story.dev_retries == 5
+    assert story.dev_retries == 2
     assert StoryState(story.state) is StoryState.DEV_RETRY
     events = read_story_events(story.id, software_factory_root=temp_root, slug_hint=story.slug)
     stopped = [e for e in events if e.get("event") == "dev_inner_loop_stopped"]

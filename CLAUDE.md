@@ -158,8 +158,16 @@ that have burned us are in Guardrails):
 - **Never `git add -A`** here (runtime churn). Deploy surgically.
 - `factory/manager/**` and `bench/**` are **forbidden to self-edit** — operator
   PR only. Every self-edit auto-merge surface stays staging-gated.
-- **Nothing loops more than ~3 times** (review cycles, retries, recovery).
-  If you add a loop, cap it.
+- **Nothing loops more than 3 times** (review cycles, retries, recovery).
+  If you add a loop, cap it. As of 2026-08-01 the code honours this:
+  `_MAX_DEV_RETRIES = 3`, `_MAX_REVIEW_CYCLES = 3`, `_MAX_CI_FIX_CYCLES = 3`.
+  The inner early-escalation guards sit one below, at 2
+  (`_MAX_DEV_SAME_SIGNATURE`, `_MAX_REVIEW_STUCK`), so they still fire *before*
+  the hard cap — keep that gap if you retune either number.
+- **Reviewer independence**: `reviewer` must not share a model with any `dev`
+  tier in `factory/routes.yaml`. Enforced at router load
+  (`model_router.check_review_independence`); it refuses to resolve any route
+  under a colliding config. Override with `FACTORY_ALLOW_REVIEW_COLLISION=1`.
 - **Fail SAFE**: a broken detector must block, not wave things through.
 - **Fixes to shared control flow do not compose for free.** Touching
   merge/reconcile/dispatch means re-verifying everything keyed off it.

@@ -263,14 +263,14 @@ def test_r2_identical_signature_escalates_before_full_budget(
     _patch_sandbox(monkeypatch, [same])
 
     db = _db(temp_root)
-    # Two ticks: still retrying, still has budget.
-    for expected in (1, 2):
+    # Ticks below the same-signature cap: still retrying, still has budget.
+    for expected in range(1, _MAX_DEV_SAME_SIGNATURE):
         result = handle_dev(story, app_config, temp_root, dry_run=False, db_path=db)
         assert result.next_state is StoryState.DEV_RETRY
         assert story.dev_retries == expected
 
-    # Third identical failure -> same-signature stall -> BLOCKED, well under
-    # the full retry budget.
+    # The _MAX_DEV_SAME_SIGNATURE'th identical failure -> same-signature stall
+    # -> BLOCKED, still under the full retry budget.
     final = handle_dev(story, app_config, temp_root, dry_run=False, db_path=db)
     assert final.next_state is StoryState.BLOCKED_TESTS_NEED_CLARIFICATION
     assert story.dev_retries == _MAX_DEV_SAME_SIGNATURE
@@ -297,8 +297,10 @@ def test_r2_changing_signature_keeps_retrying(
     monkeypatch.setattr(handlers_module, "route", lambda *a, **kw: "azure/gpt-5.4")
 
     db = _db(temp_root)
-    # Well past the same-signature cap: still retrying because each failure differs.
-    for expected in range(1, _MAX_DEV_SAME_SIGNATURE + 2):
+    # Past the same-signature cap: still retrying because each failure differs.
+    # Bounded by the retry budget itself — the last retry blocks for exhaustion,
+    # which is a different reason and not what this test is about.
+    for expected in range(1, _MAX_DEV_RETRIES):
         result = handle_dev(story, app_config, temp_root, dry_run=False, db_path=db)
         assert result.next_state is StoryState.DEV_RETRY, f"attempt {expected}"
         assert story.dev_retries == expected

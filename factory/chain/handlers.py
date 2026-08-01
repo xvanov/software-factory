@@ -1230,10 +1230,18 @@ _MAX_DEV_SANDBOX_INFRA_RETRIES = 3
 
 # Dev retry budget. A red dev run (tests not green) consumes one retry; at the
 # cap the story blocks with an explicit ``factory_needs_redesign`` event so the
-# operator sees the signal. 6 (operator-approved 2026-05-29): many stories land
-# 1-N tests short and the extra informed attempts (dev receives prior-attempt
-# history + reviewer findings) materially improve convergence on harder stories.
-_MAX_DEV_RETRIES = 6
+# operator sees the signal.
+#
+# 3 (operator decision 2026-08-01), lowered from 6. The 6 was itself
+# operator-approved on 2026-05-29 on the theory that informed extra attempts
+# (dev receives prior-attempt history + reviewer findings) improve convergence
+# on harder stories, but it contradicted the standing "nothing loops more than
+# ~3 times" guardrail in CLAUDE.md, and only ``_MAX_CI_FIX_CYCLES`` honoured
+# that. Four stories in the 14 days to 2026-08-01 reached 6 retries; those are
+# now cut off at 3 and block for a human instead of burning three more
+# attempts. Whether attempts 4-6 were producing PASSING work is unmeasured —
+# PLAN.md Phase 1.3's gate-precision number is what would settle it.
+_MAX_DEV_RETRIES = 3
 
 # Same-failure-signature fast-escalation cap. When consecutive dev runs fail
 # with the IDENTICAL normalized failure signature (the same assertions/errors,
@@ -1243,7 +1251,12 @@ _MAX_DEV_RETRIES = 6
 # signal, block after this many identical failures. 3 per the "nothing loops
 # unproductively >3" operator rule. A CHANGING signature means the model IS
 # making progress and keeps its full retry budget.
-_MAX_DEV_SAME_SIGNATURE = 3
+# 2, lowered from 3 when _MAX_DEV_RETRIES dropped 6 -> 3 (2026-08-01). This
+# guard exists to escalate EARLY — before the full retry budget is spent — so
+# it must stay strictly below _MAX_DEV_RETRIES. At 3 == 3 it would have had no
+# headroom left and the early-escalation layer would have become unreachable,
+# silently collapsing two deliberately layered guards into one.
+_MAX_DEV_SAME_SIGNATURE = 2
 
 
 def _consecutive_same_dev_signature(prior_attempts: list[Any], current_sig: str) -> int:
@@ -1276,8 +1289,20 @@ def _consecutive_same_dev_signature(prior_attempts: list[Any], current_sig: str)
 # the reviewer returns the SAME findings _MAX_REVIEW_STUCK times in a row
 # (genuine churn — "nothing loops unproductively >3"), with a hard absolute
 # backstop (_MAX_REVIEW_CYCLES) so a slowly-mutating loop can't run forever.
-_MAX_REVIEW_STUCK = 3
-_MAX_REVIEW_CYCLES = 6
+#
+# Both lowered 2026-08-01 (operator decision) to honour the CLAUDE.md "nothing
+# loops more than ~3 times" guardrail, which previously only
+# ``_MAX_CI_FIX_CYCLES`` respected. The RATIO is preserved deliberately:
+# _MAX_REVIEW_STUCK must stay strictly below _MAX_REVIEW_CYCLES or the
+# stability guard becomes unreachable and "findings that CHANGE are progress"
+# — the whole reason this is judged by stability rather than raw count —
+# silently stops being true. 3/3 would have blocked a story making genuine
+# progress at the same point as one in pure churn.
+#
+# Review convergence is healthy at this cap: in the 14 days to 2026-08-01,
+# 101 of 122 stories used zero cycles, 18 used one, and the maximum was 5.
+_MAX_REVIEW_STUCK = 2
+_MAX_REVIEW_CYCLES = 3
 
 
 def _is_premodel_infra_failure(run_res: Any) -> bool:

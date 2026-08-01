@@ -275,7 +275,11 @@ def test_rotating_criterion_findings_do_not_escalate(
     # Same file, DIFFERENT rubric axis each cycle → progress, never stuck.
     criteria = ["style", "correctness", "security", "contract"]
     last = None
-    for i in range(_MAX_REVIEW_STUCK + 1):
+    # Bounded by _MAX_REVIEW_STUCK, not STUCK+1: at _MAX_REVIEW_CYCLES=3 the
+    # absolute backstop now sits one cycle above the stability threshold, so
+    # an extra cycle would block for EXHAUSTION and prove nothing about
+    # stability. Identical findings would already have blocked by here.
+    for i in range(_MAX_REVIEW_STUCK):
         s.state = StoryState.TESTS_GREEN.value
         persist_story(s, db)
         fixture = {
