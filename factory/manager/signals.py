@@ -86,6 +86,8 @@ def write_event(
     payload: dict[str, Any],
     *,
     software_factory_root: Path | None = None,
+    rotate_max_bytes: int | None = None,
+    rotate_keep: int | None = None,
 ) -> None:
     """Append one NDJSON line to ``state/events/<stream>.ndjson``.
 
@@ -103,6 +105,12 @@ def write_event(
         ``ts`` and ``schema_version`` are injected if absent.
     software_factory_root:
         Overrides the stream directory location (useful for tests).
+    rotate_max_bytes, rotate_keep:
+        Per-stream rotation overrides. Default to the module defaults in
+        ``factory.events.rotation`` (25 MB, 3 segments), which suit the
+        small-record signal streams. A stream whose records are large —
+        ``prompt_bodies`` holds whole prompts, tens of KB each — needs a
+        bigger window to retain a useful number of rows.
     """
     try:
         record: dict[str, Any] = {}
@@ -142,7 +150,12 @@ def write_event(
         try:
             from factory.events.rotation import rotate_if_needed
 
-            rotate_if_needed(path)
+            rot_kwargs: dict[str, int] = {}
+            if rotate_max_bytes is not None:
+                rot_kwargs["max_bytes"] = rotate_max_bytes
+            if rotate_keep is not None:
+                rot_kwargs["keep"] = rotate_keep
+            rotate_if_needed(path, **rot_kwargs)
         except Exception as rot_exc:  # noqa: BLE001 - telemetry path, never fail
             print(f"[signals] rotation check failed stream={stream!r}: {rot_exc}", file=sys.stderr)
 

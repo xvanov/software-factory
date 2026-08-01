@@ -133,6 +133,87 @@ def _log_prompt_metadata(
         pass
 
 
+# Prompt BODIES are a separate stream from prompt metadata, with a separate
+# retention policy, because they are ~3 orders of magnitude larger per row.
+#
+# Rotation window: 100 MB x 3 segments. Sized against measured production
+# volume (`state/events/prompts.ndjson`, 45,868 rows): chain personas average
+# 6 KB (ralph) to 190 KB (factory_improver) per prompt and total ~127 MB of
+# body text across all history, so this window retains months of chain
+# prompts. See ``_prompt_bodies_scope`` for why the manager personas — 1.58 GB
+# on their own, 93% of all prompt text ever composed — are excluded by default.
+_PROMPT_BODY_MAX_BYTES = 100_000_000
+_PROMPT_BODY_KEEP = 3
+
+
+def _prompt_bodies_scope() -> str:
+    """Return the configured prompt-body capture scope.
+
+    ``chain`` (default) captures every persona EXCEPT ``manager_*``; ``all``
+    captures everything; ``off`` disables body capture entirely.
+
+    The default excludes the manager personas deliberately, and the reason is
+    volume, not privacy. ``manager_watcher`` alone accounts for 43,561 of the
+    45,868 recorded prompts and 1.58 GB of prompt text — it runs on a 60 s
+    cadence forever, while a chain persona runs a few times per story. Capturing
+    manager bodies would roll the stream every few hours and evict exactly the
+    dev/reviewer bodies the stream exists to retain (prompt optimization, retry
+    forensics). An unbounded firehose that evicts the signal is worse than no
+    stream at all.
+    """
+    scope = os.environ.get("FACTORY_PROMPT_BODIES", "chain").strip().lower()
+    return scope if scope in ("chain", "all", "off") else "chain"
+
+
+def _log_prompt_body(
+    *,
+    persona: str,
+    prompt: str,
+    model_id: str,
+    story_id: int | None,
+    software_factory_root: Path | None,
+) -> None:
+    """Best-effort: append the FULL prompt text to ``prompt_bodies.ndjson``.
+
+    Unlike :func:`_log_prompt_metadata`, which records lengths and a truncated
+    hash, this records the verbatim prompt plus the FULL sha256. It exists so
+    prompt optimization and retry forensics have the actual input the model
+    saw — a 16-char hash cannot be replayed, diffed, or optimized against.
+
+    ``prompt_hash`` is the full digest of the same bytes
+    ``_log_prompt_metadata`` hashes, so its first 16 chars join the two streams.
+
+    A failure here MUST NOT break the LLM call.
+    """
+    try:
+        if _prompt_bodies_scope() == "off":
+            return
+        if _prompt_bodies_scope() == "chain" and persona.startswith("manager_"):
+            return
+
+        import hashlib
+
+        from factory.manager.signals import write_event
+
+        write_event(
+            "prompt_bodies",
+            {
+                "event": "prompt_body",
+                "persona": persona,
+                "story_id": story_id,
+                "model_id": model_id,
+                "prompt_length_total": len(prompt),
+                "prompt_hash": hashlib.sha256(prompt.encode("utf-8", errors="replace")).hexdigest(),
+                "prompt": prompt,
+            },
+            software_factory_root=software_factory_root,
+            rotate_max_bytes=_PROMPT_BODY_MAX_BYTES,
+            rotate_keep=_PROMPT_BODY_KEEP,
+        )
+    except Exception:  # noqa: BLE001 — logging must never break the call
+        pass
+
+
 def _extract_cached_tokens(usage: Any) -> int:
     """Return cache-read prompt tokens from a litellm ``Usage``-shaped object.
 
@@ -1261,6 +1342,29 @@ async def sandbox_run(
         reviewer_findings=reviewer_findings,
     )
 
+    # Log prompt telemetry HERE — the moment the initial message exists and
+    # before any failure path, mirroring the ``text_run`` site. Until this
+    # existed, the three sandbox personas (dev, test_implementer, onboarder)
+    # had NO prompt telemetry at all: ``prompts.ndjson`` held 45,868 rows
+    # across 14 personas and zero rows for the three that write all the code.
+    # The metadata is needed precisely when the run later fails, so the
+    # placeholder_prompts detector can correlate a leaked-placeholder prompt
+    # with the resulting error row in runs.ndjson.
+    _log_prompt_metadata(
+        persona=persona,
+        prompt=initial_user_text,
+        model_id=llm_config.model,
+        story_id=story_id,
+        software_factory_root=software_factory_root,
+    )
+    _log_prompt_body(
+        persona=persona,
+        prompt=initial_user_text,
+        model_id=llm_config.model,
+        story_id=story_id,
+        software_factory_root=software_factory_root,
+    )
+
     _t0 = time.monotonic()
     _started_at = datetime.now(UTC).isoformat()
 
@@ -1732,6 +1836,13 @@ def text_run(
     # watcher can correlate a leaked-placeholder prompt with the resulting
     # error row in runs.ndjson. NEVER logs prompt content — only metadata.
     _log_prompt_metadata(
+        persona=persona,
+        prompt=prompt,
+        model_id=model_id,
+        story_id=story_id,
+        software_factory_root=software_factory_root,
+    )
+    _log_prompt_body(
         persona=persona,
         prompt=prompt,
         model_id=model_id,
