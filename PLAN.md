@@ -111,7 +111,7 @@ opens and merges real PRs (118 merged). The FMS L4 tier has never opened one.
   sandbox personas, and the ones that write all the code.
 - What is recorded is metadata only: `prompt_length_total`,
   `prompt_section_lengths`, `placeholder_markers_found`, and a **16-char**
-  sha256 prefix (`factory/runner.py:1117`). Never the prompt text. The
+  sha256 prefix (`factory/runner.py:117`). Never the prompt text. The
   docstring at `:94-96` says so explicitly.
 - `state/events/chain_steps.ndjson`: **410 rows, outcomes `advanced` 400 /
   `error` 10 — zero `retried` rows**, while 41 stories have `dev_retries > 0`
@@ -234,7 +234,7 @@ uninterpretable without this. Do it first, in this order.
   (`persona`, `prompt`, `model_id`, `story_id`, `software_factory_root`). Then
   add a second, separate stream — `state/events/prompt_bodies.ndjson` — that
   stores the **full prompt text** plus the full sha256 (not the 16-char prefix
-  at `:1117`), hash-chained the same way `write_event` already chains
+  at `:117`), hash-chained the same way `write_event` already chains
   `chain_steps`.
 - **Why a second stream:** `prompts.ndjson` is already 45,868 rows and is read
   by the `placeholder_prompts` detector; do not bloat it. Bodies are large and
@@ -413,7 +413,8 @@ uninterpretable without this. Do it first, in this order.
 
 ## Phase 1 — first real number
 
-**Effort ~1 day. Cost ~$30.** Goal: one honest, externally-graded datapoint,
+**Effort ~1.5 days. Cost ~$40.** Goal: one honest, externally-graded datapoint
+plus the matched bare-model number,
 using a corpus the factory has never seen.
 
 ### 1.1 — SWE-bench Pro adapter  **[OPERATOR-PR-ONLY — new file under `bench/`]**
@@ -440,9 +441,17 @@ using a corpus the factory has never seen.
       produced patch. **Before grading, strip every edit to a test file from
       the graded diff.** The factory's dev owns tests (the Loop-4 design), so
       an unstripped diff would let it edit the oracle — the single most common
-      way SWE-bench numbers get inflated. `SOTA-RESEARCH-2026-07.md:119-123`
-      records that ~30% of published SWE-bench results were found contaminated
-      this way.
+      way SWE-bench numbers get inflated.
+- **⚠ Know your suite's noise floor before you read any result.**
+  `SOTA-RESEARCH-2026-07.md:119-123` records that OpenAI's 2026-07-08 audit found
+  **~30% of SWE-bench Pro's public tasks broken** and retracted its
+  recommendation, and that Cursor found Pro scores collapse when agents lose
+  internet and git history — some agents were retrieving gold patches. This does
+  not disqualify the suite (it is still the best structural fit and the only one
+  publishing baselines for our exact models), but it means: clone `--depth 1`,
+  block egress except the model API, expect a substantial unsolvable floor rather
+  than reading it as factory failure, and record per instance whether a failure
+  was "wrong patch" or "task broken".
 - **Done looks like:** the graded diff provably contains zero `tests/` or
   `test_*.py` hunks (assert it in code, do not eyeball it).
 - **Effort:** ~3 h.
@@ -452,15 +461,44 @@ using a corpus the factory has never seen.
 - [ ] **What:** 10 instances. Report the two numbers that actually matter:
   - **gate precision** = P(hidden oracle passes | the factory said tests-green)
   - **gate recall** = P(the factory said tests-green | hidden oracle passes)
-- **Why these:** the July campaign's headline finding
-  (`bench/CAMPAIGN-2026-07-17.md:29-30`) was that the factory's edge is
-  *verification discipline*, not raw capability. Precision against a hidden
-  oracle is the direct test of that claim. A high resolve rate with low gate
-  precision would mean the gates are decorative.
+- **Why these:** the factory's merge gate runs the dev's *own* tests. Precision
+  against a hidden oracle is the only way to know whether that gate means
+  anything. A high resolve rate with low gate precision would mean the gates are
+  decorative.
+- **⚠ Do NOT justify this with the July campaign's "verification discipline"
+  finding.** That claim (`CAMPAIGN-2026-07-17.md`, Finding #2: "Claude declared
+  done without running its own new tests to green") was **falsified** by the
+  recovered Claude CLI transcripts: t3 ended on three consecutive `460 passed`
+  runs, and t5's last recorded run was `446 passed` before a subscription limit
+  killed it. Neither was a verification failure. Measure gate precision because
+  it is unmeasured, not to confirm a retracted result — that is how you get a
+  benchmark that agrees with you.
 - **Done looks like:** a table of 10 rows (instance, factory verdict, oracle
   verdict, tokens, wall clock) plus the two rates, with n=10 stated as
   preliminary. **Do not draw conclusions from n=10** beyond "the harness runs".
 - **Effort:** ~2 h of babysitting, ~$30.
+
+### 1.4 — Run the SAME 10 instances against the bare model
+
+- [ ] **What:** run a minimal scaffold (mini-SWE-agent, ~100 lines of bash loop)
+      on the **identical Azure deployments** the factory uses — same
+      `azure/deepseek-v4-pro` and `azure/gpt-5.3-codex`, same instances, same
+      oracle. Report `scaffold lift = factory − bare model`, in resolve rate and
+      in tokens.
+- **Why this is not optional, and why it moves ahead of Phase 2:** the product
+  thesis is a **model-agnostic harness that gets frontier-competitive output from
+  non-frontier models**. The model is a config value that will be swapped monthly
+  as cheaper models ship. Therefore the only number that measures *the harness*
+  is the delta between the harness and the same weights bare. A factory resolve
+  rate on its own is unattributable — the public SWE-rebench board already
+  reports what these models do with a trivial scaffold, and a skeptical reader
+  will say so.
+- **Corollary for every later phase:** never report a factory number without the
+  matched bare-model number beside it. Absolute scores measure the model;
+  the delta measures the product.
+- **Done looks like:** a two-column table, factory vs bare, on the same 10
+  instances, with the lift stated in percentage points and tokens.
+- **Effort:** ~3 h, ~$10 (the bare arm is far cheaper per instance).
 
 ---
 
