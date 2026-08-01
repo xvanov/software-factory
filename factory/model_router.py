@@ -81,13 +81,116 @@ def _provider_key_available(model: str) -> bool:
 _KEY_FALLBACK_WARNED: set[tuple[str, str]] = set()
 
 
+class ReviewIndependenceError(ValueError):
+    """Raised when ``routes.yaml`` lets the reviewer grade its own model.
+
+    Cross-family review is the only structural defence this factory has
+    against a model approving its own reasoning. A config where the reviewer
+    and dev resolve to the same deployment does not fail loudly at runtime —
+    it silently produces agreeable reviews, which is far worse than a crash.
+    """
+
+
+# Warn-once, keyed by (routes_path, message) so the 60 s-cadence L1 watcher
+# does not reprint an identical advisory every tick.
+_INDEPENDENCE_WARNED: set[tuple[str, str]] = set()
+
+# Escape hatch. A hard error at route-load time would otherwise leave an
+# operator unable to run the very commands that fix a bad routes.yaml. Set
+# ``FACTORY_ALLOW_REVIEW_COLLISION=1`` to downgrade the error to a warning.
+_ALLOW_COLLISION_ENV = "FACTORY_ALLOW_REVIEW_COLLISION"
+
+
+def _dev_tier_models(routes_section: dict[str, Any]) -> dict[str, str]:
+    """Return ``{tier: model_id}`` for the ``dev`` persona.
+
+    ``dev`` may be a bare string (all tiers identical) or a per-tier mapping.
+    """
+    entry = routes_section.get("dev")
+    if isinstance(entry, str):
+        return {"standard": entry, "hard": entry}
+    if isinstance(entry, dict):
+        return {k: v for k, v in entry.items() if isinstance(v, str)}
+    return {}
+
+
+def check_review_independence(
+    data: dict[str, Any], *, provider: str, source: str = "routes.yaml"
+) -> list[str]:
+    """Validate reviewer/dev model independence for ``provider``'s route block.
+
+    Raises :class:`ReviewIndependenceError` when the reviewer shares a model
+    with ANY dev tier. Returns a list of non-fatal advisory messages (today:
+    ``test_implementer`` sharing a model with a dev tier, which weakens the
+    independent-acceptance-oracle claim in ``routes.yaml`` but does not
+    compromise the merge decision).
+
+    Both dev tiers are checked, not just ``standard``. The hard tier is the one
+    a story escalates INTO when it is difficult — precisely when independent
+    review matters most — so a collision there is the more dangerous of the two.
+    """
+    routes_section, _ = _routes_section_for(provider, data)
+    reviewer = routes_section.get("reviewer")
+    if not isinstance(reviewer, str):
+        return []
+
+    dev_tiers = _dev_tier_models(routes_section)
+    collisions = sorted(tier for tier, model in dev_tiers.items() if model == reviewer)
+    if collisions:
+        tiers = ", ".join(f"dev.{t}" for t in collisions)
+        message = (
+            f"{source}: reviewer and {tiers} both resolve to {reviewer!r} under "
+            f"provider {provider!r}. Cross-family review is the only structural "
+            f"defence against a model approving its own reasoning; a shared model "
+            f"makes the review decorative. Give the reviewer or the colliding dev "
+            f"tier(s) a distinct deployment. To override deliberately, set "
+            f"{_ALLOW_COLLISION_ENV}=1."
+        )
+        if os.environ.get(_ALLOW_COLLISION_ENV, "").strip() not in ("", "0", "false"):
+            _warn_once(source, message)
+        else:
+            raise ReviewIndependenceError(message)
+
+    advisories: list[str] = []
+    test_impl = routes_section.get("test_implementer")
+    if isinstance(test_impl, str):
+        shared = sorted(tier for tier, model in dev_tiers.items() if model == test_impl)
+        if shared:
+            advisories.append(
+                f"{source}: test_implementer and "
+                f"{', '.join(f'dev.{t}' for t in shared)} both resolve to "
+                f"{test_impl!r} under provider {provider!r}. routes.yaml claims "
+                f"'the test author and the implementer never share a model'. This "
+                f"is advisory, not fatal — the acceptance oracle is weakened, but "
+                f"the merge decision is not."
+            )
+    for msg in advisories:
+        _warn_once(source, msg)
+    return advisories
+
+
+def _warn_once(source: str, message: str) -> None:
+    key = (source, message)
+    if key in _INDEPENDENCE_WARNED:
+        return
+    _INDEPENDENCE_WARNED.add(key)
+    _log.warning("%s", message)
+
+
 def _load_routes(path: Path | None = None) -> dict[str, Any]:
     routes_path = path or _DEFAULT_ROUTES_PATH
     with routes_path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
         raise ValueError(f"{routes_path} must be a YAML mapping at top level")
-    return cast(dict[str, Any], data)
+    data = cast(dict[str, Any], data)
+    # Validate at LOAD, so no model id can ever be resolved out of a config
+    # that has already lost reviewer independence. Only the ACTIVE provider
+    # block is enforced — an unused block may legitimately be mid-edit.
+    check_review_independence(
+        data, provider=_active_provider(data), source=str(routes_path)
+    )
+    return data
 
 
 def _active_provider(data: dict[str, Any]) -> str:

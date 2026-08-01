@@ -223,9 +223,13 @@ def test_drift_clamp_approves_rotating_findings_at_cycle_3(
 def test_regression_tagged_findings_are_not_clamped(
     temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # reviewer_cycles=1 (was 2): at _MAX_REVIEW_CYCLES=3 seeding 2 would make
+    # this cycle the third and block for EXHAUSTION before the clamp logic
+    # under test could be observed. The finality-clamp behaviour is
+    # cycle-count independent; the seed only has to leave one cycle of room.
     story = _persisted_story(
         temp_root,
-        reviewer_cycles=2,
+        reviewer_cycles=1,
         reviewer_history_json=_history(
             [{"severity": "high", "location": "a.py:1", "what": "bug a"}],
             [{"severity": "high", "location": "a.py:2", "what": "bug a again"}],

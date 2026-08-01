@@ -256,7 +256,9 @@ def test_guard_does_not_block_when_findings_change(
     code+test findings get the cycles they need to converge."""
     s = _story_at_tests_green_with_cycles(temp_root, 0)
     db = temp_root / "state" / "factory.db"
-    for i in range(_MAX_REVIEW_STUCK + 1):
+    # See test_review_rubric: bounded by the stability threshold, because the
+    # hard backstop (_MAX_REVIEW_CYCLES=3) now sits just above it.
+    for i in range(_MAX_REVIEW_STUCK):
         s.state = StoryState.TESTS_GREEN.value
         persist_story(s, db)
         fixture = {
