@@ -8,7 +8,14 @@
 #
 # base_sha: frozen sacrifice commit for ALL tasks/arms (set once per campaign;
 # resolve with `git -C ../sacrifice rev-parse origin/main`).
-base_sha: ""  # resolved at setup time when empty
+#
+# MUST be a literal 40-char SHA. It was previously "" with the comment
+# "resolved at setup time when empty", which silently re-resolved
+# ``origin/main`` on every invocation — so two arms run a week apart compared
+# different base trees and the campaign's own record could not say which. That
+# is why the July 2026 benchmark was retracted. ``_base_sha`` now REFUSES an
+# empty value rather than resolving one.
+base_sha: "b40e87aff06209919d65eb8b52cc0fec7002902f"  # sacrifice origin/main @ 2026-08-01
 
 app: sacrifice
 
