@@ -76,3 +76,12 @@ improve itself. Cross-check any yield claim against GitHub before asserting it.
 
 It guards source only. Nothing snapshots `state/factory.db`, and runtime state
 corruption is what has actually taken the factory down.
+
+## CI cost
+
+`lint`, `typecheck` and `pytest` are required checks, so they always run and
+always report. A PR that changes only root-level `*.md` skips their expensive
+steps and finishes in about 20 seconds instead of about 4 minutes. Any other
+path — including `factory/personas/*.md` and `apps/**/context/*.md`, which are
+code — runs the full suite. See the `changes` job in
+`.github/workflows/test.yml`.
