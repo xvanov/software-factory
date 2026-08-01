@@ -219,14 +219,38 @@ Also already fixed, so do not re-fix:
 
 ---
 
-## Phase 0 — make measurement possible
+## Phase 0 — make measurement possible — **DONE 2026-08-01**
 
-**Effort ~2 days. Cost ~$0 (no LLM calls).** Everything downstream is
-uninterpretable without this. Do it first, in this order.
+**Actual: one session, $0 (no LLM calls).** Shipped as PRs #193 #194 #195 #196
+#197, each with real CI. Start at Phase 1.
 
-### 0.1 — Wire `_log_prompt_metadata` into `sandbox_run`; persist full prompts
+Corrections this work produced — the plan was right about every defect, and
+wrong or silent about four consequences:
 
-- [ ] **Files:** `factory/runner.py` (`_log_prompt_metadata` at `:86`,
+1. **0.1 needed a persona scope the plan did not anticipate.** Storing every
+   prompt body would have been 1.58 GB from `manager_watcher` alone (43,561 of
+   45,868 rows; 93% of all prompt text), rolling the stream every few hours and
+   evicting exactly the dev/reviewer bodies it exists to retain. Bodies are
+   captured for chain personas only, `FACTORY_PROMPT_BODIES` overrides.
+2. **0.2's suggested `extra={"attempt": n}` would have shadowed a field.**
+   `emit_chain_step`'s payload already carries `attempt` (= `total_attempts`)
+   and merges `extra` last. Used `retry_attempt`/`retry_cap`.
+3. **0.5 Bug B changes no behaviour today.** `smoke_passed` is always None, so
+   the dry-run branch was already unreachable and the gate already fail-closed
+   — by accident. Deleting the reader makes it structural. Do not expect a
+   measurable difference; expect a removed trap.
+4. **Correction #11's caps could not simply be set to 3.** `_MAX_DEV_RETRIES`
+   and `_MAX_REVIEW_CYCLES` at 3 equal the inner guards
+   (`_MAX_DEV_SAME_SIGNATURE`, `_MAX_REVIEW_STUCK`, both 3), making the
+   early-escalation layer unreachable and deleting "findings that CHANGE are
+   progress". The inner guards moved to 2 to preserve the gap. Consequence:
+   the dev inner loop now gets at most TWO sandbox attempts per invocation.
+
+Each sub-step's original text is kept below for its file references.
+
+### 0.1 — Wire `_log_prompt_metadata` into `sandbox_run` — **DONE (#193)**
+
+- [x] **Files:** `factory/runner.py` (`_log_prompt_metadata` at `:86`,
       `sandbox_run` at `:1205`, existing call site at `:1734`),
       `factory/manager/signals.py` (`write_event`, already hash-chains).
 - **What:** call `_log_prompt_metadata` from `sandbox_run` at the point the
@@ -256,9 +280,9 @@ uninterpretable without this. Do it first, in this order.
   ```
 - **Effort:** ~3 h. Chain code — self-editable, deploys next tick.
 
-### 0.2 — Emit `chain_step` events for every dev retry and reviewer cycle
+### 0.2 — Emit `chain_step` events for retries and review cycles — **DONE (#194)**
 
-- [ ] **Files:** `factory/chain/handlers.py` (`story.dev_retries += 1` at
+- [x] **Files:** `factory/chain/handlers.py` (`story.dev_retries += 1` at
       `:1930`; `story.reviewer_cycles += 1` at `:2906`),
       `factory/chain/step_events.py` (`emit_chain_step` at `:72`, `outcome`
       param documented at `:84`), `factory/chain/orchestrator.py` (existing
@@ -287,9 +311,9 @@ uninterpretable without this. Do it first, in this order.
   the change.)
 - **Effort:** ~2 h. Chain code.
 
-### 0.3 — Pin the bench  **[OPERATOR-PR-ONLY — `bench/**`]**
+### 0.3 — Pin the bench — **DONE (#197)** **[OPERATOR-PR-ONLY]**
 
-- [ ] **Files:** `bench/tasks.yaml` (`:11`), `bench/bench.py`
+- [x] **Files:** `bench/tasks.yaml` (`:11`), `bench/bench.py`
       (`_base_sha` `:65-66`, `run_claude` `:155-193` incl. the
       `"claude","-p",prompt` invocation at `:163`, `clean()` `:459-500`, the
       `shutil.rmtree(RUNS_DIR)` at `:499`), `bench/README.md`.
@@ -314,9 +338,9 @@ uninterpretable without this. Do it first, in this order.
   still returns the files.
 - **Effort:** ~4 h. **Operator PR — do not self-merge.**
 
-### 0.4 — Make TOKENS the benchmark primitive
+### 0.4 — Make TOKENS the benchmark primitive — **DONE (#197)**
 
-- [ ] **Files:** `bench/bench.py` (`_write_result` `:114`, `report()` `:502+`)
+- [x] **Files:** `bench/bench.py` (`_write_result` `:114`, `report()` `:502+`)
       **[OPERATOR-PR-ONLY]**; `factory/providers/azure_foundry.py` (price
       constants `:130-152`); `factory/cli.py` (`audit` at `:2320`, the
       estimated-cost caveat at `:2342-2345` and `:2388-2395`).
@@ -335,9 +359,9 @@ uninterpretable without this. Do it first, in this order.
   token columns are byte-identical and only dollars moved.
 - **Effort:** ~4 h. **Operator PR** for the `bench/**` half.
 
-### 0.5 — Fix the two smoke-gate bugs
+### 0.5 — Fix the two smoke-gate bugs — **DONE (#195)**
 
-- [ ] **Bug A — failing gates' diagnostics are discarded.**
+- [x] **Bug A — failing gates' diagnostics are discarded.**
       `factory/chain/gates/smoke_green.py:51-56` returns
       `GateResult(..., reason=f"smoke_command exit={code}",
       details={"exit_code": code, "output_tail": output})`. But
@@ -354,7 +378,7 @@ uninterpretable without this. Do it first, in this order.
       `gates_failed_json` column to `MergeAction` + the `merge_actions`
       migration. `GateResult.as_dict()` already exists at
       `factory/chain/gates/evaluator.py:127`.
-- [ ] **Bug B — `smoke_passed` is write-never.**
+- [x] **Bug B — `smoke_passed` is write-never.**
       `StoryRecord.smoke_passed` (`factory/chain/state_machine.py:302`) is
       declared and is **read** at `factory/chain/gates/smoke_green.py:62`
       (`if story is not None and getattr(story, "smoke_passed", False)`) — but
@@ -378,9 +402,9 @@ uninterpretable without this. Do it first, in this order.
   merge control flow, so re-verify everything keyed off `gates_passed`
   (`auto_merge.py:892` builds `present_labels` from it).
 
-### 0.6 — Startup assertion: `dev` and `reviewer` must not share a model
+### 0.6 — Reviewer/dev model independence — **DONE (#196)**
 
-- [ ] **Files:** `factory/model_router.py` (`route()` at `:114`; existing
+- [x] **Files:** `factory/model_router.py` (`route()` at `:114`; existing
       validation raises at `:89` and `:172`), `factory/routes.yaml`.
 - **⚠ This assertion FIRES TODAY as naively specified.** Verified in
   `factory/routes.yaml`:
@@ -411,7 +435,7 @@ uninterpretable without this. Do it first, in this order.
 
 ---
 
-## Phase 1 — first real number
+## Phase 1 — first real number — **START HERE**
 
 **Effort ~1.5 days. Cost ~$40.** Goal: one honest, externally-graded datapoint
 plus the matched bare-model number,
@@ -783,15 +807,15 @@ rest verified exactly.
     matching only addresses the 16 `corrupt patch` + 5 `patch failed` cases.
     Try `git apply -3` first.
 
-11. **The retry caps are 6, not 3.** `_MAX_DEV_RETRIES = 6`
-    (`factory/chain/handlers.py:1235`) and `_MAX_REVIEW_CYCLES = 6`
-    (`:1279`). Only `_MAX_CI_FIX_CYCLES = 3` (`factory/chain/auto_merge.py:72`)
-    matches the "cap everything at 3" guardrail in `CLAUDE.md` and in memory.
-    Four stories in the last 14 days hit `dev_retries = 6`. Either the
-    guardrail or the constants should move — flag it to the operator; do not
-    silently change a cap.
+11. **The retry caps are 6, not 3.** RESOLVED 2026-08-01 (#196): operator chose
+    to lower the caps. `_MAX_DEV_RETRIES = 3`, `_MAX_REVIEW_CYCLES = 3`, and
+    the inner guards `_MAX_DEV_SAME_SIGNATURE` / `_MAX_REVIEW_STUCK` moved 3 ->
+    2 so early escalation still fires *before* the hard cap. Keep that gap.
 
-12. **Phase 0.6's assertion fires on today's `routes.yaml`.**
+12. **Phase 0.6's assertion fires on today's `routes.yaml`.** RESOLVED
+    2026-08-01 (#196): `reviewer` moved to `azure/gpt-5.4` in BOTH blocks (the
+    `direct` block had the same collision, which this note missed). The
+    `test_implementer` overlap remains, as a warning.
     `azure_routes.dev.hard` and `azure_routes.reviewer` are both
     `azure/gpt-5.3-codex`, and `azure_routes.test_implementer` equals
     `azure_routes.dev.standard` (`azure/deepseek-v4-pro`). The step is written
