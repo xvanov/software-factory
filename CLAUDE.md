@@ -26,9 +26,14 @@ one YAML file (`factory/routes.yaml`) — the model is a config value, not code.
 
 | Loop | Who drives | What it does |
 |------|-----------|--------------|
-| 1 | the factory | builds **itself** (`apps/factory`), staging-gated, self-merges |
-| 2 | the factory | builds an **app** (`apps/sacrifice` today) |
+| 1 | the factory | builds an **app** (`apps/sacrifice` today) — the base case |
+| 2 | the factory | builds **itself** (`apps/factory`), staging-gated, self-merges |
 | 3 | **you** | watch loops 1–2; when they wedge, diagnose, patch, restart |
+
+Loop 2 self-edits pass the **staging twin** (`factory/manager/staging.py` →
+`xvanov/software-factory-copy`): the diff is applied to a clone, the clone is
+actually run, and only a healthy clone is promoted. Loop 2 works. Do not confuse
+it with the FMS **L4 apply** tier, which is dead — see `STATUS.md`.
 
 Between you and the factory sits the **FMS manager daemon** (`factory/manager/`),
 a four-tier self-healing pipeline: L1 Watcher (60 s, cheap, reads event
@@ -59,9 +64,9 @@ Then read the memory index at
 the changelog of every failure class already diagnosed. Check it before
 re-diagnosing anything.
 
-**Last known status (2026-07-25):** loop-1 proven zero-touch end-to-end;
-loop-2 ships fresh directions. All units deliberately **stopped** — `factory on`
-to start. Verify with the commands above rather than trusting this line.
+Then read `STATUS.md` (what is working, what is not, measured) and `PLAN.md`
+(the current work queue). Verify with the commands above rather than trusting
+either file.
 
 ## Environment
 
@@ -161,6 +166,14 @@ that have burned us are in Guardrails):
 - Don't stop the factory to think; fix blockers on the spot. Daily spend cap
   **$200** — notify the operator at $50 / $75 / $100.
 - `factory resume` and `factory pause` are operator decisions. Don't bypass.
+
+## Documentation style
+
+Write documentation in an ASD-STE100-inspired style: short sentences, active
+voice, consistent terminology, concise paragraphs. Use lists where they improve
+readability. Keep natural prose for concepts, rationale, and design discussion.
+Do not force strict ASD-STE100 if it reduces clarity. Prioritize clear,
+easy-to-diff documentation.
 
 ## Failure patterns — recognize these fast
 
