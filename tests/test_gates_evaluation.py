@@ -552,12 +552,21 @@ def test_smoke_skips_when_ready_but_no_command() -> None:
     assert r.passed and "skipped" in r.reason
 
 
-def test_smoke_dry_run_passes_on_recorded_flag() -> None:
+def test_smoke_dry_run_fails_closed_even_with_the_recorded_flag_set() -> None:
+    """The gate must NOT accept a recorded boolean in place of a real run.
+
+    ``StoryRecord.smoke_passed`` had no writer anywhere in ``factory/**``, so
+    the old "trust the dev handler's flag" branch was unreachable and the gate
+    was fail-closed only by accident. This pins the fail-closed posture
+    structurally: even a story that claims ``smoke_passed=True`` does not get
+    the gate, because nothing booted the product.
+    """
     cfg = _smoke_cfg(ready=True, command="docker compose up -d && ./smoke.sh")
     story = _story(smoke_passed=True)
     pr = PRContext(pr_number=1, head_sha="a", base_branch="main", story=story, dry_run=True)
     r = smoke_green.evaluate(pr, cfg)
-    assert r.passed and "smoke_passed" in r.reason
+    assert not r.passed
+    assert "was not run" in r.reason
 
 
 def test_smoke_dry_run_fails_without_recorded_flag() -> None:
@@ -565,7 +574,28 @@ def test_smoke_dry_run_fails_without_recorded_flag() -> None:
     story = _story(smoke_passed=None)
     pr = PRContext(pr_number=1, head_sha="a", base_branch="main", story=story, dry_run=True)
     r = smoke_green.evaluate(pr, cfg)
-    assert not r.passed and "no green smoke run" in r.reason
+    assert not r.passed and "was not run" in r.reason
+
+
+def test_smoke_failure_details_survive_for_diagnosis() -> None:
+    """A blocked merge has to be diagnosable: the failing result carries the
+    exit code and the command output tail."""
+    cfg = _smoke_cfg(ready=True, command="echo boom-from-smoke && exit 3")
+    import pathlib as _pathlib
+
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        story=_story(),
+        dry_run=False,
+        repo_root=_pathlib.Path.cwd(),
+    )
+    r = smoke_green.evaluate(pr, cfg)
+    assert not r.passed
+    assert r.details["exit_code"] == 3
+    assert "boom-from-smoke" in r.details["output_tail"]
+    assert r.as_dict()["details"]["exit_code"] == 3
 
 
 def test_smoke_real_run_reflects_command_exit(tmp_path: Path) -> None:

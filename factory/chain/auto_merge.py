@@ -118,6 +118,12 @@ class MergeActionRecord(SQLModel, table=True):
     merged: bool
     reason: str
     gates_passed_json: str  # JSON list of labels that passed
+    # JSON list of FAILING GateResult dicts (label/passed/reason/details).
+    # Without this the table recorded only which gates passed, so a blocked
+    # merge said "missing gate labels: ['smoke-green']" and the reason — the
+    # exit code and the command's output tail, both of which the gate had
+    # already computed — was discarded at the call site and unrecoverable.
+    gates_failed_json: str = Field(default="[]")
     blocking_labels_json: str  # JSON list of blocking labels present
     ts: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
@@ -131,6 +137,12 @@ class MergeAction:
     merged: bool
     reason: str
     gates_passed: list[str] = field(default_factory=list)
+    # Full ``GateResult.as_dict()`` for every gate that FAILED this evaluation,
+    # carrying each gate's ``reason`` and ``details`` (e.g. the smoke gate's
+    # ``exit_code`` + ``output_tail``). ``gates_passed`` holds bare labels
+    # because that is all a passing gate needs to say; a failing gate has to
+    # explain itself or the block is undiagnosable.
+    gates_failed: list[dict[str, Any]] = field(default_factory=list)
     blocking_labels: list[str] = field(default_factory=list)
     # Set True when a factory self-edit was refused by the chain-side staging
     # gate (``_evaluate_self_edit_gate``): the live factory was NOT touched and
@@ -180,10 +192,33 @@ class FixturePR:
     repo_root: Path | None = None
 
 
+# ``merge_actions`` columns added after the table shipped. SQLModel's
+# ``create_all`` only creates missing TABLES — it never adds a column to an
+# existing one, so a live ``factory.db`` needs an explicit idempotent ALTER or
+# every insert fails with "no such column". Mirrors ``_ensure_story_columns``.
+_MERGE_ACTION_MIGRATION_COLUMNS: dict[str, str] = {
+    "gates_failed_json": "TEXT DEFAULT '[]'",
+}
+
+
+def _ensure_merge_action_columns(eng: Any) -> None:
+    """Idempotently add any missing ``merge_actions`` columns."""
+    from sqlalchemy import text
+
+    with eng.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(merge_actions)")).fetchall()
+        existing = {r[1] for r in rows}
+        for col, sqltype in _MERGE_ACTION_MIGRATION_COLUMNS.items():
+            if col in existing:
+                continue
+            conn.execute(text(f"ALTER TABLE merge_actions ADD COLUMN {col} {sqltype}"))
+
+
 def _engine(db_path: Path) -> Any:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     eng = create_engine(f"sqlite:///{db_path}", echo=False)
     SQLModel.metadata.create_all(eng)
+    _ensure_merge_action_columns(eng)
     return eng
 
 
@@ -196,6 +231,7 @@ def _record_merge_action(action: MergeAction, head_sha: str, db_path: Path) -> N
         merged=action.merged,
         reason=action.reason,
         gates_passed_json=json.dumps(action.gates_passed),
+        gates_failed_json=json.dumps(action.gates_failed),
         blocking_labels_json=json.dumps(action.blocking_labels),
     )
     with Session(eng) as session:
@@ -862,6 +898,7 @@ def _evaluate_one_pr(
     # ``handle_docs_enforcer`` step).
     if docs_chain:
         gates_passed: list[str] = sorted(_DOCS_CHAIN_GATE_LABELS)
+        gates_failed: list[dict[str, Any]] = []
         missing_labels: list[str] = []
     else:
         pr_ctx = PRContext(
@@ -878,6 +915,30 @@ def _evaluate_one_pr(
         )
         results = evaluate_all_gates(pr_ctx, app_config)
         gates_passed = [label for label, r in results.items() if r.passed]
+        # Keep the FAILING results too. Every gate already computes a ``reason``
+        # and ``details`` (the smoke gate's are its exit code and output tail);
+        # discarding them here was the reason a blocked merge could say WHICH
+        # gate failed but never WHY. Persisted on the MergeAction and logged as
+        # a story event so ``factory trace <id>`` shows the diagnosis.
+        gates_failed = [r.as_dict() for r in results.values() if not r.passed]
+        # ``story.id`` is None for an unpersisted fixture story; the per-story
+        # event log is keyed on it, so skip the event rather than writing an
+        # orphan. The MergeAction and the merge_actions row still carry the
+        # diagnosis in that case.
+        if gates_failed and story is not None and story.id is not None:
+            from factory.chain.event_log import log_story_event
+
+            log_story_event(
+                story.id,
+                "merge_gates_failed",
+                {
+                    "pr_number": fixture.pr_number,
+                    "head_sha": fixture.head_sha,
+                    "failed": gates_failed,
+                },
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
 
         # Compute the labels the chain would have added on previous
         # ticks. In real-run we trust the actual PR labels; in dry-run
@@ -906,6 +967,7 @@ def _evaluate_one_pr(
             merged=False,
             reason=f"story.state={story.state} not in mergeable states",
             gates_passed=gates_passed,
+            gates_failed=gates_failed,
             blocking_labels=blocking_present,
         )
 
@@ -916,6 +978,7 @@ def _evaluate_one_pr(
             merged=False,
             reason=f"blocking labels present: {blocking_present!r}",
             gates_passed=gates_passed,
+            gates_failed=gates_failed,
             blocking_labels=blocking_present,
         )
 
@@ -926,6 +989,7 @@ def _evaluate_one_pr(
             merged=False,
             reason=f"missing gate labels: {missing_labels!r}",
             gates_passed=gates_passed,
+            gates_failed=gates_failed,
             blocking_labels=blocking_present,
         )
 
@@ -945,6 +1009,7 @@ def _evaluate_one_pr(
                 "needs PR creation via docs_enforcer/_open_pr_for_story"
             ),
             gates_passed=gates_passed,
+            gates_failed=gates_failed,
             blocking_labels=blocking_present,
         )
 
@@ -975,6 +1040,7 @@ def _evaluate_one_pr(
                     f"({se_decision.status}); live factory not touched"
                 ),
                 gates_passed=gates_passed,
+                gates_failed=gates_failed,
                 blocking_labels=blocking_present,
                 staging_blocked=True,
                 staging_status=se_decision.status,
@@ -995,6 +1061,7 @@ def _evaluate_one_pr(
             merged=True,
             reason=reason,
             gates_passed=gates_passed,
+            gates_failed=gates_failed,
             blocking_labels=blocking_present,
         )
 
@@ -1014,6 +1081,7 @@ def _evaluate_one_pr(
             merged=False,
             reason=f"gh merge failed: {merge_err}",
             gates_passed=gates_passed,
+            gates_failed=gates_failed,
             blocking_labels=blocking_present,
         )
 
@@ -1046,6 +1114,7 @@ def _evaluate_one_pr(
                 merged=False,
                 reason="auto-merge enabled; awaiting required checks",
                 gates_passed=gates_passed,
+                gates_failed=gates_failed,
                 blocking_labels=blocking_present,
                 auto_merge_enabled=True,
             )
@@ -1056,6 +1125,7 @@ def _evaluate_one_pr(
         merged=True,
         reason=reason,
         gates_passed=gates_passed,
+        gates_failed=gates_failed,
         blocking_labels=blocking_present,
     )
 

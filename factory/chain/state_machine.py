@@ -296,9 +296,20 @@ class StoryRecord(SQLModel, table=True):
     error: str | None = None
     # Phase 3: last cap/mode rejection reason emitted by the dispatcher.
     last_rejection_reason: str | None = None
-    # D002 Karpathy Layer-2 runtime verifier. Set True after the dev's sandbox
-    # boots the product and the scripted smoke journey passes. Read by the
-    # ``smoke-green`` gate in dry-run; None means "not run yet".
+    # D002 Karpathy Layer-2 runtime verifier — DECLARED BUT NEVER WRITTEN.
+    # The intent was "set True after the dev's sandbox boots the product and
+    # the scripted smoke journey passes", but no handler was ever written to
+    # do it, so this is always None. The ``smoke-green`` gate used to READ it
+    # in dry-run and pass the gate when truthy; that reader was deleted
+    # (2026-08-01) because a merge gate keyed on a never-written flag is
+    # proxy != real waiting to happen. The gate now fails closed without a
+    # real run.
+    #
+    # DO NOT start reading this field again. Either write it from the place
+    # that actually observes the smoke journey — and re-verify the gate — or
+    # drop the column. It sits alongside four other write-never columns
+    # (``lint_passed``, ``format_passed``, ``types_passed``,
+    # ``coverage_passed``); see PLAN.md Phase 3.2.
     smoke_passed: bool | None = None
     # Item 4 — harness precheck. Set True after a one-shot pytest
     # collect+exit pass succeeds against the per-story worktree (with
