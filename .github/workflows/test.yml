@@ -20,30 +20,122 @@ permissions:
   contents: read
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Decide whether this change can skip the build/test work.
+  #
+  # WHY THIS IS A JOB AND NOT `paths-ignore`:
+  # `lint`, `typecheck` and `pytest` are REQUIRED status checks on `main`. A
+  # workflow suppressed by `paths-ignore` never reports those contexts at all,
+  # so GitHub leaves them "Expected — waiting for status" and the PR can never
+  # merge. That is the same vacuous-required-check class the `merge_group`
+  # comment above guards against, arrived at from the other direction.
+  #
+  # So the three jobs ALWAYS run and ALWAYS report. Only their expensive steps
+  # are conditional. A docs-only PR costs ~20 s of runner time instead of ~4 min
+  # and still satisfies branch protection.
+  # ---------------------------------------------------------------------------
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+
+          # FAIL SAFE. Every uncertain path resolves to "run everything".
+          # A wrong `docs_only=true` is a false green on a required check —
+          # strictly worse than a slow build.
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "event=$EVENT_NAME (not a PR) -> full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git fetch --no-tags origin "$BASE_REF" >/dev/null 2>&1 || true
+
+          if ! CHANGED="$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null)"; then
+            echo "could not diff against origin/${BASE_REF} -> full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$CHANGED" ]; then
+            echo "empty diff -> full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed files:"
+          echo "$CHANGED" | sed 's/^/  /'
+
+          # "Docs only" means EVERY changed path is a ROOT-LEVEL *.md file.
+          #
+          # Deliberately narrow, because markdown in this repo is often code:
+          #   factory/personas/*.md   are prompts, covered by contract tests
+          #                           (tests/handlers/test_prompt_contracts.py,
+          #                            tests/test_persona_loader.py)
+          #   apps/**/context/*.md    drive test_context_loader / canonical_paths
+          #   apps/**/directions/*.md drive test_direction_parser
+          # Only CLAUDE.md, README.md, STATUS.md, PLAN.md, AGENTS.md and
+          # SOTA-RESEARCH-*.md sit at the root, and no test reads them.
+          if echo "$CHANGED" | grep -qvE '^[^/]+\.md$'; then
+            echo "-> non-root-markdown paths present; full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "-> root-level markdown only; skipping build/test steps"
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Skip notice
+        if: needs.changes.outputs.docs_only == 'true'
+        run: echo "Root-level markdown only — ruff has nothing to check."
+
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.docs_only != 'true'
       - uses: astral-sh/setup-uv@v4
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           enable-cache: true
           python-version: "3.12"
       - name: uv sync
+        if: needs.changes.outputs.docs_only != 'true'
         run: uv sync --all-extras
       - name: ruff check
+        if: needs.changes.outputs.docs_only != 'true'
         run: uv run ruff check factory/ tests/ bench/
 
   typecheck:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Skip notice
+        if: needs.changes.outputs.docs_only == 'true'
+        run: echo "Root-level markdown only — no Python changed."
+
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.docs_only != 'true'
       - uses: astral-sh/setup-uv@v4
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           enable-cache: true
           python-version: "3.12"
       - name: uv sync
+        if: needs.changes.outputs.docs_only != 'true'
         run: uv sync --all-extras
       # BLOCKING on the verification-truth code (factory/chain/gates/): this is
       # the code that decides whether a PR is safe to merge, so it must not
@@ -51,9 +143,10 @@ jobs:
       # 2026-07-19). The rest of factory/ carries ~85 pre-existing findings and
       # is still surfaced as an advisory count until that debt is paid down.
       - name: mypy (blocking on chain/gates)
+        if: needs.changes.outputs.docs_only != 'true'
         run: uv run mypy factory/chain/gates/
       - name: mypy (advisory, package-wide)
-        if: always()
+        if: always() && needs.changes.outputs.docs_only != 'true'
         run: |
           uv run mypy factory/ > mypy.out 2>&1 || true
           tail -3 mypy.out
@@ -61,6 +154,7 @@ jobs:
           echo "::warning::mypy: ${COUNT} package-wide findings (advisory — tracked debt)"
 
   pytest:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -69,20 +163,29 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - name: Skip notice
+        if: needs.changes.outputs.docs_only == 'true'
+        run: echo "Root-level markdown only — no code path can have changed."
+
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.docs_only != 'true'
 
       - uses: astral-sh/setup-uv@v4
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           enable-cache: true
           python-version: "3.12"
 
       - name: uv sync --all-extras
+        if: needs.changes.outputs.docs_only != 'true'
         run: uv sync --all-extras
 
       - name: pytest with coverage
+        if: needs.changes.outputs.docs_only != 'true'
         run: uv run pytest -q --tb=short --cov=factory --cov-report=
 
       - name: Coverage comment + badge
+        if: needs.changes.outputs.docs_only != 'true'
         uses: py-cov-action/python-coverage-comment-action@v3
         with:
           GITHUB_TOKEN: ${{ github.token }}
