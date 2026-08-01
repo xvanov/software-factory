@@ -36,6 +36,14 @@ Do not "fix" anything in this table without a measurement that shows it broke.
 | The benchmark is retracted | Unpinned base SHA, 19 of 20 artifacts deleted, tasks now shipped | `PLAN.md` Phases 1–2 |
 | Gate precision is unknown | The merge gate runs the dev's own tests | `PLAN.md` 1.3 |
 | State has no backup | The twin guards source only | `PLAN.md` 3.4 |
+| Review is not independent on the hard tier | `azure_routes.dev.hard` and `azure_routes.reviewer` are both `azure/gpt-5.3-codex` | `PLAN.md` 0.6 |
+
+Read the last row carefully. Cross-family review is the only structural defence
+against a model approving its own reasoning. It holds on the standard tier
+(`deepseek-v4-pro` dev vs `gpt-5.3-codex` reviewer). It **collapses on the hard
+tier** — the tier a story escalates to when it is difficult, which is when
+independent review matters most. This is an operator decision, not a bug to
+patch blindly: changing it changes cost and quality together.
 
 ## Cost
 
