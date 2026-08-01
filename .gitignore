@@ -120,3 +120,8 @@ stories/*.md
 
 # coverage.py data file (never commit)
 .coverage
+
+# SWE-bench harness scratch: per-run clones, worktrees, docker logs and diffs.
+# The manifest, selftest verdicts and results.md ARE tracked — they are the
+# evidence. `runs/` is 350MB+ of reproducible working data and is not.
+bench/swebench/runs/
