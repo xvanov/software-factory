@@ -1,4 +1,4 @@
-# STATUS — measured 2026-08-01
+# STATUS — measured 2026-08-01 (Phase 0 landed same day)
 
 Point-in-time facts. Verify before you rely on them. The commands are in
 `CLAUDE.md`. The work queue is `PLAN.md`.
@@ -29,21 +29,35 @@ Do not "fix" anything in this table without a measurement that shows it broke.
 | Manager cost is unjustified | ~52% of all LLM spend | `PLAN.md` Phase 4 |
 | `factory_improver` does not land | 196 proposals, 1 commit. 179 apply failures | `PLAN.md` 3.1 |
 | L3 re-diagnoses known faults | 165 proposals span 37 distinct classes | `PLAN.md` 3.3 |
-| Dev has no prompt telemetry | `_log_prompt_metadata` is called only from `text_run` | `PLAN.md` 0.1 |
-| Retry outcomes are not recorded | 0 `retried` rows in `chain_steps`; 41 in `dev_retries` | `PLAN.md` 0.2 |
-| Smoke-gate diagnostics are discarded | `auto_merge.py` keeps passing labels only | `PLAN.md` 0.5 |
-| `StoryRecord.smoke_passed` is never assigned | Declared at `state_machine.py:302` | `PLAN.md` 0.5 |
-| The benchmark is retracted | Unpinned base SHA, 19 of 20 artifacts deleted, tasks now shipped | `PLAN.md` Phases 1–2 |
+| The benchmark is retracted | Tasks t1–t6 are shipped, so the pool is contaminated; the 20 reported rows still have no raw artifacts | `PLAN.md` Phases 1–2 |
 | Gate precision is unknown | The merge gate runs the dev's own tests | `PLAN.md` 1.3 |
 | State has no backup | The twin guards source only | `PLAN.md` 3.4 |
-| Review is not independent on the hard tier | `azure_routes.dev.hard` and `azure_routes.reviewer` are both `azure/gpt-5.3-codex` | `PLAN.md` 0.6 |
 
-Read the last row carefully. Cross-family review is the only structural defence
-against a model approving its own reasoning. It holds on the standard tier
-(`deepseek-v4-pro` dev vs `gpt-5.3-codex` reviewer). It **collapses on the hard
-tier** — the tier a story escalates to when it is difficult, which is when
-independent review matters most. This is an operator decision, not a bug to
-patch blindly: changing it changes cost and quality together.
+## Fixed 2026-08-01 (Phase 0)
+
+Measurement was impossible before these; everything in Phase 1 depends on them.
+
+| Was broken | Now | PR |
+|---|---|---|
+| Dev/test_implementer/onboarder had NO prompt telemetry — 45,868 rows, zero for the three personas that write all the code | `sandbox_run` logs metadata; new `prompt_bodies.ndjson` keeps full text + full sha256, hash-chained | #193 |
+| Retries were invisible: 0 `retried` rows in `chain_steps` vs 71 real dev retries and 119 review cycles | `retried` / `review_cycle` rows emitted, reconciling with the DB counters | #194 |
+| Failing gates' `reason` and `output_tail` were discarded — a blocked merge could not say why | `gates_failed` on `MergeAction`, a `gates_failed_json` column, and a `merge_gates_failed` story event | #195 |
+| `StoryRecord.smoke_passed` was read by the smoke gate and written nowhere — fail-closed by accident | Dead reader deleted; the gate is fail-closed structurally | #195 |
+| Reviewer shared a model with `dev.hard` (both `azure/gpt-5.3-codex`) | `reviewer` → `azure/gpt-5.4` in both blocks; enforced at router load | #196 |
+| Loop caps were 6, contradicting the "nothing loops >3" guardrail | `_MAX_DEV_RETRIES` and `_MAX_REVIEW_CYCLES` → 3; inner guards → 2 to keep early escalation reachable | #196 |
+
+**Behavioural change to watch.** At `_MAX_DEV_RETRIES = 3` the dev
+inner-convergence loop gets at most **two** sandbox attempts per invocation, so
+`red → red → green` no longer converges in one tick. Four stories in the 14 days
+to 2026-08-01 reached 6 retries and would now block at 3. Whether attempts 4–6
+produced *passing* work is unmeasured — that is exactly what Phase 1.3's gate
+precision number settles. Re-read this row after the first real soak.
+
+Reviewer independence now holds on **both** dev tiers and is enforced in code:
+`model_router.check_review_independence` refuses to resolve any route out of a
+colliding `routes.yaml`. `test_implementer` still shares `deepseek-v4-pro` with
+`dev.standard` — that weakens the acceptance oracle but not the merge decision,
+so it warns rather than blocks.
 
 ## Cost
 
@@ -69,6 +83,16 @@ The chain self-edit path and the FMS L4 apply tier are different subsystems.
 
 Measuring only the second produces the false conclusion that the factory cannot
 improve itself. Cross-check any yield claim against GitHub before asserting it.
+
+## Benchmark harness
+
+Pinned as of `PLAN.md` 0.3/0.4: `base_sha` is a literal SHA and an empty one is
+refused, the Claude arm pins `--model`, `clean()` no longer deletes
+`bench/runs/`, and every `result.json` records tokens plus its
+base/routes/price-table provenance. Tokens are the reported metric; dollars are
+derived from a hashed price table and can be re-derived after a price
+correction. This fixes the HARNESS. The July results stay retracted: their raw
+artifacts are still gone and their task pool is still contaminated.
 
 ## Known gaps in the twin
 
