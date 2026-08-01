@@ -17,9 +17,10 @@ both run for real AND become required. This keeps apps without a harness
 unaffected (no new merge blocks), avoiding the PRs 110/111 deadlock where a
 universally-required gate blocked every merge.
 
-Real-run vs dry-run mirrors the other command gates: in real-run with a local
-checkout we shell out and run the command; in dry-run we trust the dev
-handler's recorded ``smoke_passed`` flag (when present).
+Real-run vs dry-run: in real-run with a local checkout we shell out and run
+the command. Without one there is no evidence the product boots, so the gate
+FAILS CLOSED — it accepts no recorded stand-in for an actual runtime
+observation.
 """
 
 from __future__ import annotations
@@ -55,18 +56,25 @@ def evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:
             details={"exit_code": code, "output_tail": output},
         )
 
-    # Dry-run (or real-run with no checkout): trust the dev handler's recorded
-    # flag. The dev handler sets smoke_passed=True only after the smoke journey
-    # ran green in its sandbox.
-    story = pr.story
-    if story is not None and getattr(story, "smoke_passed", False):
-        return GateResult(
-            label=label,
-            passed=True,
-            reason="dev reported smoke_passed=True",
-        )
+    # Dry-run (or real-run with no checkout): FAIL CLOSED. There is no
+    # substitute for having booted the product.
+    #
+    # This branch used to pass the gate when ``story.smoke_passed`` was True,
+    # described as "trust the dev handler's recorded flag". No dev handler ever
+    # set it: ``StoryRecord.smoke_passed`` (state_machine.py) was declared and
+    # read here and assigned NOWHERE in ``factory/**`` — the ``smoke_passed``
+    # writes in ``factory/deploy/orchestrator.py`` are on ``DeployAction``, a
+    # different object. So the flag was always None, the pass branch was
+    # unreachable, and the gate was fail-closed only by accident.
+    #
+    # A gate keyed on a never-written flag is textbook proxy != real: the
+    # moment anything started writing it, a merge could be waved through on a
+    # recorded boolean instead of a runtime observation. Deleting the reader
+    # makes the fail-closed posture structural rather than accidental, and
+    # changes no observable behaviour today.
     return GateResult(
         label=label,
         passed=False,
-        reason="smoke harness required but no green smoke run recorded",
+        reason="smoke harness required but the smoke command was not run (no local checkout)",
+        details={"dry_run": pr.dry_run, "has_repo_root": pr.repo_root is not None},
     )
