@@ -53,6 +53,7 @@ from factory.chain.state_machine import (
     StoryState,
     advance,
 )
+from factory.chain.step_events import emit_chain_step
 from factory.chain.worktree import ensure_worktree_for_story
 from factory.context.enforcer import format_violation_comment, scan_pr_diff
 from factory.context.updater import ContextUpdate, apply_context_updates
@@ -1928,6 +1929,25 @@ def _handle_dev_once(
     # ``run_res`` (synthetic payload only); skip the feed-forward record
     # so the retry test fixture isn't tangled.
     story.dev_retries += 1
+    # Record the retry in the replayable chain_step stream. Dev retries happen
+    # INSIDE a single handler invocation, so the orchestrator's two emit sites
+    # (which fire once per dispatch) never see them: the stream held 400
+    # ``advanced`` + 10 ``error`` rows and zero ``retried`` rows while 41
+    # stories carried a non-zero ``dev_retries``. A retry is not a state
+    # transition, so from_state == to_state deliberately.
+    #
+    # ``retry_attempt``/``retry_cap`` are named to avoid colliding with the
+    # payload's own ``attempt`` field (which carries ``story.total_attempts``);
+    # ``extra`` is merged last and would otherwise silently redefine it.
+    emit_chain_step(
+        story,
+        handler="dev",
+        from_state=story.state,
+        to_state=story.state,
+        outcome="retried",
+        software_factory_root=software_factory_root,
+        extra={"retry_attempt": story.dev_retries, "retry_cap": _MAX_DEV_RETRIES},
+    )
     if not dry_run:
         # Capture rich cross-retry memory: the file diff + test tail are
         # the "what failed" signal; ``self_summary`` + ``last_assistant_message``
@@ -2931,6 +2951,28 @@ def handle_review(
             },
             software_factory_root=software_factory_root,
             slug_hint=story.slug,
+        )
+        # Mirror the per-story event into the replayable chain_step stream —
+        # same reason as the dev-retry emit above: review cycles turn inside a
+        # single handler invocation and never reached ``emit_chain_step``.
+        # Emitted after the stability computation so the row carries the two
+        # facts that explain the cycle (``consecutive_same``, ``stuck``), not
+        # merely that one happened.
+        emit_chain_step(
+            story,
+            handler="review",
+            from_state=story.state,
+            to_state=story.state,
+            outcome="review_cycle",
+            software_factory_root=software_factory_root,
+            extra={
+                "retry_attempt": story.reviewer_cycles,
+                "retry_cap": _MAX_REVIEW_CYCLES,
+                "consecutive_same": consecutive_same,
+                "stuck_cap": _MAX_REVIEW_STUCK,
+                "stuck": stuck,
+                "score": score,
+            },
         )
         if stuck or story.reviewer_cycles >= _MAX_REVIEW_CYCLES:
             story.state = advance(story, EVENT_REVIEW_NONCONVERGENT).value
