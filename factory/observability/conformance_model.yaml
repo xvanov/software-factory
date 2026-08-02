@@ -69,6 +69,7 @@ legal_edges:
   - {from: story_created, to: sm_in_progress}
   - {from: tech_writer_done, to: blocked_budget_exceeded}
   - {from: tech_writer_done, to: docs_enforcer_check}
+  - {from: tech_writer_in_progress, to: blocked_review_nonconvergent}
   - {from: tech_writer_in_progress, to: reviewer_requested_changes}
   - {from: tech_writer_in_progress, to: tech_writer_done}
   - {from: tests_green, to: blocked_budget_exceeded}

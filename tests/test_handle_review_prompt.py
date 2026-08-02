@@ -200,6 +200,11 @@ def test_handle_review_prompt_includes_fresh_test_output(
         "_fetch_pr_diff_for_review",
         lambda *_a, **_k: "(inert diff)",
     )
+    # This story has a real dev attempt below, and the fixture repo has no
+    # remote — the empty-diff short-circuit (with its local-base fallback)
+    # would legitimately fire and block before any prompt is built. This test
+    # pins prompt PLUMBING, not diff semantics, so force "diff not empty".
+    monkeypatch.setattr(handlers_mod, "_dev_produced_empty_diff", lambda *_a, **_k: False)
 
     s = _story(temp_root)
     s.dev_attempts_json = json.dumps(
@@ -268,6 +273,9 @@ def test_handle_review_prompt_includes_pr_diff_from_worktree(
     )
 
     def fake_run(cmd: list[str], *args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+        if cmd[:2] == ["git", "rev-parse"]:
+            # _resolve_diff_base probing origin/<base> — report it resolvable.
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="abc123\n", stderr="")
         assert cmd[:2] == ["git", "diff"], f"unexpected cmd: {cmd}"
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=fake_diff, stderr="")
 

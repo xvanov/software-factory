@@ -57,6 +57,13 @@ _BROKEN_PROMPT_MARKERS: tuple[str, ...] = (
     "(fetched from GitHub by the chain",
     "placeholder for real-run",
     "(see {",
+    # Diff-fetch failure text (see handlers._BROKEN_PROMPT_MARKERS for the
+    # full rationale): the fetch is fail-closed now, so these must never
+    # appear in a prompt; the scan catches a regression to fail-open.
+    "returned rc=",
+    "(gh pr diff failed",
+    "(git diff worktree failed",
+    "(could not resolve writing worktree",
 )
 
 

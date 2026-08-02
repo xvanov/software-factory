@@ -2302,6 +2302,20 @@ _BROKEN_PROMPT_MARKERS: tuple[str, ...] = (
     # by a bare string. We match the literal substring so a regressing
     # author swapping the f-string out is caught.
     "(see {",
+    # Diff-fetch failure text. ``_fetch_pr_diff_for_review`` used to be
+    # FAIL-OPEN: any ``gh pr diff`` / ``git diff`` failure returned the error
+    # text AS the diff, so the reviewer reviewed blind and produced "I cannot
+    # see the diff" blocking findings — a $0.008 reviewer decision triggering
+    # ~45x that in dev rework per cycle (2026-07-31 SWE-bench batch: rc=128
+    # on a missing ``origin/<base>`` ref poisoned EVERY review). The fetch now
+    # RAISES ``ReviewDiffUnavailableError`` instead (fail-closed, handled at
+    # both call sites before any prompt is built), so these strings must never
+    # reach a prompt again; the markers are the backstop that catches a
+    # regression to fail-open.
+    "returned rc=",
+    "(gh pr diff failed",
+    "(git diff worktree failed",
+    "(could not resolve writing worktree",
 )
 
 
@@ -2429,9 +2443,9 @@ def _dev_produced_empty_diff(
     dev genuinely produced nothing at all — ``False`` when either a real
     committed diff OR uncommitted/untracked working-tree changes exist, or
     ``None`` when the check itself could not be performed (no worktree yet,
-    git error, unexpected exit code, missing ``origin/<base>`` ref). ``None``
-    means "unknown" — callers MUST treat it as "do not short-circuit" and
-    fall back to the normal review path.
+    git error, unexpected exit code, neither ``origin/<base>`` nor a local
+    ``<base>`` ref resolving). ``None`` means "unknown" — callers MUST treat
+    it as "do not short-circuit" and fall back to the normal review path.
 
     The working-tree check matters because the dev's "work happened" signal
     is commit-agnostic: ``files_changed``/``test_run_passed`` come from the
@@ -2471,9 +2485,15 @@ def _dev_produced_empty_diff(
         return False
 
     base = app_config.default_branch or "main"
+    # origin/<base> → local <base> fallback (see _resolve_diff_base): keeps
+    # this check consistent with _fetch_pr_diff_for_review in worktrees that
+    # have no ``origin`` remote, instead of degrading to "unknown" there.
+    base_ref = _resolve_diff_base(worktree, base)
+    if base_ref is None:
+        return None
     try:
         proc = subprocess.run(
-            ["git", "diff", "--quiet", f"origin/{base}...HEAD"],
+            ["git", "diff", "--quiet", f"{base_ref}...HEAD"],
             cwd=str(worktree),
             capture_output=True,
             text=True,
@@ -2491,26 +2511,78 @@ def _dev_produced_empty_diff(
     return None
 
 
+class ReviewDiffUnavailableError(RuntimeError):
+    """The diff a persona must judge could not be fetched.
+
+    Raised by ``_fetch_pr_diff_for_review`` on ANY fetch failure (``gh pr
+    diff`` non-zero, git error, missing base ref, unresolvable worktree).
+    This is deliberately an exception, not an in-band error string: the old
+    fail-open behaviour returned the error text AS the diff, the reviewer
+    reviewed blind, and every cheap "I cannot see the diff" blocking finding
+    triggered a ~45x more expensive dev rework cycle (observed 2026-07-31:
+    a missing ``origin/<base>`` ref made ``git diff`` return rc=128 in every
+    review of every SWE-bench batch). Callers must treat this as a hard
+    precondition failure: no model call, no review-cycle burn, route the
+    story to a blocked state a human can see.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _resolve_diff_base(worktree: Path, base: str) -> str | None:
+    """Return the first base ref that resolves in ``worktree``, or ``None``.
+
+    Fallback chain: ``origin/<base>`` (the normal topology against a real
+    remote), then local ``<base>`` (worktrees cut from a repo with no
+    ``origin`` remote — e.g. a bench harness or a local-only app repo).
+    ``None`` means neither ref exists (or git itself failed) — callers must
+    fail CLOSED on it, never guess.
+    """
+    import subprocess
+
+    for ref in (f"origin/{base}", base):
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+                cwd=str(worktree),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return None
+        if proc.returncode == 0:
+            return ref
+    return None
+
+
 def _fetch_pr_diff_for_review(
     story: StoryRecord,
     app_config: AppConfig,
     software_factory_root: Path,
 ) -> str:
-    """Return the diff the reviewer should look at.
+    """Return the diff the reviewer should look at. FAIL-CLOSED.
 
     Two cases:
 
     * ``story.github_pr_number`` is set → ``gh pr diff <num> -R <repo>``.
       This is the source of truth once a PR exists.
-    * Otherwise → ``git diff origin/<default_branch>...HEAD`` inside the
-      per-story worktree. The chain creates a PR lazily; reviewer can fire
-      before that point, and we still want a real diff, not a placeholder.
+    * Otherwise → ``git diff <base>...HEAD`` inside the per-story worktree,
+      where ``<base>`` is resolved by ``_resolve_diff_base`` (``origin/<base>``
+      first, then local ``<base>``). The chain creates a PR lazily; reviewer
+      can fire before that point, and we still want a real diff, not a
+      placeholder.
 
-    Either way we cap the result at 64KB. Subprocess failures are swallowed
-    and surfaced inside the returned string (prefixed with ``"(...)"``)
-    so the reviewer sees the cause instead of an empty section. The
-    BROKEN_PROMPT_MARKERS guard further down catches the case where this
-    helper itself regresses and returns a literal placeholder.
+    The result is capped at 64KB. A genuinely EMPTY diff is returned as ``""``
+    — the call sites decide what an empty diff means for their persona (a
+    reviewer cannot approve zero commits). Any fetch FAILURE raises
+    ``ReviewDiffUnavailableError`` — this helper must never return error text
+    as if it were a diff (the fail-open bug that produced blind reviews). The
+    BROKEN_PROMPT_MARKERS guard downstream is the backstop that catches a
+    regression to fail-open.
     """
     import subprocess
 
@@ -2527,24 +2599,31 @@ def _fetch_pr_diff_for_review(
                 timeout=30,
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
-            return f"(gh pr diff failed: {exc!r})"
+            raise ReviewDiffUnavailableError(f"gh pr diff #{pr_number} failed: {exc!r}") from exc
         if proc.returncode != 0:
-            diff_text = (
-                f"(gh pr diff #{pr_number} returned rc={proc.returncode}; "
-                f"stderr_tail={proc.stderr.strip()[-200:]!r})"
+            raise ReviewDiffUnavailableError(
+                f"gh pr diff #{pr_number} exited rc={proc.returncode}; "
+                f"stderr_tail={proc.stderr.strip()[-200:]!r}"
             )
-        else:
-            diff_text = proc.stdout or ""
+        diff_text = proc.stdout or ""
     else:
         # No PR yet — diff the worktree against the default branch.
         try:
             worktree = _writing_worktree(app_config, software_factory_root, story)
         except Exception as exc:  # noqa: BLE001
-            return f"(could not resolve writing worktree: {exc!r})"
+            raise ReviewDiffUnavailableError(
+                f"could not resolve writing worktree: {exc!r}"
+            ) from exc
         base = app_config.default_branch or "main"
+        base_ref = _resolve_diff_base(worktree, base)
+        if base_ref is None:
+            raise ReviewDiffUnavailableError(
+                f"no diff base ref: neither 'origin/{base}' nor '{base}' "
+                f"resolves in worktree {worktree}"
+            )
         try:
             proc = subprocess.run(
-                ["git", "diff", f"origin/{base}...HEAD"],
+                ["git", "diff", f"{base_ref}...HEAD"],
                 cwd=str(worktree),
                 capture_output=True,
                 text=True,
@@ -2552,17 +2631,16 @@ def _fetch_pr_diff_for_review(
                 timeout=30,
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
-            return f"(git diff worktree failed: {exc!r})"
+            raise ReviewDiffUnavailableError(f"git diff in worktree failed: {exc!r}") from exc
         if proc.returncode != 0:
-            diff_text = (
-                f"(git diff origin/{base}...HEAD returned rc={proc.returncode}; "
-                f"stderr_tail={proc.stderr.strip()[-200:]!r})"
+            raise ReviewDiffUnavailableError(
+                f"git diff {base_ref}...HEAD exited rc={proc.returncode}; "
+                f"stderr_tail={proc.stderr.strip()[-200:]!r}"
             )
-        else:
-            diff_text = proc.stdout or ""
+        diff_text = proc.stdout or ""
 
     if not diff_text.strip():
-        return "(diff is empty — no commits on this branch beyond the base)"
+        return ""
     if len(diff_text) > _PR_DIFF_CAP_BYTES:
         diff_text = diff_text[:_PR_DIFF_CAP_BYTES] + "\n...[truncated at 64KB]"
     return diff_text
@@ -2576,11 +2654,12 @@ def _changed_files_for_story(
     """Return the branch's REAL changed-file list, or ``None`` if it cannot be
     computed (worktree GC'd, git error, timeout).
 
-    Uses ``git diff --name-only origin/<base>...HEAD`` inside the per-story
-    worktree — the SAME merge-base semantics ``_fetch_pr_diff_for_review`` uses
-    on its pre-PR path (``git diff origin/<base>...HEAD`` when the story has no
-    PR yet) — so the docs-enforcer's vacuous-diff guard and the reviewer agree
-    on what the branch changed. The enforcer runs before PR creation in the
+    Uses ``git diff --name-only <base_ref>...HEAD`` inside the per-story
+    worktree — the SAME merge-base semantics AND the same
+    ``origin/<base>`` → local ``<base>`` fallback (``_resolve_diff_base``)
+    ``_fetch_pr_diff_for_review`` uses on its pre-PR path — so the
+    docs-enforcer's vacuous-diff guard and the reviewer agree on what the
+    branch changed. The enforcer runs before PR creation in the
     normal chain (pr_number is None), so they match in practice; once a PR
     exists the reviewer switches to ``gh pr diff`` (the remote PR), which can
     differ from the local worktree HEAD.
@@ -2596,9 +2675,15 @@ def _changed_files_for_story(
     except Exception:  # noqa: BLE001 - any worktree resolution failure → fall back
         return None
     base = app_config.default_branch or "main"
+    # Same origin/<base> → local <base> fallback as _fetch_pr_diff_for_review,
+    # so the docs-enforcer and the reviewer keep agreeing on what changed even
+    # in a worktree with no ``origin`` remote.
+    base_ref = _resolve_diff_base(worktree, base)
+    if base_ref is None:
+        return None
     try:
         proc = subprocess.run(
-            ["git", "diff", "--name-only", f"origin/{base}...HEAD"],
+            ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
             cwd=str(worktree),
             capture_output=True,
             text=True,
@@ -2626,6 +2711,121 @@ def _assert_no_broken_prompt_markers(full_prompt: str, *, where: str) -> None:
                 f"{marker!r}; check that PR diff and test output fetches "
                 f"actually executed."
             )
+
+
+def _empty_diff_review_result(story: StoryRecord) -> dict[str, Any]:
+    """Deterministic request_changes for a branch whose fetched diff is EMPTY.
+
+    A reviewer cannot approve zero commits, so we never spend a model call on
+    an empty diff (the old behaviour embedded "(diff is empty …)" as the
+    prompt's diff section — and the model could, and in mocked tests did,
+    APPROVE it). The confirmed-empty case (real dev attempt + clean worktree)
+    is blocked earlier by the ``_dev_produced_empty_diff`` short-circuit; what
+    reaches here is the "give dev another chance" remainder — most commonly
+    real, test-passing work left UNCOMMITTED in the worktree (the dev agent is
+    only INSTRUCTED to commit, not forced; see ``_dev_produced_empty_diff``).
+    The synthetic finding routes back to dev with an explicit instruction.
+    Deliberately bounded: the constant findings text gives an identical
+    ``_findings_signature`` and the frozen 0.0 score never improves, so the
+    stuck + non-improving guards block the story on the second occurrence —
+    this path can never churn to the hard cap.
+    """
+    return {
+        "verdict": "request_changes",
+        "summary": (
+            "empty diff: the branch has no committed changes beyond its base. "
+            "A reviewer cannot approve zero commits. If real work exists in "
+            "the worktree it was never committed — commit it."
+        ),
+        "findings": [
+            {
+                "severity": "high",
+                "criterion": "completeness",
+                "location": "",
+                "what": (
+                    "empty diff: no committed changes on this branch beyond "
+                    "its base — commit the work (uncommitted files do not ship)"
+                ),
+            }
+        ],
+        "test_quality_findings": [],
+        "test_quality_score": 0.0,
+        "comments_to_post": [],
+        "empty_diff_precondition": True,
+    }
+
+
+def _block_on_unavailable_diff(
+    story: StoryRecord,
+    app_config: AppConfig,
+    software_factory_root: Path,
+    *,
+    persona: str,
+    reason: str,
+    db: Path,
+    github_client: Any = None,
+) -> HandlerResult:
+    """Route a story whose diff could not be fetched to the blocked sink.
+
+    FAIL-CLOSED hard-precondition handling shared by ``handle_review`` and
+    ``handle_tech_writer``: the model is never called, ``reviewer_cycles`` is
+    never incremented (this is an infra failure, not a review verdict), and
+    the story lands in ``BLOCKED_REVIEW_NONCONVERGENT`` — the same
+    human-visible sink the empty-diff short-circuit and the convergence guard
+    use. From there the bounded blocked-story auto-recovery
+    (``orchestrator._AUTO_RECOVERABLE_STATES``) re-enters the chain at
+    ``SM_DONE`` for transient causes (gh auth expiry, rate limit), and a
+    persistent cause surfaces to the operator (``last_rejection_reason`` puts
+    it in ``factory inbox``; the stalled-stories detector sees the state).
+    """
+    full_reason = f"{persona} diff precondition failed (fail-closed): {reason}"
+    story.state = advance(story, EVENT_REVIEW_NONCONVERGENT).value
+    story.error = full_reason
+    # Surfaces the story in the `factory inbox` "Needs human action" table,
+    # which keys off last_rejection_reason for states outside its small
+    # state allowlist.
+    story.last_rejection_reason = full_reason
+    result: dict[str, Any] = {
+        "verdict": "request_changes",
+        "summary": full_reason,
+        "findings": [],
+        "test_quality_findings": [],
+        "test_quality_score": 0.0,
+        "comments_to_post": [],
+        "review_diff_unavailable": True,
+    }
+    if persona == "reviewer":
+        # Keep the review record honest for history/dev plumbing. tech_writer
+        # must NOT overwrite reviewer_result_json — it holds the real approve.
+        story.reviewer_result_json = json.dumps(result)
+        _append_reviewer_history(story, result)
+    persist_story(story, db)
+    log_story_event(
+        story.id,
+        "review_diff_unavailable",
+        {
+            "persona": persona,
+            "reason": reason[:500],
+            "branch": story.github_branch,
+            "pr_number": story.github_pr_number,
+            "reviewer_cycles": story.reviewer_cycles,
+        },
+        software_factory_root=software_factory_root,
+        slug_hint=story.slug,
+    )
+    if github_client is not None and story.github_pr_number is not None:
+        try:  # pragma: no cover - real-run path
+            repo = github_client.get_repo(app_config.repo)
+            pr = repo.get_pull(story.github_pr_number)
+            pr.add_to_labels("review-nonconvergent")
+            pr.create_issue_comment(
+                f"⚠️ Diff precondition failed for {persona}: {reason}. "
+                f"Failing CLOSED (no blind review) and routing to "
+                f"{StoryState.BLOCKED_REVIEW_NONCONVERGENT.value}."
+            )
+        except Exception:  # pragma: no cover - real-run path
+            pass
+    return HandlerResult(next_state=StoryState(story.state), payload=result, error=story.error)
 
 
 def _dry_run_review(story: StoryRecord) -> dict[str, Any]:
@@ -2783,68 +2983,93 @@ def handle_review(
     elif dry_run:
         result = _dry_run_review(story)
     else:
-        from factory.app_config import resolve_app_repo_path
-        from factory.context.loader import compose_context_prelude
-        from factory.directions.parser import get_direction_chain
-        from factory.runner import text_run
+        # FAIL-CLOSED diff precondition. Fetched BEFORE any prompt assembly or
+        # model call: an unavailable diff must never be reviewed around (the
+        # old fail-open behaviour fed the fetch's error text to the model as
+        # the diff, and every blind "I cannot see the diff" rejection bought a
+        # ~45x more expensive dev rework cycle).
+        try:
+            pr_diff = _fetch_pr_diff_for_review(story, app_config, software_factory_root)
+        except ReviewDiffUnavailableError as exc:
+            return _block_on_unavailable_diff(
+                story,
+                app_config,
+                software_factory_root,
+                persona="reviewer",
+                reason=exc.reason,
+                db=db,
+                github_client=github_client,
+            )
+        if not pr_diff.strip():
+            # Empty diff: never call the model — a reviewer cannot approve
+            # zero commits. Deterministic request_changes that flows through
+            # the normal verdict machinery below (cycle count, stuck +
+            # non-improving guards), so it stays bounded.
+            result = _empty_diff_review_result(story)
+        else:
+            from factory.app_config import resolve_app_repo_path
+            from factory.context.loader import compose_context_prelude
+            from factory.directions.parser import get_direction_chain
+            from factory.runner import text_run
 
-        persona = "reviewer"
-        persona_prompt = _read_persona_prompt(persona)
-        direction = find_direction_for_story(story, software_factory_root)
-        chain = (
-            get_direction_chain(direction, software_factory_root) if direction is not None else None
-        )
-        prelude = compose_context_prelude(
-            persona=persona,
-            app_repo_path=resolve_app_repo_path(app_config, software_factory_root),
-            task_scope=story.scope,
-            direction_chain=chain,
-            software_factory_root=software_factory_root,
-        )
-        story_content = _read_story_file_content(story, software_factory_root)
-        fresh_test_output = _fetch_latest_test_output(story, software_factory_root)
-        pr_diff = _fetch_pr_diff_for_review(story, app_config, software_factory_root)
-        rcaps = (
-            "## App test capabilities (HONOR when judging test choices)\n\n"
-            f"* `e2e_harness_ready`: {str(app_config.gates.e2e_harness_ready).lower()}\n"
-            "* If false, this app has NO runnable Playwright/browser harness. Do "
-            "NOT require Playwright/E2E and do NOT flag a finding because a smoke/"
-            "flow test was written as pytest/httpx instead of Playwright — that "
-            "is the CORRECT choice here, and a backend test that covers the "
-            "behavior fully satisfies the acceptance criterion. Treat any stray "
-            "Playwright config/spec or 'playwright not wired' as NON-blocking "
-            "(`low`), never `medium`/`high`.\n\n"
-        )
-        history_section = _render_reviewer_history_section(story)
-        full_prompt = (
-            f"{persona_prompt.rstrip()}\n\n"
-            "---\n\n"
-            "## Context\n\n"
-            f"{prelude.rstrip()}\n\n"
-            f"{rcaps}" + (f"{history_section}\n\n" if history_section else "") + "## Story\n\n"
-            f"{story_content}\n\n"
-            "## Test plan\n\n"
-            f"{story.test_plan_json or '{}'}\n\n"
-            "## Latest test output\n\n"
-            f"{fresh_test_output}\n\n"
-            "## PR diff\n\n"
-            f"{pr_diff}\n\n"
-            "Return the JSON object for the review. No prose outside the JSON."
-        )
-        _assert_no_broken_prompt_markers(full_prompt, where="handle_review")
-        model_id = route(persona)
-        result_any = text_run(
-            persona=persona,
-            prompt=full_prompt,
-            model_id=model_id,
-            schema=None,  # reviewer output is JSON but we don't enforce schema here
-            max_tokens=max_output_tokens_for(model_id),
-            story_id=story.id,
-            app=story.app,
-            direction_id=story.direction_id,
-            db_path=db,
-        )
-        result = _parse_reviewer_result(result_any)
+            persona = "reviewer"
+            persona_prompt = _read_persona_prompt(persona)
+            direction = find_direction_for_story(story, software_factory_root)
+            chain = (
+                get_direction_chain(direction, software_factory_root)
+                if direction is not None
+                else None
+            )
+            prelude = compose_context_prelude(
+                persona=persona,
+                app_repo_path=resolve_app_repo_path(app_config, software_factory_root),
+                task_scope=story.scope,
+                direction_chain=chain,
+                software_factory_root=software_factory_root,
+            )
+            story_content = _read_story_file_content(story, software_factory_root)
+            fresh_test_output = _fetch_latest_test_output(story, software_factory_root)
+            rcaps = (
+                "## App test capabilities (HONOR when judging test choices)\n\n"
+                f"* `e2e_harness_ready`: {str(app_config.gates.e2e_harness_ready).lower()}\n"
+                "* If false, this app has NO runnable Playwright/browser harness. Do "
+                "NOT require Playwright/E2E and do NOT flag a finding because a smoke/"
+                "flow test was written as pytest/httpx instead of Playwright — that "
+                "is the CORRECT choice here, and a backend test that covers the "
+                "behavior fully satisfies the acceptance criterion. Treat any stray "
+                "Playwright config/spec or 'playwright not wired' as NON-blocking "
+                "(`low`), never `medium`/`high`.\n\n"
+            )
+            history_section = _render_reviewer_history_section(story)
+            full_prompt = (
+                f"{persona_prompt.rstrip()}\n\n"
+                "---\n\n"
+                "## Context\n\n"
+                f"{prelude.rstrip()}\n\n"
+                f"{rcaps}" + (f"{history_section}\n\n" if history_section else "") + "## Story\n\n"
+                f"{story_content}\n\n"
+                "## Test plan\n\n"
+                f"{story.test_plan_json or '{}'}\n\n"
+                "## Latest test output\n\n"
+                f"{fresh_test_output}\n\n"
+                "## PR diff\n\n"
+                f"{pr_diff}\n\n"
+                "Return the JSON object for the review. No prose outside the JSON."
+            )
+            _assert_no_broken_prompt_markers(full_prompt, where="handle_review")
+            model_id = route(persona)
+            result_any = text_run(
+                persona=persona,
+                prompt=full_prompt,
+                model_id=model_id,
+                schema=None,  # reviewer output is JSON but we don't enforce schema here
+                max_tokens=max_output_tokens_for(model_id),
+                story_id=story.id,
+                app=story.app,
+                direction_id=story.direction_id,
+                db_path=db,
+            )
+            result = _parse_reviewer_result(result_any)
 
     story.reviewer_result_json = json.dumps(result)
 
@@ -2965,6 +3190,28 @@ def handle_review(
             else:
                 break
         stuck = consecutive_same >= _MAX_REVIEW_STUCK
+        # Non-improving-score early exit. Review cycles are supposed to buy
+        # convergence; a score that fails to IMPROVE between consecutive
+        # rejecting cycles means more cycles are buying expensive wrong
+        # answers (2026-07-31 benchmark trajectories were flat/declining:
+        # 0.45→0.35→0.40). Compare against the PREVIOUS cycle's recorded
+        # score (reviewer_history_json — this cycle is appended later), and
+        # fire strictly BELOW the _MAX_REVIEW_CYCLES hard cap (at cycle 2, cap
+        # 3) or the guard would be unreachable. This lives inside the
+        # non-approve branch, so it can only ever route to the blocked sink —
+        # NEVER to approved.
+        prev_score: float | None = None
+        try:
+            _hist = json.loads(story.reviewer_history_json or "[]")
+        except (json.JSONDecodeError, TypeError):
+            _hist = []
+        if _hist and isinstance(_hist[-1], dict):
+            _raw_prev = _hist[-1].get("score")
+            if isinstance(_raw_prev, (int, float)):
+                prev_score = float(_raw_prev)
+        non_improving = (
+            story.reviewer_cycles >= 2 and prev_score is not None and score <= prev_score
+        )
         log_story_event(
             story.id,
             "reviewer_cycle",
@@ -2973,6 +3220,8 @@ def handle_review(
                 "cycle": story.reviewer_cycles,
                 "consecutive_same": consecutive_same,
                 "score": score,
+                "prev_score": prev_score,
+                "non_improving": non_improving,
             },
             software_factory_root=software_factory_root,
             slug_hint=story.slug,
@@ -2997,15 +3246,21 @@ def handle_review(
                 "stuck_cap": _MAX_REVIEW_STUCK,
                 "stuck": stuck,
                 "score": score,
+                "prev_score": prev_score,
+                "non_improving": non_improving,
             },
         )
-        if stuck or story.reviewer_cycles >= _MAX_REVIEW_CYCLES:
+        if stuck or non_improving or story.reviewer_cycles >= _MAX_REVIEW_CYCLES:
             story.state = advance(story, EVENT_REVIEW_NONCONVERGENT).value
-            reason = (
-                f"same findings repeated {consecutive_same}x (stuck)"
-                if stuck
-                else f"hit hard cap of {_MAX_REVIEW_CYCLES} cycles"
-            )
+            if stuck:
+                reason = f"same findings repeated {consecutive_same}x (stuck)"
+            elif non_improving:
+                reason = (
+                    f"review score did not improve between consecutive cycles "
+                    f"({prev_score} -> {score})"
+                )
+            else:
+                reason = f"hit hard cap of {_MAX_REVIEW_CYCLES} cycles"
             story.error = (
                 f"Review did not converge ({reason}); routed to "
                 f"{StoryState.BLOCKED_REVIEW_NONCONVERGENT.value} for human review."
@@ -3106,7 +3361,37 @@ def handle_tech_writer(
             software_factory_root=software_factory_root,
         )
         story_content = _read_story_file_content(story, software_factory_root)
-        pr_diff = _fetch_pr_diff_for_review(story, app_config, software_factory_root)
+        # FAIL-CLOSED diff precondition, same rationale as handle_review: a
+        # tech_writer that cannot see the diff would refresh context docs
+        # blind. An EMPTY diff is equally disqualifying HERE (unlike at
+        # review time, where it can mean "dev forgot to commit — retry"):
+        # tech_writer only runs after the reviewer approved a NON-empty diff,
+        # so an empty diff now means the worktree substrate changed under the
+        # chain (GC'd/rebuilt) — an infra fault, not a content verdict.
+        try:
+            pr_diff = _fetch_pr_diff_for_review(story, app_config, software_factory_root)
+        except ReviewDiffUnavailableError as exc:
+            return _block_on_unavailable_diff(
+                story,
+                app_config,
+                software_factory_root,
+                persona="tech_writer",
+                reason=exc.reason,
+                db=db,
+            )
+        if not pr_diff.strip():
+            return _block_on_unavailable_diff(
+                story,
+                app_config,
+                software_factory_root,
+                persona="tech_writer",
+                reason=(
+                    "diff is empty at tech_writer time, but the reviewer "
+                    "approved a non-empty diff — the worktree no longer "
+                    "matches what was reviewed"
+                ),
+                db=db,
+            )
         full_prompt = (
             f"{persona_prompt.rstrip()}\n\n"
             "---\n\n"

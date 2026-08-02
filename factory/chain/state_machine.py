@@ -443,6 +443,17 @@ _TRANSITIONS: dict[tuple[StoryState, str], StoryState] = {
         StoryState.TECH_WRITER_IN_PROGRESS,
         EVENT_REVIEWER_REQUEST_CHANGES,
     ): StoryState.REVIEWER_REQUESTED_CHANGES,
+    # Fail-closed diff precondition (2026-08-01): tech_writer could not fetch
+    # the PR diff (or it is empty when the reviewer just approved a non-empty
+    # one) — an INFRA fault, not a content verdict. Bouncing through
+    # REVIEWER_REQUESTED_CHANGES would burn a full dev+review loop on a fault
+    # dev cannot fix, so route to the same human-visible blocked sink the
+    # review path uses (bounded auto-recovery re-enters at SM_DONE for
+    # transient causes; see orchestrator._AUTO_RECOVERABLE_STATES).
+    (
+        StoryState.TECH_WRITER_IN_PROGRESS,
+        EVENT_REVIEW_NONCONVERGENT,
+    ): StoryState.BLOCKED_REVIEW_NONCONVERGENT,
     (
         StoryState.TECH_WRITER_DONE,
         EVENT_DOCS_ENFORCER_CHECK,

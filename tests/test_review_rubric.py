@@ -284,7 +284,10 @@ def test_rotating_criterion_findings_do_not_escalate(
         persist_story(s, db)
         fixture = {
             "verdict": "request_changes",
-            "test_quality_score": 0.9,
+            # Strictly improving score: since the non-improving-score early
+            # exit (2026-08-01), rotating findings alone no longer count as
+            # progress — a flat score at cycle 2 blocks.
+            "test_quality_score": 0.8 + i * 0.05,
             "findings": [{"severity": "high", "criterion": criteria[i],
                           "location": "app/x.py:5", "what": "same site diff axis"}],
             "test_quality_findings": [],
