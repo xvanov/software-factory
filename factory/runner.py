@@ -226,6 +226,163 @@ def _log_prompt_body(
         pass
 
 
+def _log_response_body(
+    *,
+    persona: str,
+    response: str,
+    prompt: str,
+    model_id: str,
+    story_id: int | None,
+    software_factory_root: Path | None,
+    mode: str = "text",
+    trajectory_path: str | None = None,
+) -> None:
+    """Best-effort: append the model's response text to ``response_bodies.ndjson``.
+
+    The other half of :func:`_log_prompt_body`: prompts were captured verbatim,
+    responses were not — a reviewer verdict or PM triage rationale could only be
+    reconstructed from downstream side effects. This records the response text
+    itself, hash-chained like every other stream.
+
+    ``prompt_hash`` is the full sha256 of the SAME bytes ``_log_prompt_body``
+    hashes, so a response row joins its prompt row exactly. ``response_hash``
+    is the full sha256 of the response text. For sandbox runs (``mode=
+    "sandbox"``) the response is the final assistant message and
+    ``trajectory_path`` points at the full OpenHands trajectory copy-out.
+
+    Scope and rotation deliberately REUSE the prompt-body mechanics
+    (``_prompt_bodies_scope`` + the same 100 MB x 3 window) — one config
+    surface for body capture, not two. Responses are typically far smaller
+    than prompts (a reviewer verdict is ~100 tokens), so the shared window is
+    generous. A failure here MUST NOT break the LLM call.
+    """
+    try:
+        if _prompt_bodies_scope() == "off":
+            return
+        if _prompt_bodies_scope() == "chain" and persona.startswith("manager_"):
+            return
+
+        import hashlib
+
+        from factory.manager.signals import write_event
+
+        if not isinstance(response, str):
+            # Some providers return content=None alongside tool calls; a
+            # telemetry writer must record that shape, not raise on it.
+            response = "" if response is None else str(response)
+        payload: dict[str, Any] = {
+            "event": "response_body",
+            "persona": persona,
+            "story_id": story_id,
+            "model_id": model_id,
+            "mode": mode,
+            "response_length_total": len(response),
+            "response_hash": hashlib.sha256(
+                response.encode("utf-8", errors="replace")
+            ).hexdigest(),
+            "prompt_hash": hashlib.sha256(prompt.encode("utf-8", errors="replace")).hexdigest(),
+            "response": response,
+        }
+        if trajectory_path is not None:
+            payload["trajectory_path"] = trajectory_path
+        write_event(
+            "response_bodies",
+            payload,
+            software_factory_root=software_factory_root,
+            rotate_max_bytes=_PROMPT_BODY_MAX_BYTES,
+            rotate_keep=_PROMPT_BODY_KEEP,
+        )
+    except Exception:  # noqa: BLE001 — logging must never break the call
+        pass
+
+
+# Ceiling for a single copied-out OpenHands trajectory file. Measured on the
+# pinned SDK (openhands-sdk 1.22.1): each persisted event is one compact JSON
+# file — the system-prompt event is ~26 KB, message/action/observation events
+# are hundreds of bytes to tens of KB — so a ~20-turn dev session lands in the
+# single-digit-MB range. 100 MB is therefore a defensive cap against a
+# pathological session (e.g. an observation echoing a huge file); when hit,
+# the copy stops and a ``trajectory_truncated`` marker line records how many
+# events were dropped.
+_TRAJECTORY_MAX_BYTES = 100_000_000
+
+
+def _trajectories_dir(software_factory_root: Path | None) -> Path:
+    """Resolve ``state/events/trajectories`` with the same root resolution
+    every event stream uses (explicit arg → ``FACTORY_STATE_ROOT`` → cwd)."""
+    from factory.manager.signals import _events_dir
+
+    return _events_dir(software_factory_root) / "trajectories"
+
+
+def _capture_trajectory(
+    *,
+    events_src: Path,
+    story_id: int | None,
+    attempt: int,
+    software_factory_root: Path | None,
+    max_bytes: int = _TRAJECTORY_MAX_BYTES,
+) -> str | None:
+    """Copy an OpenHands persisted event stream out as ONE ndjson trajectory.
+
+    The pinned SDK (1.22.1) persists each conversation event as a separate
+    compact-JSON file, ``<persistence_dir>/<conv_id.hex>/events/
+    event-NNNNN-<uuid>.json``, written incrementally as the run progresses
+    (so a crashed or timed-out run still leaves a partial trail). This
+    assembles those files, in sequence order, into
+    ``state/events/trajectories/<story>-<attempt>.ndjson`` — the agent's full
+    reasoning/tool-call/observation record, captured whole, no filtering.
+
+    Returns the written path, or ``None`` when there was nothing to copy.
+    Best-effort by contract: never raises.
+    """
+    try:
+        event_files = sorted(Path(events_src).glob("event-*.json"))
+        if not event_files:
+            return None
+        dest_dir = _trajectories_dir(software_factory_root)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        stem = f"{story_id if story_id is not None else 'nostory'}-{attempt}"
+        dest = dest_dir / f"{stem}.ndjson"
+        if dest.exists():
+            # A retry that reuses the same (story, attempt) key — e.g. a
+            # review-cycle re-dispatch — must not overwrite an earlier
+            # trajectory. One deterministic fallback, no rename loop.
+            dest = dest_dir / f"{stem}-{int(time.time() * 1000)}.ndjson"
+        written = 0
+        events_written = 0
+        with dest.open("w", encoding="utf-8") as out:
+            for i, f in enumerate(event_files):
+                try:
+                    raw = f.read_text(encoding="utf-8", errors="replace")
+                    line = json.dumps(json.loads(raw), separators=(",", ":"))
+                except Exception:  # noqa: BLE001 — one bad event must not lose the rest
+                    line = json.dumps(
+                        {"event": "trajectory_event_unreadable", "file": f.name}
+                    )
+                line_bytes = len(line.encode("utf-8", errors="replace")) + 1
+                if written + line_bytes > max_bytes:
+                    out.write(
+                        json.dumps(
+                            {
+                                "event": "trajectory_truncated",
+                                "bytes_written": written,
+                                "events_written": events_written,
+                                "events_omitted": len(event_files) - i,
+                                "max_bytes": max_bytes,
+                            }
+                        )
+                        + "\n"
+                    )
+                    break
+                out.write(line + "\n")
+                written += line_bytes
+                events_written += 1
+        return str(dest)
+    except Exception:  # noqa: BLE001 — trajectory capture must never break the run
+        return None
+
+
 def _extract_cached_tokens(usage: Any) -> int:
     """Return cache-read prompt tokens from a litellm ``Usage``-shaped object.
 
@@ -1575,6 +1732,41 @@ async def sandbox_run(
 
     loop = asyncio.get_running_loop()
 
+    # Trajectory capture: give the SDK a private persistence dir so it writes
+    # every conversation event (agent messages, tool calls, observations) to
+    # disk AS THE RUN PROGRESSES — after the run (or a timeout/crash, which
+    # still leaves a partial trail) the events are copied out whole into
+    # ``state/events/trajectories/<story>-<attempt>.ndjson``. The conversation
+    # id is fixed up front so the events dir location is known even when the
+    # run thread is orphaned by the wall-clock timeout. Gated on the same
+    # scope switch as body capture — one config surface.
+    import uuid as _uuid
+
+    _traj_attempt = len(prior_attempts or []) + 1
+    _traj_conv_id: Any = None
+    _traj_persist_dir: str | None = None
+    _traj_events_src: Path | None = None
+    if _prompt_bodies_scope() != "off":
+        _traj_conv_id = _uuid.uuid4()
+        _traj_persist_dir = _tf.mkdtemp(prefix="factory-oh-traj-")
+        _traj_events_src = Path(_traj_persist_dir) / _traj_conv_id.hex / "events"
+
+    def _capture_traj() -> str | None:
+        if _traj_events_src is None:
+            return None
+        return _capture_trajectory(
+            events_src=_traj_events_src,
+            story_id=story_id,
+            attempt=_traj_attempt,
+            software_factory_root=software_factory_root,
+        )
+
+    def _cleanup_traj_persist() -> None:
+        if _traj_persist_dir is not None:
+            import shutil as _shutil
+
+            _shutil.rmtree(_traj_persist_dir, ignore_errors=True)
+
     # Usage captured AS SOON AS the model run completes, BEFORE memory
     # extraction / conversation teardown. If ``_do_run`` raises after this is
     # populated (e.g. ``_extract_conversation_memory`` or ``close()`` blows up),
@@ -1591,11 +1783,20 @@ async def sandbox_run(
     def _do_run() -> tuple[int, int, int, float, str, list[dict[str, Any]]]:
         # ``Conversation`` is a factory that returns LocalConversation/RemoteConversation
         # depending on the workspace type. Treat as Any for mypy purposes.
+        conv_kwargs: dict[str, Any] = {}
+        if _traj_persist_dir is not None:
+            # SDK 1.22.1: ``persistence_dir`` makes LocalConversation write
+            # each event to ``<persistence_dir>/<conversation_id.hex>/events/``
+            # incrementally; ``delete_on_close=False`` (below) keeps them
+            # through close() for the post-run copy-out.
+            conv_kwargs["persistence_dir"] = _traj_persist_dir
+            conv_kwargs["conversation_id"] = _traj_conv_id
         conversation: Any = Conversation(
             agent=agent,
             workspace=workspace,
             max_iteration_per_run=effective_max_iterations,
             delete_on_close=False,
+            **conv_kwargs,
         )
         try:
             conversation.send_message(initial_user_text)
@@ -1668,6 +1869,11 @@ async def sandbox_run(
             "(likely a stalled LLM call); treating as retryable infrastructure "
             "failure"
         )
+        # Copy out whatever trajectory the run persisted before it stalled —
+        # the partial trail is exactly the forensic record a timeout needs.
+        # Do NOT delete the persistence dir here: the orphaned worker thread
+        # may still be writing to it.
+        _capture_traj()
         # Same distinction as the generic-except path below: if the model run
         # actually completed and only the post-model teardown (memory
         # extraction / close) hit the wall clock, ``_partial_usage`` is
@@ -1718,6 +1924,9 @@ async def sandbox_run(
         )
     except Exception as exc:
         err = f"sandbox run raised: {exc!r}"
+        # The partial trajectory is most valuable exactly when the run blew up.
+        _capture_traj()
+        _cleanup_traj_persist()
         # Distinguish "the model already did real work then something raised"
         # (e.g. metrics extraction / conversation teardown blew up) from "the
         # sandbox died before any model work". Only the latter is pre-model
@@ -1768,6 +1977,22 @@ async def sandbox_run(
             premodel_infra=not model_did_work,
             usage_reliable=_usage_meta.get("reliable") if model_did_work else None,
         )
+
+    # Response-side observability: copy the full OpenHands trajectory out to
+    # per-story state, then record the final assistant message as this call's
+    # response body (with the trajectory path attached for the join).
+    _traj_path = _capture_traj()
+    _cleanup_traj_persist()
+    _log_response_body(
+        persona=persona,
+        response=last_assistant_message,
+        prompt=initial_user_text,
+        model_id=llm_config.model,
+        story_id=story_id,
+        software_factory_root=software_factory_root,
+        mode="sandbox",
+        trajectory_path=_traj_path,
+    )
 
     files_changed = _scan_repo_for_changed_files(Path(repo_path))
     test_passed, test_out = _run_pytest(Path(repo_path), test_command=test_command)
@@ -2098,6 +2323,16 @@ def text_run(
                         premodel_infra=False,
                         usage_reliable=usage_reliable,
                     )
+                    # Capture the unparseable response too — the raw text is
+                    # exactly what a forensic look at this failure needs.
+                    _log_response_body(
+                        persona=persona,
+                        response=text,
+                        prompt=prompt,
+                        model_id=model_id,
+                        story_id=story_id,
+                        software_factory_root=software_factory_root,
+                    )
                     raise RuntimeError(
                         f"JSON-mode response was not valid JSON after "
                         f"{attempt} attempts (max_tokens up to {current_max}, "
@@ -2110,6 +2345,18 @@ def text_run(
     if _hb_id is not None:
         with contextlib.suppress(Exception):
             end_heartbeat(_hb_db, _hb_id)
+
+    # Response-side observability: the verbatim response text, joinable to its
+    # prompt-body row via prompt_hash. ``prompt`` here is the SAME pre-schema-
+    # augmentation string ``_log_prompt_body`` hashed above.
+    _log_response_body(
+        persona=persona,
+        response=text,
+        prompt=prompt,
+        model_id=model_id,
+        story_id=story_id,
+        software_factory_root=software_factory_root,
+    )
 
     success = True
 

@@ -795,6 +795,8 @@ def _mk_audit_run(
     bodies: list[dict[str, Any]] | None = None,
     write_db: bool = True,
     write_bodies: bool = True,
+    responses: list[dict[str, Any]] | None = None,
+    trajectories: int = 0,
 ) -> None:
     """Fabricate a run directory shaped like a real one."""
     import sqlite3
@@ -832,6 +834,27 @@ def _mk_audit_run(
             ]
         (state_root / "state" / "events" / "prompt_bodies.ndjson").write_text(
             "\n".join(json.dumps(b) for b in bodies) + "\n", encoding="utf-8"
+        )
+
+    if responses is not None:
+        (state_root / "state" / "events" / "response_bodies.ndjson").write_text(
+            "\n".join(json.dumps(r) for r in responses) + "\n", encoding="utf-8"
+        )
+
+    for i in range(trajectories):
+        traj_dir = state_root / "state" / "events" / "trajectories"
+        traj_dir.mkdir(parents=True, exist_ok=True)
+        (traj_dir / f"1-{i + 1}.ndjson").write_text(
+            json.dumps(
+                {
+                    "source": "agent",
+                    "llm_message": {
+                        "content": [{"type": "text", "text": f"dev reasoning step {i}"}]
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
         )
 
 
@@ -1031,6 +1054,90 @@ def test_audit_fails_a_run_with_a_recorded_failed_precheck(
         A.audit("inst1", "factory")
     failures = _audit_json(tmp_path)["failures"]
     assert any("precheck" in f for f in failures), failures
+
+
+# --------------------------------------------------------------------------- #
+# audit — response-side coverage is a WARNING, never a failure
+# --------------------------------------------------------------------------- #
+
+_RESPONSE_ROWS = [
+    {"event": "response_body", "persona": "dev", "story_id": 1, "mode": "sandbox",
+     "response": "SELF_SUMMARY: fixed it.", "ts": "t0"},
+    {"event": "response_body", "persona": "reviewer", "story_id": 1, "mode": "text",
+     "response": "APPROVED — no findings.", "ts": "t1"},
+]
+
+
+def test_audit_warns_but_passes_when_response_bodies_are_missing(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]  # noqa: N803
+) -> None:
+    """A run without response capture (older factory, capture off, capped
+    trajectory) stays VALID — invalidating it would fail every historical
+    run — but the gap must be loud."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path)  # prompt bodies only, no responses, no trajectories
+    A.audit("inst1", "factory")  # must not raise
+    data = _audit_json(tmp_path)
+    assert data["ok"] is True
+    assert any("response" in w for w in data["warnings"]), data["warnings"]
+    assert any("trajectory" in w for w in data["warnings"]), data["warnings"]
+    out = capsys.readouterr().out
+    assert "AUDIT WARN" in out
+    assert "resp=NO" in out
+    assert "traj=NO" in out
+
+
+def test_audit_is_warning_free_when_responses_and_trajectory_are_present(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]  # noqa: N803
+) -> None:
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS, trajectories=1)
+    A.audit("inst1", "factory")
+    data = _audit_json(tmp_path)
+    assert data["ok"] is True
+    assert data["warnings"] == []
+    out = capsys.readouterr().out
+    assert "resp=NO" not in out
+    assert "traj=yes" in out
+
+
+def test_audit_warns_when_only_the_dev_trajectory_is_missing(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS, trajectories=0)
+    A.audit("inst1", "factory")
+    warnings = _audit_json(tmp_path)["warnings"]
+    assert len(warnings) == 1
+    assert "trajectory" in warnings[0]
+
+
+def test_audit_show_responses_prints_the_reviewer_text_and_dev_messages(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]  # noqa: N803
+) -> None:
+    """The operator-readability contract: what the reviewer said and what dev
+    was thinking, without spelunking through ndjson by hand."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS, trajectories=1)
+    A.audit("inst1", "factory", show_responses=True)
+    out = capsys.readouterr().out
+    assert "APPROVED — no findings." in out
+    assert "dev reasoning step 0" in out
+
+
+def test_audit_response_warning_does_not_mask_a_real_failure(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """Warnings and failures are separate channels: a run that is BOTH
+    uncaptured and cost-mismatched still fails."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, result={"cost_usd": 0.10, "tokens_in": 150, "tokens_out": 15})
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "factory")
+    data = _audit_json(tmp_path)
+    assert data["ok"] is False
+    assert any("cost mismatch" in f for f in data["failures"])
+    assert any("response" in w for w in data["warnings"])
 
 
 def test_story_slug_is_stable_across_processes(A: Any) -> None:  # noqa: N803

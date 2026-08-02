@@ -37,14 +37,28 @@ is worse than no verifier.
   its current state. Per the repo's "Where truth lives" convention
   (`CLAUDE.md`): story state itself lives in `state/factory.db`; these two
   logs are "what happened", not "what is".
-- **Nine NDJSON streams**, all under `state/events/`: `runs`, `ticks`,
+- **Eleven NDJSON streams**, all under `state/events/`: `runs`, `ticks`,
   `queue`, `webhooks`, `git`, `spend` (the original six, wired in
   `factory/runner.py — _record_run()` and `factory/chain/orchestrator.py —
   tick()`), plus `alerts` (control-plane fail-safe alarms, `signals.ALERT_STREAM`),
-  `state_writes` (every `StoryRecord.state` change, `state_trace.py`), and
-  `prompts` (persona prompt/response records at high volume — the module
+  `state_writes` (every `StoryRecord.state` change, `state_trace.py`),
+  `prompts` (per-call prompt METADATA at high volume — the module
   docstring in `audit_chain.py` notes this stream alone runs to ~45k records
-  live, which is why chain-head writes use `flush()` and not `fsync()`).
+  live, which is why chain-head writes use `flush()` and not `fsync()`),
+  `prompt_bodies` (the verbatim prompt text per persona call,
+  `factory/runner.py — _log_prompt_body()`, its own 100 MB x 3 rotation
+  window), and `response_bodies` (the verbatim model RESPONSE per persona
+  call, `_log_response_body()` — joins its prompt row via the full
+  `prompt_hash`; sandbox rows carry a `trajectory_path`). Both body streams
+  share one capture scope switch (`FACTORY_PROMPT_BODIES`: `chain` default /
+  `all` / `off`).
+- **OpenHands trajectories** live under `state/events/trajectories/
+  <story>-<attempt>.ndjson`: the full per-run agent event stream (messages,
+  tool calls, observations) copied out of the SDK's `persistence_dir` by
+  `factory/runner.py — _capture_trajectory()` after every sandbox run —
+  including timed-out and crashed runs, which leave a partial trail. Capped
+  at 100 MB per file with a `trajectory_truncated` marker line. These are
+  plain artifacts, not a hash-chained stream.
 - **Common event envelope.** Every record written via `write_event()`
   carries at minimum `ts` (ISO-8601 UTC, tz-suffixed), `schema_version`
   (currently `1`), and `event` (a discriminator string). `write_event()`
