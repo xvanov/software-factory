@@ -1691,19 +1691,34 @@ def _scan_prompt_bodies(state_root: Path) -> tuple[list[str], int]:
     return failures, reviewer_seen
 
 
-def _scan_response_bodies(state_root: Path) -> list[dict[str, Any]]:
-    """Return every response-body record (live stream + rotated segments)."""
+def _scan_response_bodies(state_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return ``(records, scan_warnings)`` from the response-body stream.
+
+    Response coverage is a WARNINGS-class artifact by contract — so an
+    UNREADABLE stream must degrade to a warning too, never crash ``audit()``
+    before it writes ``audit.json`` (which would invalidate the run and
+    promote a warnings-class artifact to failure-class through the back
+    door). Contrast ``_scan_prompt_bodies``, which stays strict: prompt
+    bodies are legitimately failure-class.
+    """
     records: list[dict[str, Any]] = []
+    scan_warnings: list[str] = []
     for f in sorted((state_root / "state" / "events").glob("response_bodies.ndjson*")):
-        with f.open(encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if rec.get("event") == "response_body":
-                    records.append(rec)
-    return records
+        try:
+            with f.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if rec.get("event") == "response_body":
+                        records.append(rec)
+        except OSError as exc:
+            scan_warnings.append(
+                f"response-body stream {f.name} is unreadable ({exc}) — "
+                "response coverage for this segment is unknown"
+            )
+    return records, scan_warnings
 
 
 def _trajectory_files(state_root: Path) -> list[Path]:
@@ -1762,7 +1777,17 @@ def _show_responses(state_root: Path, responses: list[dict[str, Any]]) -> None:
     if not trajs:
         print("--- no dev trajectory captured ---")
         return
-    newest = trajs[-1]
+
+    def _mtime(p: Path) -> float:
+        # Lexicographic order lies here: retry-suffixed names sort before
+        # their base file and "10-1" sorts before "9-1". mtime is the truth
+        # for "newest"; a vanished file counts as oldest rather than crashing.
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    newest = max(trajs, key=_mtime)
     msgs = _trajectory_assistant_messages(newest)
     print(
         f"--- last {min(_SHOW_TRAJ_LAST_N, len(msgs))} of {len(msgs)} dev assistant "
@@ -1834,8 +1859,7 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     # (and for dev, an OpenHands trajectory) captured? Missing coverage is a
     # WARNING, never a failure — a size-capped or scope-disabled capture must
     # not invalidate an otherwise-sound run.
-    warnings: list[str] = []
-    responses = _scan_response_bodies(state_root)
+    responses, warnings = _scan_response_bodies(state_root)
     resp_counts: dict[str, int] = {}
     for r in responses:
         p = str(r.get("persona", ""))

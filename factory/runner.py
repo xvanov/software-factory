@@ -12,6 +12,23 @@ Two entry points:
 
 Both runners record a row in ``state/factory.db.runs`` keyed on persona +
 timestamp + token usage + cost.
+
+Observability caveat — the never-raise contract has one deliberate edge.
+Every capture writer in this module (``_log_prompt_body``,
+``_log_response_body``, ``_capture_trajectory``, the GC/reap sweeps) is
+best-effort and never raises. But trajectory capture works by handing the
+OpenHands SDK a ``persistence_dir``, and the SDK's OWN incremental event
+writes (``EventLog.append`` → ``LocalFileStore.write``, inside its callback
+chain, with no try/except of its own) are a mid-run disk dependency that did
+not exist before: with capture enabled (scope != ``off``), a full or
+quota-limited system temp dir aborts ``conversation.run()`` itself — surfaced
+as a normal failed sandbox attempt, not a swallowed telemetry error. On this
+host the temp dir shares the root disk, where a full disk fails everything
+anyway; the caveat bites when the temp dir is SEPARATELY constrained (e.g.
+systemd ``PrivateTmp`` backed by a small tmpfs, or a filesystem quota). Note
+also that the SDK persists each observation WHOLE per-event as it happens —
+the 100 MB cap in ``_capture_trajectory`` bounds the copied-out artifact, not
+the SDK's own scratch usage during the run.
 """
 
 from __future__ import annotations
@@ -306,6 +323,94 @@ def _log_response_body(
 # events were dropped.
 _TRAJECTORY_MAX_BYTES = 100_000_000
 
+# Total byte budget for ``state/events/trajectories/`` as a whole. One file
+# lands per dev call (plus a suffixed sibling per re-run of the same attempt
+# key), and nothing else ever deletes them — without a sweep the directory
+# grows without bound, silently, in production. 2 GB retains hundreds of
+# typical (single-digit-MB) dev sessions, mirroring the intent of the body
+# streams' 100 MB x 3 rotation window: keep months of the signal, evict the
+# oldest first. Enforced by ``_gc_trajectories`` after every copy-out.
+_TRAJECTORIES_TOTAL_MAX_BYTES = 2_000_000_000
+
+# How long an orphaned OpenHands persistence dir (``factory-oh-traj-*`` under
+# the system temp dir) may live before the next sandbox setup reaps it. The
+# wall-clock-timeout path deliberately leaves its dir behind — the orphaned
+# worker thread may still be writing — but those threads die with the one-shot
+# tick process, so anything older than a day is garbage by construction.
+_TRAJ_PERSIST_REAP_AGE_S = 24 * 3600
+
+
+def _gc_trajectories(
+    dest_dir: Path,
+    *,
+    max_total_bytes: int | None = None,
+    keep: Path | None = None,
+) -> None:
+    """Delete oldest trajectory files until the directory fits its byte budget.
+
+    Oldest-first by mtime, mirroring the eviction posture of the body streams'
+    rotation. ``keep`` (the file just written) is never deleted, even if it
+    alone exceeds the budget — evicting the newest signal to satisfy a size
+    number would invert the point of retention. ``max_total_bytes=None``
+    resolves the module constant at CALL time (so tests can patch it).
+    Best-effort: never raises.
+    """
+    try:
+        if max_total_bytes is None:
+            max_total_bytes = _TRAJECTORIES_TOTAL_MAX_BYTES
+        entries: list[tuple[float, int, Path]] = []
+        total = 0
+        for p in dest_dir.glob("*.ndjson"):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            entries.append((st.st_mtime, st.st_size, p))
+            total += st.st_size
+        if total <= max_total_bytes:
+            return
+        for _mtime, size, p in sorted(entries):
+            if keep is not None and p == keep:
+                continue
+            try:
+                p.unlink()
+            except OSError:
+                continue
+            total -= size
+            if total <= max_total_bytes:
+                return
+    except Exception:  # noqa: BLE001 — GC must never break the run
+        pass
+
+
+def _reap_stale_traj_persist_dirs(
+    tmp_root: Path | None = None,
+    *,
+    max_age_s: int = _TRAJ_PERSIST_REAP_AGE_S,
+) -> None:
+    """Delete ``factory-oh-traj-*`` persistence dirs older than ``max_age_s``.
+
+    The timeout path in ``sandbox_run`` intentionally skips its own cleanup
+    (an orphaned worker thread may still be writing); this sweep, run at the
+    NEXT sandbox setup, is what ultimately reaps those leftovers. Safe at 24 h
+    because orphaned threads die with their one-shot tick process — nothing
+    writes to one of these dirs hours later. Best-effort: never raises.
+    """
+    try:
+        import shutil as _shutil
+        import tempfile as _tempfile
+
+        root = Path(tmp_root) if tmp_root is not None else Path(_tempfile.gettempdir())
+        cutoff = time.time() - max_age_s
+        for p in root.glob("factory-oh-traj-*"):
+            try:
+                if p.is_dir() and p.stat().st_mtime < cutoff:
+                    _shutil.rmtree(p, ignore_errors=True)
+            except OSError:
+                continue
+    except Exception:  # noqa: BLE001 — a reap failure must never break the run
+        pass
+
 
 def _trajectories_dir(software_factory_root: Path | None) -> Path:
     """Resolve ``state/events/trajectories`` with the same root resolution
@@ -378,6 +483,7 @@ def _capture_trajectory(
                 out.write(line + "\n")
                 written += line_bytes
                 events_written += 1
+        _gc_trajectories(dest_dir, keep=dest)
         return str(dest)
     except Exception:  # noqa: BLE001 — trajectory capture must never break the run
         return None
@@ -1746,6 +1852,10 @@ async def sandbox_run(
     _traj_conv_id: Any = None
     _traj_persist_dir: str | None = None
     _traj_events_src: Path | None = None
+    # Reap persistence dirs a previous timed-out run left behind (its cleanup
+    # is deliberately skipped — see the TimeoutError path below). Runs even
+    # when capture is currently off, so toggling the scope can't strand them.
+    _reap_stale_traj_persist_dirs()
     if _prompt_bodies_scope() != "off":
         _traj_conv_id = _uuid.uuid4()
         _traj_persist_dir = _tf.mkdtemp(prefix="factory-oh-traj-")

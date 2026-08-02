@@ -24,8 +24,10 @@ import pytest
 
 from factory.runner import (
     _capture_trajectory,
+    _gc_trajectories,
     _log_prompt_body,
     _log_response_body,
+    _reap_stale_traj_persist_dirs,
     text_run,
 )
 
@@ -325,6 +327,92 @@ def test_trajectory_capture_returns_none_when_nothing_persisted(tmp_path: Path) 
         )
         is None
     )
+
+
+def test_trajectory_dir_is_gc_ed_to_a_byte_budget_oldest_first(tmp_path: Path) -> None:
+    """One multi-MB file lands per dev call and nothing else deletes them —
+    without a sweep the directory grows without bound in production."""
+    import os
+
+    traj_dir = tmp_path / "trajectories"
+    traj_dir.mkdir()
+    for i in range(4):
+        p = traj_dir / f"{i}-1.ndjson"
+        p.write_text("x" * 100, encoding="utf-8")
+        os.utime(p, (1000 + i, 1000 + i))  # 0-1 oldest ... 3-1 newest
+    newest = traj_dir / "3-1.ndjson"
+    _gc_trajectories(traj_dir, max_total_bytes=250, keep=newest)
+    survivors = sorted(p.name for p in traj_dir.glob("*.ndjson"))
+    # 400 bytes -> 250 budget: the two OLDEST are evicted, newest two remain.
+    assert survivors == ["2-1.ndjson", "3-1.ndjson"]
+
+
+def test_trajectory_gc_never_deletes_the_file_just_written(tmp_path: Path) -> None:
+    import os
+
+    traj_dir = tmp_path / "trajectories"
+    traj_dir.mkdir()
+    kept = traj_dir / "1-1.ndjson"
+    kept.write_text("x" * 100, encoding="utf-8")
+    os.utime(kept, (1000, 1000))  # oldest by mtime AND alone over budget
+    _gc_trajectories(traj_dir, max_total_bytes=10, keep=kept)
+    assert kept.exists()
+
+
+def test_trajectory_gc_runs_as_part_of_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep is wired into the copy-out itself, not a separate cron: a
+    single _capture_trajectory call must both write the new file AND evict
+    the oldest one beyond the budget."""
+    import os
+
+    from factory import runner
+
+    src = tmp_path / "persist" / "abc123" / "events"
+    _fake_openhands_events(src, n=1)
+    traj_dir = tmp_path / "state" / "events" / "trajectories"
+    traj_dir.mkdir(parents=True)
+    old = traj_dir / "6-1.ndjson"
+    old.write_text("x" * 5000, encoding="utf-8")
+    os.utime(old, (1000, 1000))
+    monkeypatch.setattr(runner, "_TRAJECTORIES_TOTAL_MAX_BYTES", 1000)
+
+    written = _capture_trajectory(
+        events_src=src, story_id=7, attempt=1, software_factory_root=tmp_path
+    )
+
+    assert written is not None
+    assert Path(written).exists()
+    assert not old.exists()
+
+
+def test_stale_persist_dirs_are_reaped_fresh_ones_are_not(tmp_path: Path) -> None:
+    """The timeout path deliberately leaks its factory-oh-traj-* dir (an
+    orphaned writer thread may still be using it); the age-based sweep at the
+    NEXT sandbox setup is what reaps it."""
+    import os
+    import time
+
+    old_dir = tmp_path / "factory-oh-traj-old"
+    old_dir.mkdir()
+    (old_dir / "leftover.json").write_text("{}", encoding="utf-8")
+    stale = time.time() - 25 * 3600
+    os.utime(old_dir, (stale, stale))
+    fresh_dir = tmp_path / "factory-oh-traj-fresh"
+    fresh_dir.mkdir()
+    unrelated = tmp_path / "some-other-dir"
+    unrelated.mkdir()
+
+    _reap_stale_traj_persist_dirs(tmp_path)
+
+    assert not old_dir.exists()
+    assert fresh_dir.exists()
+    assert unrelated.exists()
+
+
+def test_reap_never_raises_on_missing_tmp_root(tmp_path: Path) -> None:
+    _reap_stale_traj_persist_dirs(tmp_path / "does-not-exist")
 
 
 def test_trajectory_capture_never_raises_on_bad_root(tmp_path: Path) -> None:
