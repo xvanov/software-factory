@@ -703,7 +703,7 @@ def _ensure_image(inst: dict[str, Any], timeout_s: int = 1800) -> bool:
 _PRECHECK_TIMEOUT_S = 600
 
 
-def _precheck_collect(inst: dict[str, Any], repo: Path) -> tuple[bool, str, float]:
+def _precheck_collect(inst: dict[str, Any], repo: Path) -> dict[str, Any]:
     """Pre-dispatch gate: does the instance's test command even COLLECT?
 
     ``proxy ≠ real``: the harness used to check that ``test_command`` was SET,
@@ -714,11 +714,41 @@ def _precheck_collect(inst: dict[str, Any], repo: Path) -> tuple[bool, str, floa
     ``instance_test_command`` — with ``--collect-only -q`` (~1s), so it tests
     the real environment, not a stand-in.
 
-    Returns ``(ok, output_tail, duration_s)``. Any non-zero exit is a
-    collection failure — fail SAFE, fail loud.
+    Two DISTINCT conditions look identical to a naive gate and must not:
+
+    * **infogami class** — the target files exist but collection dies on a
+      broken import (uninitialised submodule, wrecked env). Genuinely fatal.
+    * **new-test-file class** — the target file does not exist at
+      ``base_commit`` because the DEV is supposed to CREATE it (a legitimate
+      TDD red; the story template says "put new tests in the files the test
+      command already targets"). Observed on ``openlibrary-798055…``: rc 4,
+      ``ERROR: file or directory not found``, $0 spend — a working-oracle
+      instance hard-failed for doing exactly what the task requires.
+
+    So: targets that EXIST are collected strictly (``mode:
+    "existing-targets"``, rc 0 required). When NONE exist, the gate verifies
+    the ENVIRONMENT instead (``mode: "ancestor-env-check"``): collect each
+    missing target's nearest existing ancestor directory (via
+    ``_existing_targets``; repo root as last resort). rc 0 and rc 5 ("no
+    tests collected", no errors) both PASS in that mode — an empty ancestor
+    is fine, the dev will add the file — while rc 2 (collection/import
+    errors: conftest and package imports still execute during ancestor
+    collection) and anything else stays a hard fail.
+
+    Returns the ``precheck`` payload: ``collect_ok``, ``duration_s``,
+    ``mode``, ``collected_targets``, ``exit_code``, ``tail``.
     """
-    cmd = instance_test_command(inst, repo=repo, collect_only=True)
+    files = _test_file_paths(_as_list(inst.get("selected_test_files_to_run")))
+    existing = [f for f in files if (repo / f).exists()]
+    if existing or not files:
+        # No declared targets at all → whole-repo strict collect, as before.
+        mode, targets, ok_rcs = "existing-targets", existing, (0,)
+    else:
+        mode, targets, ok_rcs = "ancestor-env-check", _existing_targets(files, repo), (0, 5)
+
+    cmd = instance_test_command(inst, test_files=targets, repo=repo, collect_only=True)
     t0 = time.monotonic()
+    rc: int | None = None
     try:
         proc = subprocess.run(
             cmd,
@@ -728,11 +758,19 @@ def _precheck_collect(inst: dict[str, Any], repo: Path) -> tuple[bool, str, floa
             text=True,
             timeout=_PRECHECK_TIMEOUT_S,
         )
-        ok = proc.returncode == 0
+        rc = proc.returncode
+        ok = rc in ok_rcs
         tail = ((proc.stdout or "") + (proc.stderr or ""))[-1500:]
     except (subprocess.TimeoutExpired, OSError) as exc:
         ok, tail = False, f"collect precheck invocation failed: {exc}"
-    return ok, tail, round(time.monotonic() - t0, 1)
+    return {
+        "collect_ok": ok,
+        "duration_s": round(time.monotonic() - t0, 1),
+        "mode": mode,
+        "collected_targets": targets,
+        "exit_code": rc,
+        "tail": tail,
+    }
 
 
 def _ledger_totals(runs: list[Any], story_id: int | None) -> dict[str, Any]:
@@ -819,9 +857,11 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
 
     # PRE-DISPATCH COLLECT GATE. Fail the run NOW, loudly, if the test command
     # cannot even collect — before a single model token is spent.
-    collect_ok, collect_tail, collect_s = _precheck_collect(inst, repo)
-    precheck = {"collect_ok": collect_ok, "duration_s": collect_s}
-    if not collect_ok:
+    precheck = _precheck_collect(inst, repo)
+    # The tail is kept out of the success-path result to stay lean; the mode
+    # and collected targets always land in result.json for the audit trail.
+    collect_tail = str(precheck.pop("tail", ""))
+    if not precheck["collect_ok"]:
         error = f"precheck: test command does not collect: {collect_tail[-400:]}"
         _write_result(
             instance_id,
