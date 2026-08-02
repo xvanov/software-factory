@@ -12,6 +12,7 @@ uv run python bench/swebench_adapter.py fetch --language python --limit 10 --see
 uv run python bench/swebench_adapter.py selftest          # validate the ORACLE
 uv run python bench/swebench_adapter.py run   --instance <id> --arm bare
 uv run python bench/swebench_adapter.py grade --instance <id> --arm bare
+uv run python bench/swebench_adapter.py audit --instance <id> --arm bare
 uv run python bench/swebench_adapter.py report
 ```
 
@@ -80,6 +81,25 @@ obvious route.
   bench runs writing synthetic failures into production telemetry.
 - **Pinned manifest** with a published seed and a per-instance
   problem-statement hash, frozen before any run.
+
+## Auditing
+
+Every run leaves a complete trail in its isolated state root: Run rows in
+`state/factory.db`, event streams in `state/events/*.ndjson`, and verbatim
+prompt bodies in `prompt_bodies.ndjson`. The `audit` subcommand verifies one
+run against that trail:
+
+```bash
+uv run python bench/swebench_adapter.py audit --instance <id> --arm factory
+```
+
+It lists every persona/LLM call (persona, story, tokens, cost, timestamp),
+cross-checks the ledger's cost/token sums against `result.json`, scans
+reviewer prompts for error strings where the diff should have been (`returned
+rc=`, `(diff is empty`, …), and flags a first dev call that failed in under
+~5 s — the unrunnable-environment signature. Any finding exits non-zero.
+FAIL SAFE: a missing artifact (no DB, no prompt bodies) is an audit failure,
+not a pass. The findings are written to `audit.json` next to `result.json`.
 
 ## Reporting rule
 
