@@ -51,6 +51,7 @@ Usage (from the factory root):
   uv run python bench/swebench_adapter.py selftest            # validate the ORACLE first
   uv run python bench/swebench_adapter.py run   --instance <id> --arm bare|factory
   uv run python bench/swebench_adapter.py grade --instance <id> --arm bare|factory
+  uv run python bench/swebench_adapter.py audit --instance <id> --arm bare|factory
   uv run python bench/swebench_adapter.py report
 """
 
@@ -347,10 +348,26 @@ def _run_dir(instance_id: str, arm: str) -> Path:
     return d
 
 
-def _write_result(instance_id: str, arm: str, payload: dict[str, Any]) -> Path:
+def _write_result(
+    instance_id: str, arm: str, payload: dict[str, Any], *, merge: bool = False
+) -> Path:
+    """Persist ``result.json`` for one (instance, arm).
+
+    ``merge=False`` (a fresh ``run``) REPLACES the file wholesale. It used to
+    merge unconditionally, so keys from a previous run in the same directory
+    (e.g. ``context_*``, or a ``grade`` verdict for a prediction that no
+    longer exists) persisted forever and were reported as if this run produced
+    them. Wholesale replacement is chosen over deleting known-stale keys
+    because a delete-list rots: the next new result key added would silently
+    start carrying over again. A new run means a new prediction, so ANY prior
+    content — including the old grade — is void.
+
+    ``merge=True`` is for ``grade``, which legitimately adds its verdict onto
+    the run's existing result.
+    """
     out = _run_dir(instance_id, arm) / "result.json"
     existing: dict[str, Any] = {}
-    if out.exists():
+    if merge and out.exists():
         try:
             existing = json.loads(out.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
@@ -358,6 +375,32 @@ def _write_result(instance_id: str, arm: str, payload: dict[str, Any]) -> Path:
     existing.update(payload)
     out.write_text(json.dumps(existing, indent=2), encoding="utf-8")
     return out
+
+
+def _reset_run_artifacts(run_dir: Path) -> None:
+    """Delete every artifact a PREVIOUS run of this (instance, arm) left behind.
+
+    Called at the TOP of both run functions, before anything can exit. Without
+    it, run #2 failing early (precheck, timeout, crash) leaves run #1's
+    ``prediction.diff`` sitting next to run #2's result — ``grade`` then
+    merges a verdict about a DEAD prediction onto the new run, and ``report``
+    counts an oracle pass for a run that produced nothing.
+
+    Also wipes ``state/`` — the bare arm's isolated ledger lives there and
+    would otherwise ACCUMULATE Run rows across re-runs, inflating the sum-all
+    totals (the factory arm's ``root/`` is already rebuilt by
+    ``_build_bench_root``). A crashed run therefore leaves NO result.json,
+    which ``audit`` treats as a failure — fail safe, never a stale pass.
+    """
+    for name in ("prediction.diff", "raw.diff", "grade.log", "result.json", "audit.json"):
+        (run_dir / name).unlink(missing_ok=True)
+    shutil.rmtree(run_dir / "state", ignore_errors=True)
+
+
+def _clone_url(inst: dict[str, Any]) -> str:
+    """The fetch URL for an instance. Separate so tests can point it at a
+    local fixture repo instead of the network."""
+    return f"https://github.com/{inst['repo']}.git"
 
 
 def _clone(inst: dict[str, Any], dest: Path) -> None:
@@ -370,7 +413,7 @@ def _clone(inst: dict[str, Any], dest: Path) -> None:
     if dest.exists():
         shutil.rmtree(dest, ignore_errors=True)
     dest.mkdir(parents=True)
-    url = f"https://github.com/{inst['repo']}.git"
+    url = _clone_url(inst)
     _git(dest, "init", "-q")
     _git(dest, "remote", "add", "origin", url)
     _git(dest, "fetch", "-q", "--depth", "1", "origin", inst["base_commit"])
@@ -378,6 +421,88 @@ def _clone(inst: dict[str, Any], dest: Path) -> None:
     _git(dest, "checkout", "-q", "-B", "swebench-base")
     _git(dest, "config", "user.email", "bench@example.invalid")
     _git(dest, "config", "user.name", "swebench adapter")
+    _init_submodules(inst, dest)
+    # A remote-tracking ref for the base branch, set AFTER submodule
+    # vendoring so it points at the final base commit. The reviewer's diff
+    # helper asks for ``git diff origin/<default_branch>...HEAD``; with only
+    # the local branch that fails rc=128 and the reviewer is handed the error
+    # string instead of a diff. Belt-and-braces alongside the handlers-side
+    # fallback.
+    _git(dest, "update-ref", "refs/remotes/origin/swebench-base", "HEAD")
+
+
+def _init_submodules(inst: dict[str, Any], dest: Path) -> None:
+    """Initialise submodules and VENDOR their content into ``swebench-base``.
+
+    openlibrary's ``infogami`` is a symlink into an uninitialised submodule:
+    without this step, mounting the tree over the image's ``/app`` produces
+    ``ModuleNotFoundError: No module named 'infogami'`` in under a second,
+    deterministically, and dev burns its whole budget on an environment that
+    can never go green.
+
+    Initialising alone is NOT enough for the factory arm: the chain builds
+    per-story worktrees with ``git worktree add``, which never populates
+    submodules — the clone would pass the collect precheck while dev's actual
+    worktree import-fails (proxy ≠ real). So after init, the gitlinks are
+    converted to plain tracked files and committed onto ``swebench-base``:
+    every tree derived from that branch then carries the content. Any fetch
+    failure is a loud hard error — a silently-partial clone is the exact bug
+    this exists to kill.
+
+    The main-repo contamination control is unaffected — submodules are
+    DEPENDENCY repos; the gold patch lives in the main repo, whose history
+    stays at depth 1.
+    """
+    if not (dest / ".gitmodules").exists():
+        return
+    base = ["git", "-C", str(dest), "submodule", "update", "--init", "--recursive"]
+    # Two attempts, no more: depth-1 first, then a full fetch — some servers
+    # refuse a direct shallow fetch of a submodule's pinned commit.
+    proc = subprocess.run([*base, "--depth", "1"], capture_output=True, text=True)
+    if proc.returncode != 0:
+        proc = subprocess.run(base, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"submodule init failed for {inst['instance_id']}: "
+            f"{((proc.stderr or '') + (proc.stdout or ''))[-500:]}"
+        )
+
+    paths_proc = subprocess.run(
+        ["git", "-C", str(dest), "config", "-f", ".gitmodules",
+         "--get-regexp", r"^submodule\..*\.path$"],
+        capture_output=True, text=True,
+    )
+    sub_paths = [line.split(" ", 1)[1] for line in paths_proc.stdout.splitlines() if " " in line]
+    for rel in sub_paths:
+        sub_dir = dest / rel
+        if not sub_dir.is_dir():
+            continue
+        # Drop every nested ``.git`` (gitfile or dir, including nested
+        # submodules') or ``git add`` would re-record a gitlink, not files.
+        for gitmeta in sorted(sub_dir.rglob(".git"), reverse=True):
+            if gitmeta.is_dir():
+                shutil.rmtree(gitmeta, ignore_errors=True)
+            else:
+                gitmeta.unlink(missing_ok=True)
+        # Tolerant: the gitlink may be absent from the index at this commit.
+        subprocess.run(
+            ["git", "-C", str(dest), "rm", "-q", "--cached", rel],
+            capture_output=True, text=True,
+        )
+        # ``-f``: the SUPERPROJECT's ignore rules can match files inside the
+        # submodule (they were tracked in the submodule's own repo, so its
+        # ignores never applied there). Without force, those files silently
+        # vanish from the vendored tree — recreating the clone-passes /
+        # worktree-fails gap for exactly those paths.
+        _git(dest, "add", "-f", rel)
+    staged = subprocess.run(
+        ["git", "-C", str(dest), "diff", "--cached", "--quiet"], capture_output=True
+    )
+    if staged.returncode != 0:
+        _git(
+            dest, "commit", "-q", "-m",
+            "bench: vendor submodule content so worktree-derived trees carry it",
+        )
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -482,7 +607,11 @@ def _existing_targets(paths: list[str], repo: Path) -> list[str]:
 
 
 def instance_test_command(
-    inst: dict[str, Any], test_files: list[str] | None = None, repo: Path | None = None
+    inst: dict[str, Any],
+    test_files: list[str] | None = None,
+    repo: Path | None = None,
+    *,
+    collect_only: bool = False,
 ) -> str:
     """The app's test command, run INSIDE the instance's official image.
 
@@ -514,7 +643,8 @@ def instance_test_command(
     )
     files = _test_file_paths(entries)
     target = " ".join(_shq(t) for t in files) if files else ""
-    inner = f"python -m pytest -p no:cacheprovider {target}".strip()
+    mode = "--collect-only -q " if collect_only else ""
+    inner = f"python -m pytest -p no:cacheprovider {mode}{target}".strip()
     image = f"jefzda/sweap-images:{inst['dockerhub_tag']}"
     return (
         'docker run --rm -v "$PWD":/app -w /app '
@@ -536,6 +666,66 @@ def _ensure_image(inst: dict[str, Any], timeout_s: int = 1800) -> bool:
         ).returncode
         == 0
     )
+
+
+_PRECHECK_TIMEOUT_S = 600
+
+
+def _precheck_collect(inst: dict[str, Any], repo: Path) -> tuple[bool, str, float]:
+    """Pre-dispatch gate: does the instance's test command even COLLECT?
+
+    ``proxy ≠ real``: the harness used to check that ``test_command`` was SET,
+    never that it WORKED. An environment where collection fails (e.g. an
+    uninitialised submodule import) turns a run into 631 seconds of dev
+    burning budget against a suite that can never go green. This runs the
+    SAME docker command dev will run — same image, same mount, built by
+    ``instance_test_command`` — with ``--collect-only -q`` (~1s), so it tests
+    the real environment, not a stand-in.
+
+    Returns ``(ok, output_tail, duration_s)``. Any non-zero exit is a
+    collection failure — fail SAFE, fail loud.
+    """
+    cmd = instance_test_command(inst, repo=repo, collect_only=True)
+    t0 = time.monotonic()
+    try:
+        proc = subprocess.run(
+            cmd,
+            shell=True,
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=_PRECHECK_TIMEOUT_S,
+        )
+        ok = proc.returncode == 0
+        tail = ((proc.stdout or "") + (proc.stderr or ""))[-1500:]
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        ok, tail = False, f"collect precheck invocation failed: {exc}"
+    return ok, tail, round(time.monotonic() - t0, 1)
+
+
+def _ledger_totals(runs: list[Any], story_id: int | None) -> dict[str, Any]:
+    """Cost/token totals over EVERY Run row in the run's isolated ledger.
+
+    The bench state root is per-run isolated, so every row in its DB belongs
+    to this run. Summing only ``story_id``-attributed rows made any row with a
+    different or ``None`` story_id (an onboarder/setup persona) invisible —
+    measured 1.62x cost under-reporting. Rows not attributed to ``story_id``
+    are ALSO counted separately, so an attribution gap is visible, not silent.
+    """
+    unattributed = [r for r in runs if getattr(r, "story_id", None) != story_id]
+    return {
+        "tokens_in": sum(int(r.tokens_in or 0) for r in runs),
+        "tokens_out": sum(int(r.tokens_out or 0) for r in runs),
+        "cached_input_tokens": sum(
+            int(getattr(r, "cached_input_tokens", 0) or 0) for r in runs
+        ),
+        "cost_usd": round(sum(float(r.cost_usd or 0.0) for r in runs), 4),
+        "persona_calls": len(runs),
+        "unattributed_persona_calls": len(unattributed),
+        "unattributed_cost_usd": round(
+            sum(float(r.cost_usd or 0.0) for r in unattributed), 4
+        ),
+    }
 
 
 def _build_bench_root(inst: dict[str, Any], repo: Path) -> Path:
@@ -578,16 +768,52 @@ def _build_bench_root(inst: dict[str, Any], repo: Path) -> Path:
 
 
 def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
+    # Wall clock starts at ENTRY. It used to start after clone + bench-root
+    # setup, so reported wall_clock_s silently excluded that work.
+    entered = time.monotonic()
     inst = _instance(instance_id)
+    run_dir = _run_dir(instance_id, "factory")
+    # BEFORE any exit path (image pull, clone, precheck): a stale
+    # prediction.diff must never outlive the run that produced it.
+    _reset_run_artifacts(run_dir)
     if not _ensure_image(inst):
         raise SystemExit(
             f"image for {instance_id} is unavailable; the factory arm needs it for "
             "a working test environment (see instance_test_command)"
         )
-    run_dir = _run_dir(instance_id, "factory")
     repo = run_dir / "repo"
     _clone(inst, repo)
     root = _build_bench_root(inst, repo)
+
+    # PRE-DISPATCH COLLECT GATE. Fail the run NOW, loudly, if the test command
+    # cannot even collect — before a single model token is spent.
+    collect_ok, collect_tail, collect_s = _precheck_collect(inst, repo)
+    precheck = {"collect_ok": collect_ok, "duration_s": collect_s}
+    if not collect_ok:
+        error = f"precheck: test command does not collect: {collect_tail[-400:]}"
+        _write_result(
+            instance_id,
+            "factory",
+            {
+                "arm": "factory",
+                "instance_id": instance_id,
+                "repo": inst["repo"],
+                "base_commit": inst["base_commit"],
+                "problem_statement_sha256": inst["problem_statement_sha256"],
+                "manifest_sha256": _manifest()["manifest_sha256"],
+                "ts": datetime.now(UTC).isoformat(),
+                "wall_clock_s": round(time.monotonic() - entered, 1),
+                "final_state": None,  # no story was ever dispatched
+                "error": error,
+                "factory_says_green": False,
+                "precheck": {**precheck, "tail": collect_tail[-1500:]},
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cost_usd": 0.0,
+                "persona_calls": 0,
+            },
+        )
+        raise SystemExit(error)
 
     # HARD isolation: every event write, every state read, inside the bench
     # root. Production telemetry must not see a single synthetic row.
@@ -638,6 +864,8 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
         StoryState.BLOCKED_REVIEW_NONCONVERGENT.value,
     }
+    # The dispatch-loop budget deliberately starts HERE (setup already spent
+    # is not dev's fault); the reported wall_clock_s uses ``entered``.
     started = time.monotonic()
     transitions: list[str] = []
     error: str | None = None
@@ -663,10 +891,12 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         transitions.append(f"{name}: {before} -> {row.state}")
         print(transitions[-1], flush=True)
 
+    # EVERY Run row in this isolated DB belongs to this run — see
+    # ``_ledger_totals`` for why a story_id filter under-reported cost 1.62x.
     with Session(eng) as s:
         final = s.get(StoryRecord, story_id)
         assert final is not None
-        runs = list(s.exec(select(Run).where(Run.story_id == story_id)).all())
+        runs = list(s.exec(select(Run)).all())
 
     # Match this story's OWN worktree. A glob[0] would happily grade a stale
     # directory left by an earlier run of the same instance.
@@ -691,18 +921,13 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "problem_statement_sha256": inst["problem_statement_sha256"],
         "manifest_sha256": _manifest()["manifest_sha256"],
         "ts": datetime.now(UTC).isoformat(),
-        "wall_clock_s": round(time.monotonic() - started, 1),
+        "wall_clock_s": round(time.monotonic() - entered, 1),
         "final_state": final.state,
         "dev_retries": final.dev_retries,
         "reviewer_cycles": final.reviewer_cycles,
-        "tokens_in": sum(int(r.tokens_in or 0) for r in runs),
-        "tokens_out": sum(int(r.tokens_out or 0) for r in runs),
-        "cached_input_tokens": sum(
-            int(getattr(r, "cached_input_tokens", 0) or 0) for r in runs
-        ),
-        "cost_usd": round(sum(float(r.cost_usd or 0.0) for r in runs), 4),
+        **_ledger_totals(runs, story_id),
         "cost_source": "derived-from-price-table",
-        "persona_calls": len(runs),
+        "precheck": precheck,
         "transitions": transitions[-12:],
         "error": error,
         # The factory's OWN verdict — what its gates believe. `grade` supplies
@@ -789,8 +1014,16 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     planning, no retrieval, no review. That is the point — it is the floor the
     factory has to beat.
     """
+    # Wall clock starts at ENTRY so clone/setup time is counted (same fix as
+    # run_factory); ``started`` below still scopes the step-loop budget.
+    entered = time.monotonic()
     inst = _instance(instance_id)
     run_dir = _run_dir(instance_id, "bare")
+    # BEFORE any exit path: clears stale prediction/grade artifacts AND wipes
+    # ``state/`` — unlike the factory arm's rebuilt root, the bare arm's
+    # ledger lives directly under run_dir and would accumulate Run rows
+    # across re-runs, inflating the sum-all totals the audit certifies.
+    _reset_run_artifacts(run_dir)
     repo = run_dir / "repo"
     _clone(inst, repo)
 
@@ -888,7 +1121,7 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "manifest_sha256": _manifest()["manifest_sha256"],
         "model": model,
         "ts": datetime.now(UTC).isoformat(),
-        "wall_clock_s": round(time.monotonic() - started, 1),
+        "wall_clock_s": round(time.monotonic() - entered, 1),
         "steps_used": len(transcript),
         "step_cap": steps,
         "tokens_in": tokens_in,
@@ -968,7 +1201,7 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
         verdict.update(
             {"oracle_resolved": False, "outcome": "empty_patch", "log_tail": ""}
         )
-        _write_result(instance_id, arm, {"grade": verdict})
+        _write_result(instance_id, arm, {"grade": verdict}, merge=True)
         print(json.dumps(verdict, indent=2))
         return
 
@@ -987,7 +1220,7 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
                     "log_tail": (proc.stderr or "")[-2000:],
                 }
             )
-            _write_result(instance_id, arm, {"grade": verdict})
+            _write_result(instance_id, arm, {"grade": verdict}, merge=True)
             print(json.dumps(verdict, indent=2))
             return
 
@@ -1042,7 +1275,7 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
             "log_tail": log[-3000:],
         }
     )
-    _write_result(instance_id, arm, {"grade": verdict})
+    _write_result(instance_id, arm, {"grade": verdict}, merge=True)
     print(json.dumps({k: v for k, v in verdict.items() if k != "log_tail"}, indent=2))
 
 
@@ -1290,6 +1523,241 @@ def _gold_patches(wanted: set[str]) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------- #
+# audit — every run must be fully auditable, and a broken run must not pass
+# --------------------------------------------------------------------------- #
+
+# Strings that mean the reviewer was handed an ERROR MESSAGE where the diff
+# should have been (see factory/chain/handlers.py `_pr_diff_for_review`'s
+# fallback strings). A reviewer verdict formed over one of these is a verdict
+# about nothing — the run is invalid.
+_REVIEWER_BROKEN_DIFF_MARKERS: tuple[str, ...] = (
+    "returned rc=",
+    "(diff is empty",
+    "(gh pr diff failed",
+    "(git diff worktree failed",
+    "(could not resolve writing worktree",
+)
+
+# A failed dev call this fast never did real work — the pre-model /
+# unrunnable-environment signature (cf. the "$0/0.2s retry storm" class).
+_FAST_FAIL_S = 5.0
+
+_RUN_COLUMNS = (
+    "ts",
+    "persona",
+    "model",
+    "story_id",
+    "tokens_in",
+    "tokens_out",
+    "cached_input_tokens",
+    "cost_usd",
+    "duration_s",
+    "success",
+    "error",
+)
+
+
+def _audit_read_runs(db: Path) -> list[dict[str, Any]]:
+    """Read every Run row from the run's isolated ledger, READ-ONLY.
+
+    Plain sqlite3 with ``mode=ro`` instead of the factory's ``_engine``: the
+    engine runs schema migrations on open, and an audit must never mutate the
+    artifact it is auditing.
+    """
+    import sqlite3
+
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            f"SELECT {', '.join(_RUN_COLUMNS)} FROM runs ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
+
+
+def _scan_prompt_bodies(state_root: Path) -> tuple[list[str], int]:
+    """Return ``(failures, reviewer_prompts_seen)`` from the prompt-body stream.
+
+    Scans the live ``prompt_bodies.ndjson`` plus rotated segments for the
+    broken-diff markers in REVIEWER prompts. A missing stream is the CALLER's
+    failure to report — this only scans what exists.
+    """
+    failures: list[str] = []
+    reviewer_seen = 0
+    for f in sorted((state_root / "state" / "events").glob("prompt_bodies.ndjson*")):
+        # Stream line-by-line: a rotated body stream can be ~100MB per segment.
+        with f.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("event") != "prompt_body" or rec.get("persona") != "reviewer":
+                    continue
+                reviewer_seen += 1
+                hits = [
+                    m for m in _REVIEWER_BROKEN_DIFF_MARKERS if m in str(rec.get("prompt", ""))
+                ]
+                if hits:
+                    failures.append(
+                        f"reviewer prompt (hash {str(rec.get('prompt_hash', ''))[:16]}) "
+                        f"contains broken-diff markers {hits}: the reviewer saw an error "
+                        "string instead of a diff, which invalidates the run"
+                    )
+    return failures, reviewer_seen
+
+
+def audit(instance_id: str, arm: str) -> None:
+    """Audit one run's artifacts end-to-end; exit non-zero on ANY failure.
+
+    Checks, in order:
+
+    1. every persona/LLM call is listed from the isolated ledger's Run rows;
+    2. the ledger's cost/token sums MATCH what result.json reported;
+    3. no reviewer prompt contained an error string where the diff belonged;
+    4. the first dev call did not fast-fail (failed in under ~5s) — the
+       unrunnable-environment signature;
+    5. a failed collect precheck recorded in result.json fails the audit.
+
+    FAIL SAFE: a missing artifact (no result.json, no DB, no prompt bodies) is
+    an audit FAILURE, never a pass — an unauditable run is an invalid run.
+    Writes ``audit.json`` next to ``result.json`` either way.
+    """
+    run_dir = _run_dir(instance_id, arm)
+    state_root = run_dir / "root" if arm == "factory" else run_dir
+    failures: list[str] = []
+
+    result: dict[str, Any] = {}
+    result_valid = False  # file existed AND parsed to a non-empty JSON object
+    result_path = run_dir / "result.json"
+    if not result_path.exists():
+        failures.append(f"missing artifact: {result_path}")
+    else:
+        try:
+            loaded = json.loads(result_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            failures.append(f"result.json is not valid JSON: {exc}")
+        else:
+            if isinstance(loaded, dict) and loaded:
+                result = loaded
+                result_valid = True
+            else:
+                # FAIL SAFE: `{}` (or a non-object) would previously skip the
+                # entire ledger<->result section via truthiness and audit-pass
+                # a run that reported nothing.
+                failures.append(
+                    "result.json is empty or not a JSON object — nothing to certify"
+                )
+
+    calls: list[dict[str, Any]] = []
+    db = state_root / "state" / "factory.db"
+    if not db.exists():
+        failures.append(f"missing artifact: {db} (no Run ledger — calls unauditable)")
+    else:
+        try:
+            calls = _audit_read_runs(db)
+        except Exception as exc:  # noqa: BLE001 — an unreadable ledger is a finding
+            failures.append(f"Run ledger unreadable: {type(exc).__name__}: {exc}")
+
+    print(f"=== audit {instance_id} / {arm} ===")
+    for c in calls:
+        print(
+            f"  {c['ts']}  {c['persona']:<12} story={c['story_id']} "
+            f"in={c['tokens_in']} out={c['tokens_out']} cached={c['cached_input_tokens']} "
+            f"cost=${float(c['cost_usd'] or 0):.4f} dur={c['duration_s']}s "
+            f"ok={bool(c['success'])}"
+        )
+
+    # 2. ledger vs result.json — the number every A/B is measured against.
+    ledger_cost = round(sum(float(c["cost_usd"] or 0.0) for c in calls), 4)
+    ledger_in = sum(int(c["tokens_in"] or 0) for c in calls)
+    ledger_out = sum(int(c["tokens_out"] or 0) for c in calls)
+    if result_valid:
+        reported = result.get("cost_usd")
+        if reported is None:
+            failures.append("result.json has no cost_usd")
+        elif abs(ledger_cost - float(reported)) > 0.005:
+            failures.append(
+                f"cost mismatch: ledger sums to ${ledger_cost} but result.json "
+                f"reports ${reported} — the reported number is not the real spend"
+            )
+        for key, ledger_val in (("tokens_in", ledger_in), ("tokens_out", ledger_out)):
+            reported_tok = result.get(key)
+            if reported_tok is None:
+                continue
+            try:
+                mismatch = int(reported_tok) != ledger_val
+            except (TypeError, ValueError):
+                mismatch = True  # an unparseable number is not the ledger's number
+            if mismatch:
+                failures.append(
+                    f"{key} mismatch: ledger={ledger_val} result.json={reported_tok}"
+                )
+
+    # 3. reviewer prompt integrity. No prompt bodies at all is a failure when
+    #    the ledger shows LLM calls were made — the trail is incomplete.
+    body_files = list((state_root / "state" / "events").glob("prompt_bodies.ndjson*"))
+    if not body_files:
+        if calls:
+            failures.append(
+                "missing artifact: no prompt_bodies.ndjson under "
+                f"{state_root / 'state' / 'events'} despite {len(calls)} persona call(s)"
+            )
+    else:
+        marker_failures, reviewer_seen = _scan_prompt_bodies(state_root)
+        failures.extend(marker_failures)
+        # Coverage cross-check: the ledger is the ground truth for whether a
+        # reviewer ran. Zero scanned reviewer prompts despite reviewer Run
+        # rows means the bodies were rotated away or never captured — the
+        # reviewer's input is unauditable, and silence must not read as clean.
+        reviewer_calls = sum(1 for c in calls if c["persona"] == "reviewer")
+        if reviewer_calls and reviewer_seen == 0:
+            failures.append(
+                f"ledger shows {reviewer_calls} reviewer call(s) but zero reviewer "
+                "prompt bodies were scanned (rotated away or never captured) — "
+                "reviewer input is unauditable"
+            )
+
+    # 4. first-dev fast-fail — the unrunnable-environment signature.
+    dev_calls = [c for c in calls if c["persona"] == "dev"]
+    if dev_calls:
+        first = dev_calls[0]
+        dur = first.get("duration_s")
+        if not first.get("success") and dur is not None and float(dur) < _FAST_FAIL_S:
+            failures.append(
+                f"first dev execution failed in {dur}s (< {_FAST_FAIL_S}s): "
+                "unrunnable-environment signature — the run never tested anything"
+            )
+
+    # 5. a recorded failed precheck is a failed run.
+    pre = result.get("precheck") if isinstance(result.get("precheck"), dict) else None
+    if pre is not None and not pre.get("collect_ok"):
+        failures.append("result.json records a failed collect precheck")
+
+    payload = {
+        "instance_id": instance_id,
+        "arm": arm,
+        "audited_at": datetime.now(UTC).isoformat(),
+        "ok": not failures,
+        "failures": failures,
+        "persona_calls": calls,
+        "ledger_cost_usd": ledger_cost,
+        "ledger_tokens_in": ledger_in,
+        "ledger_tokens_out": ledger_out,
+        "result_cost_usd": result.get("cost_usd"),
+    }
+    out = run_dir / "audit.json"
+    out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if failures:
+        for f in failures:
+            print(f"AUDIT FAIL: {f}")
+        raise SystemExit(f"audit FAILED ({len(failures)} finding(s)) -> {out}")
+    print(f"audit OK ({len(calls)} persona call(s), ${ledger_cost}) -> {out}")
+
+
+# --------------------------------------------------------------------------- #
 # report — gate precision and recall
 # --------------------------------------------------------------------------- #
 
@@ -1455,6 +1923,12 @@ def main() -> None:
     p.add_argument("--instance", default=None, help="omit to check every pinned instance")
     p.add_argument("--timeout-s", type=int, default=3600)
 
+    p = sub.add_parser(
+        "audit", help="verify one run's ledger, prompts and reported numbers"
+    )
+    p.add_argument("--instance", required=True)
+    p.add_argument("--arm", default="factory", choices=["factory", "bare"])
+
     sub.add_parser("report")
 
     args = ap.parse_args()
@@ -1467,6 +1941,8 @@ def main() -> None:
         grade(args.instance, args.arm, timeout_s=args.timeout_s)
     elif args.cmd == "selftest":
         selftest(args.instance, timeout_s=args.timeout_s)
+    elif args.cmd == "audit":
+        audit(args.instance, args.arm)
     elif args.cmd == "report":
         report()
 
