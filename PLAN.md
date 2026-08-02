@@ -435,15 +435,20 @@ Each sub-step's original text is kept below for its file references.
 
 ---
 
-## Phase 1 — first real number — **START HERE**
+## Phase 1 — first real number — **1.1–1.3 DONE 2026-08-02; 1.4 remains**
 
 **Effort ~1.5 days. Cost ~$40.** Goal: one honest, externally-graded datapoint
 plus the matched bare-model number,
 using a corpus the factory has never seen.
 
-### 1.1 — SWE-bench Pro adapter  **[OPERATOR-PR-ONLY — new file under `bench/`]**
+**2026-08-02 status:** 1.1–1.3 shipped (#199, #200, #202, #204, #205) after the
+2026-08-01 batches were retracted for three harness bugs (#202/#203/#205 fixed
+them; see `STATUS.md`). Valid numbers, n=6 audited-valid: 1/6 resolved,
+chain-verdict precision 1/5, recall 1/1. **Start at 1.4.**
 
-- [ ] **New file:** `bench/swebench_adapter.py`. **Pattern to mirror:**
+### 1.1 — SWE-bench Pro adapter  **[OPERATOR-PR-ONLY — new file under `bench/`]** — **DONE (#199, #200)**
+
+- [x] **New file:** `bench/swebench_adapter.py`. **Pattern to mirror:**
       `bench/bench.py:240-300` — it constructs a `StoryRecord` with
       `state=StoryState.SM_DONE.value` (`:267`), an isolated bench root, and a
       restricted handler set (`allowed = {"dev", "review"}` at `:278`).
@@ -459,9 +464,9 @@ using a corpus the factory has never seen.
   --instance <id>` produces a git diff in the bench root and a `result.json`.
 - **Effort:** ~4 h.
 
-### 1.2 — Grade with the official harness, stripping test edits
+### 1.2 — Grade with the official harness, stripping test edits — **DONE (#199, #202)**
 
-- [ ] **What:** run the official SWE-bench evaluation harness against the
+- [x] **What:** run the official SWE-bench evaluation harness against the
       produced patch. **Before grading, strip every edit to a test file from
       the graded diff.** The factory's dev owns tests (the Loop-4 design), so
       an unstripped diff would let it edit the oracle — the single most common
@@ -480,9 +485,9 @@ using a corpus the factory has never seen.
   `test_*.py` hunks (assert it in code, do not eyeball it).
 - **Effort:** ~3 h.
 
-### 1.3 — Run 10 instances; report gate precision and recall
+### 1.3 — Run 10 instances; report gate precision and recall — **DONE (#204, #206) — n=6 audited-valid of 10 pinned (4 excluded by selftest: gold patch does not resolve)**
 
-- [ ] **What:** 10 instances. Report the two numbers that actually matter:
+- [x] **What:** 10 instances. Report the two numbers that actually matter:
   - **gate precision** = P(hidden oracle passes | the factory said tests-green)
   - **gate recall** = P(the factory said tests-green | hidden oracle passes)
 - **Why these:** the factory's merge gate runs the dev's *own* tests. Precision
