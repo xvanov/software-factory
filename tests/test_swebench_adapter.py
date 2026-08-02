@@ -241,3 +241,83 @@ def test_shell_quoting_survives_test_names_with_quotes(A: Any) -> None:  # noqa:
     assert quoted.startswith("'") and quoted.endswith("'")
     # The embedded apostrophe is escaped, not left to terminate the string.
     assert "doesn'\\''t" in quoted
+
+
+# --------------------------------------------------------------------------- #
+# the factory arm's test environment
+# --------------------------------------------------------------------------- #
+
+
+_INST = {
+    "instance_id": "instance_x__y-abc",
+    "dockerhub_tag": "x.y-abc",
+    "selected_test_files_to_run": (
+        '["test/units/test_sys_info.py::test_get_distribution[SunOS-Solaris]", '
+        '"test/units/test_sys_info.py::test_get_distribution[Darwin-Darwin]", '
+        '"test/units/test_other.py::test_thing"]'
+    ),
+}
+
+
+def test_test_command_runs_inside_the_instance_image(A: Any) -> None:  # noqa: N803
+    """A bare clone has no dependencies: plain pytest dies with
+    ModuleNotFoundError and dev — whose mechanism is run-until-green — blocks
+    with an empty diff. The image has the deps, so mount the tree over /app."""
+    cmd = A.instance_test_command(_INST)
+    assert cmd.startswith("docker run --rm")
+    assert '-v "$PWD":/app' in cmd, "must mount the CURRENT worktree, not a baked path"
+    assert "-w /app" in cmd
+    assert "jefzda/sweap-images:x.y-abc" in cmd
+    assert "python -m pytest" in cmd
+
+
+def test_test_command_does_not_leak_oracle_test_names(A: Any) -> None:  # noqa: N803
+    """``selected_test_files_to_run`` holds the oracle's fail_to_pass NODE IDS
+    despite its name. Passing them to dev leaks the hidden suite AND asks for
+    tests that do not exist in dev's tree (they arrive with the test patch),
+    so every run died on `ERROR: not found` and dev never got a green signal."""
+    cmd = A.instance_test_command(_INST)
+    assert "::" not in cmd, cmd
+    assert "test_get_distribution" not in cmd
+    assert "test/units/test_sys_info.py" in cmd
+    assert "test/units/test_other.py" in cmd
+
+
+def test_node_ids_reduce_to_distinct_files(A: Any) -> None:  # noqa: N803
+    assert A._test_file_paths(
+        ["a/b.py::t1", "a/b.py::t2[x-y]", "c/d.py", "a/b.py::t3"]
+    ) == ["a/b.py", "c/d.py"]
+    assert A._test_file_paths([]) == []
+
+
+def test_container_cannot_litter_the_host_with_root_owned_files(A: Any) -> None:  # noqa: N803
+    """Root-owned `.pytest_cache` left by the container made the next run
+    unable to delete its own workspace ("Permission denied")."""
+    cmd = A.instance_test_command(_INST)
+    assert '--user "$(id -u):$(id -g)"' in cmd
+    assert "-p no:cacheprovider" in cmd
+    assert "PYTHONDONTWRITEBYTECODE=1" in cmd
+
+
+def test_story_slug_is_stable_across_processes(A: Any) -> None:  # noqa: N803
+    """Was ``abs(hash(instance_id))``, which Python salts per process — every
+    run produced a different worktree name, orphaning the previous one, and
+    the diff capture could then grade the WRONG run's tree."""
+    import subprocess as sp
+    import sys as _sys
+
+    code = (
+        "import importlib.util,sys;"
+        f"spec=importlib.util.spec_from_file_location('A',{str(_ADAPTER)!r});"
+        "m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);"
+        "print(m._story_slug('instance_x__y-abc'))"
+    )
+    outs = {
+        sp.run(
+            [_sys.executable, "-c", code],
+            capture_output=True, text=True, check=True,
+            env={"PYTHONHASHSEED": seed, "PATH": "/usr/bin:/bin"},
+        ).stdout.strip()
+        for seed in ("0", "1", "12345")
+    }
+    assert len(outs) == 1, f"slug varies with PYTHONHASHSEED: {outs}"
