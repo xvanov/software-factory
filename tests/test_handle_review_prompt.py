@@ -232,6 +232,72 @@ def test_handle_review_prompt_includes_fresh_test_output(
     assert "## Latest test output" in prompt
 
 
+def test_handle_review_prompt_includes_dev_self_summary(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dev's SELF_SUMMARY must reach the reviewer, clearly labeled as the
+    dev's own unverified claims (the provenance-mandate input)."""
+    _patch_helpers_to_be_inert(monkeypatch)
+    cap = _patch_text_run(monkeypatch)
+    import factory.chain.handlers as handlers_mod
+
+    monkeypatch.setattr(
+        handlers_mod,
+        "_fetch_pr_diff_for_review",
+        lambda *_a, **_k: "(inert diff)",
+    )
+    # A real dev attempt exists; keep the empty-diff short-circuit out of the way.
+    monkeypatch.setattr(handlers_mod, "_dev_produced_empty_diff", lambda *_a, **_k: False)
+
+    s = _story(temp_root)
+    s.dev_attempts_json = json.dumps(
+        [
+            {
+                "attempt": 1,
+                "ts": "2026-01-01T00:00:00+00:00",
+                "test_output_tail": "1 passed",
+                "test_run_passed": True,
+                "self_summary": (
+                    "MAGIC-SELF-SUMMARY-1732050807: I followed the precedent at "
+                    "fake_pkg/example_sibling.py:7 for the field spelling."
+                ),
+            }
+        ]
+    )
+    db = temp_root / "state" / "factory.db"
+    persist_story(s, db)
+    handle_review(s, app_config, temp_root, db_path=db)
+
+    prompt = cap.last_prompt
+    assert "## DEV SELF-SUMMARY" in prompt
+    assert "unverified claims" in prompt
+    assert "MAGIC-SELF-SUMMARY-1732050807" in prompt
+
+
+def test_handle_review_prompt_flags_missing_dev_self_summary(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No self_summary on record -> the explicit sentinel, never an empty
+    section (a dev that skipped its output contract is itself signal)."""
+    _patch_helpers_to_be_inert(monkeypatch)
+    cap = _patch_text_run(monkeypatch)
+    import factory.chain.handlers as handlers_mod
+
+    monkeypatch.setattr(
+        handlers_mod,
+        "_fetch_pr_diff_for_review",
+        lambda *_a, **_k: "(inert diff)",
+    )
+
+    s = _story(temp_root)
+    db = temp_root / "state" / "factory.db"
+    handle_review(s, app_config, temp_root, db_path=db)
+
+    prompt = cap.last_prompt
+    assert "## DEV SELF-SUMMARY" in prompt
+    assert "(dev provided no self-summary)" in prompt
+
+
 def test_handle_review_prompt_falls_back_to_no_recent_run_when_empty(
     temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:

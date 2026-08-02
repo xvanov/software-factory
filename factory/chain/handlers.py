@@ -2427,6 +2427,42 @@ def _fetch_latest_test_output(
     return "(no recent test run on record)"
 
 
+# Cap for the dev self-summary embedded in the reviewer prompt. Matches the
+# 2000-char cap ``_handle_dev_once`` applies when persisting the attempt.
+_SELF_SUMMARY_PROMPT_CAP = 2000
+
+
+def _fetch_latest_dev_self_summary(story: StoryRecord) -> str:
+    """Return the last dev attempt's ``self_summary``, or an explicit sentinel.
+
+    Same source as ``_fetch_latest_test_output`` preference 1: the trailing
+    entry of ``story.dev_attempts_json``. The reviewer needs this because the
+    dev's story-silent choices (invented literals, fixture shapes, data
+    sources) are only defensible via the precedent the dev cited here — the
+    2026-08-02 SWE-bench autopsies found every wrong patch was approved with
+    zero findings partly because the reviewer was never told which choices
+    were dev-invented versus story-mandated.
+
+    The sentinel for "no summary" is deliberate reviewable signal, never an
+    empty string: a dev that provided no self-summary skipped its own
+    output contract, and the reviewer should see that.
+    """
+    sentinel = "(dev provided no self-summary)"
+    try:
+        attempts = json.loads(story.dev_attempts_json or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return sentinel
+    if not isinstance(attempts, list) or not attempts:
+        return sentinel
+    last = attempts[-1]
+    if not isinstance(last, dict):
+        return sentinel
+    summary = str(last.get("self_summary") or "").strip()
+    if not summary:
+        return sentinel
+    return summary[:_SELF_SUMMARY_PROMPT_CAP]
+
+
 def _has_real_dev_attempt(story: StoryRecord) -> bool:
     """True when at least one REAL (non-dry-run) dev attempt is on record.
 
@@ -3066,6 +3102,7 @@ def handle_review(
             )
             story_content = _read_story_file_content(story, software_factory_root)
             fresh_test_output = _fetch_latest_test_output(story, software_factory_root)
+            dev_self_summary = _fetch_latest_dev_self_summary(story)
             rcaps = (
                 "## App test capabilities (HONOR when judging test choices)\n\n"
                 f"* `e2e_harness_ready`: {str(app_config.gates.e2e_harness_ready).lower()}\n"
@@ -3089,6 +3126,9 @@ def handle_review(
                 f"{story.test_plan_json or '{}'}\n\n"
                 "## Latest test output\n\n"
                 f"{fresh_test_output}\n\n"
+                "## DEV SELF-SUMMARY (dev's own unverified claims, including "
+                "which precedent it followed)\n\n"
+                f"{dev_self_summary}\n\n"
                 "## PR diff\n\n"
                 f"{pr_diff}\n\n"
                 "Return the JSON object for the review. No prose outside the JSON."

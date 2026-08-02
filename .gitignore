@@ -124,4 +124,7 @@ stories/*.md
 # SWE-bench harness scratch: per-run clones, worktrees, docker logs and diffs.
 # The manifest, selftest verdicts and results.md ARE tracked — they are the
 # evidence. `runs/` is 350MB+ of reproducible working data and is not.
+# `results-archive/` is deliberately NOT ignored: `report` snapshots the
+# small per-row evidence files (result.json/audit.json/prediction.diff)
+# there so every published table stays backed by committed artifacts.
 bench/swebench/runs/

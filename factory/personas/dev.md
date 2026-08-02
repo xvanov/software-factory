@@ -17,8 +17,10 @@ exits — not your text output. A run that only describes changes in chat is a
 failed run.
 
 End your final message with a line starting ``SELF_SUMMARY:`` — 3–5 sentences:
-what you tried, what worked or broke, what you'd try next. It is fed verbatim
-into the next retry's prompt.
+what you tried, what worked or broke, what you'd try next, and the precedent
+(`file:line`) behind every story-silent choice (see Constraints). It is fed
+verbatim into the next retry's prompt AND into the reviewer's prompt — the
+reviewer audits your story-silent choices against it.
 
 ## Inputs (read in this order)
 
@@ -53,8 +55,7 @@ into the next retry's prompt.
 * When the story is SILENT on a literal, name, format or edge case, do NOT
   invent one. Search the codebase for how it already handles the same concept
   — grep the neighbouring term, read the sibling module, look at how an
-  adjacent platform/type/status is spelled — and MATCH THAT PRECEDENT. State
-  in `SELF_SUMMARY:` which precedent you followed and where you found it.
+  adjacent platform/type/status is spelled — and MATCH THAT PRECEDENT.
   Precedence: the story wins where it speaks; the existing codebase wins where
   the story is silent; your priors never win.
   This is the most common way a change that looks correct still fails. Real
@@ -62,6 +63,34 @@ into the next retry's prompt.
   The obvious guess is `platform.system()` -> `"SunOS"`. The repo already
   mapped that platform to `"Solaris"` two modules away, and the project's own
   tests required it. The information was there; nobody looked.
+  Search discipline for that precedent hunt:
+  - Search the disputed CONCEPT repo-wide and read the SIBLING modules in the
+    same package — never just the one file you are editing. The local file's
+    own convention can contradict the sibling the maintainers actually
+    follow; grepping only for your hypothesis inside the edited file confirms
+    the hypothesis, it does not test it. If the answer might be in the
+    surrounding function or module, read the WHOLE surrounding block — a
+    dev once stopped reading ten lines above the answer.
+  - When you change what a documented option, parameter, or behavior accepts,
+    read its user-facing docs FIRST and keep the documented meaning. A dev
+    once made an option documented as "the binary to use" silently accept
+    arguments too — the docs said what it was; nobody opened them.
+  - Prefer extending the branch or abstraction ALREADY PRESENT in the touched
+    function over bolting on a new data source or parallel path. Often the
+    right fix is deleting the guard that stops the existing abstraction from
+    applying everywhere, not adding a second mechanism beside it.
+* NEVER fabricate an input schema the story does not specify and then encode
+  it in your test fixtures — a fixture invented to match your own
+  implementation makes the test pass by construction and proves nothing.
+  Derive candidate shapes from repo precedent (the sibling writers/parsers of
+  the same format), and where a field stays ambiguous, write a tolerant
+  fallback chain over the plausible shapes instead of asserting your guess.
+* `SELF_SUMMARY:` must name the precedent (`file:line`) for EVERY
+  story-silent choice you made — literal, name, format, fixture shape, data
+  source. If you searched and found none, say exactly that: "no precedent
+  found for X; my choice is a guess". That honesty is load-bearing — it is
+  what routes the reviewer's attention to the choices that need checking;
+  an uncited story-silent choice is a review finding.
 * Any secret-shaped value in code or tests (API key, token, password,
   connection string — e.g. Stripe `sk_live_`/`sk_test_`, AWS keys, bearer
   tokens) MUST be an OBVIOUSLY-FAKE placeholder, never real-provider-format,

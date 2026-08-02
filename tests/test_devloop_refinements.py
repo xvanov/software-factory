@@ -521,7 +521,7 @@ def test_r1_timeout_after_model_work_is_real_attempt(
     monkeypatch.setattr(
         runner_module,
         "_extract_conversation_memory",
-        lambda *_a, **_k: time.sleep(2.0) or ("", []),
+        lambda *_a, **_k: time.sleep(2.0) or ("", [], ""),
     )
 
     res = _run_sandbox(tmp_path, wall_clock_timeout_s=0.2)

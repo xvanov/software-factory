@@ -72,6 +72,38 @@ def test_extract_self_summary_empty_input() -> None:
     assert _extract_self_summary("") == ""
 
 
+def test_extract_self_summary_from_finish_message_when_last_message_lacks_marker() -> None:
+    """SELF_SUMMARY delivered via the ``finish`` tool must be captured.
+
+    Two of the four 2026-08-02 SWE-bench autopsies hit exactly this: the dev
+    called ``finish(message="... SELF_SUMMARY: ...")`` instead of ending with
+    a plain assistant message, and ``self_summary`` persisted empty.
+    """
+    finish = (
+        "Wrapping up.\n\n"
+        "SELF_SUMMARY: I followed the sibling parser precedent at "
+        "fake_pkg/sibling.py:12 for the field spelling; no precedent found "
+        "for the retry count, my choice is a guess.\n\n"
+        "trailing noise"
+    )
+    out = _extract_self_summary("All done, see the diff.", finish)
+    assert out.startswith("I followed the sibling parser precedent")
+    assert "trailing noise" not in out
+
+
+def test_extract_self_summary_prefers_last_message_marker_over_finish() -> None:
+    out = _extract_self_summary(
+        "SELF_SUMMARY: from the plain message.",
+        "SELF_SUMMARY: from the finish tool.",
+    )
+    assert out == "from the plain message."
+
+
+def test_extract_self_summary_falls_back_to_finish_tail_when_no_marker_anywhere() -> None:
+    out = _extract_self_summary("", "just a short goodbye with no marker")
+    assert out == "just a short goodbye with no marker"
+
+
 # ---------------------------------------------------------------------------
 # _extract_conversation_memory
 # ---------------------------------------------------------------------------
@@ -150,7 +182,7 @@ def test_extract_conversation_memory_returns_last_assistant_and_tool_window() ->
         ),
     ]
     conv = _FakeConversation(events)
-    last_msg, pairs = _extract_conversation_memory(conv)
+    last_msg, pairs, _finish = _extract_conversation_memory(conv)
     assert "All done" in last_msg
     assert "SELF_SUMMARY" in last_msg
     assert len(pairs) == 2
@@ -188,9 +220,56 @@ def test_extract_conversation_memory_handles_missing_state() -> None:
     class _Empty:
         state = None
 
-    last_msg, pairs = _extract_conversation_memory(_Empty())
+    last_msg, pairs, finish_msg = _extract_conversation_memory(_Empty())
     assert last_msg == ""
     assert pairs == []
+    assert finish_msg == ""
+
+
+def test_extract_conversation_memory_captures_finish_tool_message() -> None:
+    """The finish action's message field must come back as ``finish_message``.
+
+    A fake finish-message payload mirroring the persisted trajectory shape:
+    an ActionEvent whose tool is ``finish`` and whose args carry ``message``.
+    """
+    summary = (
+        "SELF_SUMMARY: matched the fake sibling precedent at "
+        "fake_pkg/example_sibling.py:34."
+    )
+    events = [
+        _FakeEvent(
+            kind="MessageEvent",
+            role="assistant",
+            llm_message=_FakeLLMMessage([_FakeMsgContent("Working on it.")]),
+        ),
+        _FakeEvent(
+            kind="ActionEvent",
+            tool_name="finish",
+            arguments={"message": f"Task complete.\n\n{summary}"},
+            tool_call_id="call-finish",
+        ),
+    ]
+    last_msg, _pairs, finish_msg = _extract_conversation_memory(_FakeConversation(events))
+    assert "Working on it." in last_msg
+    assert summary in finish_msg
+    # End-to-end: the self-summary chain picks the marker out of the finish
+    # message when the plain message has none.
+    assert _extract_self_summary(last_msg, finish_msg).startswith(
+        "matched the fake sibling precedent"
+    )
+
+
+def test_extract_conversation_memory_finish_message_via_action_attribute() -> None:
+    """SDK shape where the message lives on ``ev.action.message``."""
+
+    class _FakeFinishAction:
+        message = "Done. SELF_SUMMARY: no precedent found for X; my choice is a guess."
+
+    events = [
+        _FakeEvent(kind="ActionEvent", tool_name="finish", action=_FakeFinishAction())
+    ]
+    _last, _pairs, finish_msg = _extract_conversation_memory(_FakeConversation(events))
+    assert finish_msg == _FakeFinishAction.message
 
 
 # ---------------------------------------------------------------------------
