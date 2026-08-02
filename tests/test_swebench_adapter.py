@@ -399,6 +399,63 @@ def test_wall_clock_starts_before_clone_and_setup(A: Any) -> None:  # noqa: N803
 
 
 # --------------------------------------------------------------------------- #
+# stale artifacts — a new run must never inherit a previous run's outputs
+# --------------------------------------------------------------------------- #
+
+
+def test_reset_run_artifacts_deletes_stale_outputs_and_ledger(
+    A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    """Run #2 failing early (precheck/timeout/crash) must not leave run #1's
+    prediction.diff for `grade` to certify, nor run #1's Run rows for the
+    bare arm's sum-all totals to absorb."""
+    for name in ("prediction.diff", "raw.diff", "grade.log", "result.json", "audit.json"):
+        (tmp_path / name).write_text("stale", encoding="utf-8")
+    (tmp_path / "state" / "events").mkdir(parents=True)
+    (tmp_path / "state" / "factory.db").write_text("stale-ledger", encoding="utf-8")
+    A._reset_run_artifacts(tmp_path)
+    for name in ("prediction.diff", "raw.diff", "grade.log", "result.json", "audit.json"):
+        assert not (tmp_path / name).exists(), name
+    assert not (tmp_path / "state").exists(), "bare-arm ledger must not accumulate"
+    # Idempotent on a clean dir.
+    A._reset_run_artifacts(tmp_path)
+
+
+def test_run_functions_reset_artifacts_before_any_exit_path(A: Any) -> None:  # noqa: N803
+    """Contract (AST): both run functions call _reset_run_artifacts before
+    _clone — and run_factory before _ensure_image, its earliest SystemExit —
+    so no early exit can strand a previous run's prediction beside a fresh
+    result."""
+    import ast
+
+    tree = ast.parse(_ADAPTER.read_text(encoding="utf-8"))
+    for fname, must_precede in (
+        ("run_factory", ("_ensure_image", "_clone")),
+        ("run_bare", ("_clone",)),
+    ):
+        fn = next(
+            n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == fname
+        )
+
+        def _call_index(callee: str, fn: ast.FunctionDef = fn, fname: str = fname) -> int:
+            for i, stmt in enumerate(fn.body):
+                if any(
+                    isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Name)
+                    and n.func.id == callee
+                    for n in ast.walk(stmt)
+                ):
+                    return i
+            raise AssertionError(f"{fname} never calls {callee}")
+
+        reset_at = _call_index("_reset_run_artifacts")
+        for callee in must_precede:
+            assert reset_at < _call_index(callee), (
+                f"{fname}: _reset_run_artifacts must run before {callee}"
+            )
+
+
+# --------------------------------------------------------------------------- #
 # clone — submodules must be initialised, and loudly fail when they cannot be
 # --------------------------------------------------------------------------- #
 
@@ -542,6 +599,50 @@ def test_clone_creates_the_remote_tracking_base_ref(
     )
     assert diff.returncode == 0, diff.stderr
     assert diff.stdout.strip() == "", "base ref must match HEAD — a non-empty diff pollutes review"
+
+
+def test_vendoring_forces_files_the_superproject_ignores(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """A superproject .gitignore matching files INSIDE a submodule (tracked in
+    the submodule's own repo, so its ignores never applied) must not make them
+    silently vanish from the vendored tree — that would recreate the
+    clone-passes/worktree-fails gap for exactly those paths."""
+    import subprocess as sp
+
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "always")
+
+    sub = tmp_path / "upstream-sub"
+    _mk_git_repo(sub, {"infogami_mod.py": "VALUE = 1\n", "data.generated": "payload\n"})
+    main = tmp_path / "upstream-main"
+    # The superproject ignores *.generated — the submodule legitimately tracks one.
+    _mk_git_repo(main, {"app.py": "import vendor\n", ".gitignore": "*.generated\n"})
+    for args in (
+        ["submodule", "add", str(sub), "vendor/infogami"],
+        ["commit", "-q", "-m", "add submodule"],
+    ):
+        sp.run(
+            ["git", "-C", str(main), "-c", "user.email=t@t", "-c", "user.name=t", *args],
+            check=True, capture_output=True, text=True,
+        )
+    sha = sp.run(
+        ["git", "-C", str(main), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+    monkeypatch.setattr(A, "_clone_url", lambda inst: f"file://{main}")
+    inst = {"instance_id": "local__main-ign", "repo": "local/main", "base_commit": sha}
+    dest = tmp_path / "clone"
+    A._clone(inst, dest)
+    tracked = sp.run(
+        ["git", "-C", str(dest), "ls-files", "vendor/infogami/data.generated"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    assert tracked == "vendor/infogami/data.generated", (
+        "ignore-matched submodule file was dropped from the vendored tree"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -771,6 +872,74 @@ def test_audit_flags_a_fast_failing_first_dev_run(
         A.audit("inst1", "factory")
     failures = _audit_json(tmp_path)["failures"]
     assert any("unrunnable-environment" in f for f in failures), failures
+
+
+def test_audit_fails_on_empty_result_json(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """`{}` used to skip the whole ledger<->result section via truthiness and
+    audit-pass a run that reported nothing. Fail safe instead."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, result={})
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "factory")
+    failures = _audit_json(tmp_path)["failures"]
+    assert any("empty or not a JSON object" in f for f in failures), failures
+
+
+def test_audit_fails_on_non_object_result_json(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path)
+    (tmp_path / "inst1" / "factory" / "result.json").write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "factory")
+    failures = _audit_json(tmp_path)["failures"]
+    assert any("empty or not a JSON object" in f for f in failures), failures
+
+
+def test_audit_detects_the_worktree_resolution_failure_marker(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """The fifth handlers.py fallback string — `(could not resolve writing
+    worktree: ...)` — is also an error-instead-of-diff reviewer prompt."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(
+        tmp_path,
+        bodies=[
+            {
+                "event": "prompt_body",
+                "persona": "reviewer",
+                "prompt": "(could not resolve writing worktree: OSError('gone'))",
+                "prompt_hash": "f" * 16,
+            },
+        ],
+    )
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "factory")
+    failures = _audit_json(tmp_path)["failures"]
+    assert any("broken-diff markers" in f for f in failures), failures
+
+
+def test_audit_fails_when_reviewer_prompts_were_rotated_away(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """The ledger shows a reviewer ran, but zero reviewer prompt bodies are
+    scannable (rotated away / never captured): the marker scan finds nothing
+    only because there is nothing to scan — silence must not read as clean."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(
+        tmp_path,
+        bodies=[
+            {"event": "prompt_body", "persona": "dev",
+             "prompt": "fix it", "prompt_hash": "a" * 16},
+        ],
+    )
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "factory")
+    failures = _audit_json(tmp_path)["failures"]
+    assert any("reviewer input is unauditable" in f for f in failures), failures
 
 
 def test_audit_fails_a_run_with_a_recorded_failed_precheck(

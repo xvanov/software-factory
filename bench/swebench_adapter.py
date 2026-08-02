@@ -377,6 +377,26 @@ def _write_result(
     return out
 
 
+def _reset_run_artifacts(run_dir: Path) -> None:
+    """Delete every artifact a PREVIOUS run of this (instance, arm) left behind.
+
+    Called at the TOP of both run functions, before anything can exit. Without
+    it, run #2 failing early (precheck, timeout, crash) leaves run #1's
+    ``prediction.diff`` sitting next to run #2's result — ``grade`` then
+    merges a verdict about a DEAD prediction onto the new run, and ``report``
+    counts an oracle pass for a run that produced nothing.
+
+    Also wipes ``state/`` — the bare arm's isolated ledger lives there and
+    would otherwise ACCUMULATE Run rows across re-runs, inflating the sum-all
+    totals (the factory arm's ``root/`` is already rebuilt by
+    ``_build_bench_root``). A crashed run therefore leaves NO result.json,
+    which ``audit`` treats as a failure — fail safe, never a stale pass.
+    """
+    for name in ("prediction.diff", "raw.diff", "grade.log", "result.json", "audit.json"):
+        (run_dir / name).unlink(missing_ok=True)
+    shutil.rmtree(run_dir / "state", ignore_errors=True)
+
+
 def _clone_url(inst: dict[str, Any]) -> str:
     """The fetch URL for an instance. Separate so tests can point it at a
     local fixture repo instead of the network."""
@@ -469,7 +489,12 @@ def _init_submodules(inst: dict[str, Any], dest: Path) -> None:
             ["git", "-C", str(dest), "rm", "-q", "--cached", rel],
             capture_output=True, text=True,
         )
-        _git(dest, "add", rel)
+        # ``-f``: the SUPERPROJECT's ignore rules can match files inside the
+        # submodule (they were tracked in the submodule's own repo, so its
+        # ignores never applied there). Without force, those files silently
+        # vanish from the vendored tree — recreating the clone-passes /
+        # worktree-fails gap for exactly those paths.
+        _git(dest, "add", "-f", rel)
     staged = subprocess.run(
         ["git", "-C", str(dest), "diff", "--cached", "--quiet"], capture_output=True
     )
@@ -747,12 +772,15 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     # setup, so reported wall_clock_s silently excluded that work.
     entered = time.monotonic()
     inst = _instance(instance_id)
+    run_dir = _run_dir(instance_id, "factory")
+    # BEFORE any exit path (image pull, clone, precheck): a stale
+    # prediction.diff must never outlive the run that produced it.
+    _reset_run_artifacts(run_dir)
     if not _ensure_image(inst):
         raise SystemExit(
             f"image for {instance_id} is unavailable; the factory arm needs it for "
             "a working test environment (see instance_test_command)"
         )
-    run_dir = _run_dir(instance_id, "factory")
     repo = run_dir / "repo"
     _clone(inst, repo)
     root = _build_bench_root(inst, repo)
@@ -991,6 +1019,11 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     entered = time.monotonic()
     inst = _instance(instance_id)
     run_dir = _run_dir(instance_id, "bare")
+    # BEFORE any exit path: clears stale prediction/grade artifacts AND wipes
+    # ``state/`` — unlike the factory arm's rebuilt root, the bare arm's
+    # ledger lives directly under run_dir and would accumulate Run rows
+    # across re-runs, inflating the sum-all totals the audit certifies.
+    _reset_run_artifacts(run_dir)
     repo = run_dir / "repo"
     _clone(inst, repo)
 
@@ -1502,6 +1535,7 @@ _REVIEWER_BROKEN_DIFF_MARKERS: tuple[str, ...] = (
     "(diff is empty",
     "(gh pr diff failed",
     "(git diff worktree failed",
+    "(could not resolve writing worktree",
 )
 
 # A failed dev call this fast never did real work — the pre-model /
@@ -1596,14 +1630,26 @@ def audit(instance_id: str, arm: str) -> None:
     failures: list[str] = []
 
     result: dict[str, Any] = {}
+    result_valid = False  # file existed AND parsed to a non-empty JSON object
     result_path = run_dir / "result.json"
     if not result_path.exists():
         failures.append(f"missing artifact: {result_path}")
     else:
         try:
-            result = json.loads(result_path.read_text(encoding="utf-8"))
+            loaded = json.loads(result_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             failures.append(f"result.json is not valid JSON: {exc}")
+        else:
+            if isinstance(loaded, dict) and loaded:
+                result = loaded
+                result_valid = True
+            else:
+                # FAIL SAFE: `{}` (or a non-object) would previously skip the
+                # entire ledger<->result section via truthiness and audit-pass
+                # a run that reported nothing.
+                failures.append(
+                    "result.json is empty or not a JSON object — nothing to certify"
+                )
 
     calls: list[dict[str, Any]] = []
     db = state_root / "state" / "factory.db"
@@ -1628,7 +1674,7 @@ def audit(instance_id: str, arm: str) -> None:
     ledger_cost = round(sum(float(c["cost_usd"] or 0.0) for c in calls), 4)
     ledger_in = sum(int(c["tokens_in"] or 0) for c in calls)
     ledger_out = sum(int(c["tokens_out"] or 0) for c in calls)
-    if result:
+    if result_valid:
         reported = result.get("cost_usd")
         if reported is None:
             failures.append("result.json has no cost_usd")
@@ -1660,8 +1706,19 @@ def audit(instance_id: str, arm: str) -> None:
                 f"{state_root / 'state' / 'events'} despite {len(calls)} persona call(s)"
             )
     else:
-        marker_failures, _ = _scan_prompt_bodies(state_root)
+        marker_failures, reviewer_seen = _scan_prompt_bodies(state_root)
         failures.extend(marker_failures)
+        # Coverage cross-check: the ledger is the ground truth for whether a
+        # reviewer ran. Zero scanned reviewer prompts despite reviewer Run
+        # rows means the bodies were rotated away or never captured — the
+        # reviewer's input is unauditable, and silence must not read as clean.
+        reviewer_calls = sum(1 for c in calls if c["persona"] == "reviewer")
+        if reviewer_calls and reviewer_seen == 0:
+            failures.append(
+                f"ledger shows {reviewer_calls} reviewer call(s) but zero reviewer "
+                "prompt bodies were scanned (rotated away or never captured) — "
+                "reviewer input is unauditable"
+            )
 
     # 4. first-dev fast-fail — the unrunnable-environment signature.
     dev_calls = [c for c in calls if c["persona"] == "dev"]
