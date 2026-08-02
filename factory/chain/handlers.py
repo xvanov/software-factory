@@ -2312,10 +2312,24 @@ _BROKEN_PROMPT_MARKERS: tuple[str, ...] = (
     # both call sites before any prompt is built), so these strings must never
     # reach a prompt again; the markers are the backstop that catches a
     # regression to fail-open.
-    "returned rc=",
-    "(gh pr diff failed",
-    "(git diff worktree failed",
-    "(could not resolve writing worktree",
+    #
+    # Two rules keep the backstop from misfiring on LEGITIMATE prompt content
+    # (the diff section and test output embed arbitrary code/prose — a
+    # committed line like ``msg = f"command returned rc={rc}"`` crashed a real
+    # review when the marker was the bare ``"returned rc="``):
+    #  * anchor on the parenthesized/format-specific prefixes only the OLD
+    #    fail-open plumbing emitted, never on generic prose fragments;
+    #  * build each marker by CONCATENATION so the contiguous literal never
+    #    appears in this repo's own source — otherwise any loop-2 self-edit
+    #    whose diff context includes this very tuple would trip the guard and
+    #    crash-loop the review.
+    # old gh fail-open prefix: paren + command + "#" + PR number + rc text
+    "(gh pr diff " + "#",
+    # old git fail-open midsection: base ref ellipsis + HEAD + rc text
+    "...HEAD " + "returned rc=",
+    "(gh pr diff " + "failed",
+    "(git diff worktree " + "failed",
+    "(could not resolve " + "writing worktree",
 )
 
 
@@ -2474,10 +2488,14 @@ def _dev_produced_empty_diff(
             cwd=str(worktree),
             capture_output=True,
             text=True,
+            # Paths in status output are arbitrary bytes; tolerate rather
+            # than strict-decode-crash (UnicodeDecodeError is a ValueError,
+            # outside the OSError taxonomy below).
+            errors="replace",
             check=False,
             timeout=30,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
         return None
     if status_proc.returncode != 0:
         return None
@@ -2497,10 +2515,11 @@ def _dev_produced_empty_diff(
             cwd=str(worktree),
             capture_output=True,
             text=True,
+            errors="replace",
             check=False,
             timeout=30,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
         return None
     # ``git diff --quiet`` exits 0 (no diff), 1 (diff present), or >1 on a
     # real error (e.g. bad/missing ref) — only 0/1 are meaningful signals.
@@ -2549,10 +2568,11 @@ def _resolve_diff_base(worktree: Path, base: str) -> str | None:
                 cwd=str(worktree),
                 capture_output=True,
                 text=True,
+                errors="replace",
                 check=False,
                 timeout=30,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
             return None
         if proc.returncode == 0:
             return ref
@@ -2595,10 +2615,18 @@ def _fetch_pr_diff_for_review(
                 ["gh", "pr", "diff", str(pr_number), "-R", app_config.repo],
                 capture_output=True,
                 text=True,
+                # Diffs are arbitrary bytes: repos legitimately contain
+                # non-UTF-8 source (latin-1 files in django et al.). Without
+                # this, ``text=True`` strict-decodes inside communicate() and
+                # a UnicodeDecodeError (a ValueError — outside the OSError
+                # taxonomy) escapes the fail-closed contract entirely. A few
+                # U+FFFD replacement chars in an otherwise-real diff is far
+                # better than a crash-looping review.
+                errors="replace",
                 check=False,
                 timeout=30,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError) as exc:
             raise ReviewDiffUnavailableError(f"gh pr diff #{pr_number} failed: {exc!r}") from exc
         if proc.returncode != 0:
             raise ReviewDiffUnavailableError(
@@ -2627,10 +2655,13 @@ def _fetch_pr_diff_for_review(
                 cwd=str(worktree),
                 capture_output=True,
                 text=True,
+                # See the gh-path comment: diffs are arbitrary bytes; never
+                # let a non-UTF-8 hunk strict-decode into a crash.
+                errors="replace",
                 check=False,
                 timeout=30,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError) as exc:
             raise ReviewDiffUnavailableError(f"git diff in worktree failed: {exc!r}") from exc
         if proc.returncode != 0:
             raise ReviewDiffUnavailableError(
@@ -2687,10 +2718,13 @@ def _changed_files_for_story(
             cwd=str(worktree),
             capture_output=True,
             text=True,
+            # Filenames are arbitrary bytes too (git quotes non-UTF-8 paths,
+            # but never rely on it): tolerate, don't strict-decode-crash.
+            errors="replace",
             check=False,
             timeout=30,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
         return None
     if proc.returncode != 0:
         return None
@@ -2795,10 +2829,13 @@ def _block_on_unavailable_diff(
         "review_diff_unavailable": True,
     }
     if persona == "reviewer":
-        # Keep the review record honest for history/dev plumbing. tech_writer
-        # must NOT overwrite reviewer_result_json — it holds the real approve.
+        # Keep the review record honest for dev plumbing. tech_writer must
+        # NOT overwrite reviewer_result_json — it holds the real approve.
+        # Deliberately NOT appended to reviewer_history_json: this is an
+        # infra failure, not a review verdict, and a synthetic 0.0-score
+        # history entry would make the next REAL rejection trivially count
+        # as "improving" in the non-improving-score guard (one wasted cycle).
         story.reviewer_result_json = json.dumps(result)
-        _append_reviewer_history(story, result)
     persist_story(story, db)
     log_story_event(
         story.id,

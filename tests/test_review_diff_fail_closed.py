@@ -530,10 +530,186 @@ def test_improving_score_keeps_cycling_until_hard_cap(temp_root: Path) -> None:
 def test_diff_failure_markers_registered_in_both_marker_lists() -> None:
     """The fail-open error strings are now regression BACKSTOPS: they must be
     in the handlers marker list AND the runner's duplicated copy (the two are
-    kept in sync by convention — this test enforces it)."""
+    kept in sync by convention — this test enforces it).
+
+    Expected markers are composed by concatenation here for the same reason
+    they are in the source: the contiguous literals must never appear in the
+    repo's own files (see test_marker_literals_absent_from_source below).
+    """
     from factory.runner import _BROKEN_PROMPT_MARKERS as runner_markers
 
-    for marker in ("returned rc=", "(gh pr diff failed", "(git diff worktree failed"):
+    expected = (
+        "(gh pr diff " + "#",
+        "...HEAD " + "returned rc=",
+        "(gh pr diff " + "failed",
+        "(git diff worktree " + "failed",
+    )
+    for marker in expected:
         assert marker in _BROKEN_PROMPT_MARKERS
         assert marker in runner_markers
     assert set(runner_markers) == set(_BROKEN_PROMPT_MARKERS)
+    # The bare prose fragment must NOT be a marker: legitimate code and test
+    # output legitimately contain it (e.g. ``msg = f"command returned
+    # rc={rc}"`` — a real committed line that crashed a real review).
+    assert ("returned" + " rc=") not in _BROKEN_PROMPT_MARKERS
+    assert ("returned" + " rc=") not in runner_markers
+
+
+def test_marker_literals_absent_from_source() -> None:
+    """No contiguous marker literal may appear in handlers.py / runner.py
+    source. If one did, any loop-2 self-edit whose DIFF CONTEXT includes the
+    marker tuple would embed the literal in the review prompt's diff section
+    and trip the guard — a permanently unreviewable, crash-looping story.
+    The source builds each diff-failure marker by concatenation; this test
+    pins that."""
+    import factory.chain.handlers as handlers_mod
+    import factory.runner as runner_mod
+
+    for mod in (handlers_mod, runner_mod):
+        src = Path(mod.__file__).read_text(encoding="utf-8")
+        for marker in (
+            "(gh pr diff " + "#",
+            "...HEAD " + "returned rc=",
+            "(gh pr diff " + "failed",
+            "(git diff worktree " + "failed",
+            "(could not resolve " + "writing worktree",
+        ):
+            assert marker not in src, (
+                f"{mod.__name__} contains the contiguous marker literal "
+                f"{marker!r}; build it by concatenation instead"
+            )
+
+
+def test_diff_containing_returned_rc_prose_reviews_cleanly(
+    temp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A committed change whose CODE contains the prose ``returned rc=`` (the
+    adversarial reviewer's exact attack: ``msg = f"command returned
+    rc={rc}"``) must flow through a real review — model called, prompt
+    contains the line, no broken-marker crash."""
+    app_dir = _init_repo_without_remote(temp_root / "sacrifice")
+    app_config = _app_config(app_dir)
+    story = _mk_story(temp_root, slug="rc-prose", dev_attempts=_ONE_GREEN_ATTEMPT)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, story)
+    _commit_feature_in_worktree(
+        worktree, 'msg = f"command returned rc={rc}"\nprint(msg)\n'
+    )
+
+    import factory.chain.handlers as handlers_mod
+
+    monkeypatch.setattr(handlers_mod, "find_direction_for_story", lambda *a, **k: None)
+    monkeypatch.setattr(handlers_mod, "_read_story_file_content", lambda *a, **k: "story")
+    monkeypatch.setattr(handlers_mod, "_fetch_latest_test_output", lambda *a, **k: "1 passed")
+    monkeypatch.setattr(handlers_mod, "route", lambda *a, **k: "azure/gpt-5.4")
+    monkeypatch.setattr(handlers_mod, "_slop_findings_for_story", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "factory.context.loader.compose_context_prelude", lambda *a, **k: "ctx"
+    )
+
+    calls: list[dict[str, Any]] = []
+    import factory.runner as runner_mod
+
+    def _fake_text_run(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return json.dumps(
+            {
+                "verdict": "approve",
+                "findings": [],
+                "test_quality_score": 0.95,
+                "test_quality_findings": [],
+                "comments_to_post": [],
+                "summary": "lgtm",
+            }
+        )
+
+    monkeypatch.setattr(runner_mod, "text_run", _fake_text_run)
+
+    result = handle_review(story, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert calls, "legitimate 'returned rc=' prose in a diff must reach the model"
+    assert "command returned rc=" in calls[-1]["prompt"]
+    assert result.next_state == StoryState.REVIEWER_DONE
+
+
+def test_non_utf8_commit_reviews_cleanly(
+    temp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real latin-1 commit (``b"# caf\\xe9"``) must not escape the
+    fail-closed taxonomy as an uncaught UnicodeDecodeError: the fetch decodes
+    with errors="replace" and the (real, slightly-mangled) diff is reviewed —
+    SWE-bench repos contain non-UTF-8 source, so this is a live bench path."""
+    app_dir = _init_repo_without_remote(temp_root / "sacrifice")
+    app_config = _app_config(app_dir)
+    story = _mk_story(temp_root, slug="latin1-diff", dev_attempts=_ONE_GREEN_ATTEMPT)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, story)
+    (worktree / "legacy.py").write_bytes(b"# caf\xe9 legacy encoding\nVALUE = 1\n")
+    _run(["git", "add", "."], cwd=worktree)
+    _run(
+        ["git", "-c", "user.email=t@e.x", "-c", "user.name=T E",
+         "commit", "-q", "-m", "add latin-1 file"],
+        cwd=worktree,
+    )
+
+    # Unit level: the fetch itself must return a diff, not raise.
+    diff = _fetch_pr_diff_for_review(story, app_config, temp_root)
+    assert "legacy.py" in diff and "VALUE = 1" in diff
+
+    # Handler level: the review flows to the model.
+    import factory.chain.handlers as handlers_mod
+
+    monkeypatch.setattr(handlers_mod, "find_direction_for_story", lambda *a, **k: None)
+    monkeypatch.setattr(handlers_mod, "_read_story_file_content", lambda *a, **k: "story")
+    monkeypatch.setattr(handlers_mod, "_fetch_latest_test_output", lambda *a, **k: "1 passed")
+    monkeypatch.setattr(handlers_mod, "route", lambda *a, **k: "azure/gpt-5.4")
+    monkeypatch.setattr(handlers_mod, "_slop_findings_for_story", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "factory.context.loader.compose_context_prelude", lambda *a, **k: "ctx"
+    )
+
+    calls: list[dict[str, Any]] = []
+    import factory.runner as runner_mod
+
+    def _fake_text_run(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return json.dumps(
+            {
+                "verdict": "approve",
+                "findings": [],
+                "test_quality_score": 0.95,
+                "test_quality_findings": [],
+                "comments_to_post": [],
+                "summary": "lgtm",
+            }
+        )
+
+    monkeypatch.setattr(runner_mod, "text_run", _fake_text_run)
+
+    result = handle_review(story, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert calls, "a non-UTF-8 diff must be reviewed, not crash the handler"
+    assert result.next_state == StoryState.REVIEWER_DONE
+
+
+def test_diff_unavailable_block_does_not_pollute_score_history(
+    temp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The infra block must NOT append a synthetic 0.0-score entry to
+    reviewer_history_json — otherwise the next REAL rejection after
+    auto-recovery trivially counts as 'improving' in the non-improving-score
+    guard and buys a wasted extra cycle."""
+    app_dir = _init_repo_without_remote(temp_root / "sacrifice")
+    app_config = _app_config(app_dir)
+    story = _mk_story(temp_root, slug="no-history-pollution", dev_attempts=_ONE_GREEN_ATTEMPT)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, story)
+    _commit_feature_in_worktree(worktree)
+    _delete_all_base_refs(app_dir)
+
+    _forbid_text_run(monkeypatch)
+
+    result = handle_review(story, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert result.next_state == StoryState.BLOCKED_REVIEW_NONCONVERGENT
+    assert json.loads(story.reviewer_history_json or "[]") == []

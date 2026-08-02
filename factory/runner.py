@@ -60,10 +60,15 @@ _BROKEN_PROMPT_MARKERS: tuple[str, ...] = (
     # Diff-fetch failure text (see handlers._BROKEN_PROMPT_MARKERS for the
     # full rationale): the fetch is fail-closed now, so these must never
     # appear in a prompt; the scan catches a regression to fail-open.
-    "returned rc=",
-    "(gh pr diff failed",
-    "(git diff worktree failed",
-    "(could not resolve writing worktree",
+    # Anchored on plumbing-specific prefixes (never generic prose like a bare
+    # "returned rc=", which legitimate code/test output can contain) and
+    # built by CONCATENATION so the contiguous literal never appears in this
+    # repo's own source (a self-edit diff would otherwise trip the scan).
+    "(gh pr diff " + "#",
+    "...HEAD " + "returned rc=",
+    "(gh pr diff " + "failed",
+    "(git diff worktree " + "failed",
+    "(could not resolve " + "writing worktree",
 )
 
 
