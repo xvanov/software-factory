@@ -265,7 +265,10 @@ def test_guard_does_not_block_when_findings_change(
             "verdict": "request_changes",
             "findings": [{"severity": "high", "location": "src/x.py:42",
                           "what": f"distinct issue #{i}", "fix_suggestion": "fix"}],
-            "test_quality_score": 0.85,
+            # Strictly improving score: since the non-improving-score early
+            # exit (2026-08-01), "progress" requires BOTH changing findings
+            # and an improving score — a flat score at cycle 2 blocks.
+            "test_quality_score": 0.80 + i * 0.05,
             "test_quality_findings": [],
             "comments_to_post": [],
             "summary": "changes",

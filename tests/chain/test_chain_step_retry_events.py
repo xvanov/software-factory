@@ -257,6 +257,15 @@ def test_review_cycle_step_carries_the_stability_signal(
     monkeypatch.setattr(
         handlers_module, "text_run", lambda *a, **kw: dict(findings), raising=False
     )
+    # The story has a PR number, so the (now fail-closed) diff precondition
+    # would shell out to a real `gh pr diff` and block the story before any
+    # review cycle happens. This test pins the review_cycle step emission,
+    # not the diff plumbing — give it an inert real-looking diff.
+    monkeypatch.setattr(
+        handlers_module,
+        "_fetch_pr_diff_for_review",
+        lambda *a, **kw: "diff --git a/src/x.py b/src/x.py\n+x = 1\n",
+    )
 
     handle_review(story, app_config, temp_root, dry_run=False, db_path=db)
 

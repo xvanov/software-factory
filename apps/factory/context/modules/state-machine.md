@@ -53,6 +53,7 @@ surface after 3 stalled ticks 45+ minutes apart".
 | `REVIEWER_DONE` | `EVENT_TECH_WRITER_STARTED` | `TECH_WRITER_IN_PROGRESS` |
 | `TECH_WRITER_IN_PROGRESS` | `EVENT_TECH_WRITER_DONE` | `TECH_WRITER_DONE` |
 | `TECH_WRITER_IN_PROGRESS` | `EVENT_REVIEWER_REQUEST_CHANGES` | `REVIEWER_REQUESTED_CHANGES` |
+| `TECH_WRITER_IN_PROGRESS` | `EVENT_REVIEW_NONCONVERGENT` | `BLOCKED_REVIEW_NONCONVERGENT` |
 | `TECH_WRITER_DONE` | `EVENT_DOCS_ENFORCER_CHECK` | `DOCS_ENFORCER_CHECK` |
 | `DOCS_ENFORCER_CHECK` | `EVENT_DOCS_ENFORCER_PASS` | `PR_OPEN` |
 | `DOCS_ENFORCER_CHECK` | `EVENT_DOCS_ENFORCER_FAIL` | `REVIEWER_REQUESTED_CHANGES` |
@@ -94,10 +95,28 @@ of `is_terminal()` (see "Dependency-deferral cap" below).
   defects or test-quality/slop findings). Loop-4 has no separate test
   author, so this state dispatches straight back to `dev`
   (`orchestrator.py:150`). `story.reviewer_cycles` counts consecutive
-  request-changes verdicts; at `handlers.py:_MAX_REVIEW_CYCLES = 6` the
+  request-changes verdicts; at `handlers.py:_MAX_REVIEW_CYCLES = 3` the
   reviewer fires `EVENT_REVIEW_NONCONVERGENT` instead, landing on the
   terminal `BLOCKED_REVIEW_NONCONVERGENT` sink so a non-converging
-  dev↔reviewer ping-pong cannot loop unbounded.
+  dev↔reviewer ping-pong cannot loop unbounded. Two early exits fire
+  strictly below that hard cap: identical findings repeating
+  `_MAX_REVIEW_STUCK = 2` times (stability guard), and a review score that
+  does not IMPROVE between consecutive rejecting cycles (non-improving-score
+  guard, 2026-08-01) — flat trajectories buy expensive wrong answers, so
+  they block instead of cycling to the cap. Both route only to the blocked
+  sink, never to approve.
+* **Fail-closed reviewer diff precondition (2026-08-01)** — before any
+  reviewer model call, `handlers._fetch_pr_diff_for_review` must yield a real
+  diff (`gh pr diff` for PRs; `git diff <base>...HEAD` in the worktree
+  otherwise, with an `origin/<base>` → local `<base>` fallback). A fetch
+  FAILURE raises and routes the story straight to
+  `BLOCKED_REVIEW_NONCONVERGENT` via `EVENT_REVIEW_NONCONVERGENT` without
+  burning a reviewer cycle (it used to return the error text AS the diff —
+  blind reviews). An EMPTY diff never reaches the model either: the handler
+  emits a deterministic request_changes ("commit your work") that stays
+  bounded by the guards above. `handle_tech_writer` applies the same
+  precondition via its `TECH_WRITER_IN_PROGRESS` →
+  `BLOCKED_REVIEW_NONCONVERGENT` edge.
 * **`TECH_WRITER_IN_PROGRESS` → `REVIEWER_REQUESTED_CHANGES`** — if
   `apply_context_updates` fails (e.g. tech_writer wrote outside
   `CANONICAL_CONTEXT_PATHS`), the story bounces back through the dev-rework
@@ -157,7 +176,7 @@ are absent from `_DISPATCH` and `auto_merge._MERGEABLE_STATES`:
 | `DEPLOYED` | `EVENT_DEPLOY_SUCCEEDED` / `EVENT_DEPLOY_SKIPPED` | n/a — success |
 | `BLOCKED_TESTS_NEED_CLARIFICATION` | dev/docs-onboarder exhaustion | auto-recovered to `SM_DONE` (capped) or human |
 | `BLOCKED_DEPLOY_FAILED` | `EVENT_DEPLOY_FAILED` / `EVENT_PR_UNMERGEABLE` | `auto_merge._attempt_pr_reconcile`, or human |
-| `BLOCKED_REVIEW_NONCONVERGENT` | `EVENT_REVIEW_NONCONVERGENT` (6th request-changes) | auto-recovered to `SM_DONE` (capped) or human |
+| `BLOCKED_REVIEW_NONCONVERGENT` | `EVENT_REVIEW_NONCONVERGENT` (stuck/non-improving/capped review cycles, empty-diff short-circuit, or an unfetchable diff at review/tech_writer time) | auto-recovered to `SM_DONE` (capped) or human |
 | `BLOCKED_BUDGET_EXCEEDED` | `EVENT_BUDGET_EXCEEDED` | manual: reset state AND zero `total_attempts`/`total_spend_usd`, or raise `caps.per_story_*` |
 | `SUPERSEDED_BY_SIBLING` | `dual_draft.close_abandoned_draft_sibling` (direct assignment) | none — permanent |
 | `BLOCKED_CI_UNRESOLVED` | `auto_merge._handle_ci_failure` giving up (direct assignment) | operator re-opens PR / re-files direction |

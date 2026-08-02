@@ -262,17 +262,20 @@ def test_real_diff_flows_through_review_normally(
     assert result.next_state == StoryState.REVIEWER_DONE
 
 
-def test_uncommitted_real_work_does_not_short_circuit(
+def test_uncommitted_real_work_routes_back_to_dev_without_model_call(
     temp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Dev produced REAL, test-passing changes but never ran the final
     ``git commit`` (e.g. it hit a turn/timeout limit near the end of the
     run) — a common real-world case since the dev agent is only
-    INSTRUCTED to commit, not forced to. ``files_changed``/test results
-    come from the on-disk working tree, so this is genuine work, not an
-    empty diff. The short-circuit must NOT fire; the story must flow
-    through the normal review path (not get permanently blocked on its
-    first pass over a missed commit)."""
+    INSTRUCTED to commit, not forced to. The short-circuit must NOT fire
+    (this is genuine work, not a permanently-blockable empty diff), but
+    since the fail-closed diff precondition (2026-08-01) the model must
+    NOT be called either: the fetched COMMITTED diff is empty, a reviewer
+    cannot approve zero commits, and the old behaviour let a mocked LLM
+    approve exactly that. Instead the handler emits a deterministic
+    request_changes telling dev to commit, burning one (bounded) cycle
+    and zero model spend."""
     app_dir = temp_root / "sacrifice"
     _init_repo_with_origin(app_dir)
     app_config = AppConfig(
@@ -291,19 +294,13 @@ def test_uncommitted_real_work_does_not_short_circuit(
     # Deliberately NOT committed.
 
     # Sanity: the helper itself must report "not empty" (False) for this
-    # topology — uncommitted work must never read as an empty diff.
+    # topology — uncommitted work must never read as a CONFIRMED empty diff
+    # (that would terminally block the story on its first pass).
     assert _dev_produced_empty_diff(story, app_config, temp_root) is False
 
     import factory.chain.handlers as handlers_mod
 
-    monkeypatch.setattr(handlers_mod, "find_direction_for_story", lambda *a, **k: None)
-    monkeypatch.setattr(handlers_mod, "_read_story_file_content", lambda *a, **k: "story")
-    monkeypatch.setattr(handlers_mod, "_fetch_latest_test_output", lambda *a, **k: "1 passed")
-    monkeypatch.setattr(handlers_mod, "route", lambda *a, **k: "azure/gpt-5.4")
     monkeypatch.setattr(handlers_mod, "_slop_findings_for_story", lambda *a, **k: [])
-    monkeypatch.setattr(
-        "factory.context.loader.compose_context_prelude", lambda *a, **k: "ctx"
-    )
 
     calls: list[dict[str, Any]] = []
     import factory.runner as runner_mod
@@ -325,17 +322,25 @@ def test_uncommitted_real_work_does_not_short_circuit(
 
     result = handle_review(story, app_config, temp_root, dry_run=False, db_path=db)
 
-    assert calls, "uncommitted-but-real work must flow to the normal review path"
-    assert result.next_state == StoryState.REVIEWER_DONE
-    assert story.state != StoryState.BLOCKED_REVIEW_NONCONVERGENT.value
+    assert not calls, "a zero-commit diff must never reach the reviewer LLM"
+    assert result.next_state == StoryState.REVIEWER_REQUESTED_CHANGES
+    assert story.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
+    # One normal (bounded) review cycle was burned — this is a verdict, not
+    # an infra failure.
+    assert story.reviewer_cycles == 1
+    payload = json.loads(story.reviewer_result_json)
+    assert payload.get("empty_diff_precondition") is True
+    assert any("commit" in (f.get("what") or "") for f in payload["findings"])
 
 
-def test_git_error_falls_back_to_normal_review(
+def test_no_remote_confirmed_empty_diff_short_circuits_via_local_base(
     temp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No 'origin' remote at all -> the git-diff check can't resolve
-    ``origin/<base>`` and returns None (unknown). The handler must fall
-    back to the normal review path rather than crash or short-circuit."""
+    """No 'origin' remote at all -> the git-diff check now falls back to the
+    LOCAL ``<base>`` ref (2026-08-01 fail-closed fix; before that it returned
+    None/unknown and the handler reviewed a fail-open error string). With the
+    fallback the empty diff is CONFIRMED, so the short-circuit fires: blocked
+    on the first occurrence, no model call, no review cycle burned."""
     app_dir = temp_root / "sacrifice"
     _init_repo_without_remote(app_dir)
     app_config = AppConfig(
@@ -344,50 +349,34 @@ def test_git_error_falls_back_to_normal_review(
     story = _mk_story(temp_root, slug="git-error-story", dev_attempts=_ONE_GREEN_ATTEMPT)
     db = temp_root / "state" / "factory.db"
 
-    # Sanity: the helper itself must report "unknown" for this topology.
-    assert _dev_produced_empty_diff(story, app_config, temp_root) is None
+    # Sanity: the helper now CONFIRMS the empty diff via the local-base
+    # fallback instead of degrading to None/unknown.
+    assert _dev_produced_empty_diff(story, app_config, temp_root) is True
 
-    import factory.chain.handlers as handlers_mod
+    def _must_not_be_called(**_kw: Any) -> Any:
+        raise AssertionError("text_run must NOT be called on a confirmed empty diff")
 
-    monkeypatch.setattr(handlers_mod, "find_direction_for_story", lambda *a, **k: None)
-    monkeypatch.setattr(handlers_mod, "_read_story_file_content", lambda *a, **k: "story")
-    monkeypatch.setattr(handlers_mod, "_fetch_latest_test_output", lambda *a, **k: "1 passed")
-    monkeypatch.setattr(handlers_mod, "route", lambda *a, **k: "azure/gpt-5.4")
-    monkeypatch.setattr(handlers_mod, "_slop_findings_for_story", lambda *a, **k: [])
-    monkeypatch.setattr(
-        "factory.context.loader.compose_context_prelude", lambda *a, **k: "ctx"
-    )
-
-    calls: list[dict[str, Any]] = []
     import factory.runner as runner_mod
 
-    def _fake_text_run(**kwargs: Any) -> str:
-        calls.append(kwargs)
-        return json.dumps(
-            {
-                "verdict": "approve",
-                "findings": [],
-                "test_quality_score": 0.95,
-                "test_quality_findings": [],
-                "comments_to_post": [],
-                "summary": "lgtm",
-            }
-        )
-
-    monkeypatch.setattr(runner_mod, "text_run", _fake_text_run)
+    monkeypatch.setattr(runner_mod, "text_run", _must_not_be_called)
 
     result = handle_review(story, app_config, temp_root, dry_run=False, db_path=db)
 
-    assert calls, "git-error path must fall back to the real review flow, not crash/skip"
-    assert result.next_state == StoryState.REVIEWER_DONE
-    assert story.state != StoryState.BLOCKED_REVIEW_NONCONVERGENT.value
+    assert result.next_state == StoryState.BLOCKED_REVIEW_NONCONVERGENT
+    assert story.state == StoryState.BLOCKED_REVIEW_NONCONVERGENT.value
+    assert story.reviewer_cycles == 0
 
 
-def test_short_circuit_does_not_fire_without_a_real_dev_attempt(
+def test_no_dev_attempt_empty_diff_requests_changes_without_model_call(
     temp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Even with an empty branch diff, no short-circuit before dev has run
-    for real at least once (``dev_attempts_json`` empty)."""
+    """Even with an empty branch diff, no TERMINAL short-circuit before dev
+    has run for real at least once (``dev_attempts_json`` empty) — the story
+    must keep its path back to dev. But since the fail-closed diff
+    precondition (2026-08-01) the model is not called either: an empty diff
+    cannot be approved, so the handler emits the deterministic
+    request_changes (one bounded cycle, zero model spend) and the next dev
+    dispatch gets its real chance."""
     app_dir = temp_root / "sacrifice"
     _init_repo_with_origin(app_dir)
     app_config = AppConfig(
@@ -399,14 +388,7 @@ def test_short_circuit_does_not_fire_without_a_real_dev_attempt(
 
     import factory.chain.handlers as handlers_mod
 
-    monkeypatch.setattr(handlers_mod, "find_direction_for_story", lambda *a, **k: None)
-    monkeypatch.setattr(handlers_mod, "_read_story_file_content", lambda *a, **k: "story")
-    monkeypatch.setattr(handlers_mod, "_fetch_latest_test_output", lambda *a, **k: "(none)")
-    monkeypatch.setattr(handlers_mod, "route", lambda *a, **k: "azure/gpt-5.4")
     monkeypatch.setattr(handlers_mod, "_slop_findings_for_story", lambda *a, **k: [])
-    monkeypatch.setattr(
-        "factory.context.loader.compose_context_prelude", lambda *a, **k: "ctx"
-    )
 
     calls: list[dict[str, Any]] = []
     import factory.runner as runner_mod
@@ -428,5 +410,7 @@ def test_short_circuit_does_not_fire_without_a_real_dev_attempt(
 
     result = handle_review(story, app_config, temp_root, dry_run=False, db_path=db)
 
-    assert calls, "must fall through to the normal review (no real dev attempt yet)"
-    assert result.next_state == StoryState.REVIEWER_DONE
+    assert not calls, "an empty diff must never reach the reviewer LLM"
+    # NOT the terminal block — the story keeps a path back to dev.
+    assert result.next_state == StoryState.REVIEWER_REQUESTED_CHANGES
+    assert story.reviewer_cycles == 1
