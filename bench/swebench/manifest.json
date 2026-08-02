@@ -5,7 +5,7 @@
   "seed": 20260802,
   "limit": 20,
   "created_at_after": "2026-01-01",
-  "frozen_at": "2026-08-02T21:19:34.298617+00:00",
+  "frozen_at": "2026-08-02T23:00:01.962095+00:00",
   "pool_size": 215,
   "instances": [
     {
@@ -18,6 +18,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.tox-dev_1776_tox-3931:latest",
       "created_at": "2026-05-01 15:37:40",
+      "install_cmd": "pip install -e . --quiet && pip install build[virtualenv] covdefaults coverage detect-test-pollution devpi-process diff-cover distlib docutils flaky hatch-vcs hatchling pdm-backend psutil pytest pytest-cov pytest-mock pytest-timeout pytest-xdist re-assert setuptools wheel time-machine argcomplete --quiet",
       "test_targets": [
         "tests/session/cmd/test_schema.py"
       ],
@@ -34,6 +35,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.hkuds_1776_openharness-217:latest",
       "created_at": "2026-04-30 00:28:27",
+      "install_cmd": "pip install -e \".[dev]\" -q",
       "test_targets": [
         "tests/test_auth/test_flows.py"
       ],
@@ -50,6 +52,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.pyinfra-dev_1776_pyinfra-1665:latest",
       "created_at": "2026-04-14 07:06:21",
+      "install_cmd": "pip install -e . --quiet && pip install \"pytest>=8.3.5,<9\" \"coverage>=7.7.1,<8\" \"pytest-cov>=7.0.0,<8\" \"pytest-testinfra>=10.2.2,<11\" \"pyyaml>=6.0.2,<7\" --quiet && pip install freezegun --quiet && pip install pyinfra-testgen==0.1.1 --quiet",
       "test_targets": [
         "tests/test_connectors/test_util.py"
       ],
@@ -66,6 +69,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.alibaba_1776_opensandbox-816:latest",
       "created_at": "2026-04-29 07:35:36",
+      "install_cmd": "pip install -e ./sdks/sandbox/python -q && pip install -e ./sdks/code-interpreter/python -q && pip install -e ./server -q && pip install -e ./cli -q && pip install pytest pytest-asyncio pytest-cov -q",
       "test_targets": [
         "server/tests/test_docker_service.py"
       ],
@@ -82,6 +86,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.google_1776_flax-5171:latest",
       "created_at": "2026-01-06 16:34:00",
+      "install_cmd": "pip install uv --quiet && uv pip install -e . --system --quiet && uv pip install pytest cloudpickle --system --quiet",
       "test_targets": [
         "tests/nnx/graph_utils_test.py"
       ],
@@ -98,6 +103,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.harumiweb_1776_exstruct-113:latest",
       "created_at": "2026-03-21 08:53:23",
+      "install_cmd": "pip install -e \".[yaml,mcp]\" --quiet && pip install pytest pytest-cov pytest-mock --quiet",
       "test_targets": [
         "tests/cli/test_cli_lazy_imports.py"
       ],
@@ -114,6 +120,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.keras-team_1776_keras-22316:latest",
       "created_at": "2026-03-01 00:54:12",
+      "install_cmd": "pip install -q -r requirements.txt && python pip_build.py --install && pip install -q tf_keras",
       "test_targets": [
         "keras/src/ops/function_test.py"
       ],
@@ -130,6 +137,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.ucfopen_1776_canvasapi-716:latest",
       "created_at": "2026-03-31 19:11:13",
+      "install_cmd": "pip install -q -e . && pip install -q -r tests_requirements.txt && pip install -q pytest",
       "test_targets": [
         "tests/test_util.py"
       ],
@@ -146,6 +154,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.raullenchai_1776_rapid-mlx-289:latest",
       "created_at": "2026-05-07 19:33:12",
+      "install_cmd": "pip install -e . --quiet --root-user-action=ignore && pip install pytest --quiet --root-user-action=ignore",
       "test_targets": [
         "tests/test_reasoning_parsers.py"
       ],
@@ -162,6 +171,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.pandas-dev_1776_pandas-63945:latest",
       "created_at": "2026-01-30 04:30:20",
+      "install_cmd": "export DEBIAN_FRONTEND=noninteractive && apt-get update -y -qq && apt-get install -y -qq ninja-build && pip install -q cython numpy>=2.0.0 && pip install -q \"meson-python>=0.17.1,<1\" \"meson>=1.2.1,<2\" wheel && pip install -q versioneer[toml] && pip install -q -ve . --no-build-isolation --config-settings editable-verbose=true && pip install -q pytest>=8.3.4 hypothesis>=6.116.0 pytest-xdist>=3.6.1",
       "test_targets": [
         "pandas/tests/groupby/test_categorical.py",
         "pandas/tests/test_col.py",
@@ -191,6 +201,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.idaholab_1776_montepy-933_interface:latest",
       "created_at": "2026-03-20 15:47:06",
+      "install_cmd": "pip install -e \".[test]\" --quiet",
       "test_targets": [
         "tests/test_universe.py",
         "tests/test_universe_integration.py"
@@ -208,6 +219,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588:latest",
       "created_at": "2026-01-12 16:20:27",
+      "install_cmd": "pip install -q -e . && pip install -q -e .[dev,docs,testing]",
       "test_targets": [
         "tests/object_test.py"
       ],
@@ -224,6 +236,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.conan-io_1776_conan-19750:latest",
       "created_at": "2026-03-13 10:20:23",
+      "install_cmd": "pip install -q -e . && pip install -q -r conans/requirements_dev.txt",
       "test_targets": [
         "test/integration/graph/test_system_tools.py"
       ],
@@ -240,6 +253,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.keras-team_1776_keras-22642:latest",
       "created_at": "2026-04-06 21:57:28",
+      "install_cmd": "pip install -q -r requirements.txt && python pip_build.py --install && pip install -q tf_keras",
       "test_targets": [
         "keras/src/layers/attention/grouped_query_attention_test.py"
       ],
@@ -256,6 +270,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.vyperlang_1776_vyper-4801:latest",
       "created_at": "2026-01-03 21:33:22",
+      "install_cmd": "make dev-init",
       "test_targets": [
         "tests/unit/compiler/venom/test_memory_allocator.py"
       ],
@@ -272,6 +287,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.zauberzeug_1776_nicegui-5858:latest",
       "created_at": "2026-03-09 16:34:24",
+      "install_cmd": "pip install -e . --quiet && pip install pytest pytest-asyncio pytest-selenium selenium webdriver-manager --quiet && apt-get update && apt-get install -y -qq chromium chromium-driver",
       "test_targets": [
         "tests/test_xterm.py"
       ],
@@ -288,6 +304,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.getmoto_1776_moto-9841:latest",
       "created_at": "2026-03-09 23:11:49",
+      "install_cmd": "pip install -e . -q && pip install -r requirements-tests.txt -q",
       "test_targets": [
         "tests/test_kms/test_kms.py"
       ],
@@ -304,6 +321,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.line_1776_line-bot-sdk-python-981_interface:latest",
       "created_at": "2026-04-01 07:44:57",
+      "install_cmd": "pip install -e . -q && pip install -r requirements-test.txt -q",
       "test_targets": [
         "tests/api/test_issue_stateless_channel_token.py"
       ],
@@ -320,6 +338,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.conan-io_1776_conan-19735_interface:latest",
       "created_at": "2026-03-10 10:33:02",
+      "install_cmd": "pip install -q -e . && pip install -q -r conans/requirements_dev.txt",
       "test_targets": [
         "test/unittests/util/detect_test.py"
       ],
@@ -336,6 +355,7 @@
       "language": "python",
       "docker_image": "swerebench/sweb.eval.x86_64.hiero-ledger_1776_hiero-sdk-python-1914_interface:latest",
       "created_at": "2026-03-06 14:12:44",
+      "install_cmd": "pip install -e \".[eth]\" --quiet && pip install pytest pytest-cov --quiet && pip install grpcio-tools --quiet && python generate_proto.py && pip install hypothesis --quiet && pip install flask --quiet",
       "test_targets": [
         "tests/unit/account_info_test.py"
       ],
