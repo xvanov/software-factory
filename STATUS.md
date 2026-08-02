@@ -18,7 +18,7 @@ All systemd units are deliberately **stopped**. Run `factory on` to start.
 | GitHub loop | 1 open issue, 0 open PRs, 0 blocked stories |
 | Spend control | $200/day cap, hourly cap, per-story budget |
 | Test suite | 2,368 tests, ~5 min |
-| SWE-bench harness | 6 externally-graded instances, every row audit-valid, $3.33 total |
+| SWE-bench harness | Runs end to end, grades externally, and archives evidence with every table (PLAN 1.5, #210/#211). Current backed numbers: factory 1/6 = bare 1/6 |
 
 Do not "fix" anything in this table without a measurement that shows it broke.
 
@@ -52,11 +52,34 @@ under-reported 1.62× (onboarder spend invisible). Do not cite them.
 | Benchmark ran one instance at a time | `run-all` parallel sweep (child processes, spend guard on actual mid-sweep cost, pure dry-run, group kill) | #204 |
 | Dev invented literals where the story was silent | Persona seeks codebase precedent (measured 2/2 vs 0/2 on the isolating instance) | #201 |
 
-First VALID externally-graded numbers (n=6, every row audit-valid, $3.33):
-**1/6 resolved**, 4 `right_place_wrong_fix`, 1 honestly-blocked empty patch.
-Chain-verdict precision 1/5, recall 1/1. 5/6 located the correct file —
-failures are unstated-convention failures, not localization failures.
-`bench/swebench/results.md` is the artifact; next is the 1.4 bare-model arm.
+Reported (n=6, `bench/swebench/results.md`, generated 14:01:07Z): **1/6
+resolved**, 4 `right_place_wrong_fix`, 1 honestly-blocked empty patch,
+chain-verdict precision 1/5, recall 1/1, $3.33.
+
+> **⚠ RETRACTED PENDING RE-DERIVATION — do not cite these numbers.**
+> The artifacts on disk are from a **later** sweep (16:23–16:35Z) that reports
+> 5 `right_place_wrong_fix` and `cost_usd: 6.7342`, and they disagree per
+> instance: `openlibrary-3aeec6af` is published as `empty_patch` at 142,903
+> input tokens but on disk shows 2,985,777 in / 50,735 out. **No `grade.json`
+> survives anywhere under `bench/swebench/runs/`**, so the oracle PASS/FAIL
+> column has no backing artifact. `_reset_run_artifacts` clears state at run
+> start (correct) but nothing snapshots a published run first. This is the same
+> class as the retraction on line 33, recurring one day later. `PLAN.md` 1.5
+> fixes it and must run before 1.4 — a bare-model delta against an unbacked
+> factory number measures nothing.
+
+> **RESOLVED later the same day.** PLAN 1.5 shipped in #210: `report` now
+> snapshots every row's `result.json`/`audit.json`/`prediction.diff` into
+> `bench/swebench/results-archive/` before publishing and refuses unbacked
+> rows. (One correction to the note above: no separate `grade.json` exists by
+> design — `grade` merges its verdict into `result.json`.) Evidence archives
+> are committed in #211. The 14:01Z table ($3.33, precision 1/5) stays
+> retracted — its artifacts were destroyed before archival existed. The
+> **currently backed** numbers (archives `17-30-31Z` and `17-45-30Z`):
+> factory 1/6 = bare 1/6 resolved (same qutebrowser instance; scaffold lift
+> 0 pp at ~30× tokens), and the post-#210 sweep holds 1/6 with the review
+> loop now engaging (`reviewer_cycles` on 2/6 vs 0/6 before). Per-instance
+> autopsies live in the memory file `swebench_failure_synthesis_2026_08_02`.
 
 ## Fixed 2026-08-01 (Phase 0)
 

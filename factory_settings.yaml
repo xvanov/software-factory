@@ -14,7 +14,9 @@ caps:
   daily_spend_usd: 300
   # Operator-approved 2026-05-30: raised 15 -> 40 to let the ~29 re-dispatched
   # stories reprocess in parallel without constant hourly-cap throttling.
-  # Daily $200 cap (chain stops at $180) remains the real spend ceiling.
+  # ``daily_spend_usd`` above is the real ceiling and is the ONLY place the
+  # daily cap is defined — it was also stated as $200 in CLAUDE.md, which
+  # disagreed with the configured value. Confirmed $300, 2026-08-01.
   hourly_spend_usd: 40
 queues:
   human_review_max_open_prs: 5
