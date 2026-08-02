@@ -65,7 +65,14 @@ speedup:
 * It refuses to start when the projected spend would breach
   ``caps.hourly_spend_usd`` / ``caps.daily_spend_usd``. Bench runs write to an
   isolated state root, so the chain's own spend enforcer never sees them and
-  will never throttle them — this guard is the only one there is.
+  will never throttle them — this guard is the only one there is. Because a
+  projection can be wrong, ACTUAL accumulated spend is re-checked after every
+  completed instance: on breach no new children start (in-flight ones finish,
+  so the residual overshoot is bounded by workers x the true per-instance
+  cost), the summary records ``stopped_reason: "spend cap: …"``, and the
+  sweep exits non-zero. ``--force-over-cap`` bypasses both the projection
+  refusal and the mid-sweep stop; the $50/$75/$100 operator notices key off
+  actual accumulated spend and are emitted regardless.
 * ``--dry-run`` is a PURE preview: it prints the plan and the projected spend,
   spawns nothing and writes nothing.
 * ``Ctrl-C`` kills the whole process group of every in-flight child. Without
@@ -1801,9 +1808,28 @@ def report() -> None:
     rows: list[dict[str, Any]] = []
     for f in sorted(RUNS_DIR.glob("*/*/result.json")):
         try:
-            rows.append(json.loads(f.read_text(encoding="utf-8")))
+            r = json.loads(f.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             continue
+        if not isinstance(r, dict):
+            continue
+        # The audit gate. Every run must be fully auditable; a row whose
+        # audit failed — or that was never audited at all (legacy runs
+        # included) — must not be laundered into the headline number.
+        # ``None`` = no audit.json (not audited); an unreadable audit.json is
+        # a FAIL, never a pass.
+        audit_path = f.parent / "audit.json"
+        audit_ok: bool | None = None
+        if audit_path.exists():
+            try:
+                audit_ok = json.loads(audit_path.read_text(encoding="utf-8")).get("ok") is True
+            except (json.JSONDecodeError, OSError, AttributeError):
+                audit_ok = False
+        r["_audit_ok"] = audit_ok
+        # Both run functions record ``error`` (None on a normal completion);
+        # an oracle pass from a run that failed is flagged, not counted.
+        r["_run_failed"] = bool(r.get("error"))
+        rows.append(r)
     if not rows:
         raise SystemExit(f"no results under {RUNS_DIR}")
 
@@ -1828,16 +1854,18 @@ def report() -> None:
         "2026-07-08 audit found ~30% of this suite's public tasks broken, so "
         "summing the two would read a broken harness as factory failure.",
         "",
-        "| instance | arm | factory says | oracle | outcome | tokens in | tokens out | wall s |",
-        "|---|---|---|---|---|---:|---:|---:|",
+        "| instance | arm | factory says | oracle | audit | outcome | tokens in | tokens out | wall s |",
+        "|---|---|---|---|---|---|---:|---:|---:|",
     ]
     for r in rows:
         g = r.get("grade") or {}
         oracle = g.get("oracle_resolved")
+        audit_cell = "ok" if r["_audit_ok"] else ("—" if r["_audit_ok"] is None else "FAIL")
         lines.append(
             f"| {str(r.get('instance_id'))[:46]} | {r.get('arm')} "
             f"| {'green' if r.get('factory_says_green') else 'not green'} "
             f"| {'PASS' if oracle else ('?' if oracle is None else 'FAIL')} "
+            f"| {audit_cell} "
             f"| {g.get('outcome', '—')} "
             f"| {r.get('tokens_in', '?'):,} | {r.get('tokens_out', '?'):,} "
             f"| {r.get('wall_clock_s', '—')} |"
@@ -1854,21 +1882,55 @@ def report() -> None:
             for r in arm_rows
             if not str((r.get("grade") or {}).get("outcome", "")).startswith("task_broken")
         ]
-        said_green = [r for r in gradable if r.get("factory_says_green")]
-        oracle_pass = [r for r in gradable if (r["grade"] or {}).get("oracle_resolved")]
+        # The audit gate: the headline counts ONLY rows whose run completed
+        # normally AND whose audit passed. Everything else lands in a loud
+        # bucket — an oracle pass with a failed (or absent) audit is not a
+        # result, and silently laundering it into the resolve rate is exactly
+        # the number-inflation this harness exists to prevent.
+        valid = [r for r in gradable if r["_audit_ok"] is True and not r["_run_failed"]]
+        valid_ids = {id(r) for r in valid}
+        audit_failed = [r for r in gradable if r["_audit_ok"] is False]
+        not_audited = [r for r in gradable if r["_audit_ok"] is None]
+        run_failed = [r for r in gradable if r["_run_failed"]]
+        excluded_passes = [
+            r
+            for r in gradable
+            if (r.get("grade") or {}).get("oracle_resolved") and id(r) not in valid_ids
+        ]
+        said_green = [r for r in valid if r.get("factory_says_green")]
+        oracle_pass = [r for r in valid if (r["grade"] or {}).get("oracle_resolved")]
         tp = [r for r in said_green if (r["grade"] or {}).get("oracle_resolved")]
         broken = len(arm_rows) - len(gradable)
 
         def _rate(num: int, den: int) -> str:
             return f"{num}/{den} = {num / den:.0%}" if den else "n/a (0 in denominator)"
 
+        headline = f"- resolve rate: **{_rate(len(oracle_pass), len(valid))} audited-valid**"
+        if excluded_passes:
+            reasons = ", ".join(
+                f"{str(r.get('instance_id'))[:46]}: "
+                + ("run failed" if r["_run_failed"] else "")
+                + (" + " if r["_run_failed"] and r["_audit_ok"] is not True else "")
+                + (
+                    ("audit failed" if r["_audit_ok"] is False else "not audited")
+                    if r["_audit_ok"] is not True
+                    else ""
+                )
+                for r in excluded_passes
+            )
+            headline += (
+                f"; **{len(excluded_passes)} oracle-pass EXCLUDED** ({reasons})"
+            )
         lines += [
             "",
             f"## {arm}",
             "",
             f"- graded instances: **{len(arm_rows)}** "
             f"({broken} excluded as `task_broken`, leaving {len(gradable)})",
-            f"- resolve rate: **{_rate(len(oracle_pass), len(gradable))}**",
+            f"- audit gate: **{len(valid)} audited-valid** of {len(gradable)} gradable "
+            f"(audit failed: {len(audit_failed)}, not audited: {len(not_audited)}, "
+            f"run failed: {len(run_failed)})",
+            headline,
             f"- chain-verdict precision (oracle passes | chain said green): "
             f"**{_rate(len(tp), len(said_green))}**",
             f"- chain-verdict recall (chain said green | oracle passes): "
@@ -2047,12 +2109,19 @@ def load_spend_caps(settings_path: Path | None = None) -> tuple[float, float]:
 def estimate_instance_cost(arm: str, runs_dir: Path | None = None) -> tuple[float, float, str]:
     """``(usd_per_instance, hours_per_instance, source)`` for the spend guard.
 
-    Prefers what previous runs of this arm actually cost over a baked constant
-    — gate on the real artifact. Uses the MAXIMUM, not the mean: a guard sized
-    on the average is wrong exactly when the sweep contains the expensive
-    instances, and the fail-safe direction here is to over-estimate spend.
-    Duration takes the MINIMUM for the same reason (shorter instance ->
-    higher $/hour -> more likely to refuse).
+    Prefers what previous CLEAN runs of this arm actually cost over a baked
+    constant — gate on the real artifact, but only the REAL artifact: a run
+    that died early leaves a recorded ``error`` and a tiny partial
+    ``cost_usd``, and a max() over poisoned samples once projected a
+    100-instance sweep at $5.00 against live caps (real cost ~$300). Only
+    runs that completed normally (result.json written, no ``error``) are
+    samples, and the estimate is FLOORED at the documented default unless
+    there are >=2 such runs — one clean-but-cheap run is an anecdote and must
+    never LOWER the guard.
+
+    Uses the MAXIMUM cost and MINIMUM duration: both push the projected burn
+    rate up, which is the fail-safe direction for a guard whose job is to
+    refuse.
     """
     base = RUNS_DIR if runs_dir is None else runs_dir
     costs: list[float] = []
@@ -2062,22 +2131,30 @@ def estimate_instance_cost(arm: str, runs_dir: Path | None = None) -> tuple[floa
             r = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
+        if not isinstance(r, dict) or r.get("error"):
+            continue  # a failed run's partial spend is not a cost sample
         cost = float(r.get("cost_usd") or 0.0)
         wall = float(r.get("wall_clock_s") or 0.0)
         if cost > 0:
             costs.append(cost)
         if wall > 0:
             hours.append(wall / 3600.0)
+    default_usd = _DEFAULT_COST_USD.get(arm, 3.00)
     if costs:
+        usd = max(costs)
+        floored = len(costs) < 2 and usd < default_usd
+        if floored:
+            usd = default_usd
         return (
-            max(costs),
+            usd,
             max(min(hours, default=0.05), 0.01),
-            f"measured over {len(costs)} prior {arm} run(s)",
+            f"measured over {len(costs)} clean prior {arm} run(s)"
+            + (f", floored at the ${default_usd:,.2f} default" if floored else ""),
         )
     return (
-        _DEFAULT_COST_USD.get(arm, 3.00),
+        default_usd,
         _DEFAULT_HOURS.get(arm, 0.05),
-        "default estimate (no prior runs to measure)",
+        "default estimate (no clean prior runs to measure)",
     )
 
 
@@ -2216,6 +2293,16 @@ def _bench_subprocess(argv: list[str], *, timeout_s: int, log_path: Path) -> tup
 
     with _LIVE_LOCK:
         _LIVE_CHILDREN.add(proc)
+    # TOCTOU: ``abort_all`` snapshots ``_LIVE_CHILDREN`` once. A child spawned
+    # between the pre-spawn ``_ABORT`` check and the registration above is
+    # invisible to that snapshot — without this re-check its supervisor would
+    # sit in ``communicate()`` for hours while the child keeps spending.
+    if _ABORT.is_set():
+        _kill_tree(proc)
+        with _LIVE_LOCK:
+            _LIVE_CHILDREN.discard(proc)
+        log_path.write_text("aborted at spawn\n", encoding="utf-8")
+        return -2, "aborted at spawn"
     rc: int
     try:
         out, _ = proc.communicate(timeout=timeout_s)
@@ -2339,6 +2426,12 @@ def sweep_one(
         # finding (fail safe), so a run that produced nothing is marked
         # invalid here rather than silently averaged in. The audit reads only
         # local artifacts, hence the short fixed timeout.
+        #
+        # Drop any stale audit.json FIRST: if the run child failed to spawn,
+        # ``_reset_run_artifacts`` never ran, and an audit child that crashes
+        # before writing would leave a PREVIOUS run's file for
+        # ``_audit_failure_reasons`` to read as this row's findings.
+        (run_dir / "audit.json").unlink(missing_ok=True)
         arc, atail = _bench_subprocess(
             [
                 sys.executable,
@@ -2495,18 +2588,11 @@ def run_all(
         if not force_over_cap:
             raise SystemExit(f"REFUSING TO START — {refusal}")
         _emit(f"WARNING: --force-over-cap set; proceeding over cap — {refusal}")
-    # Operator notification thresholds ($50/$75/$100 — CLAUDE.md guardrail):
-    # name the highest one this sweep's projection crosses.
-    for threshold in (100, 75, 50):
-        if total >= threshold:
-            _emit(
-                f"NOTICE: this sweep projects ${total:,.2f} of spend "
-                f"(crosses the ${threshold} operator notification threshold)."
-            )
-            break
 
     started = time.monotonic()
     records: list[dict[str, Any]] = []
+    stopped_reason: str | None = None
+    notified: set[int] = set()
     _ABORT.clear()
     _emit(f"{'-' * 100}")
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
@@ -2521,15 +2607,54 @@ def run_all(
             ): iid
             for iid in chosen
         }
+        recorded: set[concurrent.futures.Future[dict[str, Any]]] = set()
         try:
             for done in concurrent.futures.as_completed(futures):
                 iid = futures[done]
+                if done.cancelled():
+                    continue  # blank-recorded in the drain below
                 try:
                     rec = done.result()
                 except Exception as exc:  # noqa: BLE001 - belt and braces; sweep_one swallows
                     rec = _blank_record(iid, arm, f"{type(exc).__name__}: {exc}")
+                recorded.add(done)
                 records.append(rec)
                 _emit(_progress_line(len(records), len(chosen), rec))
+
+                # MID-SWEEP ENFORCEMENT, on ACTUAL spend. The start-of-sweep
+                # guard works from a projection, and a projection can be wrong
+                # (it once said $5.00 for a sweep that cost ~$300). Actual
+                # cost_usd summed over completed rows is the real artifact.
+                # Residual window: rows still IN FLIGHT when the cap trips are
+                # allowed to finish, so the overshoot is bounded by
+                # workers x the true per-instance cost.
+                actual = sum(float(r.get("cost_usd") or 0.0) for r in records)
+                # Operator notification thresholds ($50/$75/$100 — CLAUDE.md
+                # guardrail), each announced once, on real accumulated spend.
+                for threshold in (50, 75, 100):
+                    if actual >= threshold and threshold not in notified:
+                        notified.add(threshold)
+                        _emit(
+                            f"NOTICE: accumulated sweep spend ${actual:,.2f} has "
+                            f"crossed the ${threshold} operator notification threshold."
+                        )
+                if stopped_reason is None and not force_over_cap:
+                    elapsed_h = (time.monotonic() - started) / 3600.0
+                    # Same 1-hour floor as the projection guard: within the
+                    # first hour the hourly cap bounds the total so far.
+                    allowed = min(daily_cap, hourly_cap * max(elapsed_h, 1.0))
+                    if actual > allowed:
+                        stopped_reason = (
+                            f"spend cap: actual ${actual:,.2f} breached the "
+                            f"${allowed:,.2f} allowance (caps ${hourly_cap:,.2f}/h, "
+                            f"${daily_cap:,.2f}/day)"
+                        )
+                        for fut in futures:
+                            fut.cancel()  # queued rows; in-flight ones finish
+                        _emit(
+                            f"SPEND CAP — {stopped_reason}; no new instances will "
+                            "start, in-flight ones are allowed to finish"
+                        )
         except KeyboardInterrupt:
             # Ctrl-C must actually STOP the spend. Letting the executor's
             # shutdown drain normally would keep every in-flight dev run going
@@ -2537,26 +2662,54 @@ def run_all(
             killed = abort_all()
             for fut in futures:
                 fut.cancel()
+            stopped_reason = stopped_reason or "interrupted (Ctrl-C)"
             _emit(
                 f"\nINTERRUPTED — killed {killed} in-flight child process(es); "
                 "writing a partial summary"
             )
-            for fut, iid in futures.items():
-                if fut.cancelled():
-                    records.append(_blank_record(iid, arm, "cancelled", status="aborted"))
+
+    # The pool has shut down, so every future is now finished or cancelled.
+    # Drain the ones the loop never recorded: an interrupt abandons in-flight
+    # and just-dequeued rows, and their spend is REAL — dropping them silently
+    # under-reports the sweep's cost.
+    for fut, iid in futures.items():
+        if fut in recorded:
+            continue
+        if fut.cancelled():
+            reason = "cancelled before start"
+            if stopped_reason:
+                reason += f" ({stopped_reason})"
+            records.append(_blank_record(iid, arm, reason, status="aborted"))
+            continue
+        try:
+            records.append(fut.result(timeout=0))
+        except BaseException as exc:  # noqa: BLE001 - KeyboardInterrupt included
+            records.append(
+                _blank_record(iid, arm, f"{type(exc).__name__}: {exc}", status="aborted")
+            )
 
     records.sort(key=lambda r: str(r["instance_id"]))
-    summary = _sweep_summary(records, arm=arm, workers=workers, wall_s=time.monotonic() - started)
+    summary = _sweep_summary(
+        records,
+        arm=arm,
+        workers=workers,
+        wall_s=time.monotonic() - started,
+        stopped_reason=stopped_reason,
+    )
     out = SWE_DIR / f"sweep-{arm}.json"
     out.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     _emit(_render_summary(summary) + f"\nwrote {out}\nnext: `report`")
-    # A sweep with no audited-valid row produced nothing reportable. The
-    # summary is still written (the evidence of WHY it failed), but the exit
-    # code must say so — a cron job or CI step reading rc=0 as "results are
-    # in" would otherwise report a sweep whose every row is invalid.
-    if records and all(r.get("audit_ok") is False for r in records):
+    # Non-zero exits, AFTER the summary is written (it is the evidence):
+    # 1. a spend-cap stop is an incomplete sweep, whatever its rows say;
+    # 2. a sweep with ZERO audited-valid rows produced nothing reportable —
+    #    `not any(True)` rather than `all(False)`, because a single crashed
+    #    row (audit_ok null) must not launder an otherwise all-invalid sweep
+    #    into rc=0.
+    if stopped_reason and stopped_reason.startswith("spend cap"):
+        raise SystemExit(f"sweep stopped early — {stopped_reason} (see {out})")
+    if records and not any(r.get("audit_ok") is True for r in records):
         raise SystemExit(
-            f"every sweep row FAILED audit — no valid results (see {out}). "
+            f"sweep produced NO audited-valid rows (see {out}). "
             "An unauditable run is an invalid run."
         )
 
@@ -2582,7 +2735,12 @@ def _blank_record(
 
 
 def _sweep_summary(
-    records: list[dict[str, Any]], *, arm: str, workers: int, wall_s: float
+    records: list[dict[str, Any]],
+    *,
+    arm: str,
+    workers: int,
+    wall_s: float,
+    stopped_reason: str | None = None,
 ) -> dict[str, Any]:
     outcomes: dict[str, int] = {}
     statuses: dict[str, int] = {}
@@ -2621,6 +2779,7 @@ def _sweep_summary(
         "workers": workers,
         "finished_at": datetime.now(UTC).isoformat(),
         "wall_clock_s": round(wall_s, 1),
+        "stopped_reason": stopped_reason,
         "instances": len(records),
         "ok": statuses.get("ok", 0),
         "failed": len(records) - statuses.get("ok", 0),
@@ -2661,6 +2820,8 @@ def _render_summary(s: dict[str, Any]) -> str:
         + ", ".join(f"{k}={v}" for k, v in sorted(s["outcomes"].items()))
         + "",
     ]
+    if s.get("stopped_reason"):
+        lines.insert(1, f"  STOPPED EARLY — {s['stopped_reason']}")
     failures = [r for r in s["results"] if r.get("status") != "ok"]
     if failures:
         lines.append("  failures (isolated — the sweep continued):")

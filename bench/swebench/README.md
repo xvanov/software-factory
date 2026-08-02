@@ -59,17 +59,28 @@ uv run python bench/swebench_adapter.py run-all --arm factory --workers 4 --only
   from another terminal does not — those children are detached by design, so
   they survive; interrupt the sweep, don't kill it. (Docker containers already
   started are owned by dockerd and outlive either route.)
-- **The spend guard can refuse.** `run-all` reads `caps.hourly_spend_usd` and
-  `caps.daily_spend_usd` from `factory_settings.yaml` and will not start a
-  sweep whose projected burn breaches either. This matters here more than
-  anywhere else in the factory: bench runs write to an isolated state root, so
-  the chain's own spend enforcer never sees them and will never throttle them.
-  `--force-over-cap` overrides, loudly and on purpose.
+- **The spend guard can refuse — and can stop a running sweep.** `run-all`
+  reads `caps.hourly_spend_usd` and `caps.daily_spend_usd` from
+  `factory_settings.yaml` and will not start a sweep whose projected burn
+  breaches either. This matters here more than anywhere else in the factory:
+  bench runs write to an isolated state root, so the chain's own spend
+  enforcer never sees them and will never throttle them. Because a projection
+  can be wrong, **actual** accumulated `cost_usd` is re-checked after every
+  completed instance: on breach the sweep launches no new children, lets
+  in-flight ones finish (residual overshoot is therefore bounded by
+  `workers × the true per-instance cost`), records
+  `stopped_reason: "spend cap: …"` in the summary, and exits non-zero. The
+  $50/$75/$100 operator notices are emitted on actual accumulated spend as
+  rows complete, not on the projection. `--force-over-cap` overrides both the
+  refusal and the mid-sweep stop, loudly and on purpose.
 
-Per-instance cost is estimated from previous runs of the same arm when any
-exist, and otherwise from a documented conservative default (~$3/instance for
-the factory arm). Results land in the usual per-instance
-`runs/<instance>/<arm>/`, plus a `sweep-<arm>.json` roll-up. Then run `report`.
+Per-instance cost is estimated from previous **clean** runs of the same arm
+(runs that completed normally — a failed run's partial spend is not a sample),
+floored at the documented conservative default (~$3/instance for the factory
+arm) unless there are at least two clean runs to measure. Results land in the
+usual per-instance `runs/<instance>/<arm>/`, plus a `sweep-<arm>.json`
+roll-up. Then run `report` — its headline counts only audited-valid rows and
+loudly buckets `audit failed` / `not audited` / `run failed` oracle passes.
 
 ## What selftest caught (2026-08-01)
 
