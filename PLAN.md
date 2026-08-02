@@ -435,7 +435,13 @@ Each sub-step's original text is kept below for its file references.
 
 ---
 
-## Phase 1 — first real number — **1.1–1.3 DONE 2026-08-02; 1.4 remains**
+## Phase 1 — first real number — **1.1–1.5 DONE 2026-08-02**
+
+**⚠ Read 1.5 before citing any 1.3 number.** The committed `results.md` table
+and the artifacts now on disk are from different sweeps and disagree, and no
+`grade.json` survives. Do 1.5 before 1.4. *(Resolved: the paired 2026-08-02
+factory+bare sweep in 1.4 is the run of record, and `report` is now
+artifact-backed — see 1.5.)*
 
 **Effort ~1.5 days. Cost ~$40.** Goal: one honest, externally-graded datapoint
 plus the matched bare-model number,
@@ -507,9 +513,9 @@ chain-verdict precision 1/5, recall 1/1. **Start at 1.4.**
   preliminary. **Do not draw conclusions from n=10** beyond "the harness runs".
 - **Effort:** ~2 h of babysitting, ~$30.
 
-### 1.4 — Run the SAME 10 instances against the bare model
+### 1.4 — Run the SAME 10 instances against the bare model — **DONE 2026-08-02**
 
-- [ ] **What:** run a minimal scaffold (mini-SWE-agent, ~100 lines of bash loop)
+- [x] **What:** run a minimal scaffold (mini-SWE-agent, ~100 lines of bash loop)
       on the **identical Azure deployments** the factory uses — same
       `azure/deepseek-v4-pro` and `azure/gpt-5.3-codex`, same instances, same
       oracle. Report `scaffold lift = factory − bare model`, in resolve rate and
@@ -528,6 +534,57 @@ chain-verdict precision 1/5, recall 1/1. **Start at 1.4.**
 - **Done looks like:** a two-column table, factory vs bare, on the same 10
   instances, with the lift stated in percentage points and tokens.
 - **Effort:** ~3 h, ~$10 (the bare arm is far cheaper per instance).
+- **Result (2026-08-02):** both arms ran the same n=6 audited-valid instances.
+  Factory 1/6 resolved = bare 1/6 resolved — **zero scaffold lift** — at ~34x
+  the tokens, and both arms resolved the SAME qutebrowser instance. The lift
+  fixes derived from the four trajectory autopsies ship in the 1.5 commit.
+
+### 1.5 — Re-derive the 1.3 numbers, then make `report` artifact-backed  **[OPERATOR-PR-ONLY]** — **DONE 2026-08-02 (the lift-fixes commit)**
+
+- [x] **The 1.3 headline is not reproducible from this tree.**
+      *Done: `report` now snapshots every consumed artifact into
+      `bench/swebench/results-archive/<generated-at>/` (committed, not
+      gitignored) and refuses any row whose artifacts are missing.*
+      `bench/swebench/results.md` (committed in #206, generated
+      `2026-08-02T14:01:07Z`) reports 6 rows — 4 `right_place_wrong_fix`, 1
+      `empty_patch`, 1 `resolved`. The artifacts on disk now are from a **later**
+      sweep (`result.json` mtimes 16:23–16:30Z; untracked `sweep-factory.json`
+      finished `16:35:29Z`) reporting **5 `right_place_wrong_fix` + 1 `resolved`,
+      `cost_usd: 6.7342`**. Per instance the two disagree: `ansible-34db57`
+      published 2,299,905 in / 23,472 out / 419.0 s vs on-disk 1,827,811 /
+      15,913 / 408.8 s; `openlibrary-3aeec6af` published `empty_patch`,
+      142,903 in / 70.6 s vs on-disk 2,985,777 in / 50,735 out / 847.9 s.
+      **No `grade.json` exists anywhere under `bench/swebench/runs/`**, so the
+      oracle PASS/FAIL column behind the published table has no backing
+      artifact at all.
+- [x] **This is the July retraction class, recurring one day later.**
+      `STATUS.md:33` retracted the old benchmark partly because "the 20 reported
+      rows still have no raw artifacts". #202 added `_reset_run_artifacts`
+      (`bench/swebench_adapter.py:848`), which correctly clears stale state at
+      run start — but nothing snapshots a *published* run first, so re-running
+      the sweep destroys the evidence for numbers already committed.
+      *Done: the archive snapshot happens at `report` time, before any later
+      sweep can wipe `runs/`; `report --from-archive <dir>` re-derives the
+      table from the snapshot alone.*
+- [x] **Do first:** decide which run is the run of record and say so in
+      `results.md`. Until one is re-derived from artifacts that still exist,
+      treat `STATUS.md:55-59` ("1/6 resolved … $3.33") as **unbacked** — do not
+      cite it, and do not use it as the baseline any later change is compared
+      against.
+      *Done: the paired 2026-08-02 factory+bare sweep (1.4) is the run of
+      record; every later table must come from an archived `report` run.*
+- **Then fix the harness:** `report` must (a) copy every `result.json` /
+  `grade.json` / `audit.json` it consumed into a dated
+  `bench/swebench/results-<ISO>/` committed alongside the markdown, and
+  (b) **refuse to emit a row whose artifacts are missing** rather than
+  reporting it. Same fail-closed posture as the audit gate.
+  *(Shipped as `bench/swebench/results-archive/<generated-at>/` holding
+  `result.json` + `audit.json` + `prediction.diff` per row — there is no
+  standalone `grade.json`; `grade` merges its verdict into `result.json`.)*
+- **Done looks like:** a second `report` run re-derives the committed table
+  byte-for-byte from the committed artifacts, with no live sweep.
+- **Effort:** ~3 h. **Blocks 1.4 from being interpretable** — a bare-model delta
+  measured against an unbacked factory number measures nothing.
 
 ---
 
@@ -693,6 +750,126 @@ chain-verdict precision 1/5, recall 1/1. **Start at 1.4.**
   block every self-edit.
 - **Effort:** 5 min + one validation cycle.
 
+### 3.6 — Ratchet the package-wide `mypy` count, per file
+
+- [ ] **Verified gap:** `.github/workflows/test.yml:145-154` runs two mypy
+      steps. `mypy factory/chain/gates/` is a real zero-tolerance gate and is
+      currently clean — **leave it alone**. The package-wide step pipes to
+      `|| true`, counts with `grep -c "error:"`, and emits a `::warning::`.
+      Advisory, no baseline, no comparison. No test asserts a count.
+- [ ] **The drift is real and larger than the docs claim.** The only number in
+      the repo is `test.yml:143-144` ("~85 pre-existing findings"). Measured on
+      this tree: `uv run mypy factory/` → **99 errors in 29 files**.
+      `CLAUDE.md:75` says only "compare against `origin/main`" — a manual
+      instruction, which is precisely how it drifted.
+- **What:** commit `mypy-baseline.json` mapping **file → error count**. Not a
+  single integer — a scalar lets you add three errors in one file, delete three
+  in another, and stay green. CI fails when any file exceeds its entry. Count
+  from `--output json` or the `Found N errors` summary line, **not**
+  `grep -c "error:"`, which counts lines containing the substring and can be
+  inflated by mypy's own code excerpts.
+- **Ship standalone.** It blocks unrelated PRs the moment it lands, so it must
+  not ride along with type-debt work. mypy is pinned in `uv.lock` and CI runs
+  `uv sync --all-extras`, so drift is bounded — but any lockfile bump must
+  re-baseline in the same PR or main goes red. Say that in the job.
+- **Also fix the doc:** `CLAUDE.md:75` should name the baseline file instead of
+  "compare against `origin/main`".
+- **Done looks like:** a PR adding one deliberate mypy error to an existing file
+  fails CI; a PR that fixes one and lowers the baseline passes.
+- **Effort:** ~1 h.
+
+### 3.7 — Isolate gate exceptions, and make a scan error GLOBALLY blocking
+
+- [ ] **Verified:** `factory/chain/gates/evaluator.py:188-197` calls
+      `mod.evaluate(...)` with no `try`. Its docstring (`:175-176`) promises
+      "failure of one gate does not short-circuit the others" — true for a
+      *returned* failure, false for a *raise*.
+- [ ] **What actually happens today — checked, do not re-diagnose.** Both
+      orchestrator call sites already catch (`orchestrator.py:2591`, `:3117`),
+      so the tick does **not** crash and the merge is **not** waved through
+      (`_record_merge_action` is never reached). `summary.errors` non-empty →
+      `factory tick` exits 1. It is already fail-safe by accident. The real
+      costs are that one raise aborts merge evaluation for **every remaining
+      fixture** on that tick, and that `factory/cli.py:2480`
+      (`factory auto-merge`) is unwrapped. **Zero gate raises have occurred in
+      production** (441 ticks at `errors=0`; the 3 non-zero ticks were worktree
+      errors from the story loop).
+- **⚠ The naive fix is a fail-OPEN regression.** `missing_labels` is computed
+  only over `required_gate_labels(...)` (`auto_merge.py:948-954`). A raise in a
+  **non-required** gate (`smoke-green` on either app; `acceptance-verified` when
+  not expected) that becomes a non-required blocking `GateResult` is filtered
+  out and **the merge proceeds** — strictly weaker than today. Therefore:
+  1. `scan_error` results are **globally blocking**, evaluated alongside
+     `missing_labels` and **not** filtered through `required_gate_labels`.
+  2. Keep it loud: append to `summary.errors` so the tick still exits non-zero.
+     Do not trade a loud abort for a silent block that re-evaluates every five
+     minutes forever — that is failure pattern #2, and `blocked_ci_unresolved`
+     already burned us exactly that way.
+  3. Wrap `cli.py:2480` too.
+- **Adopt the precedence rule while you are there:** can't-run > found-something
+  > clean.
+- **Done looks like:** force each of the 6 gates to raise in turn; each time the
+  merge is blocked, the other 5 still report, and the tick exits non-zero.
+- **Effort:** ~2 h. This is robustness, **not** a closed failure class. Sell it
+  as such.
+
+### 3.8 — Fix or delete the dormant ablation path in `tests-meaningful`
+
+- [ ] **Context:** `factory/chain/gates/tests_meaningful.py:63-138` implements
+      real mutation testing (no-op a symbol, re-run the suite, fail if it stays
+      green). It has **never run** — `mutation_testing: false` in all three app
+      configs. But `tests-meaningful` **is** in `LOOP4_REQUIRED_GATE_LABELS`, so
+      that flag is the only thing between this code and every merge.
+- [ ] **Do not simply flip the flag.** Four independent verified defects:
+  1. **It ablates the wrong symbols.** `_changed_public_symbols` (`:140-172`)
+     parses each changed file *whole* and returns every public symbol, not the
+     ones the diff touched; with `_MAX_ABLATION_SYMBOLS = 5` and a
+     `(path, lineno)` sort it takes the top five of the alphabetically-first
+     file. Over the last 40 commits: median 21 candidates, 77% hit the cap. For
+     `e13d98e0` the five chosen symbols have **zero overlap** with the four the
+     commit changed.
+  2. **Fail-OPEN on infrastructure failure.** `_run_pytest` returns `False` on a
+     600 s timeout or `FileNotFoundError`, and `survived == False` is read as
+     "exercised → good" (`:104-107`). There is no green-baseline run before
+     mutating, so an already-red suite, a flaky red, or a failed `uv sync` in
+     the worktree certifies coverage that was never measured. Violates
+     fail-SAFE.
+  3. **It mutates the live story worktree.** `repo_root` is the
+     `state/worktrees/` checkout the chain later pushes from, and
+     `_mutate_source` round-trips the whole file through `ast.unparse` — on
+     `handlers.py` that is 4,804 → 2,113 lines with **all 756 comments
+     stripped**. Restore sits in a `finally`, which does not run on `SIGKILL`,
+     and the tick unit has `TimeoutStartSec=3h`.
+  4. **It fails in dry-run, which is the default.** `:68-75` returns
+     `passed=False` when `dry_run`, and `factory auto-merge` defaults to
+     `--dry-run` (`cli.py:2464`). Worse, `auto_merge.py:928-942` writes a
+     `merge_gates_failed` story event **unconditionally, including dry-run** —
+     so flipping the flag manufactures false gate-failure events into the exact
+     substrate L1→L2→L3 escalate on.
+- **Decide:** delete the ablation branch (leaving the static slop detector,
+  which is the layer that actually runs), or rewrite it — diff-hunk-scoped
+  symbol selection, a green baseline with non-green ⇒ `skipped`, timeout/infra
+  distinguished from a real red, mutation in a throwaway copy, per-`(head_sha,
+  symbol)` caching, and **advisory until measured**. Deleting is the cheaper
+  honest option; `evaluator.py:18-29` already sets the precedent that a gate
+  detached from a real check is worse than no gate.
+- **Effort:** 30 min to delete, ~2 days to rewrite. Cost context if you rewrite:
+  the full factory suite is **5m36s** warm, so five ablations is ~28 min per
+  merge evaluation, re-run every tick per open PR.
+
+### 3.9 — Wire or drop `gates_failed_json`
+
+- [ ] **Verified dead surface:** #195 added `MergeAction.gates_failed` and the
+      `gates_failed_json` column (`auto_merge.py:126`, `:200`, `:234`) plus the
+      `merge_gates_failed` story event (`:933`). Repo-wide there is **one writer
+      and zero readers** for both. The diagnosis is durable and reaches a human
+      via `factory trace` — and nothing else.
+- **Pick one:** feed `gates_failed` into the dev re-dispatch findings path the
+  way `_handle_ci_failure` already does (`auto_merge.py:1777-1806`) — **and cap
+  that loop** — or drop the column. Do not leave it sitting beside the four
+  write-never `stories` columns from 3.2.
+- **Effort:** ~2 h either way. Same class as 3.2; do them in one PR.
+
 ---
 
 ## Phase 4 — decide the FMS on evidence
@@ -750,6 +927,99 @@ chain-verdict precision 1/5, recall 1/1. **Start at 1.4.**
 - [ ] **Evaluate, don't commit.** Cost: loses the local dry-run fast path and
       couples every gate to Actions minutes. Write the trade-off up before
       building anything.
+
+### 5.3 — Extend the persona contract-collision validator
+
+- [ ] **Verified:** `factory/personas/validator.py:59-62` `_ENUM_CONTRACTS`
+      covers only `scope` and `chain_kind`. The check itself already runs in CI
+      (`tests/test_persona_loader.py:60`, `:296` call `validate_all`).
+- **Why this instead of a persona prompt audit:** the story-14 non-convergence
+  was caused by a prompt *example literal* colliding with a live contract value.
+  `_check_contract_collisions` catches that mechanically; a stylistic trim would
+  not have. See "Rejected" below for why the personas are not the bloat they
+  look like.
+- **What:** extend `_ENUM_CONTRACTS` to every field whose values are enumerated
+  in code.
+- **Effort:** ~2 h.
+
+---
+
+## Rejected — LifeOS-derived proposals, adversarially reviewed 2026-08-02
+
+A survey of `danielmiessler/LifeOS` (cloned at `/home/k/LifeOS`) produced 11
+candidate additions. Three adversarial reviews rejected **nine**. Recorded so
+they are not re-proposed. Each entry is the refutation, not the proposal.
+
+1. **`evidence-corroborated` gate** — classify the dev's completion claim,
+   corroborate it against the ledger. There is no prose claim in the merge path
+   to classify: `runner.py:2107-2108` runs pytest and scans git *itself*, and
+   `RunResult.test_run_passed` is the factory's own observation, never the
+   model's word. `gates/tests_green.py:69-83` already re-derives the truth at
+   merge time and its docstring states that as the design intent. The
+   corroborating ledger does not exist — there is **no `sandbox_run` table**,
+   `prompt_bodies.ndjson` has **zero production rows** (#193 merged 2026-08-01;
+   units stopped since ~07-30), `chain_steps.ndjson` still has zero `retried` /
+   `review_cycle` rows, and `runs` carries no diff, file list, or exit code. The
+   proposed 118-PR replay corpus is fiction (and the count is 138).
+2. **Gate-reason lint** — require a problem *and* a remedy in every failing
+   `reason`. Roughly 15 strings across 6 files; "names a remedy" is not
+   statically decidable, so any implementation is a keyword heuristic — a proxy
+   gate, in the repo whose #1 failure pattern is `proxy ≠ real`. The loop it
+   claims to prevent does not exist: nothing reads the string (see 3.9).
+3. **"L4 falsify, not L4 apply"** — have the manager emit a red replay fixture
+   instead of a diff. The premise is false. Of 163 apply attempts only **58 ever
+   carried a patch**, and **53 of those died on `dirty_working_tree`**, an
+   environment bug fixed 2026-07-24 — `apply.py:864-869` records exactly this.
+   Not one attempt was ever rejected for diff quality; zero reached review. The
+   107 escalations are **information** failures (84 are "source bundle
+   insufficient"), and a model that cannot see `tick()` cannot write a fixture
+   for it either. Run 4.1 instead.
+4. **Detector graduation lifecycle** — log-only → counterfactual corpus →
+   blocking. Manager detectors are already advisory by construction
+   (`factory/manager/detectors/__init__.py:1-6`: "Detectors never make
+   decisions"); the only blocking path is `halt.py`, which is L3, not a
+   detector. The motivating episode (SM-truncation) was **test pollution** — a
+   counterfactual corpus built from those same contaminated streams scores
+   FP = 0 and passes the very case it was designed to catch. And no adjudicator
+   is specified for up to 190 observations per detector.
+5. **Turn on the ablation gate** — superseded by 3.8. The gate is broken four
+   ways; the flag flip is not the adoption path.
+6. **Property tests in the dev persona** — already ships in a better seam.
+   `hypothesis>=6` is a dev dependency, `acceptance_author.md:52-72` authors
+   Hypothesis property tests from EARS criteria, and `acceptance.py:101-194`
+   injects that automatically. The cited evidence does not support it either:
+   `right_place_wrong_fix` is defined at `swebench_adapter.py:1349` as **file
+   overlap only**, and `STATUS.md:56-58` reads those failures as
+   unstated-convention failures — which #201 already addressed.
+7. **"Bitter Pill" audit of the 22 personas** — the trim already happened.
+   `27008931` (2026-06-11) cut `dev.md` 177→108 and `reviewer.md` 158→102,
+   citing the same story-14 incident this proposal cites. Genuinely cuttable
+   today is ~25 lines (`pm.md:242-251`, `sm.md:127-135`, two role preambles) —
+   5–8%, not bloat — while several lines that *look* cuttable are measured
+   load-bearing (`dev.md:54-64`, 2/2 vs 0/2). The "no regression" guard is
+   statistically fake: on a 5-instance precision denominator it fires only at
+   0/5, which occurs **32.8%** of the time when nothing changed.
+8. **Per-persona A/B with a no-persona arm** — the SWE-bench harness runs
+   `allowed = {"dev", "review"}` (`swebench_adapter.py:933`) and seeds the story
+   at `SM_DONE`, so **20 of 22 personas never execute**. Of the two reachable,
+   the reviewer had `reviewer_cycles = 0` on 5/5 — it modified nothing, so
+   ablating it is a guaranteed null result at full cost. `run_bare` is a
+   separate agent, not the factory-minus-a-persona
+   (`bench/swebench/README.md:126-128` says the arms are not comparable). Cost
+   at a detectable n: **$673 at n=33, $2,591 at n=127**, against Phase 2's
+   entire $510 budget.
+9. **AC-ID stability + falsifier test** — already shipped. `sm.md:46-57`
+   mandates `AC<n>.<m>` EARS IDs and 93 of the 139 stories with an
+   `sm_result_json` carry them; `acceptance_author.md:37-38` names generated
+   tests off those IDs. The guarded failure has never occurred (0 hits across
+   326 review/dev blobs). The measurement has no data source: story markdown has
+   been gitignored since #181 and the DB stores one `sm_result_json`, not a
+   revision series. The falsifier test already exists in triplicate
+   (`pm.md:231-236`, `sm.md:55-57`, `acceptance_author.md:39-42`).
+
+**Adopted from the same survey:** 3.6 (mypy ratchet), 3.7 (gate exception
+isolation, in inverted form), 5.3 (validator extension). **1.5, 3.8 and 3.9 were
+found *by* the review, not proposed to it** — they are the session's real yield.
 
 ---
 

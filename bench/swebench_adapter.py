@@ -56,6 +56,16 @@ Usage (from the factory root):
       --only-working --dry-run          # ALWAYS preview: a sweep costs real money
   uv run python bench/swebench_adapter.py run-all --arm factory --workers 4 --only-working
   uv run python bench/swebench_adapter.py report
+  uv run python bench/swebench_adapter.py report \
+      --from-archive bench/swebench/results-archive/<ts>   # re-derive, no live runs
+
+``report`` is artifact-backed (PLAN 1.5): it snapshots every consumed
+``result.json`` / ``audit.json`` / ``prediction.diff`` into a dated
+``bench/swebench/results-archive/<generated-at>/`` dir (committed — unlike
+``runs/``, which the next sweep wipes) and REFUSES any row whose artifacts
+are missing, naming it in the output instead of silently dropping it.
+``--from-archive`` re-derives the committed table byte-for-byte from a
+snapshot alone.
 
 ``run-all`` is the same run+grade+audit pipeline fanned out over a pool of
 child PROCESSES (never threads — ``run_factory`` mutates process-global state;
@@ -110,6 +120,13 @@ BENCH_DIR = FACTORY_ROOT / "bench"
 SWE_DIR = BENCH_DIR / "swebench"
 RUNS_DIR = SWE_DIR / "runs"
 MANIFEST_PATH = SWE_DIR / "manifest.json"
+# Committed evidence snapshots — one dated dir per ``report`` run, holding the
+# exact artifacts every published row was derived from (PLAN 1.5). Unlike
+# ``runs/`` (gitignored scratch that ``_reset_run_artifacts`` legitimately
+# wipes on the next sweep), an archive is immutable once committed: re-running
+# ``report --from-archive <dir>`` must re-derive the published table from it
+# with no live runs dir at all.
+RESULTS_ARCHIVE_DIR = SWE_DIR / "results-archive"
 
 DATASET = "ScaleAI/SWE-bench_Pro"
 _ROWS_URL = "https://datasets-server.huggingface.co/rows"
@@ -2001,21 +2018,52 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def report() -> None:
+# Every artifact a published row is derived from. ``result.json`` carries the
+# run record AND the oracle verdict (``grade`` is merged into it by
+# ``_write_result(..., merge=True)`` — there is no standalone grade.json);
+# ``audit.json`` is the gate verdict; ``prediction.diff`` is the graded patch.
+_ROW_ARTIFACTS = ("result.json", "audit.json", "prediction.diff")
+_REPORT_META_NAME = "report-meta.json"
+
+
+def _collect_report_rows(
+    base_dir: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Read every ``<instance>/<arm>/result.json`` under ``base_dir``.
+
+    Returns ``(rows, refused)``. FAIL-CLOSED: a row whose backing artifacts
+    are missing or unreadable is never silently dropped and never emitted as
+    a table row — it lands in ``refused`` with the exact reason, which the
+    report prints. This is the same posture as the audit gate: evidence that
+    cannot be produced is a refusal, not a shrug (PLAN 1.5 — the July
+    retraction class was "reported rows with no raw artifacts").
+    """
     rows: list[dict[str, Any]] = []
-    for f in sorted(RUNS_DIR.glob("*/*/result.json")):
+    refused: list[dict[str, str]] = []
+    for f in sorted(base_dir.glob("*/*/result.json")):
+        run_dir = f.parent
+        row_id = f"{run_dir.parent.name}/{run_dir.name}"
+        missing = [name for name in _ROW_ARTIFACTS if not (run_dir / name).is_file()]
+        if missing:
+            refused.append(
+                {"row": row_id, "why": f"missing artifact(s): {', '.join(missing)}"}
+            )
+            continue
         try:
             r = json.loads(f.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, OSError) as exc:
+            refused.append({"row": row_id, "why": f"result.json unreadable: {exc}"})
             continue
         if not isinstance(r, dict):
+            refused.append({"row": row_id, "why": "result.json is not a JSON object"})
             continue
         # The audit gate. Every run must be fully auditable; a row whose
-        # audit failed — or that was never audited at all (legacy runs
-        # included) — must not be laundered into the headline number.
-        # ``None`` = no audit.json (not audited); an unreadable audit.json is
-        # a FAIL, never a pass.
-        audit_path = f.parent / "audit.json"
+        # audit failed must not be laundered into the headline number. An
+        # unreadable audit.json is a FAIL, never a pass. (A MISSING audit.json
+        # no longer reaches this point — the artifact check above refuses the
+        # whole row, fail-closed, where the old code showed it as "not
+        # audited".)
+        audit_path = run_dir / "audit.json"
         audit_ok: bool | None = None
         if audit_path.exists():
             try:
@@ -2026,14 +2074,77 @@ def report() -> None:
         # Both run functions record ``error`` (None on a normal completion);
         # an oracle pass from a run that failed is flagged, not counted.
         r["_run_failed"] = bool(r.get("error"))
+        r["_run_dir"] = str(run_dir)
         rows.append(r)
+    return rows, refused
+
+
+def _archive_report_artifacts(
+    rows: list[dict[str, Any]], *, generated_at: str, table_text: str
+) -> Path:
+    """Snapshot every consumed artifact into a dated results-archive dir.
+
+    Copies ONLY the three per-row evidence files (no state roots, no
+    trajectories — archives must stay small enough to commit) plus the
+    rendered table and a meta file, so ``report --from-archive`` can re-derive
+    the table byte-for-byte with no live runs dir.
+    """
+    stamp = generated_at.replace(":", "-").replace("+00-00", "Z")
+    archive_dir = RESULTS_ARCHIVE_DIR / stamp
+    for r in rows:
+        run_dir = Path(r["_run_dir"])
+        dest = archive_dir / run_dir.parent.name / run_dir.name
+        dest.mkdir(parents=True, exist_ok=True)
+        for name in _ROW_ARTIFACTS:
+            shutil.copy2(run_dir / name, dest / name)
+    (archive_dir / _REPORT_META_NAME).write_text(
+        json.dumps(
+            {"generated_at": generated_at, "source": str(RUNS_DIR), "rows": len(rows)},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (archive_dir / "results.md").write_text(table_text, encoding="utf-8")
+    return archive_dir
+
+
+def report(*, from_archive: Path | None = None) -> str:
+    """Render ``results.md`` from artifacts; archive the evidence.
+
+    Live mode (default): rows come from ``runs/``, and every artifact a row
+    consumed is copied into ``results-archive/<generated-at>/`` so the
+    published table stays reproducible after the next sweep wipes ``runs/``.
+
+    ``from_archive``: re-derive the table purely from a previous archive dir
+    (no live runs dir touched, no new archive written). Reuses the archived
+    ``generated_at`` so the output is byte-for-byte the committed table.
+    """
+    base_dir = from_archive if from_archive is not None else RUNS_DIR
+    generated_at = datetime.now(UTC).isoformat()
+    if from_archive is not None:
+        meta_path = from_archive / _REPORT_META_NAME
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            generated_at = str(meta["generated_at"])
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise SystemExit(
+                f"archive at {from_archive} has no readable {_REPORT_META_NAME} "
+                f"({exc}) — not a report archive"
+            ) from exc
+
+    rows, refused = _collect_report_rows(base_dir)
     if not rows:
-        raise SystemExit(f"no results under {RUNS_DIR}")
+        detail = "; ".join(f"{x['row']}: {x['why']}" for x in refused)
+        raise SystemExit(
+            f"no reportable results under {base_dir}"
+            + (f" — every row refused (fail-closed): {detail}" if refused else "")
+        )
 
     lines = [
         "# SWE-bench Pro — externally graded",
         "",
-        f"Generated {datetime.now(UTC).isoformat()}.",
+        f"Generated {generated_at}.",
         "",
         "`factory says` is the chain's OWN verdict — it reached `reviewer_done`, "
         "i.e. dev got its tests green and the reviewer approved. `oracle` is the "
@@ -2067,6 +2178,18 @@ def report() -> None:
             f"| {r.get('tokens_in', '?'):,} | {r.get('tokens_out', '?'):,} "
             f"| {r.get('wall_clock_s', '—')} |"
         )
+
+    if refused:
+        lines += [
+            "",
+            "## Refused rows (fail-closed: backing artifacts missing)",
+            "",
+            "These result dirs exist but their evidence is incomplete, so they are",
+            "NOT table rows and count in NO rate above. A number without its",
+            "artifacts is the retraction class this report exists to prevent.",
+            "",
+        ]
+        lines += [f"- `{x['row']}` — {x['why']}" for x in refused]
 
     for arm in sorted({str(r.get("arm")) for r in rows}):
         arm_rows = [
@@ -2147,11 +2270,21 @@ def report() -> None:
         "measures the MODEL, not the harness. See `PLAN.md` 1.4.",
     ]
 
+    text = "\n".join(lines) + "\n"
+    # Archive BEFORE publishing results.md: a table whose evidence snapshot
+    # failed must not exist. The reverse order would recreate the exact gap
+    # this exists to close (published number, no backing artifacts).
+    if from_archive is None:
+        archive_dir = _archive_report_artifacts(
+            rows, generated_at=generated_at, table_text=text
+        )
+        print(f"archived evidence -> {archive_dir}")
     SWE_DIR.mkdir(parents=True, exist_ok=True)
     out = SWE_DIR / "results.md"
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out.write_text(text, encoding="utf-8")
     print(out)
-    print("\n".join(lines))
+    print(text)
+    return text
 
 
 # --------------------------------------------------------------------------- #
@@ -3145,7 +3278,12 @@ def main() -> None:
              "assistant messages from the captured trajectory",
     )
 
-    sub.add_parser("report")
+    p = sub.add_parser("report")
+    p.add_argument(
+        "--from-archive",
+        default=None,
+        help="re-derive the table purely from a results-archive dir (no live runs)",
+    )
 
     args = ap.parse_args()
     if args.cmd == "fetch":
@@ -3176,7 +3314,9 @@ def main() -> None:
     elif args.cmd == "audit":
         audit(args.instance, args.arm, show_responses=args.show_responses)
     elif args.cmd == "report":
-        report()
+        report(
+            from_archive=Path(args.from_archive) if args.from_archive else None
+        )
 
 
 if __name__ == "__main__":

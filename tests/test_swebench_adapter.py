@@ -2419,10 +2419,15 @@ def _report_run(
     resolved: bool,
     audit: bool | None,
     error: str | None = None,
+    with_diff: bool = True,
 ) -> None:
     """One (instance, factory) run dir with a result.json and optional audit.json."""
     d = runs / iid / "factory"
     d.mkdir(parents=True)
+    if with_diff:
+        (d / "prediction.diff").write_text(
+            f"diff --git a/{iid}.py b/{iid}.py\n+# fake\n", encoding="utf-8"
+        )
     (d / "result.json").write_text(
         json.dumps(
             {
@@ -2451,34 +2456,159 @@ def _report_run(
 def test_report_headline_counts_only_audited_valid_rows(  # noqa: N803
     A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """An oracle-PASS row whose audit failed — or that was never audited, or
-    whose run failed — must be EXCLUDED from the headline resolve rate and
-    named loudly. report() used to count grade.oracle_resolved alone, which
-    laundered invalid rows into results.md."""
+    """An oracle-PASS row whose audit failed or whose run failed must be
+    EXCLUDED from the headline resolve rate and named loudly. A row that was
+    never audited at all is REFUSED outright (missing audit.json — see the
+    fail-closed tests below). report() used to count grade.oracle_resolved
+    alone, which laundered invalid rows into results.md."""
     runs = tmp_path / "runs"
     _report_run(runs, "inst_valid_pass", resolved=True, audit=True)
     _report_run(runs, "inst_valid_fail", resolved=False, audit=True)
     _report_run(runs, "inst_audit_failed_pass", resolved=True, audit=False)
-    _report_run(runs, "inst_never_audited_pass", resolved=True, audit=None)
     _report_run(
         runs, "inst_run_failed_pass", resolved=True, audit=True,
         error="wall-clock cap 5400s hit",
     )
     monkeypatch.setattr(A, "RUNS_DIR", runs)
     monkeypatch.setattr(A, "SWE_DIR", tmp_path)
+    monkeypatch.setattr(A, "RESULTS_ARCHIVE_DIR", tmp_path / "results-archive")
 
     A.report()
 
     md = (tmp_path / "results.md").read_text(encoding="utf-8")
     # Headline: 1 resolved of 2 audited-valid (valid_pass + valid_fail); the
-    # three other oracle passes are excluded, each with its reason.
+    # two other oracle passes are excluded, each with its reason.
     assert "resolve rate: **1/2 = 50% audited-valid**" in md
-    assert "3 oracle-pass EXCLUDED" in md
+    assert "2 oracle-pass EXCLUDED" in md
     assert "inst_audit_failed_pass: audit failed" in md
-    assert "inst_never_audited_pass: not audited" in md
     assert "inst_run_failed_pass: run failed" in md
-    assert "audit gate: **2 audited-valid** of 5 gradable" in md
+    assert "audit gate: **2 audited-valid** of 4 gradable" in md
     # The per-row table carries the audit column.
     assert "| audit |" in md
     assert "| FAIL |" in md  # the audit-failed row
     capsys.readouterr()  # silence report()'s stdout echo
+
+
+# --------------------------------------------------------------------------- #
+# report — artifact-backed evidence (PLAN 1.5)
+# --------------------------------------------------------------------------- #
+
+
+def _patch_report_dirs(A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:  # noqa: N803
+    runs = tmp_path / "runs"
+    monkeypatch.setattr(A, "RUNS_DIR", runs)
+    monkeypatch.setattr(A, "SWE_DIR", tmp_path)
+    monkeypatch.setattr(A, "RESULTS_ARCHIVE_DIR", tmp_path / "results-archive")
+    return runs
+
+
+def test_report_archives_every_consumed_artifact(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A live report() must snapshot result.json + audit.json + prediction.diff
+    per row into a dated results-archive dir, byte-for-byte. Publishing a
+    number without archiving its evidence is the July retraction class."""
+    runs = _patch_report_dirs(A, tmp_path, monkeypatch)
+    _report_run(runs, "inst_a", resolved=True, audit=True)
+    _report_run(runs, "inst_b", resolved=False, audit=True)
+
+    A.report()
+    capsys.readouterr()
+
+    archives = list((tmp_path / "results-archive").iterdir())
+    assert len(archives) == 1, "exactly one dated archive dir per report run"
+    archive = archives[0]
+    for iid in ("inst_a", "inst_b"):
+        for name in ("result.json", "audit.json", "prediction.diff"):
+            src = runs / iid / "factory" / name
+            dst = archive / iid / "factory" / name
+            assert dst.is_file(), f"{name} not archived for {iid}"
+            assert dst.read_bytes() == src.read_bytes()
+    # The rendered table and the meta travel with the evidence.
+    assert (archive / "results.md").read_text(encoding="utf-8") == (
+        tmp_path / "results.md"
+    ).read_text(encoding="utf-8")
+    meta = json.loads((archive / "report-meta.json").read_text(encoding="utf-8"))
+    assert meta["rows"] == 2
+    assert meta["generated_at"]
+
+
+def test_report_refuses_row_with_missing_artifacts(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """FAIL-CLOSED: a row without its backing artifacts is refused BY NAME —
+    not silently dropped, not emitted as a table row, not archived."""
+    runs = _patch_report_dirs(A, tmp_path, monkeypatch)
+    _report_run(runs, "inst_complete", resolved=True, audit=True)
+    _report_run(runs, "inst_no_audit", resolved=True, audit=None)
+    _report_run(runs, "inst_no_diff", resolved=True, audit=True, with_diff=False)
+
+    A.report()
+    capsys.readouterr()
+
+    md = (tmp_path / "results.md").read_text(encoding="utf-8")
+    assert "## Refused rows (fail-closed: backing artifacts missing)" in md
+    assert "`inst_no_audit/factory` — missing artifact(s): audit.json" in md
+    assert "`inst_no_diff/factory` — missing artifact(s): prediction.diff" in md
+    # Refused rows are not table rows and count in no rate.
+    assert "| inst_no_audit |" not in md
+    assert "| inst_no_diff |" not in md
+    assert "resolve rate: **1/1 = 100% audited-valid**" in md
+    # And their partial evidence is not archived.
+    archive = next((tmp_path / "results-archive").iterdir())
+    assert (archive / "inst_complete").is_dir()
+    assert not (archive / "inst_no_audit").exists()
+    assert not (archive / "inst_no_diff").exists()
+
+
+def test_report_refuses_everything_rather_than_an_empty_table(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every row refused -> SystemExit naming each refusal, no results.md."""
+    runs = _patch_report_dirs(A, tmp_path, monkeypatch)
+    _report_run(runs, "inst_only", resolved=True, audit=None)
+
+    with pytest.raises(SystemExit, match="fail-closed"):
+        A.report()
+    assert not (tmp_path / "results.md").exists()
+
+
+def test_report_from_archive_rederives_the_table_byte_for_byte(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """report --from-archive re-derives the committed table purely from the
+    archive — no live runs dir, no new archive, identical bytes."""
+    import shutil as _shutil
+
+    runs = _patch_report_dirs(A, tmp_path, monkeypatch)
+    _report_run(runs, "inst_a", resolved=True, audit=True)
+    _report_run(runs, "inst_b", resolved=False, audit=True)
+
+    live_text = A.report()
+    capsys.readouterr()
+    archive = next((tmp_path / "results-archive").iterdir())
+
+    # The next sweep wipes runs/ — exactly the scenario that destroyed the
+    # 1.3 evidence. The archive must be sufficient on its own.
+    _shutil.rmtree(runs)
+    (tmp_path / "results.md").unlink()
+
+    rederived = A.report(from_archive=archive)
+    capsys.readouterr()
+
+    assert rederived == live_text
+    assert (tmp_path / "results.md").read_text(encoding="utf-8") == live_text
+    # Re-deriving must not mint a second archive.
+    assert len(list((tmp_path / "results-archive").iterdir())) == 1
+
+
+def test_report_from_archive_requires_report_meta(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dir without report-meta.json is not a report archive — refuse."""
+    _patch_report_dirs(A, tmp_path, monkeypatch)
+    not_an_archive = tmp_path / "random-dir"
+    not_an_archive.mkdir()
+
+    with pytest.raises(SystemExit, match="not a report archive"):
+        A.report(from_archive=not_an_archive)

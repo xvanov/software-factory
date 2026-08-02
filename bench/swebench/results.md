@@ -2,6 +2,14 @@
 
 Generated 2026-08-02T16:40:16.979179+00:00.
 
+**Run of record (PLAN 1.5):** this paired factory+bare table (the 1.4 sweep,
+#209) is the run of record. The earlier 2026-08-02T14:01:07Z table (#206)
+disagreed with the artifacts then on disk and is superseded. From this commit
+on, `report` refuses rows without backing artifacts and snapshots the
+evidence for every row into `bench/swebench/results-archive/<generated-at>/`;
+regenerate this file with `report --from-archive <dir>` to re-derive a
+published table from its snapshot.
+
 `factory says` is the chain's OWN verdict — it reached `reviewer_done`, i.e. dev got its tests green and the reviewer approved. `oracle` is the hidden held-out suite.
 
 NOTE ON NAMING: the rates below are **chain-verdict** precision/recall, NOT merge-gate precision. This harness drives dev+review only; no merge gate runs. Of the six gates, only `tests-green` and `tests-meaningful` could even apply to a SWE-bench repo — `docs-current`, `acceptance-verified`, `smoke-green` and `canonical-paths-only` all require app capabilities these repos do not have. Calling this "gate precision" would overclaim.

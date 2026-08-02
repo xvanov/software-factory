@@ -981,32 +981,51 @@ _LAST_MSG_CHAR_CAP = 2000
 _SELF_SUMMARY_MARKER = "SELF_SUMMARY:"
 
 
-def _extract_self_summary(last_assistant_message: str) -> str:
-    """Pull the ``SELF_SUMMARY:`` paragraph out of the last assistant message.
-
-    The dev persona prompt asks for ``SELF_SUMMARY: <3-5 sentences>``
-    before exit. If the marker is present, we return the text following
-    it (up to the next blank line or end-of-message). If not, we fall
-    back to the trailing 500 chars of the message — better than nothing
-    so the next retry has *some* free-form context to read.
-    """
-    if not last_assistant_message:
-        return ""
-    idx = last_assistant_message.find(_SELF_SUMMARY_MARKER)
+def _parse_self_summary_block(text: str) -> str:
+    """Return the text after ``SELF_SUMMARY:`` up to the next blank line."""
+    idx = text.find(_SELF_SUMMARY_MARKER)
     if idx == -1:
-        return last_assistant_message[-500:].strip()
-    tail = last_assistant_message[idx + len(_SELF_SUMMARY_MARKER) :].lstrip()
+        return ""
+    tail = text[idx + len(_SELF_SUMMARY_MARKER) :].lstrip()
     # Stop at a blank-line boundary so we don't pull in a wall of trailing
     # tool logs the persona may have appended.
     blank = tail.find("\n\n")
     return (tail[:blank] if blank != -1 else tail).strip()[:_LAST_MSG_CHAR_CAP]
 
 
-def _extract_conversation_memory(conversation: Any) -> tuple[str, list[dict[str, Any]]]:
+def _extract_self_summary(last_assistant_message: str, finish_message: str = "") -> str:
+    """Pull the ``SELF_SUMMARY:`` paragraph out of the dev's final output.
+
+    The dev persona prompt asks for ``SELF_SUMMARY: <3-5 sentences>``
+    before exit. Sources, in order:
+
+    1. The last plain assistant message containing the marker.
+    2. The OpenHands ``finish`` tool's message (``finish_message``). Two of
+       the four 2026-08-02 SWE-bench autopsies found the summary delivered
+       ONLY here — the dev called ``finish(message="... SELF_SUMMARY: ...")``
+       instead of ending with a plain message, and the old capture (which
+       read only plain messages) persisted an empty ``self_summary``, so the
+       reviewer never saw the dev's own claims.
+    3. Fallback: the trailing 500 chars of whichever source is non-empty
+       (last message preferred) — better than nothing so the next retry has
+       *some* free-form context to read.
+
+    Never raises; returns ``""`` when there is nothing to extract.
+    """
+    for source in (last_assistant_message, finish_message):
+        if source and _SELF_SUMMARY_MARKER in source:
+            return _parse_self_summary_block(source)
+    tail_source = last_assistant_message or finish_message
+    return tail_source[-500:].strip() if tail_source else ""
+
+
+def _extract_conversation_memory(
+    conversation: Any,
+) -> tuple[str, list[dict[str, Any]], str]:
     """Pull cross-retry memory signal from an OpenHands ``Conversation``.
 
-    Returns ``(last_assistant_message, recent_tool_calls)``. Each tool
-    call dict has the shape::
+    Returns ``(last_assistant_message, recent_tool_calls, finish_message)``.
+    Each tool call dict has the shape::
 
         {
           "tool": "<name>",          # e.g. "execute_bash", "str_replace_editor"
@@ -1014,19 +1033,25 @@ def _extract_conversation_memory(conversation: Any) -> tuple[str, list[dict[str,
           "observation": "<truncated>",  # truncated tool output
         }
 
+    ``finish_message`` is the message content of the last ``finish`` tool
+    call, when the agent ended the run that way instead of (or as well as)
+    a plain assistant message — that is where ``SELF_SUMMARY:`` lands for
+    agents that deliver it via ``finish``.
+
     Robust to SDK shape changes — every attribute access is defensive,
     every coercion goes through ``str()`` with a fallback. A failure here
-    must not break the run; we return ``("", [])``.
+    must not break the run; we return ``("", [], "")``.
     """
     last_msg = ""
+    finish_msg = ""
     pairs: list[dict[str, Any]] = []
     try:
         state = getattr(conversation, "state", None)
         if state is None:
-            return last_msg, pairs
+            return last_msg, pairs, finish_msg
         events = list(getattr(state, "events", []) or [])
     except Exception:
-        return last_msg, pairs
+        return last_msg, pairs, finish_msg
 
     # Walk events in order. Build (action, observation) pairs by matching
     # tool_call_id when the SDK exposes one; otherwise pair consecutive
@@ -1057,6 +1082,14 @@ def _extract_conversation_memory(conversation: Any) -> tuple[str, list[dict[str,
             if tcid is not None:
                 actions_by_id[str(tcid)] = record
             ordered_pairs.append(record)
+            # The ``finish`` tool ends the run; its message field is the
+            # agent's final word (and where SELF_SUMMARY: lands when the
+            # agent finishes via the tool instead of a plain message).
+            # Last one wins, matching the assistant-message capture above.
+            if str(tool_name).lower() == "finish":
+                candidate = _stringify_finish_message(ev)
+                if candidate:
+                    finish_msg = candidate
             continue
         # Observations — attach to the matching action by id, or to the
         # most-recent action in stream order if no id match.
@@ -1071,7 +1104,7 @@ def _extract_conversation_memory(conversation: Any) -> tuple[str, list[dict[str,
     # Keep just the trailing window so the persisted JSON stays bounded.
     pairs = ordered_pairs[-RECENT_TOOL_CALL_WINDOW:]
     last_msg = (last_msg or "")[-_LAST_MSG_CHAR_CAP:]
-    return last_msg, pairs
+    return last_msg, pairs, finish_msg
 
 
 def _stringify_message_content(ev: Any) -> str:
@@ -1134,6 +1167,45 @@ def _stringify_action_args(ev: Any) -> str:
         return json.dumps(data, default=str)
     except Exception:
         return ""
+
+
+def _stringify_finish_message(ev: Any) -> str:
+    """Best-effort extract of a ``finish`` tool call's message content.
+
+    The pinned SDK (openhands-sdk 1.22.1) carries the finish text on the
+    action's ``message`` field; older/newer shapes put it in the raw tool
+    args. Defensive on every access — a failure returns ``""``, never raises.
+    """
+    # 1. ev.action.message (the FinishAction object).
+    try:
+        action = getattr(ev, "action", None)
+        msg = getattr(action, "message", None)
+        if isinstance(msg, str) and msg.strip():
+            return msg
+    except Exception:  # noqa: BLE001 — capture must never break the run
+        pass
+    # 2. Raw tool args carrying a "message" key (dict or JSON string).
+    for attr in ("arguments", "args", "tool_args"):
+        try:
+            val = getattr(ev, attr, None)
+            if isinstance(val, str):
+                val = json.loads(val)
+            if isinstance(val, dict):
+                msg = val.get("message")
+                if isinstance(msg, str) and msg.strip():
+                    return msg
+        except Exception:  # noqa: BLE001
+            continue
+    # 3. model_dump fallback: {"action": {"message": ...}}.
+    try:
+        data = ev.model_dump()
+        node = data.get("action") if isinstance(data, dict) else None
+        msg = node.get("message") if isinstance(node, dict) else None
+        if isinstance(msg, str) and msg.strip():
+            return msg
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
 
 
 def _stringify_observation(ev: Any) -> str:
@@ -1890,7 +1962,7 @@ async def sandbox_run(
     # all". Populated inside ``_do_run``; read by every exit path below.
     _usage_meta: dict[str, bool] = {}
 
-    def _do_run() -> tuple[int, int, int, float, str, list[dict[str, Any]]]:
+    def _do_run() -> tuple[int, int, int, float, str, list[dict[str, Any]], str]:
         # ``Conversation`` is a factory that returns LocalConversation/RemoteConversation
         # depending on the workspace type. Treat as Any for mypy purposes.
         conv_kwargs: dict[str, Any] = {}
@@ -1935,8 +2007,8 @@ async def sandbox_run(
             # ObservationEvent records. We do the extraction inside the
             # executor (same thread that owns the state) and pass plain
             # dicts back to the async layer.
-            last_msg, recent = _extract_conversation_memory(conversation)
-            return (t_in, t_out, t_cached, cost, last_msg, recent)
+            last_msg, recent, finish_msg = _extract_conversation_memory(conversation)
+            return (t_in, t_out, t_cached, cost, last_msg, recent, finish_msg)
         finally:
             conversation.close()
 
@@ -1964,6 +2036,7 @@ async def sandbox_run(
                 cost_usd,
                 last_assistant_message,
                 recent_tool_calls,
+                finish_message,
                 # Bound the blocking executor call so a stalled LLM request can't
                 # hang the handler forever. asyncio.wait_for cancels the await on
                 # timeout; the orphaned worker thread (threads can't be force-
@@ -2106,7 +2179,7 @@ async def sandbox_run(
 
     files_changed = _scan_repo_for_changed_files(Path(repo_path))
     test_passed, test_out = _run_pytest(Path(repo_path), test_command=test_command)
-    self_summary = _extract_self_summary(last_assistant_message)
+    self_summary = _extract_self_summary(last_assistant_message, finish_message)
 
     _record(
         persona=persona,

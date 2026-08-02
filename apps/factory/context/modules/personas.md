@@ -253,11 +253,14 @@ via `defaults.azure_fallback` / `defaults.fallback`.
   family — escapes Azure content-filter blocks, adds a capability jump);
   `reasoning_effort: "none"` standard / `high` hard; breaks on touching
   frozen tests or exhausting retries without landing code.
-- **`reviewer`** — PR diff+story+tests+context → `verdict`/`findings[]`+
-  `test_quality_score`; `azure/gpt-5.3-codex` both blocks;
-  `reasoning_effort: high` (sandbox reviews only); breaks by moving the
-  goalposts on re-review (chain clamps this past cycle 3) or approving
-  below the 0.7 test-quality threshold.
+- **`reviewer`** — PR diff+story+tests+dev self-summary+context →
+  `verdict`/`findings[]`+`test_quality_score`; `azure/gpt-5.3-codex` both
+  blocks; `reasoning_effort: high` (sandbox reviews only); carries a
+  provenance mandate — story-silent literals/formats/data sources must cite a
+  repo precedent (`file:line`) in the dev's self-summary, and same-diff test
+  fixtures are never evidence; breaks by moving the goalposts on re-review
+  (chain clamps this past cycle 3) or approving below the 0.7 test-quality
+  threshold.
 - **`tech_writer`** — final PR diff+context+story → full-file
   `context_updates[]`; `azure/gpt-5.4` (`deepseek/deepseek-chat`); breaks on
   non-canonical paths or preserving reversed decisions.
