@@ -2612,3 +2612,349 @@ def test_report_from_archive_requires_report_meta(  # noqa: N803
 
     with pytest.raises(SystemExit, match="not a report archive"):
         A.report(from_archive=not_an_archive)
+
+
+# --------------------------------------------------------------------------- #
+# dataset profiles — selected at fetch, pinned in the manifest, never mixed
+# --------------------------------------------------------------------------- #
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _rebench_row() -> dict[str, Any]:
+    """A REAL row from the live nebius/SWE-rebench-leaderboard rows API
+    (fetched 2026-08-02; PASS_TO_PASS truncated to 5 ids for fixture size).
+    The mapping is tested against the actual upstream schema, not against
+    what a memo said the field names were."""
+    return json.loads(
+        (_FIXTURES / "swe_rebench_row.json").read_text(encoding="utf-8")
+    )
+
+
+def _rebench_instance(A: Any) -> dict[str, Any]:  # noqa: N803
+    return A._row_to_instance(A.PROFILES["swe-rebench"], _rebench_row())
+
+
+def test_profile_defaults_to_pro_for_pre_profile_artifacts(A: Any) -> None:  # noqa: N803
+    """Old manifests and old run dirs carry no profile key. They mean Pro —
+    frozen, not dropped."""
+    assert A._profile_of({}).name == "swebench-pro"
+    assert A._profile_of({"profile": "swe-rebench"}).name == "swe-rebench"
+
+
+def test_unknown_profile_is_a_hard_error_not_a_fallback(A: Any) -> None:  # noqa: N803
+    """Grading a rebench instance with Pro plumbing (or vice versa) would
+    produce a confident wrong number; refuse instead."""
+    with pytest.raises(SystemExit, match="unknown dataset profile"):
+        A._profile_of({"profile": "swe-bench-ultra"})
+
+
+def test_fetch_refuses_an_unknown_dataset(A: Any) -> None:  # noqa: N803
+    with pytest.raises(SystemExit, match="unknown --dataset"):
+        A.fetch(dataset="nope", language="python", limit=1, seed=1, after=None)
+
+
+def test_fetch_pins_the_profile_in_manifest_and_instances(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """Every later command reads the profile back FROM the manifest, so fetch
+    must persist it at both levels (instances travel alone through helpers)."""
+    monkeypatch.setattr(A, "MANIFEST_PATH", tmp_path / "manifest.json")
+    monkeypatch.setattr(A, "_all_rows", lambda profile: [_rebench_row()])
+    A.fetch(dataset="swe-rebench", language="python", limit=5, seed=1, after=None)
+    m = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert m["profile"] == "swe-rebench"
+    assert m["dataset"] == "nebius/SWE-rebench-leaderboard"
+    assert all(i["profile"] == "swe-rebench" for i in m["instances"])
+
+
+def test_fetch_filters_to_post_cutoff_instances_by_default(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """Contamination control: swe-rebench defaults to created_at > 2026-01-01
+    (DeepSeek-V4 Pro's cutoff is undocumented; the stand-in is recorded in the
+    manifest so the choice is auditable)."""
+    fresh = _rebench_row()                      # created_at 2026-02-19
+    stale = dict(_rebench_row(), instance_id="old__one-1", created_at="2025-06-01 00:00:00")
+    monkeypatch.setattr(A, "MANIFEST_PATH", tmp_path / "manifest.json")
+    monkeypatch.setattr(A, "_all_rows", lambda profile: [fresh, stale])
+    A.fetch(dataset="swe-rebench", language="python", limit=10, seed=1, after=None)
+    m = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert m["created_at_after"] == "2026-01-01"
+    ids = [i["instance_id"] for i in m["instances"]]
+    assert ids == [fresh["instance_id"]], ids
+
+
+def test_rebench_row_maps_the_real_upstream_schema(A: Any) -> None:  # noqa: N803
+    """Field mapping against the REAL rows-API schema: uppercase
+    FAIL_TO_PASS/PASS_TO_PASS (real JSON lists), in-row gold `patch`, verbatim
+    `docker_image`, `created_at` present."""
+    row = _rebench_row()
+    inst = _rebench_instance(A)
+    assert inst["profile"] == "swe-rebench"
+    assert inst["instance_id"] == row["instance_id"]
+    assert inst["base_commit"] == row["base_commit"]
+    assert inst["fail_to_pass"] == row["FAIL_TO_PASS"]
+    assert inst["pass_to_pass"] == row["PASS_TO_PASS"]
+    assert inst["gold_patch"] == row["patch"] and inst["gold_patch"].startswith("diff --git")
+    assert inst["docker_image"] == row["docker_image"]
+    assert inst["docker_image"].startswith("swerebench/")
+    assert inst["created_at"] == row["created_at"]
+    assert inst["test_patch"] == row["test_patch"]
+
+
+def test_rebench_test_targets_are_files_never_node_ids(A: Any) -> None:  # noqa: N803
+    """The dev-facing targets are FAIL_TO_PASS reduced to FILE paths at fetch
+    time — node ids would leak the hidden oracle's test names AND point at
+    tests that only exist after the withheld test patch."""
+    inst = _rebench_instance(A)
+    assert inst["test_targets"], "expected at least one dev-facing target"
+    assert all("::" not in t for t in inst["test_targets"])
+    # Derived from fail_to_pass, so they point at the oracle's FILES.
+    f2p_files = {t.split("::", 1)[0] for t in inst["fail_to_pass"]}
+    assert set(inst["test_targets"]) == f2p_files
+
+
+def test_rebench_test_command_uses_the_image_verbatim_and_testbed(A: Any) -> None:  # noqa: N803
+    """The collect gate and dev's run-until-green both go through this exact
+    command: in-row image, mount over /testbed (not Pro's /app), conda env
+    activated explicitly (a non-root login shell does not inherit it)."""
+    inst = _rebench_instance(A)
+    cmd = A.instance_test_command(inst)
+    assert inst["docker_image"] in cmd
+    assert '-v "$PWD":/testbed' in cmd and "-w /testbed" in cmd
+    assert "source /opt/conda/bin/activate testbed" in cmd
+    assert "jefzda" not in cmd
+    assert "::" not in cmd, "oracle node ids must never reach dev's command"
+    # The host-litter guards apply across profiles.
+    assert '--user "$(id -u):$(id -g)"' in cmd
+    assert "-p no:cacheprovider" in cmd
+    # And the collect-gate variant keeps the identical environment.
+    collect = A.instance_test_command(inst, collect_only=True)
+    assert "--collect-only -q" in collect
+    assert '-v "$PWD":/testbed' in collect
+    assert "source /opt/conda/bin/activate testbed" in collect
+
+
+def test_rebench_precheck_collects_the_pinned_targets(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """The pre-dispatch collect gate must work from the rebench manifest shape
+    (test_targets), same modes as Pro."""
+    inst = _rebench_instance(A)
+    target = inst["test_targets"][0]
+    p = tmp_path / target
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("def test_x():\n    pass\n", encoding="utf-8")
+    seen = _fake_collect(monkeypatch, A, 0, "1 test collected")
+    pre = A._precheck_collect(inst, tmp_path)
+    assert pre["collect_ok"] is True
+    assert pre["mode"] == "existing-targets"
+    assert pre["collected_targets"] == [target]
+    assert inst["docker_image"] in seen["cmd"]
+    assert "/testbed" in seen["cmd"]
+
+
+def test_rebench_grade_script_gets_testbed_and_conda(A: Any) -> None:  # noqa: N803
+    """grade and selftest share _grade_script_for, so the control validates
+    exactly the script the measurement uses — per profile."""
+    inst = _rebench_instance(A)
+    script = A._grade_script_for(inst, "diff --git a/x.py b/x.py\n")
+    assert "cd /testbed" in script
+    assert "source /opt/conda/bin/activate testbed" in script
+    assert "cd /app 2>" not in script
+    for f2p_id in inst["fail_to_pass"]:
+        assert f2p_id in script  # the hidden oracle runs the real node ids
+
+
+def test_rebench_oracle_setup_applies_the_test_patch_unconditionally(A: Any) -> None:  # noqa: N803
+    """The nicegui-5858 false-BROKEN_ALREADY_GREEN class: when the f2p test
+    NAMES exist at base_commit with old assertions, a collect-gated fallback
+    never installs the updated oracle and the old tests pass. swe-rebench has
+    no before_repo_set_cmd, so the test patch must be applied always; Pro
+    keeps the fallback (its before_cmd already installs the oracle files and
+    the patch would conflict)."""
+    rebench_script = A._grade_script_for(_rebench_instance(A), "diff --git a/x b/x\n")
+    assert "SWEBENCH_SETUP: test_patch applied" in rebench_script
+    assert "applying test_patch as fallback" not in rebench_script
+    assert "SWEBENCH_SETUP: before_repo_set_cmd" not in rebench_script
+
+    pro_inst = _pro_manifest()["instances"][0]
+    pro_script = A._grade_script_for(pro_inst, "diff --git a/x b/x\n")
+    assert "applying test_patch as fallback" in pro_script
+    assert "SWEBENCH_SETUP: before_repo_set_cmd rc=$?" in pro_script
+
+
+def test_truncated_param_ids_are_repaired_to_whole_functions(A: Any) -> None:  # noqa: N803
+    """SWE-rebench's log parser splits ids on whitespace, so a parametrized id
+    with a space in its parameter arrives with an UNCLOSED bracket and can
+    never match (real shapes from getmoto__moto-9841 / conan-19735). Repair
+    selects the whole function — a strict superset, fail-safe."""
+    assert A._repair_truncated_param_ids(
+        [
+            "tests/test_kms/test_kms.py::test_sign_happy[some",
+            "tests/test_kms/test_kms.py::test_verify_happy[some",
+            "tests/test_kms/test_kms.py::test_create_key",
+            "x.py::test_ok[a-b]",  # well-formed parametrized id: untouched
+        ]
+    ) == [
+        "tests/test_kms/test_kms.py::test_sign_happy",
+        "tests/test_kms/test_kms.py::test_verify_happy",
+        "tests/test_kms/test_kms.py::test_create_key",
+        "x.py::test_ok[a-b]",
+    ]
+    # Collapsed params dedupe; order preserved.
+    assert A._repair_truncated_param_ids(
+        ["t.py::f[a", "t.py::f[b", "t.py::g"]
+    ) == ["t.py::f", "t.py::g"]
+    assert A._repair_truncated_param_ids([]) == []
+
+
+def test_grade_script_treats_pre_patch_no_collect_as_red_not_broken(A: Any) -> None:  # noqa: N803
+    """The pandas-63945 TDD class: the oracle test module import-errors until
+    the fix lands. Pre-patch no-collect is a red baseline (official SWE-bench
+    semantics); the broken-instance signal is POST-patch no-collect, which
+    only the gold patch (selftest) can decide."""
+    script = A._grade_script_for(_rebench_instance(A), "diff --git a/x b/x\n")
+    assert "NO_COLLECT_PRE_PATCH" in script
+    assert "treated as a red baseline" in script
+    assert "SWEBENCH_POST_PATCH: FAIL_TO_PASS_IDS_DO_NOT_COLLECT" in script
+    # The old hard pre-patch exit is gone from the generated script.
+    assert "BROKEN_NO_COLLECT" not in script
+
+
+def test_gold_patch_comes_from_the_row_with_no_network(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """The Pro HF-lookup was a rate-limit failure mode under parallel sweeps;
+    for swe-rebench the gold patch is pinned in the manifest and the lookup
+    path must never fire."""
+    inst = _rebench_instance(A)
+    m = tmp_path / "manifest.json"
+    m.write_text(
+        json.dumps({"profile": "swe-rebench", "manifest_sha256": "x", "instances": [inst]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(A, "MANIFEST_PATH", m)
+
+    def _no_network(*a: Any, **k: Any) -> dict[str, str]:
+        raise AssertionError("HF gold-patch lookup must not fire for swe-rebench")
+
+    monkeypatch.setattr(A, "_gold_patches", _no_network)
+    files = A.gold_touched_files(inst["instance_id"])
+    assert files, "gold patch from the row must yield touched files"
+    assert all(not A.is_test_path(f) for f in files)
+
+
+def test_pro_gold_patch_still_falls_back_to_the_lookup(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    m = tmp_path / "manifest.json"
+    m.write_text(
+        json.dumps(
+            {"manifest_sha256": "x", "instances": [{"instance_id": "pro-1"}]}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(A, "MANIFEST_PATH", m)
+    seen: dict[str, Any] = {}
+
+    def _lookup(wanted: set[str], profile: Any) -> dict[str, str]:
+        seen["wanted"], seen["profile"] = wanted, profile.name
+        return {"pro-1": "diff --git a/src/x.py b/src/x.py\n"}
+
+    monkeypatch.setattr(A, "_gold_patches", _lookup)
+    assert A.gold_touched_files("pro-1") == ["src/x.py"]
+    assert seen == {"wanted": {"pro-1"}, "profile": "swebench-pro"}
+
+
+# --------------------------------------------------------------------------- #
+# Pro regression — frozen means old artifacts keep working, verbatim
+# --------------------------------------------------------------------------- #
+
+
+def _pro_manifest() -> dict[str, Any]:
+    """A verbatim pre-profile Pro manifest (one real pinned instance), taken
+    from the committed manifest the 2026-08-02 runs used."""
+    return json.loads(
+        (_FIXTURES / "swebench_pro_manifest.json").read_text(encoding="utf-8")
+    )
+
+
+def test_old_pro_manifest_loads_and_resolves_pro_plumbing(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    m = tmp_path / "manifest.json"
+    m.write_text(json.dumps(_pro_manifest()), encoding="utf-8")
+    monkeypatch.setattr(A, "MANIFEST_PATH", m)
+    manifest = A._manifest()
+    assert A._profile_of(manifest).name == "swebench-pro"
+    inst = manifest["instances"][0]
+    assert A._instance(inst["instance_id"]) == inst
+    image = A._image_for(inst)
+    assert image == f"jefzda/sweap-images:{inst['dockerhub_tag']}"
+    cmd = A.instance_test_command(inst)
+    assert '-v "$PWD":/app' in cmd and "-w /app" in cmd
+    assert image in cmd
+    assert "conda" not in cmd
+    script = A._grade_script_for(inst, "diff --git a/x.py b/x.py\n")
+    assert "cd /app" in script
+    assert inst["before_repo_set_cmd"].strip().splitlines()[0] in script
+
+
+def test_image_resolution_fails_loudly_with_neither_source(A: Any) -> None:  # noqa: N803
+    with pytest.raises(SystemExit, match="neither docker_image nor"):
+        A._image_for({"instance_id": "x", "profile": "swe-rebench"})
+
+
+def test_declared_test_entries_reads_both_manifest_shapes(A: Any) -> None:  # noqa: N803
+    assert A._declared_test_entries(
+        {"test_targets": ["tests/a.py", "tests/b.py"]}
+    ) == ["tests/a.py", "tests/b.py"]
+    assert A._declared_test_entries(
+        {"selected_test_files_to_run": '["tests/a.py::t1", "tests/a.py::t2"]'}
+    ) == ["tests/a.py::t1", "tests/a.py::t2"]
+    assert A._declared_test_entries({}) == []
+
+
+def test_pre_port_archive_rerenders_with_the_pro_heading(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """A pre-port archive's report-meta has no profile key: it is Pro by
+    definition, and re-deriving it must say so even though the LIVE manifest
+    now pins swe-rebench — otherwise old committed tables stop reproducing."""
+    _patch_report_dirs(A, tmp_path, monkeypatch)
+    # Live manifest pins the NEW profile.
+    live = tmp_path / "manifest.json"
+    live.write_text(
+        json.dumps({"profile": "swe-rebench", "manifest_sha256": "x", "instances": []}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(A, "MANIFEST_PATH", live)
+    # A minimal pre-port archive: one row, meta WITHOUT a profile key.
+    archive = tmp_path / "old-archive"
+    row_dir = archive / "inst1" / "factory"
+    row_dir.mkdir(parents=True)
+    (row_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "arm": "factory",
+                "instance_id": "inst1",
+                "factory_says_green": True,
+                "grade": {"oracle_resolved": True, "outcome": "resolved"},
+                "tokens_in": 1,
+                "tokens_out": 1,
+                "wall_clock_s": 1.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (row_dir / "audit.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
+    (row_dir / "prediction.diff").write_text("diff --git a/x b/x\n", encoding="utf-8")
+    (archive / "report-meta.json").write_text(
+        json.dumps({"generated_at": "2026-08-02T17:00:00+00:00", "rows": 1}),
+        encoding="utf-8",
+    )
+    text = A.report(from_archive=archive)
+    assert text.startswith("# SWE-bench Pro — externally graded")
+    assert "OpenAI's" in text  # the Pro broken-task note, not the rebench one

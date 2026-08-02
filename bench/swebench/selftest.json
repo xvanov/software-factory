@@ -1,62 +1,122 @@
 {
-  "checked_at": "2026-08-02T05:49:18.495441+00:00",
+  "checked_at": "2026-08-02T20:41:40.752560+00:00",
   "results": [
     {
-      "instance_id": "instance_internetarchive__openlibrary-798055d1a19b8fa0983153b709f460be97e33064-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+      "instance_id": "tox-dev__tox-3931",
       "gold_resolves": true,
       "note": "ok",
       "stripped_from_gold": []
     },
     {
-      "instance_id": "instance_ansible__ansible-de01db08d00c8d2438e1ba5989c313ba16a145b0-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5",
-      "gold_resolves": false,
-      "note": "gold_patch_does_not_resolve",
-      "stripped_from_gold": []
-    },
-    {
-      "instance_id": "instance_ansible__ansible-9a21e247786ebd294dafafca1105fcd770ff46c6-v67cdaa49f89b34e42b69d5b7830b3c3ad3d8803f",
+      "instance_id": "hkuds__openharness-217",
       "gold_resolves": true,
       "note": "ok",
       "stripped_from_gold": []
     },
     {
-      "instance_id": "instance_internetarchive__openlibrary-3aeec6afed9198d734b7ee1293f03ca94ff970e1-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+      "instance_id": "pyinfra-dev__pyinfra-1665",
       "gold_resolves": true,
       "note": "ok",
       "stripped_from_gold": []
     },
     {
-      "instance_id": "instance_internetarchive__openlibrary-72321288ea790a3ace9e36f1c05b68c93f7eec43-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
-      "gold_resolves": false,
-      "note": "fail_to_pass_ids_do_not_collect",
+      "instance_id": "alibaba__opensandbox-816",
+      "gold_resolves": true,
+      "note": "ok",
       "stripped_from_gold": []
     },
     {
-      "instance_id": "instance_internetarchive__openlibrary-0a90f9f0256e4f933523e9842799e39f95ae29ce-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c",
+      "instance_id": "google__flax-5171",
       "gold_resolves": false,
       "note": "fail_to_pass_ids_do_not_collect",
       "stripped_from_gold": []
     },
     {
-      "instance_id": "instance_qutebrowser__qutebrowser-0833b5f6f140d04200ec91605f88704dd18e2970-v059c6fdc75567943479b23ebca7c07b5e9a7f34c",
+      "instance_id": "harumiweb__exstruct-113",
       "gold_resolves": true,
       "note": "ok",
       "stripped_from_gold": []
     },
     {
-      "instance_id": "instance_ansible__ansible-34db57a47f875d11c4068567b9ec7ace174ec4cf-v1055803c3a812189a1133297f7f5468579283f86",
+      "instance_id": "keras-team__keras-22316",
       "gold_resolves": true,
       "note": "ok",
       "stripped_from_gold": []
     },
     {
-      "instance_id": "instance_ansible__ansible-622a493ae03bd5e5cf517d336fc426e9d12208c7-v906c969b551b346ef54a2c0b41e04f632b7b73c2",
-      "gold_resolves": false,
-      "note": "fail_to_pass_ids_do_not_collect",
+      "instance_id": "ucfopen__canvasapi-716",
+      "gold_resolves": true,
+      "note": "ok",
       "stripped_from_gold": []
     },
     {
-      "instance_id": "instance_ansible__ansible-e22e103cdf8edc56ff7d9b848a58f94f1471a263-v1055803c3a812189a1133297f7f5468579283f86",
+      "instance_id": "raullenchai__rapid-mlx-289",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "pandas-dev__pandas-63945",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "idaholab__montepy-933_interface",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "jsonpickle__jsonpickle-588",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "conan-io__conan-19750",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "keras-team__keras-22642",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "vyperlang__vyper-4801",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "zauberzeug__nicegui-5858",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "getmoto__moto-9841",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "line__line-bot-sdk-python-981_interface",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "conan-io__conan-19735_interface",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
       "gold_resolves": true,
       "note": "ok",
       "stripped_from_gold": []

@@ -1,9 +1,18 @@
-"""SWE-bench Pro adapter — an externally-graded number for the factory.
+"""SWE-bench adapter — an externally-graded number for the factory.
 
 PLAN.md Phase 1. The existing ``bench/bench.py`` grades the factory against
 sacrifice's own backlog using sacrifice's own gates: the factory writes the
 code AND owns the tests that say the code works. That measures convergence,
 not correctness. This adapter swaps in a HIDDEN oracle the factory never sees.
+
+Datasets are PROFILES (see ``PROFILES``): ``swe-rebench``
+(nebius/SWE-rebench-leaderboard — execution-validated upstream, monthly
+post-cutoff splits, gold patch and docker image in-row) is primary;
+``swebench-pro`` is frozen after OpenAI's 2026-07-08 audit found ~30% of its
+tasks broken. ``fetch --dataset`` selects the profile ONCE and pins it in the
+manifest; every later command reads it back from there. Only harness plumbing
+varies by profile — the factory chain (handlers, state machine, personas,
+worktrees) runs identically, exactly as it does in the wild.
 
 Design
 ------
@@ -41,13 +50,14 @@ The factory arm needs a WORKING test environment
 A bare clone has no dependencies, so ``pytest`` dies with
 ``ModuleNotFoundError`` and dev — whose whole mechanism is run-until-green —
 blocks with an empty diff. The app's ``test_command`` therefore runs inside the
-instance's own image with the working tree mounted over ``/app``
+instance's own image with the working tree mounted over the profile's workdir
 (``instance_test_command``). Measured on ``ansible__ansible-9a21e2477...``:
 empty diff after 870k tokens before, ``reviewer_done`` with a real patch in
 104s / 355k tokens after.
 
 Usage (from the factory root):
-  uv run python bench/swebench_adapter.py fetch --language python --limit 10 --seed 20260801
+  uv run python bench/swebench_adapter.py fetch --dataset swe-rebench \
+      --language python --limit 20 --seed 20260802
   uv run python bench/swebench_adapter.py selftest            # validate the ORACLE first
   uv run python bench/swebench_adapter.py run   --instance <id> --arm bare|factory
   uv run python bench/swebench_adapter.py grade --instance <id> --arm bare|factory
@@ -113,7 +123,7 @@ import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 FACTORY_ROOT = Path(__file__).resolve().parent.parent
 BENCH_DIR = FACTORY_ROOT / "bench"
@@ -128,7 +138,6 @@ MANIFEST_PATH = SWE_DIR / "manifest.json"
 # with no live runs dir at all.
 RESULTS_ARCHIVE_DIR = SWE_DIR / "results-archive"
 
-DATASET = "ScaleAI/SWE-bench_Pro"
 _ROWS_URL = "https://datasets-server.huggingface.co/rows"
 
 # Fake issue numbers far from production so a bench story can never collide
@@ -137,16 +146,162 @@ SWE_ISSUE_BASE = 95000
 
 
 # --------------------------------------------------------------------------- #
+# dataset profiles — everything dataset-specific lives HERE, nowhere else
+# --------------------------------------------------------------------------- #
+#
+# The harness supports more than one upstream dataset, but a RUN never mixes
+# them: ``fetch --dataset <name>`` selects a profile and persists its name in
+# the manifest (and in every pinned instance), and every later command —
+# run, grade, selftest, audit, report — reads the profile back FROM the
+# manifest. There is deliberately no ``--dataset`` flag anywhere but fetch.
+#
+# ``swebench-pro`` is FROZEN: OpenAI's 2026-07-08 audit found ~30% of its
+# public tasks broken (our own selftest measured 6/10 usable), no fixed
+# release or broken-ID list exists, and the selftest is structurally blind to
+# the dominant failure class (overly-strict hidden tests pass a gold-patch
+# control by construction). Existing Pro manifests, run dirs and archives must
+# keep loading and rendering — but do not extend the profile.
+#
+# ``swe-rebench`` (nebius/SWE-rebench-leaderboard) is the primary dataset:
+# every instance is execution-validated upstream, contamination is controlled
+# via monthly post-cutoff splits (``created_at``), the gold patch ships in-row
+# (no rate-limited HF lookup at selftest/grade time), and per-instance docker
+# images come verbatim in the row. Schema verified against the live rows API
+# on 2026-08-02: ``instance_id, repo, base_commit, patch, test_patch,
+# problem_statement, created_at, install_config, FAIL_TO_PASS, PASS_TO_PASS
+# (uppercase, real JSON lists), docker_image, image_name`` — 860 rows in the
+# ``test`` split (the union of the monthly splits), zero truncated cells.
+
+
+class DatasetProfile(NamedTuple):
+    """Environment plumbing for one upstream dataset.
+
+    Only the HARNESS varies by profile — fetch, docker image selection,
+    container layout, test-command derivation, gold-patch sourcing, grading
+    setup. The factory chain itself (handlers, state machine, personas,
+    worktrees) is identical across profiles by design: the benchmark must
+    exercise the factory exactly as it runs in the wild.
+
+    (A NamedTuple, not a dataclass: this module is exec'd from a file path
+    without a ``sys.modules`` entry in child processes, where the dataclass
+    machinery cannot resolve ``from __future__ import annotations`` strings.)
+    """
+
+    name: str
+    title: str                 # report heading
+    dataset: str               # HuggingFace dataset id
+    split: str                 # rows-API split the pool is read from
+    pool_cap: int              # pagination hard stop (pages of 100)
+    container_workdir: str     # where the image keeps the repo; also the mount target
+    env_setup: str             # shell prefix that puts the test env on PATH ("" = none)
+    image_template: str | None # image ref from a tag ({tag}); None = in-row docker_image
+    gold_in_row: bool          # gold patch pinned into the manifest at fetch time
+
+
+PROFILES: dict[str, DatasetProfile] = {
+    "swebench-pro": DatasetProfile(
+        name="swebench-pro",
+        title="SWE-bench Pro",
+        dataset="ScaleAI/SWE-bench_Pro",
+        split="test",
+        pool_cap=800,
+        container_workdir="/app",
+        env_setup="",
+        image_template="jefzda/sweap-images:{tag}",
+        gold_in_row=False,
+    ),
+    "swe-rebench": DatasetProfile(
+        name="swe-rebench",
+        title="SWE-rebench",
+        dataset="nebius/SWE-rebench-leaderboard",
+        split="test",
+        pool_cap=5000,
+        container_workdir="/testbed",
+        # The images ship a conda env; a non-root login shell (the factory arm
+        # runs containers as the invoking uid with HOME=/tmp) does NOT inherit
+        # it, so activate explicitly. Verified against a live image 2026-08-02.
+        env_setup="source /opt/conda/bin/activate testbed && ",
+        image_template=None,
+        gold_in_row=True,
+    ),
+}
+
+_DEFAULT_PROFILE = "swebench-pro"  # what a pre-profile manifest means
+
+# DeepSeek-V4 Pro's training cutoff is UNDOCUMENTED (preview released
+# 2026-04-24; neither the release notes nor the model card state a data
+# cutoff), so the pilot uses 2026-01-01 as a conservative stand-in and says
+# so. Instances created after this date land in the manifest; ones at or
+# before it are filtered out at fetch time.
+_REBENCH_DEFAULT_CUTOFF = "2026-01-01"
+
+
+def _profile_of(inst_or_manifest: dict[str, Any]) -> DatasetProfile:
+    """The profile a pinned instance (or manifest) was fetched under.
+
+    A missing key means the artifact predates profiles, i.e. SWE-bench Pro —
+    old manifests and old run dirs must keep loading (frozen, not dropped).
+    An unknown name is a hard error, never a silent fallback: grading a
+    rebench instance with Pro plumbing would produce a confident wrong number.
+    """
+    name = str(inst_or_manifest.get("profile") or _DEFAULT_PROFILE)
+    if name not in PROFILES:
+        raise SystemExit(
+            f"unknown dataset profile {name!r} (known: {sorted(PROFILES)}). "
+            "The manifest names a profile this adapter version does not have."
+        )
+    return PROFILES[name]
+
+
+def _image_for(inst: dict[str, Any]) -> str:
+    """The instance's official docker image, profile-aware.
+
+    swe-rebench rows carry the full image ref verbatim (``docker_image``);
+    Pro manifests carry only ``dockerhub_tag`` and the ref is templated. A
+    manifest entry that supports neither is a hard error — grading in the
+    wrong image measures nothing.
+    """
+    image = inst.get("docker_image")
+    if image:
+        return str(image)
+    profile = _profile_of(inst)
+    if profile.image_template and inst.get("dockerhub_tag"):
+        return profile.image_template.format(tag=inst["dockerhub_tag"])
+    raise SystemExit(
+        f"instance {inst.get('instance_id')!r} has neither docker_image nor a "
+        f"dockerhub_tag usable with profile {profile.name!r}"
+    )
+
+
+def _declared_test_entries(inst: dict[str, Any]) -> list[str]:
+    """The instance's declared test targets, as raw entries (may hold ::ids).
+
+    Pro pins them under ``selected_test_files_to_run`` (a JSON-encoded list of
+    the oracle's fail_to_pass NODE IDS — see ``_test_file_paths`` for why they
+    are reduced to files before dev ever sees them). swe-rebench manifests pin
+    ``test_targets``, already reduced to file paths at fetch time from
+    FAIL_TO_PASS. Either way the caller must still run the result through
+    ``_test_file_paths`` — it is idempotent on plain paths.
+    """
+    targets = inst.get("test_targets")
+    if isinstance(targets, list):
+        return [str(t) for t in targets]
+    return _as_list(inst.get("selected_test_files_to_run"))
+
+
+# --------------------------------------------------------------------------- #
 # dataset access
 # --------------------------------------------------------------------------- #
 
 
-def _fetch_rows(offset: int, length: int) -> list[dict[str, Any]]:
+def _fetch_rows(
+    offset: int, length: int, *, dataset: str, split: str
+) -> list[dict[str, Any]]:
     qs = urllib.parse.urlencode(
         {
-            "dataset": DATASET,
+            "dataset": dataset,
             "config": "default",
-            "split": "test",
+            "split": split,
             "offset": offset,
             "length": length,
         }
@@ -156,10 +311,19 @@ def _fetch_rows(offset: int, length: int) -> list[dict[str, Any]]:
     return [r["row"] for r in data.get("rows", [])]
 
 
-def _all_rows(total: int = 731) -> list[dict[str, Any]]:
+def _all_rows(profile: DatasetProfile) -> list[dict[str, Any]]:
+    """Every row in the profile's pool split.
+
+    Paginates until a short page rather than to a baked total, so a dataset
+    that grows (SWE-rebench adds a monthly split) is picked up whole;
+    ``pool_cap`` bounds the loop so a runaway API can never loop forever.
+    """
     rows: list[dict[str, Any]] = []
-    for off in range(0, total, 100):
-        rows.extend(_fetch_rows(off, 100))
+    for off in range(0, profile.pool_cap, 100):
+        page = _fetch_rows(off, 100, dataset=profile.dataset, split=profile.split)
+        rows.extend(page)
+        if len(page) < 100:
+            break
     return rows
 
 
@@ -221,47 +385,136 @@ def _as_list(value: Any) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def fetch(*, language: str, limit: int, seed: int) -> None:
-    """Sample instances and freeze them into a hash-pinned manifest.
+def _repair_truncated_param_ids(ids: list[str]) -> list[str]:
+    """Repair SWE-rebench's whitespace-truncated parametrized test ids.
 
-    The seed is recorded so the sample is reproducible, and each instance
-    carries a hash of its problem statement so a later dataset revision that
-    silently rewrites a task is detectable rather than invisible.
+    The upstream log parser splits ids on whitespace, so a parametrized id
+    whose parameter contains a space arrives truncated with an UNCLOSED
+    bracket — e.g. ``test_kms.py::test_sign_happy[some`` for the real
+    ``test_sign_happy[some message]`` (measured on getmoto__moto-9841 and
+    conan-io__conan-19735). Such an id can never match anything, so a healthy
+    instance grades broken.
+
+    The repair strips the parametrization, selecting EVERY parametrization of
+    that test function. That is a strict superset of the intended set: more
+    tests must pass, so grading can only get stricter, never laxer — and an
+    instance whose gold patch cannot carry the superset drops out at selftest,
+    honestly. Well-formed ids (closed bracket or no bracket) pass through
+    untouched. Duplicates from collapsed params are dropped, order preserved.
     """
-    rows = [r for r in _all_rows() if r.get("repo_language") == language]
-    if not rows:
-        raise SystemExit(f"no instances with repo_language={language!r}")
-    rows.sort(key=lambda r: str(r["instance_id"]))  # deterministic pre-shuffle order
-    rng = random.Random(seed)
-    picked = rng.sample(rows, min(limit, len(rows)))
+    out: dict[str, None] = {}
+    for tid in ids:
+        if "[" in tid and not tid.endswith("]"):
+            tid = tid.split("[", 1)[0]
+        out.setdefault(tid, None)
+    return list(out)
 
-    instances = []
-    for r in picked:
-        statement = r.get("problem_statement") or ""
-        instances.append(
+
+def _row_to_instance(profile: DatasetProfile, r: dict[str, Any]) -> dict[str, Any]:
+    """Map ONE raw dataset row into the manifest's normalized instance shape.
+
+    Common keys are consumed by every downstream command; profile-specific
+    keys carry what only that profile's plumbing needs. Every instance is
+    tagged with its profile so old (untagged = Pro) and new manifests resolve
+    identically at consumption time.
+    """
+    statement = r.get("problem_statement") or ""
+    inst: dict[str, Any] = {
+        "profile": profile.name,
+        "instance_id": r["instance_id"],
+        "repo": r["repo"],
+        "base_commit": r["base_commit"],
+        "problem_statement": statement,
+        "problem_statement_sha256": hashlib.sha256(
+            statement.encode("utf-8")
+        ).hexdigest(),
+        "test_patch": r.get("test_patch") or "",
+    }
+    if profile.name == "swe-rebench":
+        fail_to_pass = _repair_truncated_param_ids(_as_list(r.get("FAIL_TO_PASS")))
+        inst.update(
             {
-                "instance_id": r["instance_id"],
-                "repo": r["repo"],
-                "base_commit": r["base_commit"],
+                "language": "python",  # the leaderboard split is Python-only
+                "docker_image": r.get("docker_image") or "",
+                "created_at": r.get("created_at") or "",
+                "fail_to_pass": fail_to_pass,
+                "pass_to_pass": _repair_truncated_param_ids(
+                    _as_list(r.get("PASS_TO_PASS"))
+                ),
+                # The gold patch ships IN the row. Pinning it here kills the
+                # rate-limited HF lookup that Pro's selftest/grade needed. It
+                # lives beside test_patch/fail_to_pass, which are equally
+                # oracle — the manifest is harness-side and never enters an
+                # arm's working tree.
+                "gold_patch": r.get("patch") or "",
+                # Dev-facing test targets: fail_to_pass node ids reduced to
+                # FILE paths at fetch time (same reduction Pro applies at run
+                # time) — files exist in the tree, node ids would leak the
+                # oracle AND not exist until the withheld test patch lands.
+                "test_targets": _test_file_paths(fail_to_pass),
+            }
+        )
+    else:
+        inst.update(
+            {
                 "language": r.get("repo_language"),
                 "dockerhub_tag": r.get("dockerhub_tag"),
-                "problem_statement": statement,
-                "problem_statement_sha256": hashlib.sha256(
-                    statement.encode("utf-8")
-                ).hexdigest(),
                 "fail_to_pass": _as_list(r.get("fail_to_pass")),
                 "pass_to_pass": _as_list(r.get("pass_to_pass")),
-                "test_patch": r.get("test_patch") or "",
                 "before_repo_set_cmd": r.get("before_repo_set_cmd") or "",
                 "selected_test_files_to_run": r.get("selected_test_files_to_run") or "",
             }
         )
+    return inst
+
+
+def _row_language(profile: DatasetProfile, r: dict[str, Any]) -> str:
+    if profile.name == "swe-rebench":
+        return "python"  # single-language dataset; rows carry no language field
+    return str(r.get("repo_language") or "")
+
+
+def fetch(*, dataset: str, language: str, limit: int, seed: int, after: str | None) -> None:
+    """Sample instances and freeze them into a hash-pinned manifest.
+
+    The seed is recorded so the sample is reproducible, and each instance
+    carries a hash of its problem statement so a later dataset revision that
+    silently rewrites a task is detectable rather than invisible. The chosen
+    profile is persisted in the manifest AND in every instance: all later
+    commands read it back from there, so a run can never mix profiles.
+
+    ``after`` keeps only instances created strictly after the given date
+    (contamination control for profiles with ``created_at``; ignored where
+    the field does not exist). For swe-rebench it defaults to 2026-01-01 —
+    DeepSeek-V4 Pro's training cutoff is undocumented, so that stand-in is
+    deliberately conservative and recorded in the manifest.
+    """
+    if dataset not in PROFILES:
+        raise SystemExit(f"unknown --dataset {dataset!r} (known: {sorted(PROFILES)})")
+    profile = PROFILES[dataset]
+    if after is None and profile.name == "swe-rebench":
+        after = _REBENCH_DEFAULT_CUTOFF
+
+    rows = [r for r in _all_rows(profile) if _row_language(profile, r) == language]
+    if not rows:
+        raise SystemExit(f"no instances with language={language!r}")
+    if after:
+        rows = [r for r in rows if str(r.get("created_at") or "") > after]
+        if not rows:
+            raise SystemExit(f"no instances created after {after!r}")
+    rows.sort(key=lambda r: str(r["instance_id"]))  # deterministic pre-shuffle order
+    rng = random.Random(seed)
+    picked = rng.sample(rows, min(limit, len(rows)))
+
+    instances = [_row_to_instance(profile, r) for r in picked]
 
     manifest = {
-        "dataset": DATASET,
+        "profile": profile.name,
+        "dataset": profile.dataset,
         "language": language,
         "seed": seed,
         "limit": limit,
+        "created_at_after": after,
         "frozen_at": datetime.now(UTC).isoformat(),
         "pool_size": len(rows),
         "instances": instances,
@@ -686,17 +939,24 @@ def instance_test_command(
     ``.pytest_cache``, observed). Three guards: run as the invoking uid/gid,
     disable pytest's cache plugin, and suppress ``.pyc`` writes. ``HOME=/tmp``
     because the mapped user has no home inside the image.
+
+    Profile plumbing: the image ref, the mount target (Pro images keep the
+    repo at ``/app``, swe-rebench at ``/testbed``) and the env-activation
+    prefix (swe-rebench images ship a conda env that a non-root login shell
+    does not inherit) all come from the instance's pinned profile.
     """
-    entries = test_files if test_files is not None else _as_list(
-        inst.get("selected_test_files_to_run")
-    )
+    entries = test_files if test_files is not None else _declared_test_entries(inst)
     files = _test_file_paths(entries)
     target = " ".join(_shq(t) for t in files) if files else ""
     mode = "--collect-only -q " if collect_only else ""
-    inner = f"python -m pytest -p no:cacheprovider {mode}{target}".strip()
-    image = f"jefzda/sweap-images:{inst['dockerhub_tag']}"
+    profile = _profile_of(inst)
+    inner = (
+        f"{profile.env_setup}python -m pytest -p no:cacheprovider {mode}{target}"
+    ).strip()
+    image = _image_for(inst)
+    wd = profile.container_workdir
     return (
-        'docker run --rm -v "$PWD":/app -w /app '
+        f'docker run --rm -v "$PWD":{wd} -w {wd} '
         '--user "$(id -u):$(id -g)" -e HOME=/tmp '
         "-e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash "
         f"{image} -lc {_shq(inner)}"
@@ -705,7 +965,7 @@ def instance_test_command(
 
 def _ensure_image(inst: dict[str, Any], timeout_s: int = 1800) -> bool:
     """Pull the instance image if absent. Returns False when unavailable."""
-    image = f"jefzda/sweap-images:{inst['dockerhub_tag']}"
+    image = _image_for(inst)
     if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0:
         return True
     print(f"pulling {image} …", flush=True)
@@ -755,7 +1015,7 @@ def _precheck_collect(inst: dict[str, Any], repo: Path) -> dict[str, Any]:
     Returns the ``precheck`` payload: ``collect_ok``, ``duration_s``,
     ``mode``, ``collected_targets``, ``exit_code``, ``tail``.
     """
-    files = _test_file_paths(_as_list(inst.get("selected_test_files_to_run")))
+    files = _test_file_paths(_declared_test_entries(inst))
     existing = [f for f in files if (repo / f).exists()]
     if existing or not files:
         # No declared targets at all → whole-repo strict collect, as before.
@@ -825,11 +1085,11 @@ def _build_bench_root(inst: dict[str, Any], repo: Path) -> Path:
     (app_dir / "stories").mkdir(parents=True)
     (app_dir / "directions").mkdir(parents=True)
 
-    # ``selected_test_files_to_run`` is a JSON-encoded LIST, like fail_to_pass.
+    # The declared targets are a JSON-encoded LIST, like fail_to_pass.
     # Interpolating it raw produced `python -m pytest ["tests/x.py"]`, which
     # pytest reads as a nonexistent path — every dev run would have seen a
     # collection error instead of the real suite.
-    test_files = _as_list(inst.get("selected_test_files_to_run"))
+    test_files = _declared_test_entries(inst)
     test_cmd = instance_test_command(inst, test_files, repo=repo)
     cfg = {
         "name": "swebench",
@@ -1269,7 +1529,7 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
     diff_text = pred.read_text(encoding="utf-8")
     assert_no_test_edits(diff_text)  # belt and braces: re-check at grade time
 
-    image = f"jefzda/sweap-images:{inst['dockerhub_tag']}"
+    image = _image_for(inst)
     f2p, p2p = inst["fail_to_pass"], inst["pass_to_pass"]
 
     started = time.monotonic()
@@ -1313,21 +1573,24 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
             print(json.dumps(verdict, indent=2))
             return
 
-    script = _GRADE_SCRIPT.format(
-        test_patch=_heredoc(inst["test_patch"]),
-        prediction=_heredoc(diff_text),
-        before_cmd=inst.get("before_repo_set_cmd") or "true",
-        f2p=" ".join(_shq(t) for t in f2p),
-        p2p=" ".join(_shq(t) for t in p2p),
-    )
+    script = _grade_script_for(inst, diff_text)
     proc = _docker_bash(image, script, timeout_s)
     log = (proc.stdout or "") + (proc.stderr or "")
     (run_dir / "grade.log").write_text(log, encoding="utf-8")
 
     resolved = "SWEBENCH_RESULT: RESOLVED" in log
     applied = "SWEBENCH_APPLY: OK" in log
+    # Visible, not decisive: on a selftest-cleared instance, ids that do not
+    # collect under the ARM's patch mean the arm did not deliver the API the
+    # tests need — an ordinary UNRESOLVED, recorded so the log tail is
+    # interpretable without spelunking.
+    verdict["post_patch_ids_collect"] = (
+        "SWEBENCH_POST_PATCH: FAIL_TO_PASS_IDS_DO_NOT_COLLECT" not in log
+    )
     # Order matters: a broken baseline short-circuits BEFORE the prediction is
     # applied, so "not applied" must not be read as the arm's fault.
+    # (BROKEN_NO_COLLECT is emitted only by the pre-2026-08 script; kept so
+    # old grade logs re-read consistently.)
     if "SWEBENCH_BASELINE: BROKEN_NO_COLLECT" in log:
         outcome = "task_broken_no_collect"
     elif "SWEBENCH_BASELINE: BROKEN_ALREADY_GREEN" in log:
@@ -1386,9 +1649,17 @@ def _docker_bash(image: str, script: str, timeout_s: int) -> subprocess.Complete
     bash try to EXECUTE the string "bash" and die with "cannot execute binary
     file". ``--network none`` denies egress during grading so a patch cannot
     reach out for the answer.
+
+    The script goes in on STDIN (``-i`` + ``bash -l -s``), not as an argv
+    element: the script embeds the test patch, the prediction AND every
+    hidden test id, and Linux caps a single argv string at ~128KB
+    (MAX_ARG_STRLEN). A pinned swe-rebench instance with 16k fail_to_pass ids
+    exceeds that as argv and would die with E2BIG before running anything.
     """
     return subprocess.run(
-        ["docker", "run", "--rm", "--network", "none", "--entrypoint", "bash", image, "-lc", script],
+        ["docker", "run", "--rm", "-i", "--network", "none",
+         "--entrypoint", "bash", image, "-l", "-s"],
+        input=script,
         capture_output=True,
         text=True,
         timeout=timeout_s,
@@ -1403,12 +1674,67 @@ def _heredoc(text: str) -> str:
     return text if text.endswith("\n") or not text else text + "\n"
 
 
+def _grade_script_for(inst: dict[str, Any], prediction: str) -> str:
+    """The grade script for one instance, with its profile's plumbing filled in.
+
+    Shared by ``grade`` (the arm's prediction) and ``selftest`` (the gold
+    patch) so the control validates EXACTLY the script the measurement uses.
+    Profile differences are environment-only: where the repo lives in the
+    image, how the test env gets on PATH, and the dataset's own setup command
+    (Pro's ``before_repo_set_cmd``; swe-rebench has none, so the test patch
+    fallback below is its primary oracle-install path).
+    """
+    profile = _profile_of(inst)
+    if profile.name == "swe-rebench":
+        # No dataset setup command exists; the test patch IS the oracle
+        # install and must be applied UNCONDITIONALLY. Applying it only as a
+        # collect-fallback (the Pro flow) silently skips it whenever the f2p
+        # test NAMES already exist at base_commit with old assertions — the
+        # baseline then runs the OLD tests, passes, and a healthy instance is
+        # excluded as BROKEN_ALREADY_GREEN (measured on nicegui-5858).
+        oracle_setup = (
+            "if [ -s /tmp/test_patch.diff ]; then\n"
+            "  git apply -v /tmp/test_patch.diff 2>&1 "
+            "|| git apply -v --3way /tmp/test_patch.diff 2>&1 || true\n"
+            '  echo "SWEBENCH_SETUP: test_patch applied"\n'
+            "fi"
+        )
+    else:
+        # Pro: ``before_repo_set_cmd`` already checks out the oracle test
+        # files from the fix commit, so applying test_patch on top CONFLICTS
+        # ("patch does not apply") — it stays a fallback used only when the
+        # ids do not collect.
+        before_cmd = inst.get("before_repo_set_cmd") or "true"
+        oracle_setup = (
+            f"{before_cmd}\n"
+            'echo "SWEBENCH_SETUP: before_repo_set_cmd rc=$?"\n'
+            "if ! collect; then\n"
+            '  echo "SWEBENCH_SETUP: ids missing after before_cmd;'
+            ' applying test_patch as fallback"\n'
+            "  if [ -s /tmp/test_patch.diff ]; then\n"
+            "    git apply -v /tmp/test_patch.diff 2>&1 "
+            "|| git apply -v --3way /tmp/test_patch.diff 2>&1 || true\n"
+            "  fi\n"
+            "fi"
+        )
+    return _GRADE_SCRIPT.format(
+        workdir=profile.container_workdir,
+        env_setup=profile.env_setup.rstrip() or "true &&",
+        test_patch=_heredoc(inst["test_patch"]),
+        prediction=_heredoc(prediction),
+        oracle_setup=oracle_setup,
+        f2p=" ".join(_shq(t) for t in inst["fail_to_pass"]),
+        p2p=" ".join(_shq(t) for t in inst["pass_to_pass"]),
+    )
+
+
 # Runs inside the instance's official image. Order matters: the test patch
 # (the ORACLE) is applied first and the prediction second, so a prediction that
 # tries to undo the oracle fails loudly instead of silently winning.
 _GRADE_SCRIPT = r"""
 set -o pipefail
-cd /app 2>/dev/null || cd "$(ls -d /*/ | head -1)"
+cd {workdir} 2>/dev/null || cd "$(ls -d /*/ | head -1)"
+{env_setup} true
 git config --global --add safe.directory '*' 2>/dev/null || true
 
 cat > /tmp/test_patch.diff <<'SWEBENCH_TEST_PATCH_EOF'
@@ -1418,16 +1744,6 @@ SWEBENCH_TEST_PATCH_EOF
 cat > /tmp/prediction.diff <<'SWEBENCH_PRED_EOF'
 {prediction}
 SWEBENCH_PRED_EOF
-
-# ORACLE SETUP. `before_repo_set_cmd` is the dataset's own setup: it resets to
-# the base commit and then `git checkout <fix_commit> -- <test paths>`, i.e. it
-# ALREADY installs the oracle test files. Applying `test_patch` on top of that
-# conflicts ("patch does not apply"), which is why the test patch is only a
-# FALLBACK below, used when the ids still do not collect.
-git reset --hard HEAD >/dev/null 2>&1 || true
-git clean -fd >/dev/null 2>&1 || true
-{before_cmd}
-echo "SWEBENCH_SETUP: before_repo_set_cmd rc=$?"
 
 # Does every fail_to_pass id EXIST? pytest exits 4 for a missing file or a
 # missing ::id.
@@ -1445,37 +1761,55 @@ collect() {{
   return 0
 }}
 
-if ! collect; then
-  echo "SWEBENCH_SETUP: ids missing after before_cmd; applying test_patch as fallback"
-  if [ -s /tmp/test_patch.diff ]; then
-    git apply -v /tmp/test_patch.diff 2>&1 || git apply -v --3way /tmp/test_patch.diff 2>&1 || true
-  fi
-fi
+# ORACLE SETUP — profile-specific, built by `_grade_script_for`. Pro runs its
+# `before_repo_set_cmd` (which already installs the oracle test files) with
+# the test patch as a collect-fallback; swe-rebench applies the test patch
+# unconditionally (there is no setup command, and skipping the patch when the
+# f2p test NAMES already exist at base leaves the OLD assertions in place —
+# a false BROKEN_ALREADY_GREEN).
+git reset --hard HEAD >/dev/null 2>&1 || true
+git clean -fd >/dev/null 2>&1 || true
+{oracle_setup}
 
-# The fail_to_pass ids MUST collect. pytest exits 4 ("file or directory not
-# found") for a nonexistent id — non-zero, and therefore indistinguishable
-# from a healthy red baseline unless checked separately. Left unchecked the
-# instance grades as unresolved no matter what the arm produced.
+# Pre-patch collection MAY legitimately fail: a TDD-style instance's oracle
+# test imports API the fix itself introduces (measured on
+# pandas-dev__pandas-63945 — the test module import-errors until the patch
+# lands). The official SWE-bench semantic treats an import error as a red
+# baseline, so it is treated as red here — NOT as a broken instance. The
+# honest broken-instance signal moves POST-patch (below): ids that do not
+# collect even with the patch applied cannot ever pass, and `selftest`
+# grading the GOLD patch is what turns that into an exclusion.
+baseline_no_collect=0
 if ! collect; then
-  echo "SWEBENCH_BASELINE: BROKEN_NO_COLLECT (fail_to_pass ids do not exist)"
+  echo "SWEBENCH_BASELINE: NO_COLLECT_PRE_PATCH (collection fails before the patch; treated as a red baseline)"
   tail -20 /tmp/collect.log
-  exit 3
+  baseline_no_collect=1
+else
+  # Baseline: the fail_to_pass set MUST fail before the prediction is applied.
+  # If it already passes, the instance is not measuring what it claims to.
+  if python -m pytest -q {f2p} >/tmp/baseline.log 2>&1; then
+    echo "SWEBENCH_BASELINE: BROKEN_ALREADY_GREEN (fail_to_pass passes unpatched)"
+    tail -20 /tmp/baseline.log
+    exit 3
+  fi
+  echo "SWEBENCH_BASELINE: OK (red as expected)"
 fi
-
-# Baseline: the fail_to_pass set MUST fail before the prediction is applied.
-# If it already passes, the instance is not measuring what it claims to.
-if python -m pytest -q {f2p} >/tmp/baseline.log 2>&1; then
-  echo "SWEBENCH_BASELINE: BROKEN_ALREADY_GREEN (fail_to_pass passes unpatched)"
-  tail -20 /tmp/baseline.log
-  exit 3
-fi
-echo "SWEBENCH_BASELINE: OK (red as expected)"
 
 if git apply -v /tmp/prediction.diff 2>&1 || git apply -v --3way /tmp/prediction.diff 2>&1; then
   echo "SWEBENCH_APPLY: OK"
 else
   echo "SWEBENCH_APPLY: FAILED"
   exit 2
+fi
+
+# pytest exits 4 ("file or directory not found") for a nonexistent id —
+# non-zero, and therefore indistinguishable from a healthy red run unless
+# checked separately. Ids that STILL do not collect with the patch applied
+# can never pass: under the gold patch (selftest) that means the instance is
+# broken as shipped; under an arm's prediction it simply stays UNRESOLVED.
+if [ "$baseline_no_collect" = "1" ] && ! collect; then
+  echo "SWEBENCH_POST_PATCH: FAIL_TO_PASS_IDS_DO_NOT_COLLECT (even with the patch applied)"
+  tail -20 /tmp/collect.log
 fi
 
 fail=0
@@ -1505,8 +1839,11 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
     factory could not solve it", which OpenAI's audit says is ~30% of the
     public suite.
 
-    The gold patch is fetched just-in-time and never written next to a run, so
-    it cannot leak into an arm's working tree.
+    The gold patch is read from the pinned manifest where the profile ships
+    it in-row (swe-rebench), and fetched just-in-time from the dataset API
+    otherwise (Pro — a rate-limited path, which is one reason Pro is frozen).
+    Either way it is never written next to a run, so it cannot leak into an
+    arm's working tree.
     """
     manifest = _manifest()
     targets = (
@@ -1517,18 +1854,24 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
     if not targets:
         raise SystemExit(f"{instance_id!r} is not in the pinned manifest")
 
-    gold = _gold_patches({i["instance_id"] for i in targets})
+    # The HF lookup is only for instances whose profile does NOT pin the gold
+    # patch in the manifest. For swe-rebench this set is empty and no network
+    # call happens at all.
+    needs_lookup = {
+        i["instance_id"] for i in targets if not str(i.get("gold_patch") or "").strip()
+    }
+    gold = _gold_patches(needs_lookup, _profile_of(manifest)) if needs_lookup else {}
     results: list[dict[str, Any]] = []
     for inst in targets:
         iid = inst["instance_id"]
-        patch = gold.get(iid, "")
+        patch = str(inst.get("gold_patch") or "") or gold.get(iid, "")
         print(f"\n=== selftest {iid[:60]} ===", flush=True)
         if not patch.strip():
             results.append({"instance_id": iid, "gold_resolves": None, "note": "no gold patch"})
             print("  no gold patch in dataset")
             continue
 
-        image = f"jefzda/sweap-images:{inst['dockerhub_tag']}"
+        image = _image_for(inst)
         if subprocess.run(
             ["docker", "image", "inspect", image], capture_output=True
         ).returncode != 0:
@@ -1546,20 +1889,21 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
         # dataset's `patch` ever included a test edit, grading it would validate
         # the oracle against a modified oracle.
         code_only, _, stripped = split_diff(patch)
-        script = _GRADE_SCRIPT.format(
-            test_patch=_heredoc(inst["test_patch"]),
-            prediction=_heredoc(code_only),
-            before_cmd=inst.get("before_repo_set_cmd") or "true",
-            f2p=" ".join(_shq(t) for t in inst["fail_to_pass"]),
-            p2p=" ".join(_shq(t) for t in inst["pass_to_pass"]),
-        )
+        script = _grade_script_for(inst, code_only)
         proc = _docker_bash(image, script, timeout_s)
         log = (proc.stdout or "") + (proc.stderr or "")
         d = _run_dir(iid, "selftest")
         (d / "selftest.log").write_text(log, encoding="utf-8")
 
         resolved = "SWEBENCH_RESULT: RESOLVED" in log
-        if "SWEBENCH_BASELINE: BROKEN_NO_COLLECT" in log:
+        # The first marker is the current script's post-patch check (ids that
+        # do not collect even WITH the gold patch can never pass — broken as
+        # shipped); the second is the pre-2026-08 script's pre-patch check,
+        # kept so old logs re-read consistently.
+        if (
+            "SWEBENCH_POST_PATCH: FAIL_TO_PASS_IDS_DO_NOT_COLLECT" in log
+            or "SWEBENCH_BASELINE: BROKEN_NO_COLLECT" in log
+        ):
             note = "fail_to_pass_ids_do_not_collect"
         elif "SWEBENCH_BASELINE: BROKEN_ALREADY_GREEN" in log:
             note = "baseline_already_green"
@@ -1603,20 +1947,33 @@ def gold_touched_files(instance_id: str) -> list[str]:
     that found the exact right function but used the wrong string constant is
     indistinguishable from one that never located the code at all. Those are
     completely different failures and should never share a name.
+
+    The gold patch comes from the pinned manifest when the profile ships it
+    in-row; the network lookup is the Pro-only fallback (and was a measured
+    rate-limit failure mode under a parallel sweep — ``gold_files_lookup_ok``
+    exists because of it).
     """
-    patch = _gold_patches({instance_id}).get(instance_id, "")
+    inst = _instance(instance_id)
+    patch = str(inst.get("gold_patch") or "")
+    if not patch.strip():
+        patch = _gold_patches({instance_id}, _profile_of(inst)).get(instance_id, "")
     _, kept, _ = split_diff(patch)
     return kept
 
 
-def _gold_patches(wanted: set[str]) -> dict[str, str]:
-    """Fetch gold patches just-in-time. Never persisted beside a run."""
+def _gold_patches(wanted: set[str], profile: DatasetProfile) -> dict[str, str]:
+    """Fetch gold patches just-in-time from the dataset API (Pro fallback).
+
+    Never persisted beside a run. Profiles with ``gold_in_row`` never reach
+    this — their gold patch is pinned in the manifest at fetch time.
+    """
     found: dict[str, str] = {}
-    for off in range(0, 731, 100):
-        for row in _fetch_rows(off, 100):
+    for off in range(0, profile.pool_cap, 100):
+        page = _fetch_rows(off, 100, dataset=profile.dataset, split=profile.split)
+        for row in page:
             if row["instance_id"] in wanted:
                 found[row["instance_id"]] = row.get("patch") or ""
-        if len(found) == len(wanted):
+        if len(found) == len(wanted) or len(page) < 100:
             break
     return found
 
@@ -2097,9 +2454,20 @@ def _archive_report_artifacts(
         dest.mkdir(parents=True, exist_ok=True)
         for name in _ROW_ARTIFACTS:
             shutil.copy2(run_dir / name, dest / name)
+    # The profile is pinned into the meta so ``--from-archive`` re-derives
+    # the SAME heading even after the live manifest moves to another dataset.
+    try:
+        profile_name = _profile_of(_manifest()).name
+    except SystemExit:
+        profile_name = _DEFAULT_PROFILE
     (archive_dir / _REPORT_META_NAME).write_text(
         json.dumps(
-            {"generated_at": generated_at, "source": str(RUNS_DIR), "rows": len(rows)},
+            {
+                "generated_at": generated_at,
+                "source": str(RUNS_DIR),
+                "rows": len(rows),
+                "profile": profile_name,
+            },
             indent=2,
         )
         + "\n",
@@ -2122,6 +2490,7 @@ def report(*, from_archive: Path | None = None) -> str:
     """
     base_dir = from_archive if from_archive is not None else RUNS_DIR
     generated_at = datetime.now(UTC).isoformat()
+    archive_profile: str | None = None
     if from_archive is not None:
         meta_path = from_archive / _REPORT_META_NAME
         try:
@@ -2132,6 +2501,8 @@ def report(*, from_archive: Path | None = None) -> str:
                 f"archive at {from_archive} has no readable {_REPORT_META_NAME} "
                 f"({exc}) — not a report archive"
             ) from exc
+        # Pre-port archives carry no profile; they are all Pro by definition.
+        archive_profile = str(meta.get("profile") or _DEFAULT_PROFILE)
 
     rows, refused = _collect_report_rows(base_dir)
     if not rows:
@@ -2141,8 +2512,32 @@ def report(*, from_archive: Path | None = None) -> str:
             + (f" — every row refused (fail-closed): {detail}" if refused else "")
         )
 
+    # The heading names the profile the rows were produced under: the
+    # archive's pinned profile when re-deriving, else the live manifest's.
+    # This keeps ``--from-archive`` byte-for-byte even after the live
+    # manifest moves to another dataset.
+    if archive_profile is not None:
+        profile = PROFILES.get(archive_profile, PROFILES[_DEFAULT_PROFILE])
+    else:
+        try:
+            profile = _profile_of(_manifest())
+        except SystemExit:
+            profile = PROFILES[_DEFAULT_PROFILE]
+    if profile.name == "swebench-pro":
+        broken_note = (
+            "`task_broken` is reported SEPARATELY from `wrong_patch`. OpenAI's "
+            "2026-07-08 audit found ~30% of this suite's public tasks broken, so "
+            "summing the two would read a broken harness as factory failure."
+        )
+    else:
+        broken_note = (
+            "`task_broken` is reported SEPARATELY from `wrong_patch`. This "
+            "dataset execution-validates every instance upstream, so a "
+            "non-trivial `task_broken` rate means THIS harness's plumbing "
+            "broke, not the tasks."
+        )
     lines = [
-        "# SWE-bench Pro — externally graded",
+        f"# {profile.title} — externally graded",
         "",
         f"Generated {generated_at}.",
         "",
@@ -2158,9 +2553,7 @@ def report(*, from_archive: Path | None = None) -> str:
         "require app capabilities these repos do not have. Calling this "
         "\"gate precision\" would overclaim.",
         "",
-        "`task_broken` is reported SEPARATELY from `wrong_patch`. OpenAI's "
-        "2026-07-08 audit found ~30% of this suite's public tasks broken, so "
-        "summing the two would read a broken harness as factory failure.",
+        broken_note,
         "",
         "| instance | arm | factory says | oracle | audit | outcome | tokens in | tokens out | wall s |",
         "|---|---|---|---|---|---|---:|---:|---:|",
@@ -3206,9 +3599,25 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("fetch", help="pin a manifest (do this BEFORE any run)")
+    p.add_argument(
+        "--dataset",
+        default=_DEFAULT_PROFILE,
+        choices=sorted(PROFILES),
+        help="dataset profile; persisted in the manifest, which every later "
+             "command reads it back from — a run never mixes profiles. "
+             "swebench-pro is FROZEN (do not extend); swe-rebench is primary.",
+    )
     p.add_argument("--language", default="python")
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--seed", type=int, required=True, help="published RNG seed")
+    p.add_argument(
+        "--after",
+        default=None,
+        help="keep only instances created strictly after this date "
+             "(YYYY-MM-DD). Defaults to 2026-01-01 for swe-rebench — a "
+             "conservative stand-in for DeepSeek-V4 Pro's UNDOCUMENTED "
+             "training cutoff.",
+    )
 
     p = sub.add_parser("run", help="drive an arm over one instance")
     p.add_argument("--instance", required=True)
@@ -3287,7 +3696,13 @@ def main() -> None:
 
     args = ap.parse_args()
     if args.cmd == "fetch":
-        fetch(language=args.language, limit=args.limit, seed=args.seed)
+        fetch(
+            dataset=args.dataset,
+            language=args.language,
+            limit=args.limit,
+            seed=args.seed,
+            after=args.after,
+        )
     elif args.cmd == "run":
         runner = run_bare if args.arm == "bare" else run_factory
         runner(args.instance, max_steps=args.max_steps, timeout_s=args.timeout_s)
