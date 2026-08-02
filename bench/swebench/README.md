@@ -20,6 +20,57 @@ uv run python bench/swebench_adapter.py report
 must come back `RESOLVED`. Any instance where it does not is excluded — a score
 computed over broken instances measures the harness, not the arm.
 
+## Sweeping in parallel
+
+One instance at a time is fine for six and impractical for a hundred.
+`run-all` fans the same run+grade+audit pipeline out over a worker pool:
+
+```bash
+uv run python bench/swebench_adapter.py run-all --arm factory --workers 4 \
+    --only-working --dry-run     # ALWAYS preview first
+uv run python bench/swebench_adapter.py run-all --arm factory --workers 4 --only-working
+```
+
+- **`--dry-run` is a pure preview.** It prints the work list and the projected
+  spend, spawns nothing, writes nothing, costs nothing. Use it every time.
+- **`--only-working`** restricts the sweep to instances whose gold patch
+  resolves, per `selftest.json`. Without it you are averaging in tasks that
+  nothing can solve.
+- **Workers are child processes, not threads.** `run` sets
+  `FACTORY_STATE_ROOT`, mutates `sys.path` and depends on a module-global
+  settings cache, so two runs in one interpreter would cross-contaminate — and
+  the loser writes synthetic telemetry into somebody else's state root. Each
+  worker shells out to `swebench_adapter.py run`, then `… grade`, then
+  `… audit`, so an instance is graded and audited the moment its own run
+  finishes.
+- **Failure is isolated.** A crash, a wall-clock timeout, a missing docker
+  image or a failed grade becomes a row in the summary; the sweep continues.
+- **Every row is audited.** Each instance's `audit` runs after run+grade —
+  failed runs included, because the audit treats a missing artifact as a
+  finding. A failed audit marks the row `audit_ok: false` with the audit's
+  reasons; the summary separates audited-valid results from invalid ones, and
+  a sweep where **every** row fails audit exits non-zero. The headline
+  `resolved` counts only rows that are clean end-to-end (run ok + audit ok);
+  an oracle pass from a late-failed run or an audit-failed run stays visible
+  in `resolved_but_run_failed` / `resolved_but_audit_failed`, never in the
+  headline.
+- **`Ctrl-C` really stops it.** The interrupt kills each in-flight child's
+  whole process group and still writes a partial summary. Killing the *parent*
+  from another terminal does not — those children are detached by design, so
+  they survive; interrupt the sweep, don't kill it. (Docker containers already
+  started are owned by dockerd and outlive either route.)
+- **The spend guard can refuse.** `run-all` reads `caps.hourly_spend_usd` and
+  `caps.daily_spend_usd` from `factory_settings.yaml` and will not start a
+  sweep whose projected burn breaches either. This matters here more than
+  anywhere else in the factory: bench runs write to an isolated state root, so
+  the chain's own spend enforcer never sees them and will never throttle them.
+  `--force-over-cap` overrides, loudly and on purpose.
+
+Per-instance cost is estimated from previous runs of the same arm when any
+exist, and otherwise from a documented conservative default (~$3/instance for
+the factory arm). Results land in the usual per-instance
+`runs/<instance>/<arm>/`, plus a `sweep-<arm>.json` roll-up. Then run `report`.
+
 ## What selftest caught (2026-08-01)
 
 Three harness bugs, each of which would have produced a plausible-looking but

@@ -985,3 +985,922 @@ def test_story_slug_is_stable_across_processes(A: Any) -> None:  # noqa: N803
         for seed in ("0", "1", "12345")
     }
     assert len(outs) == 1, f"slug varies with PYTHONHASHSEED: {outs}"
+
+
+# --------------------------------------------------------------------------- #
+# run-all — the parallel sweep
+#
+# Nothing here executes a real sweep: a run costs real money and needs API
+# keys. Every test below replaces the child-process layer with a fake, which is
+# the correct seam — the whole design is "the parent orchestrates, children do
+# the work", so faking the child tests the orchestration and nothing else.
+# --------------------------------------------------------------------------- #
+
+
+class _FakeChild:
+    """Stands in for ``_bench_subprocess``: records calls, fabricates artifacts.
+
+    Also measures how many calls were in flight at once, which is the only way
+    to prove the pool actually fans out rather than quietly running in series.
+    """
+
+    def __init__(self, A: Any, *, fail: dict[str, str] | None = None, delay: float = 0.0):
+        self.A = A
+        self.fail = fail or {}
+        self.delay = delay
+        self.calls: list[list[str]] = []
+        self.log_paths: list[Path] = []
+        self.live = 0
+        self.max_live = 0
+        self._lock = __import__("threading").Lock()
+
+    def __call__(self, argv: list[str], *, timeout_s: int, log_path: Path) -> tuple[int, str]:
+        import time as _time
+
+        with self._lock:
+            self.calls.append(list(argv))
+            self.log_paths.append(log_path)
+            self.live += 1
+            self.max_live = max(self.max_live, self.live)
+        try:
+            if self.delay:
+                _time.sleep(self.delay)
+            cmd = argv[2]
+            iid = argv[argv.index("--instance") + 1]
+            arm = argv[argv.index("--arm") + 1]
+            mode = self.fail.get(iid)
+
+            if cmd == "run":
+                if mode == "raise":
+                    raise RuntimeError("worker exploded")
+                if mode == "no_image":
+                    return 1, "image for X is unavailable"
+                if mode == "timeout":
+                    return -9, "timeout after 1s"
+                d = self.A._run_dir(iid, arm)
+                (d / "prediction.diff").write_text("diff --git a/x.py b/x.py\n", encoding="utf-8")
+                (d / "result.json").write_text(
+                    json.dumps(
+                        {
+                            "arm": arm,
+                            "instance_id": iid,
+                            "final_state": "reviewer_done",
+                            "tokens_in": 1000,
+                            "tokens_out": 100,
+                            "cost_usd": 0.5,
+                            "factory_says_green": True,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                if mode == "late_fail":
+                    # A run that failed LATE: prediction + result already
+                    # written, then the run exits non-zero.
+                    return 1, "run crashed after writing its prediction"
+                return 0, "factory arm done"
+
+            if cmd == "audit":
+                d = self.A._run_dir(iid, arm)
+                if mode == "audit_fail":
+                    (d / "audit.json").write_text(
+                        json.dumps(
+                            {"ok": False, "failures": ["cost mismatch: ledger vs result.json"]}
+                        ),
+                        encoding="utf-8",
+                    )
+                    return 1, "audit FAILED (1 finding(s))"
+                # Mirror the real audit's fail-safety: a run that left no
+                # result.json is an audit FAILURE, never a pass.
+                if not (d / "result.json").exists():
+                    (d / "audit.json").write_text(
+                        json.dumps({"ok": False, "failures": ["missing artifact: result.json"]}),
+                        encoding="utf-8",
+                    )
+                    return 1, "audit FAILED (missing artifact)"
+                (d / "audit.json").write_text(
+                    json.dumps({"ok": True, "failures": []}), encoding="utf-8"
+                )
+                return 0, "audit OK"
+
+            # grade
+            if mode == "grade_fail":
+                return 2, "docker died"
+            d = self.A._run_dir(iid, arm)
+            existing = json.loads((d / "result.json").read_text(encoding="utf-8"))
+            existing["grade"] = {"oracle_resolved": True, "outcome": "resolved"}
+            (d / "result.json").write_text(json.dumps(existing), encoding="utf-8")
+            return 0, "graded"
+        finally:
+            with self._lock:
+                self.live -= 1
+
+
+def _sweep_env(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ids: list[str]
+) -> None:
+    """Point every path the sweep writes at ``tmp_path`` and pin a manifest."""
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "manifest_sha256": "deadbeef",
+                "instances": [{"instance_id": i, "dockerhub_tag": "t"} for i in ids],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(A, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(A, "SWE_DIR", tmp_path)
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(A, "load_spend_caps", lambda *a, **k: (1000.0, 10000.0))
+
+
+_IDS = [f"instance_repo__x-{n}" for n in range(6)]
+
+
+def test_sweep_fans_out_and_grades_every_instance(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every instance is run AND graded, and the work genuinely overlaps."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS)
+    fake = _FakeChild(A, delay=0.05)
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+
+    A.run_all(
+        arm="factory", workers=3, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+    )
+
+    ran = {c[c.index("--instance") + 1] for c in fake.calls if c[2] == "run"}
+    graded = {c[c.index("--instance") + 1] for c in fake.calls if c[2] == "grade"}
+    audited = {c[c.index("--instance") + 1] for c in fake.calls if c[2] == "audit"}
+    assert ran == set(_IDS)
+    assert graded == set(_IDS), "grade must follow each run, in the same pool"
+    assert audited == set(_IDS), "every instance must be audited, in the same pool"
+    assert fake.max_live > 1, "workers ran strictly in series — the pool is not fanning out"
+
+    out = capsys.readouterr().out
+    for iid in _IDS:
+        assert iid in out
+    assert "6 ok, 0 failed" in out
+    summary = json.loads((tmp_path / "sweep-factory.json").read_text(encoding="utf-8"))
+    assert summary["instances"] == 6 and summary["resolved"] == 6
+    assert summary["audited_valid"] == 6 and summary["audit_failed"] == 0
+    assert summary["tokens_in"] == 6000 and summary["tokens_out"] == 600
+
+
+def test_sweep_runs_children_as_separate_processes(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The unsafe work MUST happen behind a process boundary.
+
+    ``run_factory`` sets ``os.environ['FACTORY_STATE_ROOT']``, mutates
+    ``sys.path`` and relies on ``factory.settings.loader``'s module-global
+    cache. Two of those in one interpreter cross-contaminate, and the losing
+    run writes synthetic telemetry into the other's root — or into production
+    ``state/``. So the pool must never call ``run_factory`` in-process.
+    """
+    import sys as _sys
+
+    _sweep_env(A, tmp_path, monkeypatch, _IDS[:2])
+    fake = _FakeChild(A)
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+
+    def _boom(*a: Any, **k: Any) -> None:
+        raise AssertionError("run_factory called IN-PROCESS — that is not thread-safe")
+
+    monkeypatch.setattr(A, "run_factory", _boom)
+    monkeypatch.setattr(A, "run_bare", _boom)
+    monkeypatch.setattr(A, "grade", _boom)
+    monkeypatch.setattr(A, "audit", _boom)
+
+    A.run_all(
+        arm="factory", workers=2, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+    )
+    assert fake.calls
+    for argv in fake.calls:
+        assert argv[0] == _sys.executable, argv
+        assert argv[1].endswith("swebench_adapter.py"), argv
+
+
+def test_no_two_workers_write_the_same_path(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deterministic, collision-free result files.
+
+    Two workers sharing a ``result.json`` would let the last writer silently
+    win, and the sweep would report a score for a run that never happened.
+    """
+    _sweep_env(A, tmp_path, monkeypatch, _IDS)
+    fake = _FakeChild(A)
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+    A.run_all(
+        arm="factory", workers=4, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+    )
+    assert len(fake.log_paths) == len(set(fake.log_paths)), "two workers shared a log path"
+    results = sorted((tmp_path / "runs").glob("*/factory/result.json"))
+    assert len(results) == len(_IDS)
+    assert len({p.parent.parent.name for p in results}) == len(_IDS)
+
+
+def test_duplicate_instances_are_collapsed(A: Any) -> None:  # noqa: N803
+    """The same instance twice would be two workers on one result path."""
+    assert A.select_instances(["a", "b"], requested=["a", "a", "b"]) == ["a", "b"]
+    assert A.select_instances(["a", "a", "b"]) == ["a", "b"]
+
+
+def test_requesting_an_unpinned_instance_refuses(A: Any) -> None:  # noqa: N803
+    with pytest.raises(SystemExit, match="not in the pinned manifest"):
+        A.select_instances(["a", "b"], requested=["a", "zzz"])
+
+
+# --------------------------------------------------------------------------- #
+# --only-working
+# --------------------------------------------------------------------------- #
+
+
+def test_only_working_keeps_instances_with_a_resolving_gold_patch(A: Any) -> None:  # noqa: N803
+    """``gold_resolves: None`` means "could not check", which is NOT evidence
+    of a working oracle — it must be filtered out just like an explicit
+    failure, or a score gets computed over instances nobody validated."""
+    working = {"ok1", "ok2"}
+    got = A.select_instances(
+        ["ok1", "broken", "unchecked", "ok2"], only_working=True, working=working
+    )
+    assert got == ["ok1", "ok2"]
+
+
+def test_only_working_reads_selftest_json(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    p = tmp_path / "selftest.json"
+    p.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {"instance_id": "good", "gold_resolves": True},
+                    {"instance_id": "bad", "gold_resolves": False},
+                    {"instance_id": "unknown", "gold_resolves": None},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert A.selftest_working_instances(p) == {"good"}
+
+
+def test_only_working_without_a_selftest_refuses(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """Fail SAFE: no control run means we cannot know which oracles work, so
+    refuse rather than silently sweep everything."""
+    with pytest.raises(SystemExit, match="Run `selftest` first"):
+        A.selftest_working_instances(tmp_path / "absent.json")
+
+
+def test_only_working_with_nothing_left_refuses(A: Any) -> None:  # noqa: N803
+    with pytest.raises(SystemExit, match="no instances left after --only-working"):
+        A.select_instances(["a", "b"], only_working=True, working=set())
+
+
+def test_sweep_honours_only_working_end_to_end(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _sweep_env(A, tmp_path, monkeypatch, _IDS)
+    (tmp_path / "selftest.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {"instance_id": i, "gold_resolves": i in (_IDS[0], _IDS[3])}
+                    for i in _IDS
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    fake = _FakeChild(A)
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+    A.run_all(
+        arm="factory", workers=4, instances=None, only_working=True,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+    )
+    ran = {c[c.index("--instance") + 1] for c in fake.calls if c[2] == "run"}
+    assert ran == {_IDS[0], _IDS[3]}
+
+
+# --------------------------------------------------------------------------- #
+# failure isolation
+# --------------------------------------------------------------------------- #
+
+
+def test_one_bad_instance_does_not_kill_the_sweep(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A crash, a timeout, a missing image and a failed grade — all four are
+    recorded and the other instances still finish."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS)
+    fake = _FakeChild(
+        A,
+        fail={
+            _IDS[0]: "raise",
+            _IDS[1]: "timeout",
+            _IDS[2]: "no_image",
+            _IDS[3]: "grade_fail",
+        },
+    )
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+
+    A.run_all(
+        arm="factory", workers=3, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+    )
+
+    summary = json.loads((tmp_path / "sweep-factory.json").read_text(encoding="utf-8"))
+    assert summary["instances"] == 6, "the sweep must visit every instance"
+    assert summary["ok"] == 2 and summary["failed"] == 4
+    by_id = {r["instance_id"]: r for r in summary["results"]}
+    assert by_id[_IDS[0]]["status"] == "crashed"
+    assert "worker exploded" in by_id[_IDS[0]]["error"]
+    assert by_id[_IDS[1]]["status"] == "run_failed"
+    assert "timeout" in by_id[_IDS[1]]["error"]
+    assert by_id[_IDS[2]]["status"] == "run_failed"
+    assert by_id[_IDS[3]]["status"] == "grade_failed"
+    # The two healthy instances still produced a real graded verdict.
+    assert by_id[_IDS[4]]["oracle_resolved"] is True
+    assert by_id[_IDS[5]]["outcome"] == "resolved"
+    # Audit tri-state: a crashed worker never audits (None); a run that left
+    # no result.json FAILS its audit (missing artifact, fail safe); healthy
+    # rows pass.
+    assert by_id[_IDS[0]]["audit_ok"] is None
+    assert by_id[_IDS[1]]["audit_ok"] is False
+    assert by_id[_IDS[2]]["audit_ok"] is False
+    assert by_id[_IDS[4]]["audit_ok"] is True
+    assert summary["audited_valid"] == 3  # grade_failed row still audits clean
+    assert summary["audit_failed"] == 2 and summary["not_audited"] == 1
+    assert summary["resolved"] == 2
+    out = capsys.readouterr().out
+    assert "failures (isolated — the sweep continued)" in out
+
+
+def test_a_failed_run_is_not_graded(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No prediction.diff means nothing to grade; grading anyway would only
+    stack a confusing second error on top of the real one."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS[:2])
+    fake = _FakeChild(A, fail={_IDS[0]: "no_image"})
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+    A.run_all(
+        arm="factory", workers=2, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+    )
+    graded = {c[c.index("--instance") + 1] for c in fake.calls if c[2] == "grade"}
+    assert graded == {_IDS[1]}
+
+
+# --------------------------------------------------------------------------- #
+# the per-instance audit gate
+#
+# Every benchmark run must be fully auditable (the operator's standing
+# requirement); the sweep is where that becomes automatic. A row whose audit
+# fails is INVALID and must never be silently averaged into a score.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_failed_run_is_still_audited(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit runs UNCONDITIONALLY after run+grade — the real audit treats a
+    missing artifact as a finding (fail safe), so skipping it for failed runs
+    would let exactly the suspicious rows dodge scrutiny."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS[:2])
+    fake = _FakeChild(A, fail={_IDS[0]: "no_image"})
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+    A.run_all(
+        arm="factory", workers=2, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+    )
+    audited = {c[c.index("--instance") + 1] for c in fake.calls if c[2] == "audit"}
+    assert audited == set(_IDS[:2]), "failed runs must be audited too"
+    # And within one instance, audit is the LAST step.
+    order = [c[2] for c in fake.calls if c[c.index("--instance") + 1] == _IDS[1]]
+    assert order == ["run", "grade", "audit"]
+
+
+def test_audit_failure_marks_the_row_invalid(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A run can look perfect (green, graded, resolved) and still be invalid —
+    the audit found its trail does not support its numbers. The row keeps its
+    status but is flagged ``audit_ok: false`` with the reasons, and the
+    summary separates audited-valid results from invalid ones."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS)
+    fake = _FakeChild(A, fail={_IDS[1]: "audit_fail"})
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+    A.run_all(
+        arm="factory", workers=3, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+    )
+    summary = json.loads((tmp_path / "sweep-factory.json").read_text(encoding="utf-8"))
+    by_id = {r["instance_id"]: r for r in summary["results"]}
+    row = by_id[_IDS[1]]
+    assert row["status"] == "ok", "audit failure must not rewrite what the run did"
+    assert row["audit_ok"] is False
+    assert any("cost mismatch" in f for f in row["audit_failures"])
+    assert summary["audited_valid"] == 5 and summary["audit_failed"] == 1
+    # The invalid row's oracle pass is visible but flagged — never in the
+    # headline number.
+    assert summary["resolved"] == 5
+    assert summary["resolved_but_audit_failed"] == 1
+    out = capsys.readouterr().out
+    assert "audit failures (rows are INVALID" in out
+    assert "audit: 5 valid, 1 failed" in out
+
+
+def test_a_sweep_where_every_row_fails_audit_exits_nonzero(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rc=0 means "results are in". A sweep with zero audited-valid rows has
+    no results, and anything scripted on top of it must see that."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS[:2])
+    fake = _FakeChild(A, fail={i: "audit_fail" for i in _IDS[:2]})
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+    with pytest.raises(SystemExit, match="every sweep row FAILED audit"):
+        A.run_all(
+            arm="factory", workers=2, instances=None, only_working=False,
+            max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+        )
+    # The summary is still written — it is the evidence of WHY it failed.
+    summary = json.loads((tmp_path / "sweep-factory.json").read_text(encoding="utf-8"))
+    assert summary["audit_failed"] == 2 and summary["audited_valid"] == 0
+    assert summary["resolved"] == 0
+
+
+def test_audit_reasons_fall_back_to_child_output(  # noqa: N803
+    A: Any, tmp_path: Path
+) -> None:
+    """An invalid row must always say WHY: if the audit child died without
+    writing audit.json, the child's last line is the reason."""
+    d = tmp_path / "run"
+    d.mkdir()
+    assert A._audit_failure_reasons(d, "audit blew up") == ["audit blew up"]
+    (d / "audit.json").write_text(
+        json.dumps({"ok": False, "failures": ["finding A", "finding B"]}), encoding="utf-8"
+    )
+    assert A._audit_failure_reasons(d, "ignored") == ["finding A", "finding B"]
+
+
+def test_resolved_but_run_failed_is_flagged_not_conflated(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A run that failed LATE can still have written a prediction that
+    resolves the oracle (safe to grade only because ``_reset_run_artifacts``
+    guarantees the prediction is THIS run's). That pass is recorded — but in
+    its own flagged counter, never in the headline ``resolved``."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS[:2])
+    fake = _FakeChild(A, fail={_IDS[0]: "late_fail"})
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+    A.run_all(
+        arm="factory", workers=2, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+    )
+    summary = json.loads((tmp_path / "sweep-factory.json").read_text(encoding="utf-8"))
+    by_id = {r["instance_id"]: r for r in summary["results"]}
+    assert by_id[_IDS[0]]["status"] == "run_failed"
+    assert by_id[_IDS[0]]["oracle_resolved"] is True, "the late prediction WAS graded"
+    assert summary["resolved"] == 1, "only the clean run counts"
+    assert summary["resolved_but_run_failed"] == 1
+    out = capsys.readouterr().out
+    assert "resolved but run FAILED" in out
+
+
+def test_bench_subprocess_turns_a_timeout_into_a_return_code(  # noqa: N803
+    A: Any, tmp_path: Path
+) -> None:
+    """A wedged child must become a row in the summary, not an exception that
+    unwinds the pool."""
+    import sys as _sys
+
+    log = tmp_path / "t.log"
+    rc, tail = A._bench_subprocess(
+        [_sys.executable, "-c", "import time; time.sleep(30)"], timeout_s=1, log_path=log
+    )
+    assert rc == -9
+    assert "timeout" in tail
+    assert "TIMEOUT" in log.read_text(encoding="utf-8")
+
+
+def test_bench_subprocess_leaves_no_orphan_after_a_timeout(  # noqa: N803
+    A: Any, tmp_path: Path
+) -> None:
+    """A timed-out child must be DEAD, not detached.
+
+    ``subprocess.run(timeout=…)`` kills only the direct child; a ``run`` child
+    spawns git, pytest and an OpenHands agent, and an orphaned dev run keeps
+    calling the model — i.e. keeps spending, unattended. Killing the process
+    GROUP is the fix, and this asserts the grandchild dies too.
+    """
+    import os as _os
+    import sys as _sys
+
+    marker = tmp_path / "grandchild.pid"
+    script = (
+        "import os,subprocess,sys,time;"
+        f"p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)']);"
+        f"open({str(marker)!r},'w').write(str(p.pid));"
+        "time.sleep(120)"
+    )
+    rc, _ = A._bench_subprocess(
+        [_sys.executable, "-c", script], timeout_s=3, log_path=tmp_path / "t.log"
+    )
+    assert rc == -9
+    grandchild = int(marker.read_text())
+    for _ in range(50):
+        try:
+            _os.kill(grandchild, 0)
+        except OSError:
+            break
+        __import__("time").sleep(0.1)
+    else:
+        _os.kill(grandchild, 9)
+        pytest.fail(f"grandchild {grandchild} survived the timeout — orphaned spend")
+
+
+def test_abort_all_kills_running_children(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """``abort_all`` is what makes Ctrl-C actually stop the spend."""
+    import sys as _sys
+    import threading as _threading
+    import time as _time
+
+    result: list[tuple[int, str]] = []
+
+    def _worker() -> None:
+        result.append(
+            A._bench_subprocess(
+                [_sys.executable, "-c", "import time; time.sleep(120)"],
+                timeout_s=300,
+                log_path=tmp_path / "a.log",
+            )
+        )
+
+    t = _threading.Thread(target=_worker)
+    t.start()
+    try:
+        for _ in range(50):  # wait for the child to register as live
+            if A._LIVE_CHILDREN:
+                break
+            _time.sleep(0.1)
+        assert A._LIVE_CHILDREN, "child never registered; abort could not reach it"
+        started = _time.monotonic()
+        assert A.abort_all() == 1
+        t.join(timeout=30)
+        assert not t.is_alive()
+        assert _time.monotonic() - started < 30, "abort did not actually stop the child"
+        assert A._ABORT.is_set()
+        # A queued instance must not start once abort is set.
+        assert A._bench_subprocess(["/bin/true"], timeout_s=5, log_path=tmp_path / "b.log") == (
+            -2,
+            "aborted before start",
+        )
+    finally:
+        A._ABORT.clear()
+        t.join(timeout=5)
+    assert result and result[0][0] != 0
+
+
+def test_interrupt_writes_a_partial_summary_and_stops(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ctrl-C mid-sweep: kill the children, keep what finished, do not raise."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS)
+    killed: list[int] = []
+    monkeypatch.setattr(A, "abort_all", lambda: (killed.append(1), 2)[1])
+
+    fake = _FakeChild(A)
+    real_call = fake.__call__
+
+    def _interrupting(argv: list[str], **kw: Any) -> tuple[int, str]:
+        if argv[argv.index("--instance") + 1] == _IDS[2] and argv[2] == "run":
+            raise KeyboardInterrupt
+        return real_call(argv, **kw)
+
+    monkeypatch.setattr(A, "_bench_subprocess", _interrupting)
+
+    A.run_all(  # must NOT propagate
+        arm="factory", workers=1, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+    )
+
+    assert killed, "the interrupt handler did not abort in-flight children"
+    out = capsys.readouterr().out
+    assert "INTERRUPTED" in out
+    summary = json.loads((tmp_path / "sweep-factory.json").read_text(encoding="utf-8"))
+    # The two that completed before the interrupt are kept, not thrown away.
+    assert summary["ok"] == 2
+    assert any(r["status"] == "aborted" for r in summary["results"])
+
+
+def test_bench_subprocess_survives_an_unspawnable_command(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    rc, tail = A._bench_subprocess(
+        ["/nonexistent/binary/xyzzy"], timeout_s=5, log_path=tmp_path / "s.log"
+    )
+    assert rc == -1
+    assert "Error" in tail or "error" in tail
+
+
+# --------------------------------------------------------------------------- #
+# the spend guard
+# --------------------------------------------------------------------------- #
+
+
+def test_caps_come_from_factory_settings(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    p = tmp_path / "factory_settings.yaml"
+    p.write_text("caps:\n  hourly_spend_usd: 40\n  daily_spend_usd: 300\n", encoding="utf-8")
+    assert A.load_spend_caps(p) == (40.0, 300.0)
+
+
+def test_unreadable_settings_fall_back_to_the_TIGHT_caps(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """Fail SAFE. A guard that cannot read its limits must assume the strict
+    ones — treating a missing file as "no cap" is how an unattended sweep
+    spends four figures."""
+    assert A.load_spend_caps(tmp_path / "absent.yaml") == (2.0, 10.0)
+    bad = tmp_path / "broken.yaml"
+    bad.write_text("caps: [this is not a mapping\n", encoding="utf-8")
+    assert A.load_spend_caps(bad) == (2.0, 10.0)
+
+
+def test_a_small_sweep_is_allowed(A: Any) -> None:  # noqa: N803
+    """6 instances at $3 is $18 total: it cannot breach a $40/h cap however
+    many workers run it, because the whole sweep costs less than the cap."""
+    total, peak, refusal = A.spend_guard(
+        n_instances=6, workers=4, usd_per_instance=3.0, hours_per_instance=0.05,
+        hourly_cap=40.0, daily_cap=300.0,
+    )
+    assert refusal is None
+    assert total == 18.0 and peak == 18.0
+
+
+def test_a_big_parallel_sweep_is_refused_on_the_hourly_cap(A: Any) -> None:  # noqa: N803
+    total, peak, refusal = A.spend_guard(
+        n_instances=100, workers=4, usd_per_instance=3.0, hours_per_instance=0.05,
+        hourly_cap=40.0, daily_cap=1000.0,
+    )
+    assert refusal is not None
+    assert "hourly_spend_usd" in refusal
+    assert peak > 40.0 and total == 300.0
+
+
+def test_the_daily_cap_is_checked_too(A: Any) -> None:  # noqa: N803
+    _, _, refusal = A.spend_guard(
+        n_instances=100, workers=1, usd_per_instance=3.0, hours_per_instance=0.05,
+        hourly_cap=10_000.0, daily_cap=250.0,
+    )
+    assert refusal is not None and "daily_spend_usd" in refusal
+
+
+def test_refusal_says_when_fewer_workers_would_not_help(A: Any) -> None:  # noqa: N803
+    """An instance costing $60/h all by itself is not a parallelism problem.
+    Advising "--workers 0" would be nonsense; say the true thing instead."""
+    _, _, refusal = A.spend_guard(
+        n_instances=100, workers=8, usd_per_instance=3.0, hours_per_instance=0.05,
+        hourly_cap=40.0, daily_cap=1000.0,
+    )
+    assert refusal is not None
+    assert "even ONE worker" in refusal
+    assert "--workers 0" not in refusal
+
+
+def test_refusal_suggests_a_worker_count_that_fits(A: Any) -> None:  # noqa: N803
+    _, _, refusal = A.spend_guard(
+        n_instances=100, workers=16, usd_per_instance=1.0, hours_per_instance=0.25,
+        hourly_cap=12.0, daily_cap=1000.0,
+    )
+    assert refusal is not None and "--workers 3" in refusal
+
+
+def test_sweep_refuses_to_start_over_cap_and_spends_nothing(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal must happen BEFORE the pool starts. A guard that fires after
+    the first worker has already burned $3 is not a guard."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS)
+    monkeypatch.setattr(A, "load_spend_caps", lambda *a, **k: (0.5, 1.0))
+    fake = _FakeChild(A)
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+    with pytest.raises(SystemExit, match="REFUSING TO START"):
+        A.run_all(
+            arm="factory", workers=4, instances=None, only_working=False,
+            max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+        )
+    assert fake.calls == [], "the guard let work start before refusing"
+
+
+def test_force_over_cap_is_explicit_and_loud(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Exceeding a cap is allowed only by a deliberate flag, and never quietly."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS[:2])
+    monkeypatch.setattr(A, "load_spend_caps", lambda *a, **k: (0.5, 1.0))
+    monkeypatch.setattr(A, "_bench_subprocess", _FakeChild(A))
+    A.run_all(
+        arm="factory", workers=2, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=True,
+    )
+    out = capsys.readouterr().out
+    assert "WARNING" in out and "proceeding over cap" in out
+
+
+def test_cost_estimate_prefers_measured_runs_and_errs_high(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gate on the real artifact: use what prior runs actually cost. Take the
+    MAX cost and the MIN duration, because both push the projected burn rate
+    up, which is the fail-safe direction for a guard that refuses."""
+    runs = tmp_path / "runs"
+    for n, (cost, wall) in enumerate([(1.0, 600.0), (4.0, 120.0)]):
+        d = runs / f"inst{n}" / "factory"
+        d.mkdir(parents=True)
+        (d / "result.json").write_text(
+            json.dumps({"cost_usd": cost, "wall_clock_s": wall}), encoding="utf-8"
+        )
+    monkeypatch.setattr(A, "RUNS_DIR", runs)
+    usd, hours, source = A.estimate_instance_cost("factory")
+    assert usd == 4.0
+    assert hours == pytest.approx(120.0 / 3600.0)
+    assert "measured" in source
+
+    # No prior runs for this arm -> the documented conservative default.
+    usd, hours, source = A.estimate_instance_cost("bare")
+    assert usd == A._DEFAULT_COST_USD["bare"]
+    assert "default" in source
+
+
+# --------------------------------------------------------------------------- #
+# readable interleaved output
+# --------------------------------------------------------------------------- #
+
+
+def test_progress_lines_never_interleave_partially(A: Any) -> None:  # noqa: N803
+    """Workers finish concurrently, so the ONLY guarantee that matters is that
+    a line is written whole. Assert it at the write layer: every ``_emit`` must
+    reach stdout as a single ``write`` call."""
+    import threading as _threading
+
+    writes: list[str] = []
+
+    class _Spy:
+        def write(self, s: str) -> int:
+            writes.append(s)
+            return len(s)
+
+        def flush(self) -> None:
+            pass
+
+    import sys as _sys
+
+    real, _sys.stdout = _sys.stdout, _Spy()  # type: ignore[assignment]
+    try:
+        threads = [
+            _threading.Thread(target=A._emit, args=(f"line-{i}" * 20,)) for i in range(40)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        _sys.stdout = real
+    assert len(writes) == 40, "a line was split across multiple writes"
+    assert all(w.endswith("\n") and w.count("\n") == 1 for w in writes)
+
+
+def test_progress_line_reports_the_four_required_fields(A: Any) -> None:  # noqa: N803
+    line = A._progress_line(
+        3,
+        6,
+        {
+            "instance_id": "instance_qutebrowser__qutebrowser-0833b5f6",
+            "status": "ok",
+            "final_state": "reviewer_done",
+            "tokens_in": 560580,
+            "tokens_out": 4998,
+            "oracle_resolved": True,
+            "outcome": "resolved",
+            "sweep_wall_s": 102.7,
+        },
+    )
+    assert "\n" not in line
+    assert "instance_qutebrowser__qutebrowser-0833b5f6" in line
+    assert "reviewer_done" in line
+    assert "560,580" in line and "4,998" in line
+    assert "PASS" in line and "resolved" in line
+    assert "[  3/6" in line
+
+
+def test_cli_wires_run_all_through(A: Any, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: N803
+    """Guards against argparse drift — a flag that parses but reaches nothing."""
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(A, "_load_env", lambda: None)
+    monkeypatch.setattr(A, "run_all", lambda **kw: seen.update(kw))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "swebench_adapter.py", "run-all", "--arm", "bare", "--workers", "7",
+            "--instances", "a, b ,", "--only-working", "--force-over-cap",
+            "--timeout-s", "11", "--grade-timeout-s", "12", "--max-steps", "3",
+            "--dry-run",
+        ],
+    )
+    A.main()
+    assert seen == {
+        "arm": "bare",
+        "workers": 7,
+        "instances": ["a", "b"],
+        "only_working": True,
+        "max_steps": 3,
+        "run_timeout_s": 11,
+        "grade_timeout_s": 12,
+        "force_over_cap": True,
+        "dry_run": True,
+    }
+
+
+def test_cli_run_all_defaults_are_safe(A: Any, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: N803
+    """Never over-cap by default, and never invent an instance list."""
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(A, "_load_env", lambda: None)
+    monkeypatch.setattr(A, "run_all", lambda **kw: seen.update(kw))
+    monkeypatch.setattr(sys, "argv", ["swebench_adapter.py", "run-all"])
+    A.main()
+    assert seen["force_over_cap"] is False
+    assert seen["only_working"] is False
+    assert seen["instances"] is None
+    assert seen["arm"] == "factory"
+    assert seen["dry_run"] is False
+
+
+# --------------------------------------------------------------------------- #
+# --dry-run must be a PURE preview
+# --------------------------------------------------------------------------- #
+
+
+def test_dry_run_spawns_nothing_and_writes_nothing(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """This repo has been bitten by a "dry-run" that did real work (pm-sync,
+    2026-07-20 — it spawned live dispatchable stories). Assert the absence of
+    side effects, not just the presence of output."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS)
+    fake = _FakeChild(A)
+    monkeypatch.setattr(A, "_bench_subprocess", fake)
+    before = sorted(p.name for p in tmp_path.iterdir())
+
+    A.run_all(
+        arm="factory", workers=3, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+        dry_run=True,
+    )
+
+    assert fake.calls == []
+    assert sorted(p.name for p in tmp_path.iterdir()) == before, "dry-run wrote to disk"
+    assert not (tmp_path / "runs").exists(), "dry-run created run directories"
+    assert not (tmp_path / "sweep-factory.json").exists()
+    out = capsys.readouterr().out
+    assert "nothing was executed and nothing was written" in out
+    for iid in _IDS:
+        assert iid in out
+
+
+def test_dry_run_previews_a_refusal_instead_of_raising(  # noqa: N803
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """You must be able to preview a sweep that would be refused — that is
+    exactly when you most want to see the numbers."""
+    _sweep_env(A, tmp_path, monkeypatch, _IDS)
+    monkeypatch.setattr(A, "load_spend_caps", lambda *a, **k: (0.5, 1.0))
+    monkeypatch.setattr(A, "_bench_subprocess", _FakeChild(A))
+    A.run_all(
+        arm="factory", workers=4, instances=None, only_working=False,
+        max_steps=1, run_timeout_s=10, grade_timeout_s=10, force_over_cap=False,
+        dry_run=True,
+    )
+    out = capsys.readouterr().out
+    assert "WOULD REFUSE TO START" in out
+
+
+def test_progress_line_surfaces_a_failure(A: Any) -> None:  # noqa: N803
+    line = A._progress_line(
+        1,
+        2,
+        {
+            "instance_id": "instance_x",
+            "status": "run_failed",
+            "error": "image unavailable",
+            "final_state": "—",
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "oracle_resolved": None,
+            "outcome": "—",
+            "sweep_wall_s": 1.0,
+        },
+    )
+    assert "!run_failed" in line and "image unavailable" in line
+    assert "\n" not in line
