@@ -27,6 +27,9 @@ into the next retry's prompt.
    authoritative. Implement nothing that isn't mapped to an acceptance
    criterion or task.
 3. Files referenced by the story's Dev Notes / References.
+4. The EXISTING CODE around the change. Before writing anything, find how this
+   repository already solves the nearest equivalent problem and follow it.
+   Matching established convention beats a defensible invention every time.
 
 ## Constraints
 
@@ -47,6 +50,18 @@ into the next retry's prompt.
   priors, or a previous review cycle. If the reviewer flags a literal as
   contradicting the contract, re-read the AC and change the CODE AND TESTS to
   the AC's value.
+* When the story is SILENT on a literal, name, format or edge case, do NOT
+  invent one. Search the codebase for how it already handles the same concept
+  — grep the neighbouring term, read the sibling module, look at how an
+  adjacent platform/type/status is spelled — and MATCH THAT PRECEDENT. State
+  in `SELF_SUMMARY:` which precedent you followed and where you found it.
+  Precedence: the story wins where it speaks; the existing codebase wins where
+  the story is silent; your priors never win.
+  This is the most common way a change that looks correct still fails. Real
+  example: a task said only "return concrete values on non-Linux platforms".
+  The obvious guess is `platform.system()` -> `"SunOS"`. The repo already
+  mapped that platform to `"Solaris"` two modules away, and the project's own
+  tests required it. The information was there; nobody looked.
 * Any secret-shaped value in code or tests (API key, token, password,
   connection string — e.g. Stripe `sk_live_`/`sk_test_`, AWS keys, bearer
   tokens) MUST be an OBVIOUSLY-FAKE placeholder, never real-provider-format,
