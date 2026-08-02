@@ -1691,7 +1691,114 @@ def _scan_prompt_bodies(state_root: Path) -> tuple[list[str], int]:
     return failures, reviewer_seen
 
 
-def audit(instance_id: str, arm: str) -> None:
+def _scan_response_bodies(state_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return ``(records, scan_warnings)`` from the response-body stream.
+
+    Response coverage is a WARNINGS-class artifact by contract — so an
+    UNREADABLE stream must degrade to a warning too, never crash ``audit()``
+    before it writes ``audit.json`` (which would invalidate the run and
+    promote a warnings-class artifact to failure-class through the back
+    door). Contrast ``_scan_prompt_bodies``, which stays strict: prompt
+    bodies are legitimately failure-class.
+    """
+    records: list[dict[str, Any]] = []
+    scan_warnings: list[str] = []
+    for f in sorted((state_root / "state" / "events").glob("response_bodies.ndjson*")):
+        try:
+            with f.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if rec.get("event") == "response_body":
+                        records.append(rec)
+        except OSError as exc:
+            scan_warnings.append(
+                f"response-body stream {f.name} is unreadable ({exc}) — "
+                "response coverage for this segment is unknown"
+            )
+    return records, scan_warnings
+
+
+def _trajectory_files(state_root: Path) -> list[Path]:
+    return sorted((state_root / "state" / "events" / "trajectories").glob("*.ndjson"))
+
+
+_SHOW_TRAJ_LAST_N = 5
+
+
+def _trajectory_assistant_messages(path: Path) -> list[str]:
+    """Extract the agent's message texts from a copied-out trajectory ndjson.
+
+    OpenHands persists ``llm_message.content`` as a list of content parts;
+    tolerate string content and missing fields — this is a viewer, not a
+    validator.
+    """
+    messages: list[str] = []
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(ev, dict) or ev.get("source") != "agent":
+                    continue
+                msg = ev.get("llm_message") or ev.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                content = msg.get("content")
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, list):
+                    text = "\n".join(
+                        str(c.get("text", "")) for c in content if isinstance(c, dict)
+                    )
+                else:
+                    continue
+                if text.strip():
+                    messages.append(text.strip())
+    except OSError:
+        return []
+    return messages
+
+
+def _show_responses(state_root: Path, responses: list[dict[str, Any]]) -> None:
+    """Print the reviewer's response text and the tail of the newest dev
+    trajectory, so an operator can read what happened without spelunking."""
+    reviewer = [r for r in responses if r.get("persona") == "reviewer"]
+    print(f"--- reviewer responses ({len(reviewer)}) ---")
+    for r in reviewer:
+        print(f"[{r.get('ts', '?')}] story={r.get('story_id')}")
+        print(str(r.get("response", "")))
+        print()
+    trajs = _trajectory_files(state_root)
+    if not trajs:
+        print("--- no dev trajectory captured ---")
+        return
+
+    def _mtime(p: Path) -> float:
+        # Lexicographic order lies here: retry-suffixed names sort before
+        # their base file and "10-1" sorts before "9-1". mtime is the truth
+        # for "newest"; a vanished file counts as oldest rather than crashing.
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    newest = max(trajs, key=_mtime)
+    msgs = _trajectory_assistant_messages(newest)
+    print(
+        f"--- last {min(_SHOW_TRAJ_LAST_N, len(msgs))} of {len(msgs)} dev assistant "
+        f"message(s) ({newest.name}) ---"
+    )
+    for m in msgs[-_SHOW_TRAJ_LAST_N:]:
+        print(m)
+        print("~" * 40)
+
+
+def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     """Audit one run's artifacts end-to-end; exit non-zero on ANY failure.
 
     Checks, in order:
@@ -1702,6 +1809,11 @@ def audit(instance_id: str, arm: str) -> None:
     4. the first dev call did not fast-fail (failed in under ~5s) — the
        unrunnable-environment signature;
     5. a failed collect precheck recorded in result.json fails the audit.
+
+    Response-side coverage (response bodies per call; a trajectory per dev
+    call) is reported as WARNINGS, not failures: a size-capped trajectory or
+    disabled capture must not invalidate a run. ``show_responses`` also prints
+    the reviewer's response text and the tail of the newest dev trajectory.
 
     FAIL SAFE: a missing artifact (no result.json, no DB, no prompt bodies) is
     an audit FAILURE, never a pass — an unauditable run is an invalid run.
@@ -1743,13 +1855,53 @@ def audit(instance_id: str, arm: str) -> None:
         except Exception as exc:  # noqa: BLE001 — an unreadable ledger is a finding
             failures.append(f"Run ledger unreadable: {type(exc).__name__}: {exc}")
 
+    # Response-side coverage: per persona call, was the model's response body
+    # (and for dev, an OpenHands trajectory) captured? Missing coverage is a
+    # WARNING, never a failure — a size-capped or scope-disabled capture must
+    # not invalidate an otherwise-sound run.
+    responses, warnings = _scan_response_bodies(state_root)
+    resp_counts: dict[str, int] = {}
+    for r in responses:
+        p = str(r.get("persona", ""))
+        resp_counts[p] = resp_counts.get(p, 0) + 1
+    traj_files = _trajectory_files(state_root)
+
     print(f"=== audit {instance_id} / {arm} ===")
+    resp_seen: dict[str, int] = {}
+    traj_seen = 0
     for c in calls:
-        print(
-            f"  {c['ts']}  {c['persona']:<12} story={c['story_id']} "
+        persona = str(c["persona"])
+        resp_seen[persona] = resp_seen.get(persona, 0) + 1
+        has_resp = resp_seen[persona] <= resp_counts.get(persona, 0)
+        line = (
+            f"  {c['ts']}  {persona:<12} story={c['story_id']} "
             f"in={c['tokens_in']} out={c['tokens_out']} cached={c['cached_input_tokens']} "
             f"cost=${float(c['cost_usd'] or 0):.4f} dur={c['duration_s']}s "
-            f"ok={bool(c['success'])}"
+            f"ok={bool(c['success'])} resp={'yes' if has_resp else 'NO'}"
+        )
+        if persona == "dev":
+            traj_seen += 1
+            line += f" traj={'yes' if traj_seen <= len(traj_files) else 'NO'}"
+        print(line)
+
+    call_counts: dict[str, int] = {}
+    for c in calls:
+        p = str(c["persona"])
+        call_counts[p] = call_counts.get(p, 0) + 1
+    for persona, n_calls in sorted(call_counts.items()):
+        n_resp = resp_counts.get(persona, 0)
+        if n_resp < n_calls:
+            warnings.append(
+                f"{persona}: {n_calls} call(s) but only {n_resp} response "
+                "body(ies) captured — response_bodies.ndjson is incomplete "
+                "(rotated away, capture disabled, or a failed call)"
+            )
+    dev_calls_n = call_counts.get("dev", 0)
+    if dev_calls_n and len(traj_files) < dev_calls_n:
+        warnings.append(
+            f"dev: {dev_calls_n} call(s) but only {len(traj_files)} trajectory "
+            "file(s) under state/events/trajectories — the agent's reasoning "
+            "trail is incomplete"
         )
 
     # 2. ledger vs result.json — the number every A/B is measured against.
@@ -1824,6 +1976,7 @@ def audit(instance_id: str, arm: str) -> None:
         "audited_at": datetime.now(UTC).isoformat(),
         "ok": not failures,
         "failures": failures,
+        "warnings": warnings,
         "persona_calls": calls,
         "ledger_cost_usd": ledger_cost,
         "ledger_tokens_in": ledger_in,
@@ -1832,6 +1985,10 @@ def audit(instance_id: str, arm: str) -> None:
     }
     out = run_dir / "audit.json"
     out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if show_responses:
+        _show_responses(state_root, responses)
+    for w in warnings:
+        print(f"AUDIT WARN: {w}")
     if failures:
         for f in failures:
             print(f"AUDIT FAIL: {f}")
@@ -2981,6 +3138,12 @@ def main() -> None:
     )
     p.add_argument("--instance", required=True)
     p.add_argument("--arm", default="factory", choices=["factory", "bare"])
+    p.add_argument(
+        "--show-responses",
+        action="store_true",
+        help="also print the reviewer's response text and the last few dev "
+             "assistant messages from the captured trajectory",
+    )
 
     sub.add_parser("report")
 
@@ -3011,7 +3174,7 @@ def main() -> None:
     elif args.cmd == "selftest":
         selftest(args.instance, timeout_s=args.timeout_s)
     elif args.cmd == "audit":
-        audit(args.instance, args.arm)
+        audit(args.instance, args.arm, show_responses=args.show_responses)
     elif args.cmd == "report":
         report()
 

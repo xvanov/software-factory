@@ -795,6 +795,8 @@ def _mk_audit_run(
     bodies: list[dict[str, Any]] | None = None,
     write_db: bool = True,
     write_bodies: bool = True,
+    responses: list[dict[str, Any]] | None = None,
+    trajectories: int = 0,
 ) -> None:
     """Fabricate a run directory shaped like a real one."""
     import sqlite3
@@ -832,6 +834,27 @@ def _mk_audit_run(
             ]
         (state_root / "state" / "events" / "prompt_bodies.ndjson").write_text(
             "\n".join(json.dumps(b) for b in bodies) + "\n", encoding="utf-8"
+        )
+
+    if responses is not None:
+        (state_root / "state" / "events" / "response_bodies.ndjson").write_text(
+            "\n".join(json.dumps(r) for r in responses) + "\n", encoding="utf-8"
+        )
+
+    for i in range(trajectories):
+        traj_dir = state_root / "state" / "events" / "trajectories"
+        traj_dir.mkdir(parents=True, exist_ok=True)
+        (traj_dir / f"1-{i + 1}.ndjson").write_text(
+            json.dumps(
+                {
+                    "source": "agent",
+                    "llm_message": {
+                        "content": [{"type": "text", "text": f"dev reasoning step {i}"}]
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
         )
 
 
@@ -1031,6 +1054,147 @@ def test_audit_fails_a_run_with_a_recorded_failed_precheck(
         A.audit("inst1", "factory")
     failures = _audit_json(tmp_path)["failures"]
     assert any("precheck" in f for f in failures), failures
+
+
+# --------------------------------------------------------------------------- #
+# audit — response-side coverage is a WARNING, never a failure
+# --------------------------------------------------------------------------- #
+
+_RESPONSE_ROWS = [
+    {"event": "response_body", "persona": "dev", "story_id": 1, "mode": "sandbox",
+     "response": "SELF_SUMMARY: fixed it.", "ts": "t0"},
+    {"event": "response_body", "persona": "reviewer", "story_id": 1, "mode": "text",
+     "response": "APPROVED — no findings.", "ts": "t1"},
+]
+
+
+def test_audit_warns_but_passes_when_response_bodies_are_missing(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]  # noqa: N803
+) -> None:
+    """A run without response capture (older factory, capture off, capped
+    trajectory) stays VALID — invalidating it would fail every historical
+    run — but the gap must be loud."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path)  # prompt bodies only, no responses, no trajectories
+    A.audit("inst1", "factory")  # must not raise
+    data = _audit_json(tmp_path)
+    assert data["ok"] is True
+    assert any("response" in w for w in data["warnings"]), data["warnings"]
+    assert any("trajectory" in w for w in data["warnings"]), data["warnings"]
+    out = capsys.readouterr().out
+    assert "AUDIT WARN" in out
+    assert "resp=NO" in out
+    assert "traj=NO" in out
+
+
+def test_audit_is_warning_free_when_responses_and_trajectory_are_present(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]  # noqa: N803
+) -> None:
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS, trajectories=1)
+    A.audit("inst1", "factory")
+    data = _audit_json(tmp_path)
+    assert data["ok"] is True
+    assert data["warnings"] == []
+    out = capsys.readouterr().out
+    assert "resp=NO" not in out
+    assert "traj=yes" in out
+
+
+def test_audit_warns_when_only_the_dev_trajectory_is_missing(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS, trajectories=0)
+    A.audit("inst1", "factory")
+    warnings = _audit_json(tmp_path)["warnings"]
+    assert len(warnings) == 1
+    assert "trajectory" in warnings[0]
+
+
+def test_audit_show_responses_prints_the_reviewer_text_and_dev_messages(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]  # noqa: N803
+) -> None:
+    """The operator-readability contract: what the reviewer said and what dev
+    was thinking, without spelunking through ndjson by hand."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS, trajectories=1)
+    A.audit("inst1", "factory", show_responses=True)
+    out = capsys.readouterr().out
+    assert "APPROVED — no findings." in out
+    assert "dev reasoning step 0" in out
+
+
+def test_audit_survives_an_unreadable_response_stream_with_a_warning(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """SHIP-BLOCKER class: response coverage is warnings-class by contract, so
+    an UNREADABLE response stream must degrade to a warning — an unhandled
+    OSError here would crash audit() before audit.json is written and
+    invalidate the whole run through the back door."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, trajectories=1)
+    state_root = tmp_path / "inst1" / "factory" / "root"
+    # A directory matching the stream glob raises IsADirectoryError (an
+    # OSError) on open() for ANY uid — unlike chmod 0, which root ignores.
+    (state_root / "state" / "events" / "response_bodies.ndjson").mkdir()
+    A.audit("inst1", "factory")  # must not raise
+    data = _audit_json(tmp_path)
+    assert data["ok"] is True
+    assert any("unreadable" in w for w in data["warnings"]), data["warnings"]
+
+
+def test_show_responses_picks_the_newest_trajectory_by_mtime(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]  # noqa: N803
+) -> None:
+    """Lexicographic 'newest' is wrong twice over: retry-suffixed names sort
+    before their base file, and '10-1' sorts before '9-1'. mtime is truth."""
+    import os
+
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS)
+    traj_dir = tmp_path / "inst1" / "factory" / "root" / "state" / "events" / "trajectories"
+    traj_dir.mkdir(parents=True)
+
+    def _traj(name: str, text: str, mtime: int) -> None:
+        p = traj_dir / name
+        p.write_text(
+            json.dumps(
+                {"source": "agent",
+                 "llm_message": {"content": [{"type": "text", "text": text}]}}
+            ) + "\n",
+            encoding="utf-8",
+        )
+        os.utime(p, (mtime, mtime))
+
+    # '9-1' is the newest run but sorts LAST lexicographically in this set
+    # only by accident — pin the trap: '10-1' and a retry-suffixed '5-1-...'
+    # both sort after/around it depending on the set. mtimes disagree with
+    # every lexicographic ordering here.
+    _traj("5-1.ndjson", "from 5-1", 1000)
+    _traj("5-1-1700000000000.ndjson", "from 5-1 retry", 2000)
+    _traj("10-1.ndjson", "from 10-1", 3000)
+    _traj("9-1.ndjson", "from 9-1 NEWEST", 4000)
+
+    A.audit("inst1", "factory", show_responses=True)
+    out = capsys.readouterr().out
+    assert "from 9-1 NEWEST" in out
+    assert "from 10-1" not in out
+
+
+def test_audit_response_warning_does_not_mask_a_real_failure(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """Warnings and failures are separate channels: a run that is BOTH
+    uncaptured and cost-mismatched still fails."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, result={"cost_usd": 0.10, "tokens_in": 150, "tokens_out": 15})
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "factory")
+    data = _audit_json(tmp_path)
+    assert data["ok"] is False
+    assert any("cost mismatch" in f for f in data["failures"])
+    assert any("response" in w for w in data["warnings"])
 
 
 def test_story_slug_is_stable_across_processes(A: Any) -> None:  # noqa: N803
