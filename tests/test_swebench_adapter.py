@@ -662,28 +662,41 @@ def test_collect_only_command_keeps_the_real_environment(A: Any) -> None:  # noq
     assert "--collect-only" not in A.instance_test_command(_INST)
 
 
-def test_precheck_fails_loudly_when_collection_fails(
-    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
-) -> None:
-    """Mocked at the subprocess boundary: a non-zero collect exit must come
-    back as a failure carrying the output tail."""
+def _mk_targets(repo: Path, *rels: str) -> None:
+    for rel in rels:
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("def test_x():\n    pass\n", encoding="utf-8")
+
+
+def _fake_collect(monkeypatch: pytest.MonkeyPatch, A: Any, rc: int, out: str) -> dict[str, Any]:  # noqa: N803
     from types import SimpleNamespace
 
     seen: dict[str, Any] = {}
 
     def fake_run(cmd: Any, **kw: Any) -> Any:
         seen["cmd"], seen["kw"] = cmd, kw
-        return SimpleNamespace(
-            returncode=2,
-            stdout="",
-            stderr="ModuleNotFoundError: No module named 'infogami'",
-        )
+        return SimpleNamespace(returncode=rc, stdout=out, stderr="")
 
     monkeypatch.setattr(A.subprocess, "run", fake_run)
-    ok, tail, duration = A._precheck_collect(_INST, tmp_path)
-    assert ok is False
-    assert "infogami" in tail
-    assert duration >= 0
+    return seen
+
+
+def test_precheck_fails_loudly_when_collection_fails(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """The infogami class: targets EXIST but collection dies on a broken
+    import. Mocked at the subprocess boundary; must stay a hard fail."""
+    _mk_targets(tmp_path, "test/units/test_sys_info.py", "test/units/test_other.py")
+    seen = _fake_collect(
+        monkeypatch, A, 2, "ModuleNotFoundError: No module named 'infogami'"
+    )
+    pre = A._precheck_collect(_INST, tmp_path)
+    assert pre["collect_ok"] is False
+    assert pre["mode"] == "existing-targets"
+    assert pre["exit_code"] == 2
+    assert "infogami" in pre["tail"]
+    assert pre["duration_s"] >= 0
     assert "--collect-only" in seen["cmd"]
     assert seen["kw"]["shell"] is True, "must run the docker command verbatim"
     assert seen["kw"]["cwd"] == str(tmp_path), "must mount the run's own clone"
@@ -692,16 +705,73 @@ def test_precheck_fails_loudly_when_collection_fails(
 def test_precheck_passes_when_collection_succeeds(
     A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
 ) -> None:
-    from types import SimpleNamespace
+    _mk_targets(tmp_path, "test/units/test_sys_info.py", "test/units/test_other.py")
+    _fake_collect(monkeypatch, A, 0, "12 tests collected")
+    pre = A._precheck_collect(_INST, tmp_path)
+    assert pre["collect_ok"] is True
+    assert pre["mode"] == "existing-targets"
+    assert sorted(pre["collected_targets"]) == [
+        "test/units/test_other.py", "test/units/test_sys_info.py",
+    ]
+    assert "collected" in pre["tail"]
 
-    monkeypatch.setattr(
-        A.subprocess,
-        "run",
-        lambda cmd, **kw: SimpleNamespace(returncode=0, stdout="12 tests collected", stderr=""),
-    )
-    ok, tail, _ = A._precheck_collect(_INST, tmp_path)
-    assert ok is True
-    assert "collected" in tail
+
+def test_precheck_existing_mode_collects_only_the_targets_that_exist(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """SOME targets exist → strict mode over exactly those; the missing one
+    (which dev will create) must not poison the command with rc 4."""
+    _mk_targets(tmp_path, "test/units/test_sys_info.py")  # test_other.py missing
+    seen = _fake_collect(monkeypatch, A, 0, "ok")
+    pre = A._precheck_collect(_INST, tmp_path)
+    assert pre["mode"] == "existing-targets"
+    assert pre["collected_targets"] == ["test/units/test_sys_info.py"]
+    assert "test_sys_info.py" in seen["cmd"]
+    assert "test_other.py" not in seen["cmd"]
+
+
+def test_precheck_existing_mode_stays_strict_about_rc5(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """rc 5 over targets that EXIST means the suite dev must run collects
+    nothing — that is still a broken setup, not a TDD instance."""
+    _mk_targets(tmp_path, "test/units/test_sys_info.py", "test/units/test_other.py")
+    _fake_collect(monkeypatch, A, 5, "no tests collected")
+    pre = A._precheck_collect(_INST, tmp_path)
+    assert pre["collect_ok"] is False
+    assert pre["mode"] == "existing-targets"
+
+
+def test_precheck_salvages_new_test_file_instances_via_ancestor_env_check(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """The openlibrary-798055 class: NO target exists at base_commit because
+    dev is supposed to CREATE it (legit TDD red). The gate must verify the
+    environment via the nearest existing ancestor dir, and rc 5 (nothing
+    collected there, no errors) must PASS."""
+    (tmp_path / "test" / "units").mkdir(parents=True)  # ancestor exists, files don't
+    seen = _fake_collect(monkeypatch, A, 5, "no tests ran")
+    pre = A._precheck_collect(_INST, tmp_path)
+    assert pre["collect_ok"] is True
+    assert pre["mode"] == "ancestor-env-check"
+    assert pre["collected_targets"] == ["test/units"]
+    assert pre["exit_code"] == 5
+    assert "'test/units'" in seen["cmd"], "must collect the ancestor, not the missing file"
+    assert "test_sys_info.py" not in seen["cmd"]
+
+
+def test_precheck_ancestor_mode_still_hard_fails_on_import_errors(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """Ancestor collection still executes conftest/package imports, so a
+    wrecked environment (rc 2) must stay a hard fail even in salvage mode."""
+    (tmp_path / "test" / "units").mkdir(parents=True)
+    _fake_collect(monkeypatch, A, 2, "ImportError while loading conftest")
+    pre = A._precheck_collect(_INST, tmp_path)
+    assert pre["collect_ok"] is False
+    assert pre["mode"] == "ancestor-env-check"
+    assert pre["exit_code"] == 2
+    assert "conftest" in pre["tail"]
 
 
 # --------------------------------------------------------------------------- #
