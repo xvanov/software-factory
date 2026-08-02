@@ -36,24 +36,15 @@ unsolvable floor; ``grade`` records ``task_broken_*`` separately from
 ``wrong_patch`` so the two are never summed into one "failure" number. Run
 ``selftest`` FIRST and grade only the instances whose gold patch resolves.
 
-KNOWN LIMITATION — the factory arm is not yet fairly measurable
----------------------------------------------------------------
-``run --arm factory`` clones the repo but does NOT install its dependencies,
-so the app's test command fails with ``ModuleNotFoundError`` before dev writes
-anything. Measured on ``ansible__ansible-9a21e2477...``: dev burned two
-attempts on an identical ``No module named 'ansible'`` signature, hit the
-same-signature guard, and blocked with an EMPTY diff after 870k tokens.
-
-That number measures THIS ADAPTER, not the factory, and must not be reported
-as a factory score. The factory's core mechanism is run-until-green; denying
-it a working test environment removes the thing under test. The bare arm is
-unaffected because it never needs to run tests to emit a patch — which is
-also why the two arms are not yet comparable.
-
-Fixing it means giving the dev sandbox an environment with dependencies
-installed — running the arm inside the instance's own image is the obvious
-route, since that image already has them. Until then, only the bare arm's
-numbers here are trustworthy.
+The factory arm needs a WORKING test environment
+-----------------------------------------------
+A bare clone has no dependencies, so ``pytest`` dies with
+``ModuleNotFoundError`` and dev — whose whole mechanism is run-until-green —
+blocks with an empty diff. The app's ``test_command`` therefore runs inside the
+instance's own image with the working tree mounted over ``/app``
+(``instance_test_command``). Measured on ``ansible__ansible-9a21e2477...``:
+empty diff after 870k tokens before, ``reviewer_done`` with a real patch in
+104s / 355k tokens after.
 
 Usage (from the factory root):
   uv run python bench/swebench_adapter.py fetch --language python --limit 10 --seed 20260801
@@ -336,6 +327,20 @@ def assert_no_test_edits(diff_text: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _story_slug(instance_id: str) -> str:
+    """A STABLE slug for an instance.
+
+    Was ``abs(hash(instance_id))``, and Python salts ``hash()`` per process
+    (PYTHONHASHSEED), so every run produced a different slug — hence a
+    different per-story worktree name. Re-running an instance left the previous
+    worktree orphaned in ``state/worktrees/``, and the diff capture below,
+    which took ``sorted(glob(...))[0]``, could then grade the WRONG run's tree
+    (or one whose git metadata pointed at a deleted ``.git``). Identity must
+    never ride on a value that changes between processes.
+    """
+    return "swe-" + hashlib.sha256(instance_id.encode("utf-8")).hexdigest()[:10]
+
+
 def _run_dir(instance_id: str, arm: str) -> Path:
     d = RUNS_DIR / instance_id / arm
     d.mkdir(parents=True, exist_ok=True)
@@ -389,13 +394,148 @@ _STORY_TEMPLATE = """# {instance_id}
 
 ## Definition of done
 
-Change the PRODUCTION code in this repository so the described behaviour is
-correct. A hidden test suite that you cannot see will judge the result.
+Change the production code in this repository so the described behaviour is
+correct.
 
-Do NOT add, edit, delete or rename any test file. Test-file edits are stripped
-before grading, so time spent on them is wasted and any behaviour that only
-works because a test changed will score as a failure.
+Work exactly as you normally do: write tests that express the required
+behaviour, then make them pass. A separate held-out test suite, written by the
+project's maintainers and which you will never see, is the final judge.
+
+## Where to put tests
+
+Put new tests in the files or directories the test command below already
+targets, so your own runs execute them.
+
+Your test edits are removed from the diff before the held-out suite runs, so
+they cannot affect the verdict either way — they are your feedback loop, not
+the grade. Only your production-code changes are judged. This means a test
+that merely asserts whatever your implementation happens to do buys nothing:
+make the tests encode what the TASK requires.
+
+## Running the tests
+
+This checkout has NO dependencies installed, so a bare `pytest` fails with
+`ModuleNotFoundError`. Run this exact command from the repo root — it executes
+inside an image that has the dependencies, with your working tree mounted so it
+tests YOUR edits:
+
+```
+{test_command}
+```
 """
+
+
+def _test_file_paths(entries: list[str]) -> list[str]:
+    """Reduce test entries to distinct FILE paths, dropping any ``::node_id``.
+
+    ``selected_test_files_to_run`` does not contain file paths despite the
+    name — it contains the oracle's ``fail_to_pass`` NODE IDS, e.g.
+    ``test/.../test_sys_info.py::test_get_distribution_not_linux[SunOS-Solaris]``.
+
+    Handing those to dev is wrong twice over:
+
+    1. It LEAKS the oracle. The hidden suite's test names are exactly what the
+       arm under test must not see.
+    2. Those tests do not exist in dev's tree — they are added by the test
+       patch, which is deliberately withheld. Every run died on
+       ``ERROR: not found``, so dev could never get a green signal and blocked
+       on an identical failure signature.
+
+    The file itself DOES exist at the base commit, and running it exercises
+    the pre-existing tests: a real regression signal, with no oracle leak.
+    """
+    seen: dict[str, None] = {}
+    for entry in entries:
+        path = entry.split("::", 1)[0].strip()
+        if path:
+            seen.setdefault(path, None)
+    return list(seen)
+
+
+def _existing_targets(paths: list[str], repo: Path) -> list[str]:
+    """Keep only test targets that EXIST in the arm's tree.
+
+    Some instances add a brand-new test file, so the oracle's target does not
+    exist at ``base_commit`` — and the test patch that creates it is
+    deliberately withheld from the arm. Pointing dev at it produces
+    ``ERROR: file or directory not found``, no green run is ever possible, and
+    dev burns its whole retry budget on a target that cannot exist. Observed on
+    ``openlibrary-798055d1`` (``scripts/tests/test_import_standard_ebooks.py``).
+
+    A missing file falls back to its nearest existing ancestor DIRECTORY, which
+    keeps the run pointed at relevant tests instead of the whole suite. If
+    nothing survives, the caller runs the repo default.
+    """
+    out: dict[str, None] = {}
+    for rel in paths:
+        candidate = repo / rel
+        if candidate.exists():
+            out.setdefault(rel, None)
+            continue
+        parent = candidate.parent
+        while parent != repo and parent.is_relative_to(repo):
+            if parent.is_dir():
+                out.setdefault(str(parent.relative_to(repo)), None)
+                break
+            parent = parent.parent
+    return list(out)
+
+
+def instance_test_command(
+    inst: dict[str, Any], test_files: list[str] | None = None, repo: Path | None = None
+) -> str:
+    """The app's test command, run INSIDE the instance's official image.
+
+    A bare ``git clone`` has no dependencies installed, so plain
+    ``python -m pytest`` dies with ``ModuleNotFoundError`` before dev writes a
+    line. Measured: dev burned two attempts on an identical
+    ``No module named 'ansible'`` signature, hit the same-signature guard, and
+    blocked with an EMPTY diff after 870k tokens. That measured the adapter,
+    not the factory — run-until-green is the factory's whole mechanism, and it
+    cannot run anything without a working environment.
+
+    The instance's image already has the dependencies, so mount the working
+    tree over its ``/app`` and run there. Imports resolve against the image's
+    site-packages while the CODE under test is the dev's own edits.
+
+    ``$PWD`` (not a baked path) because the chain runs this from a per-story
+    worktree that does not exist when the config is written. OpenHands uses a
+    ``LocalWorkspace``, so the dev agent's shell is on the host and can reach
+    docker; the post-run ``_run_pytest`` gate shells out the same way.
+
+    The container must not litter the host tree with ROOT-OWNED files, or the
+    next run cannot even delete its own workspace ("Permission denied" on
+    ``.pytest_cache``, observed). Three guards: run as the invoking uid/gid,
+    disable pytest's cache plugin, and suppress ``.pyc`` writes. ``HOME=/tmp``
+    because the mapped user has no home inside the image.
+    """
+    entries = test_files if test_files is not None else _as_list(
+        inst.get("selected_test_files_to_run")
+    )
+    files = _test_file_paths(entries)
+    target = " ".join(_shq(t) for t in files) if files else ""
+    inner = f"python -m pytest -p no:cacheprovider {target}".strip()
+    image = f"jefzda/sweap-images:{inst['dockerhub_tag']}"
+    return (
+        'docker run --rm -v "$PWD":/app -w /app '
+        '--user "$(id -u):$(id -g)" -e HOME=/tmp '
+        "-e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash "
+        f"{image} -lc {_shq(inner)}"
+    )
+
+
+def _ensure_image(inst: dict[str, Any], timeout_s: int = 1800) -> bool:
+    """Pull the instance image if absent. Returns False when unavailable."""
+    image = f"jefzda/sweap-images:{inst['dockerhub_tag']}"
+    if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0:
+        return True
+    print(f"pulling {image} …", flush=True)
+    return (
+        subprocess.run(
+            ["docker", "pull", image], capture_output=True, text=True, timeout=timeout_s
+        ).returncode
+        == 0
+    )
 
 
 def _build_bench_root(inst: dict[str, Any], repo: Path) -> Path:
@@ -413,11 +553,7 @@ def _build_bench_root(inst: dict[str, Any], repo: Path) -> Path:
     # pytest reads as a nonexistent path — every dev run would have seen a
     # collection error instead of the real suite.
     test_files = _as_list(inst.get("selected_test_files_to_run"))
-    test_cmd = (
-        f"python -m pytest {' '.join(_shq(t) for t in test_files)}"
-        if test_files
-        else "python -m pytest"
-    )
+    test_cmd = instance_test_command(inst, test_files, repo=repo)
     cfg = {
         "name": "swebench",
         "repo": f"swebench/{inst['instance_id']}",
@@ -443,6 +579,11 @@ def _build_bench_root(inst: dict[str, Any], repo: Path) -> Path:
 
 def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     inst = _instance(instance_id)
+    if not _ensure_image(inst):
+        raise SystemExit(
+            f"image for {instance_id} is unavailable; the factory arm needs it for "
+            "a working test environment (see instance_test_command)"
+        )
     run_dir = _run_dir(instance_id, "factory")
     repo = run_dir / "repo"
     _clone(inst, repo)
@@ -464,7 +605,9 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     (root / "apps" / "swebench" / story_rel).parent.mkdir(parents=True, exist_ok=True)
     (root / "apps" / "swebench" / story_rel).write_text(
         _STORY_TEMPLATE.format(
-            instance_id=instance_id, statement=inst["problem_statement"]
+            instance_id=instance_id,
+            statement=inst["problem_statement"],
+            test_command=instance_test_command(inst, repo=repo),
         ),
         encoding="utf-8",
     )
@@ -475,7 +618,7 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         direction_id="swebench",
         app="swebench",
         title=instance_id[:80],
-        slug=f"swe-{abs(hash(instance_id)) % 10**8}",
+        slug=_story_slug(instance_id),
         scope="backend",
         state=StoryState.SM_DONE.value,
         github_issue_number=SWE_ISSUE_BASE,
@@ -525,8 +668,13 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         assert final is not None
         runs = list(s.exec(select(Run).where(Run.story_id == story_id)).all())
 
-    candidates = sorted((root / "state" / "worktrees").glob("swebench-*"))
-    graded_wt = candidates[0] if candidates else repo
+    # Match this story's OWN worktree. A glob[0] would happily grade a stale
+    # directory left by an earlier run of the same instance.
+    slug = _story_slug(instance_id)
+    matches = [
+        p for p in (root / "state" / "worktrees").glob("swebench-*") if p.name.endswith(slug)
+    ]
+    graded_wt = matches[0] if matches else repo
     raw_diff = _capture_diff(graded_wt)
     code_diff, kept, stripped = split_diff(raw_diff)
     assert_no_test_edits(code_diff)
@@ -570,8 +718,22 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         print(f"  stripped {len(stripped)} test-file edit(s) before grading: {stripped}")
 
 
-def _capture_diff(wt: Path) -> str:
+def _capture_diff(wt: Path, base: str = "swebench-base") -> str:
+    """Everything the arm changed relative to the BASE COMMIT.
+
+    ``git diff --cached`` alone loses work that was COMMITTED: when dev
+    exhausts its retries the chain commits the partial work to preserve it, so
+    a staged-only diff comes back empty and the run grades as "produced
+    nothing" when it actually produced a patch. Stage the worktree, then diff
+    against the base ref so committed and uncommitted changes both appear.
+    """
     subprocess.run(["git", "-C", str(wt), "add", "-A"], capture_output=True)
+    for ref in (base, "HEAD"):
+        proc = subprocess.run(
+            ["git", "-C", str(wt), "diff", ref], capture_output=True, text=True
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout
     return subprocess.run(
         ["git", "-C", str(wt), "diff", "--cached"], capture_output=True, text=True
     ).stdout
@@ -853,7 +1015,23 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
     elif resolved:
         outcome = "resolved"
     else:
-        outcome = "wrong_patch"
+        # Did the arm at least edit the files the real fix edited? A patch that
+        # found the right function and got a convention wrong is a different
+        # failure from one that never located the code.
+        try:
+            gold_files = set(gold_touched_files(instance_id))
+        except Exception:  # noqa: BLE001 - classification must not break grading
+            gold_files = set()
+        touched = {
+            m.group("b")
+            for line in diff_text.splitlines()
+            if (m := _DIFF_HEADER.match(line.strip()))
+        }
+        overlap = sorted(gold_files & touched)
+        verdict["gold_files"] = sorted(gold_files)
+        verdict["touched_files"] = sorted(touched)
+        verdict["gold_files_overlap"] = overlap
+        outcome = "right_place_wrong_fix" if overlap else "wrong_place"
 
     verdict.update(
         {
@@ -1085,6 +1263,20 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
         )
 
 
+def gold_touched_files(instance_id: str) -> list[str]:
+    """Production files the maintainers' real fix changed (tests excluded).
+
+    Lets ``grade`` record whether the arm even edited the right place. Without
+    it, every failure collapses into one ``wrong_patch`` label, and a patch
+    that found the exact right function but used the wrong string constant is
+    indistinguishable from one that never located the code at all. Those are
+    completely different failures and should never share a name.
+    """
+    patch = _gold_patches({instance_id}).get(instance_id, "")
+    _, kept, _ = split_diff(patch)
+    return kept
+
+
 def _gold_patches(wanted: set[str]) -> dict[str, str]:
     """Fetch gold patches just-in-time. Never persisted beside a run."""
     found: dict[str, str] = {}
@@ -1117,10 +1309,17 @@ def report() -> None:
         "",
         f"Generated {datetime.now(UTC).isoformat()}.",
         "",
-        "`factory says` is the factory's OWN verdict (its gates, its tests). "
-        "`oracle` is the hidden held-out suite. The pair is the point: the "
-        "merge gate runs the dev's own tests, so precision against a hidden "
-        "oracle is the only way to know whether that gate means anything.",
+        "`factory says` is the chain's OWN verdict — it reached `reviewer_done`, "
+        "i.e. dev got its tests green and the reviewer approved. `oracle` is the "
+        "hidden held-out suite.",
+        "",
+        "NOTE ON NAMING: the rates below are **chain-verdict** precision/recall, "
+        "NOT merge-gate precision. This harness drives dev+review only; no merge "
+        "gate runs. Of the six gates, only `tests-green` and `tests-meaningful` "
+        "could even apply to a SWE-bench repo — `docs-current`, "
+        "`acceptance-verified`, `smoke-green` and `canonical-paths-only` all "
+        "require app capabilities these repos do not have. Calling this "
+        "\"gate precision\" would overclaim.",
         "",
         "`task_broken` is reported SEPARATELY from `wrong_patch`. OpenAI's "
         "2026-07-08 audit found ~30% of this suite's public tasks broken, so "
@@ -1167,9 +1366,9 @@ def report() -> None:
             f"- graded instances: **{len(arm_rows)}** "
             f"({broken} excluded as `task_broken`, leaving {len(gradable)})",
             f"- resolve rate: **{_rate(len(oracle_pass), len(gradable))}**",
-            f"- gate precision (oracle passes | factory said green): "
+            f"- chain-verdict precision (oracle passes | chain said green): "
             f"**{_rate(len(tp), len(said_green))}**",
-            f"- gate recall (factory said green | oracle passes): "
+            f"- chain-verdict recall (chain said green | oracle passes): "
             f"**{_rate(len(tp), len(oracle_pass))}**",
         ]
     n = len({r.get("instance_id") for r in rows})
