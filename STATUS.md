@@ -1,4 +1,4 @@
-# STATUS — measured 2026-08-01 (Phase 0 landed same day)
+# STATUS — measured 2026-08-02 (Phase 0 + Phase 1.1–1.3 landed)
 
 Point-in-time facts. Verify before you rely on them. The commands are in
 `CLAUDE.md`. The work queue is `PLAN.md`.
@@ -17,7 +17,8 @@ All systemd units are deliberately **stopped**. Run `factory on` to start.
 | CI-failure recovery | Real CI log is fed back to dev as a structured finding. Capped at 3 |
 | GitHub loop | 1 open issue, 0 open PRs, 0 blocked stories |
 | Spend control | $200/day cap, hourly cap, per-story budget |
-| Test suite | 2,182 tests, ~5 min |
+| Test suite | 2,368 tests, ~5 min |
+| SWE-bench harness | 6 externally-graded instances, every row audit-valid, $3.33 total |
 
 Do not "fix" anything in this table without a measurement that shows it broke.
 
@@ -29,9 +30,33 @@ Do not "fix" anything in this table without a measurement that shows it broke.
 | Manager cost is unjustified | ~52% of all LLM spend | `PLAN.md` Phase 4 |
 | `factory_improver` does not land | 196 proposals, 1 commit. 179 apply failures | `PLAN.md` 3.1 |
 | L3 re-diagnoses known faults | 165 proposals span 37 distinct classes | `PLAN.md` 3.3 |
-| The benchmark is retracted | Tasks t1–t6 are shipped, so the pool is contaminated; the 20 reported rows still have no raw artifacts | `PLAN.md` Phases 1–2 |
-| Gate precision is unknown | The merge gate runs the dev's own tests | `PLAN.md` 1.3 |
+| The old (`bench.py`) benchmark is retracted | Tasks t1–t6 are shipped, so the pool is contaminated; the 20 reported rows still have no raw artifacts. SWE-bench Pro (below) replaces it for external grading | `PLAN.md` Phase 2 |
+| Merge-gate precision is unknown | The SWE-bench harness runs dev+review only, so 1.3 measured **chain-verdict** precision (1/5), not the merge gate | `PLAN.md` Phase 2 |
+| Bare-model arm not yet run | A factory number alone measures the model, not the harness | `PLAN.md` 1.4 — next |
 | State has no backup | The twin guards source only | `PLAN.md` 3.4 |
+
+## Fixed 2026-08-02 (Phase 1.1–1.3 + the three bugs that invalidated 2026-08-01)
+
+The four 2026-08-01 benchmark batches (1/6…2/6) are **retracted**: the reviewer
+never saw a diff in any review (fail-open error-text-as-diff), openlibrary
+instances were unrunnable (uninitialised submodules), and cost was
+under-reported 1.62× (onboarder spend invisible). Do not cite them.
+
+| Was broken | Now | PR |
+|---|---|---|
+| `_fetch_pr_diff_for_review` was FAIL-OPEN — any `gh pr diff`/`git diff` failure returned the error text AS the diff; reviewer reviewed blind (production bug, not bench-only) | Missing diff raises before any model call, routes to `blocked_review_nonconvergent`, burns no cycle; base-ref fallback `origin/<base>` → `<base>`; anchored broken-prompt markers; `errors="replace"` on diff decode | #203 |
+| Bench cost summed only story-attributed Run rows (1.62× under-report) | ALL ledger rows counted; unattributed spend reported separately; wall clock from function entry; stale artifacts reset at run start | #202 |
+| `_clone` left submodules uninitialised → `ModuleNotFoundError` in 0.8 s | Submodules vendored into the base branch as tracked files (survives `git worktree add`) | #202 |
+| Nothing verified the test command WORKS before spending | Pre-dispatch `--collect-only` gate in the real docker env; two modes — strict `existing-targets` / `ancestor-env-check` for legit new-test-file TDD instances | #202, #205 |
+| No post-hoc integrity check existed (all three bugs shipped past green tests) | `audit` subcommand: full persona-call ledger, cost cross-check, error-text-in-reviewer-prompt scan, missing artifact = FAIL; wired per-instance into the parallel sweep; `report` counts only audited-valid rows | #202, #204 |
+| Benchmark ran one instance at a time | `run-all` parallel sweep (child processes, spend guard on actual mid-sweep cost, pure dry-run, group kill) | #204 |
+| Dev invented literals where the story was silent | Persona seeks codebase precedent (measured 2/2 vs 0/2 on the isolating instance) | #201 |
+
+First VALID externally-graded numbers (n=6, every row audit-valid, $3.33):
+**1/6 resolved**, 4 `right_place_wrong_fix`, 1 honestly-blocked empty patch.
+Chain-verdict precision 1/5, recall 1/1. 5/6 located the correct file —
+failures are unstated-convention failures, not localization failures.
+`bench/swebench/results.md` is the artifact; next is the 1.4 bare-model arm.
 
 ## Fixed 2026-08-01 (Phase 0)
 
