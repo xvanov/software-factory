@@ -113,6 +113,7 @@ import json
 import os
 import random
 import re
+import secrets
 import shutil
 import signal
 import subprocess
@@ -256,11 +257,17 @@ def _profile_of(inst_or_manifest: dict[str, Any]) -> DatasetProfile:
 def _image_for(inst: dict[str, Any]) -> str:
     """The instance's official docker image, profile-aware.
 
-    swe-rebench rows carry the full image ref verbatim (``docker_image``);
-    Pro manifests carry only ``dockerhub_tag`` and the ref is templated. A
-    manifest entry that supports neither is a hard error — grading in the
-    wrong image measures nothing.
+    swe-rebench rows carry the full image ref verbatim (``docker_image``),
+    which fetch resolves to an immutable ``repo@sha256:…`` digest
+    (``docker_image_digest`` — preferred, because upstream tags are mutable
+    and a drifted image invalidates what the selftest certified). Pro
+    manifests carry only ``dockerhub_tag`` and the ref is templated. A
+    manifest entry that supports none of these is a hard error — grading in
+    the wrong image measures nothing.
     """
+    digest = inst.get("docker_image_digest")
+    if digest:
+        return str(digest)
     image = inst.get("docker_image")
     if image:
         return str(image)
@@ -271,6 +278,113 @@ def _image_for(inst: dict[str, Any]) -> str:
         f"instance {inst.get('instance_id')!r} has neither docker_image nor a "
         f"dockerhub_tag usable with profile {profile.name!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# the oracle store — answer material must not be greppable from the manifest
+# --------------------------------------------------------------------------- #
+#
+# Both arms execute on THIS host filesystem (OpenHands LocalWorkspace; the
+# bare arm's bash loop), so anything the harness stores in plaintext is one
+# ``grep -r <instance_id>`` away from the arm under test. The gold patch, the
+# test patch and the hidden test ids therefore live OUTSIDE the manifest, in
+# ``oracle.json.z`` — zlib-compressed, base64-wrapped JSON. That defeats
+# text-scavenging (grep, ripgrep, ctags, naive cat), which is the actual
+# threat model; it is NOT cryptography, and a determined host process that
+# knows the format can still decode it. The manifest keeps only a sha256
+# digest per instance, which every consumer verifies before trusting the
+# store — a tampered or stale store is a hard error, never a silent
+# substitution. ``audit`` additionally scans the arms' action trails for any
+# reference to these paths (see ``_scan_oracle_probes``).
+
+ORACLE_PATH = SWE_DIR / "oracle.json.z"
+
+# Every per-instance field that names or contains the answer. Pro's
+# ``before_repo_set_cmd`` embeds the FIX COMMIT sha and the oracle file list;
+# ``selected_test_files_to_run`` is the f2p node ids under another name.
+_ORACLE_FIELDS = (
+    "gold_patch",
+    "test_patch",
+    "fail_to_pass",
+    "pass_to_pass",
+    "before_repo_set_cmd",
+    "selected_test_files_to_run",
+)
+
+
+def _oracle_record_digest(record: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(record, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _write_oracle_store(records: dict[str, dict[str, Any]], path: Path | None = None) -> Path:
+    import base64
+    import zlib
+
+    p = path or ORACLE_PATH
+    blob = base64.b64encode(
+        zlib.compress(json.dumps(records, sort_keys=True).encode("utf-8"), 9)
+    ).decode("ascii")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(blob, encoding="utf-8")
+    return p
+
+
+def _load_oracle_store(path: Path | None = None) -> dict[str, dict[str, Any]]:
+    import base64
+    import zlib
+
+    p = path or ORACLE_PATH
+    if not p.exists():
+        raise SystemExit(
+            f"oracle store missing at {p}. The manifest pins oracle digests, so "
+            "grading is impossible without the store — re-run `fetch`."
+        )
+    data = json.loads(zlib.decompress(base64.b64decode(p.read_text(encoding="utf-8"))))
+    if not isinstance(data, dict):
+        raise SystemExit(f"oracle store at {p} is not a JSON object")
+    return data
+
+
+def _normalize_oracle(rec: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "gold_patch": str(rec.get("gold_patch") or ""),
+        "test_patch": str(rec.get("test_patch") or ""),
+        "fail_to_pass": _as_list(rec.get("fail_to_pass")),
+        "pass_to_pass": _as_list(rec.get("pass_to_pass")),
+        "before_repo_set_cmd": str(rec.get("before_repo_set_cmd") or ""),
+        "selected_test_files_to_run": rec.get("selected_test_files_to_run") or "",
+    }
+
+
+def _oracle_for(inst: dict[str, Any]) -> dict[str, Any]:
+    """The instance's oracle material, digest-verified.
+
+    New manifests carry ``oracle_sha256`` and no material; the record comes
+    from the store and MUST hash to the pinned digest (fail safe: a missing
+    or tampered record refuses, it never grades against a guess).
+    Pre-oracle-store manifests (old Pro pins, test fixtures) carry the
+    material inline — read it from the instance itself so frozen artifacts
+    keep loading.
+    """
+    pinned = inst.get("oracle_sha256")
+    if not pinned:
+        return _normalize_oracle(inst)
+    store = _load_oracle_store()
+    rec = store.get(str(inst["instance_id"]))
+    if rec is None:
+        raise SystemExit(
+            f"oracle store has no record for {inst['instance_id']!r} — the "
+            "manifest and oracle.json.z are out of sync; re-run `fetch`."
+        )
+    if _oracle_record_digest(rec) != pinned:
+        raise SystemExit(
+            f"oracle record for {inst['instance_id']!r} does not match the "
+            "manifest's pinned digest — the store was modified after the pin. "
+            "Refusing to grade against unverified oracle material."
+        )
+    return _normalize_oracle(rec)
 
 
 def _declared_test_entries(inst: dict[str, Any]) -> list[str]:
@@ -463,15 +577,94 @@ def _row_to_instance(profile: DatasetProfile, r: dict[str, Any]) -> dict[str, An
                 "pass_to_pass": _as_list(r.get("pass_to_pass")),
                 "before_repo_set_cmd": r.get("before_repo_set_cmd") or "",
                 "selected_test_files_to_run": r.get("selected_test_files_to_run") or "",
+                # Dev-facing FILE paths, so new-format Pro manifests need not
+                # carry the raw node ids (which move to the oracle store).
+                "test_targets": _test_file_paths(
+                    _as_list(r.get("selected_test_files_to_run"))
+                ),
             }
         )
     return inst
+
+
+def _split_oracle(inst: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split a full instance into ``(public_instance, oracle_record)``.
+
+    The public instance keeps everything an arm may see plus a sha256 digest
+    of the oracle record; the record itself goes to the compressed store.
+    """
+    public = dict(inst)
+    record = {k: public.pop(k) for k in _ORACLE_FIELDS if k in public}
+    public["oracle_sha256"] = _oracle_record_digest(record)
+    return public, record
 
 
 def _row_language(profile: DatasetProfile, r: dict[str, Any]) -> str:
     if profile.name == "swe-rebench":
         return "python"  # single-language dataset; rows carry no language field
     return str(r.get("repo_language") or "")
+
+
+def _created_after(row: dict[str, Any], after: str) -> bool:
+    """True when the row's ``created_at`` DATE is strictly after ``after``.
+
+    Parsed as datetimes, not compared as strings: string comparison let
+    cutoff-DAY instances slip in (``"2026-01-01 00:00:01" > "2026-01-01"`` is
+    string-true), while the documented semantics are "strictly after the
+    cutoff date" — the whole cutoff day is excluded. An unparseable
+    ``created_at`` is excluded too (fail safe: unknown provenance is not
+    post-cutoff evidence).
+    """
+    from datetime import date
+
+    raw = str(row.get("created_at") or "").strip()
+    try:
+        cutoff = date.fromisoformat(after)
+    except ValueError as exc:
+        raise SystemExit(f"--after must be YYYY-MM-DD, got {after!r}") from exc
+    try:
+        created = datetime.fromisoformat(raw)
+    except ValueError:
+        return False
+    return created.date() > cutoff
+
+
+def _resolve_image_digest(image: str) -> str | None:
+    """Resolve an image ref to its immutable ``repo@sha256:…`` form.
+
+    ``:latest`` tags are MUTABLE upstream — a selftest certifies the
+    environment only as of the day it ran (the flax exclusion was exactly
+    such drift). Pinning the digest at fetch time makes every later pull
+    byte-identical to what the selftest validated. Local ``RepoDigests``
+    first (no network); ``docker manifest inspect`` as the registry fallback
+    (no pull). Returns None when neither works — the caller keeps the tag
+    and warns loudly rather than failing the fetch.
+    """
+    repo = image.split("@", 1)[0].rsplit(":", 1)[0]
+    proc = subprocess.run(
+        ["docker", "image", "inspect", "--format", '{{join .RepoDigests "\n"}}', image],
+        capture_output=True, text=True,
+    )
+    if proc.returncode == 0:
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if line.startswith(f"{repo}@sha256:"):
+                return line
+    proc = subprocess.run(
+        ["docker", "manifest", "inspect", "-v", image],
+        capture_output=True, text=True,
+    )
+    if proc.returncode == 0:
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            return None
+        entries = data if isinstance(data, list) else [data]
+        for entry in entries:
+            digest = (entry.get("Descriptor") or {}).get("digest", "")
+            if str(digest).startswith("sha256:"):
+                return f"{repo}@{digest}"
+    return None
 
 
 def fetch(*, dataset: str, language: str, limit: int, seed: int, after: str | None) -> None:
@@ -483,11 +676,15 @@ def fetch(*, dataset: str, language: str, limit: int, seed: int, after: str | No
     profile is persisted in the manifest AND in every instance: all later
     commands read it back from there, so a run can never mix profiles.
 
-    ``after`` keeps only instances created strictly after the given date
-    (contamination control for profiles with ``created_at``; ignored where
-    the field does not exist). For swe-rebench it defaults to 2026-01-01 —
-    DeepSeek-V4 Pro's training cutoff is undocumented, so that stand-in is
-    deliberately conservative and recorded in the manifest.
+    Oracle material (gold patch, test patch, hidden test ids, Pro's setup
+    command) is NOT written to the manifest — it goes to the compressed
+    oracle store, digest-pinned per instance (see the oracle-store section).
+
+    ``after`` keeps only instances whose ``created_at`` DATE is strictly
+    after the given date — the cutoff day itself is excluded (contamination
+    control for profiles with ``created_at``). For swe-rebench it defaults
+    to 2026-01-01 — DeepSeek-V4 Pro's training cutoff is undocumented, so
+    that stand-in is deliberately conservative and recorded in the manifest.
     """
     if dataset not in PROFILES:
         raise SystemExit(f"unknown --dataset {dataset!r} (known: {sorted(PROFILES)})")
@@ -499,14 +696,32 @@ def fetch(*, dataset: str, language: str, limit: int, seed: int, after: str | No
     if not rows:
         raise SystemExit(f"no instances with language={language!r}")
     if after:
-        rows = [r for r in rows if str(r.get("created_at") or "") > after]
+        rows = [r for r in rows if _created_after(r, after)]
         if not rows:
             raise SystemExit(f"no instances created after {after!r}")
     rows.sort(key=lambda r: str(r["instance_id"]))  # deterministic pre-shuffle order
     rng = random.Random(seed)
     picked = rng.sample(rows, min(limit, len(rows)))
 
-    instances = [_row_to_instance(profile, r) for r in picked]
+    instances: list[dict[str, Any]] = []
+    oracle_records: dict[str, dict[str, Any]] = {}
+    for r in picked:
+        full = _row_to_instance(profile, r)
+        # Pin the docker image to its immutable digest: a `:latest` tag is
+        # mutable upstream, so a tag-pinned manifest silently drifts away
+        # from the environment the selftest certified.
+        image = full.get("docker_image")
+        if image:
+            digest_ref = _resolve_image_digest(str(image))
+            full["docker_image_digest"] = digest_ref
+            if not digest_ref:
+                print(
+                    f"WARNING: could not resolve a digest for {image} — "
+                    f"{full['instance_id']} stays tag-pinned and may drift upstream"
+                )
+        public, record = _split_oracle(full)
+        instances.append(public)
+        oracle_records[public["instance_id"]] = record
 
     manifest = {
         "profile": profile.name,
@@ -527,7 +742,9 @@ def fetch(*, dataset: str, language: str, limit: int, seed: int, after: str | No
 
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    store = _write_oracle_store(oracle_records)
     print(f"pinned {len(instances)} instances -> {MANIFEST_PATH}")
+    print(f"oracle store ({len(oracle_records)} records) -> {store}")
     print(f"manifest_sha256={manifest['manifest_sha256']} seed={seed} pool={len(rows)}")
     for i in instances:
         print(f"  {i['instance_id']}  ({i['repo']}@{i['base_commit'][:10]})")
@@ -694,7 +911,14 @@ def _reset_run_artifacts(run_dir: Path) -> None:
     ``_build_bench_root``). A crashed run therefore leaves NO result.json,
     which ``audit`` treats as a failure — fail safe, never a stale pass.
     """
-    for name in ("prediction.diff", "raw.diff", "grade.log", "result.json", "audit.json"):
+    for name in (
+        "prediction.diff",
+        "raw.diff",
+        "grade.log",
+        "result.json",
+        "audit.json",
+        "bare-commands.ndjson",  # APPENDED per step; must not span runs
+    ):
         (run_dir / name).unlink(missing_ok=True)
     shutil.rmtree(run_dir / "state", ignore_errors=True)
 
@@ -1432,6 +1656,11 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         output = ((proc.stdout or "") + (proc.stderr or ""))[-_BARE_OUTPUT_CAP:]
         history.append(reply)
         history.append(f"Exit {proc.returncode}. Output:\n{output}")
+        # UNTRUNCATED command log, appended as executed: result.json keeps
+        # only the last 20 steps with 300-char commands, which is where an
+        # oracle probe would hide from the audit's `_scan_oracle_probes`.
+        with (run_dir / "bare-commands.ndjson").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"step": step, "command": command}) + "\n")
         transcript.append(
             {
                 "step": step,
@@ -1530,7 +1759,8 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
     assert_no_test_edits(diff_text)  # belt and braces: re-check at grade time
 
     image = _image_for(inst)
-    f2p, p2p = inst["fail_to_pass"], inst["pass_to_pass"]
+    oracle = _oracle_for(inst)
+    f2p, p2p = oracle["fail_to_pass"], oracle["pass_to_pass"]
 
     started = time.monotonic()
     verdict: dict[str, Any] = {
@@ -1573,27 +1803,31 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
             print(json.dumps(verdict, indent=2))
             return
 
+    # Nonce-suffixed markers (env-injected, never in the script text): a
+    # marker echoed by arm-authored test code, or replayed from any static
+    # text, can never match the strings checked below.
+    nonce = secrets.token_hex(8)
     script = _grade_script_for(inst, diff_text)
-    proc = _docker_bash(image, script, timeout_s)
+    proc = _docker_bash(image, script, timeout_s, nonce=nonce)
     log = (proc.stdout or "") + (proc.stderr or "")
     (run_dir / "grade.log").write_text(log, encoding="utf-8")
 
-    resolved = "SWEBENCH_RESULT: RESOLVED" in log
-    applied = "SWEBENCH_APPLY: OK" in log
+    resolved = f"{_marker('SWEBENCH_RESULT', nonce)}: RESOLVED" in log
+    applied = f"{_marker('SWEBENCH_APPLY', nonce)}: OK" in log
     # Visible, not decisive: on a selftest-cleared instance, ids that do not
     # collect under the ARM's patch mean the arm did not deliver the API the
     # tests need — an ordinary UNRESOLVED, recorded so the log tail is
     # interpretable without spelunking.
     verdict["post_patch_ids_collect"] = (
-        "SWEBENCH_POST_PATCH: FAIL_TO_PASS_IDS_DO_NOT_COLLECT" not in log
+        f"{_marker('SWEBENCH_POST_PATCH', nonce)}: FAIL_TO_PASS_IDS_DO_NOT_COLLECT"
+        not in log
     )
     # Order matters: a broken baseline short-circuits BEFORE the prediction is
     # applied, so "not applied" must not be read as the arm's fault.
-    # (BROKEN_NO_COLLECT is emitted only by the pre-2026-08 script; kept so
-    # old grade logs re-read consistently.)
-    if "SWEBENCH_BASELINE: BROKEN_NO_COLLECT" in log:
+    # (BROKEN_NO_COLLECT is the Pro profile's frozen semantics.)
+    if f"{_marker('SWEBENCH_BASELINE', nonce)}: BROKEN_NO_COLLECT" in log:
         outcome = "task_broken_no_collect"
-    elif "SWEBENCH_BASELINE: BROKEN_ALREADY_GREEN" in log:
+    elif f"{_marker('SWEBENCH_BASELINE', nonce)}: BROKEN_ALREADY_GREEN" in log:
         outcome = "task_broken_already_green"
     elif not applied:
         outcome = "patch_did_not_apply"
@@ -1641,7 +1875,9 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
     print(json.dumps({k: v for k, v in verdict.items() if k != "log_tail"}, indent=2))
 
 
-def _docker_bash(image: str, script: str, timeout_s: int) -> subprocess.CompletedProcess[str]:
+def _docker_bash(
+    image: str, script: str, timeout_s: int, *, nonce: str = ""
+) -> subprocess.CompletedProcess[str]:
     """Run ``script`` in ``image``.
 
     ``--entrypoint bash`` is required: these images already set
@@ -1650,15 +1886,27 @@ def _docker_bash(image: str, script: str, timeout_s: int) -> subprocess.Complete
     file". ``--network none`` denies egress during grading so a patch cannot
     reach out for the answer.
 
-    The script goes in on STDIN (``-i`` + ``bash -l -s``), not as an argv
-    element: the script embeds the test patch, the prediction AND every
-    hidden test id, and Linux caps a single argv string at ~128KB
-    (MAX_ARG_STRLEN). A pinned swe-rebench instance with 16k fail_to_pass ids
-    exceeds that as argv and would die with E2BIG before running anything.
+    The script goes in on STDIN, not as an argv element: it embeds the test
+    patch, the prediction AND every hidden test id, and Linux caps a single
+    argv string at ~128KB (MAX_ARG_STRLEN) — a pinned swe-rebench instance
+    with 16k fail_to_pass ids dies with E2BIG as argv.
+
+    Stdin is NOT the execution stream, though. ``bash -l -s`` left the
+    unread script on fd 0 while arm-authored test code ran: a stdin-reading
+    test ate the trailing verdict echo (wrong UNRESOLVED), and a
+    stdin-echoing test printed the literal ``echo "SWEBENCH_RESULT: …"``
+    line into the tail the verdict grep matched (false RESOLVED — executed
+    demo). So the script is first drained to a container-local file with
+    ``cat``, then exec'd with stdin re-pointed at ``/dev/null``: nothing the
+    graded code runs can see, eat, or replay the script. The verdict markers
+    are additionally nonce-suffixed (``SWEBENCH_NONCE``, env-injected) so a
+    marker echoed from any static text can never match the checked string.
     """
     return subprocess.run(
         ["docker", "run", "--rm", "-i", "--network", "none",
-         "--entrypoint", "bash", image, "-l", "-s"],
+         "-e", f"SWEBENCH_NONCE={nonce}",
+         "--entrypoint", "bash", image, "-lc",
+         "cat > /tmp/.swebench_grade.sh && exec bash -l /tmp/.swebench_grade.sh < /dev/null"],
         input=script,
         capture_output=True,
         text=True,
@@ -1674,17 +1922,33 @@ def _heredoc(text: str) -> str:
     return text if text.endswith("\n") or not text else text + "\n"
 
 
+# The shell-side spelling of a nonce-suffixed marker. The value is injected
+# via ``docker run -e SWEBENCH_NONCE=…`` — deliberately NOT embedded in the
+# script text, so even a verbatim replay of the script cannot reproduce a
+# checked marker string.
+_NONCE_VAR = "${SWEBENCH_NONCE}"
+
+
+def _marker(name: str, nonce: str) -> str:
+    """The exact log string a genuine script emission expands to."""
+    return f"{name}_{nonce}"
+
+
 def _grade_script_for(inst: dict[str, Any], prediction: str) -> str:
     """The grade script for one instance, with its profile's plumbing filled in.
 
     Shared by ``grade`` (the arm's prediction) and ``selftest`` (the gold
     patch) so the control validates EXACTLY the script the measurement uses.
-    Profile differences are environment-only: where the repo lives in the
-    image, how the test env gets on PATH, and the dataset's own setup command
-    (Pro's ``before_repo_set_cmd``; swe-rebench has none, so the test patch
-    fallback below is its primary oracle-install path).
+    Profile differences: where the repo lives in the image, how the test env
+    gets on PATH, the dataset's own setup command, and the BASELINE
+    semantics — Pro is FROZEN on its origin/main behavior (persistent
+    no-collect is a hard ``BROKEN_NO_COLLECT`` exit → ``task_broken``,
+    excluded from the denominator, so old archives' outcome labels stay
+    reproducible), while swe-rebench treats pre-patch no-collect as a red
+    baseline (TDD instances) and moves the broken-instance signal post-patch.
     """
     profile = _profile_of(inst)
+    oracle = _oracle_for(inst)
     if profile.name == "swe-rebench":
         # No dataset setup command exists; the test patch IS the oracle
         # install and must be applied UNCONDITIONALLY. Applying it only as a
@@ -1699,12 +1963,44 @@ def _grade_script_for(inst: dict[str, Any], prediction: str) -> str:
             '  echo "SWEBENCH_SETUP: test_patch applied"\n'
             "fi"
         )
+        # Pre-patch collection MAY legitimately fail: a TDD-style instance's
+        # oracle test imports API the fix itself introduces (measured on
+        # pandas-dev__pandas-63945). Official SWE-bench semantics treat an
+        # import error as a red baseline; the honest broken-instance signal
+        # moves POST-patch, where only the gold patch (selftest) decides it.
+        baseline_gate = (
+            "baseline_no_collect=0\n"
+            "if ! collect; then\n"
+            f'  echo "SWEBENCH_BASELINE_{_NONCE_VAR}: NO_COLLECT_PRE_PATCH '
+            '(collection fails before the patch; treated as a red baseline)"\n'
+            "  tail -20 /tmp/collect.log\n"
+            "  baseline_no_collect=1\n"
+            "else\n"
+            '  if python -m pytest -q "${SWEBENCH_F2P[@]}" >/tmp/baseline.log 2>&1 </dev/null; then\n'
+            f'    echo "SWEBENCH_BASELINE_{_NONCE_VAR}: BROKEN_ALREADY_GREEN '
+            '(fail_to_pass passes unpatched)"\n'
+            "    tail -20 /tmp/baseline.log\n"
+            "    exit 3\n"
+            "  fi\n"
+            f'  echo "SWEBENCH_BASELINE_{_NONCE_VAR}: OK (red as expected)"\n'
+            "fi"
+        )
+        post_patch_check = (
+            "# Ids that STILL do not collect with the patch applied can never\n"
+            "# pass: under the gold patch (selftest) the instance is broken as\n"
+            "# shipped; under an arm's prediction it simply stays UNRESOLVED.\n"
+            'if [ "$baseline_no_collect" = "1" ] && ! collect; then\n'
+            f'  echo "SWEBENCH_POST_PATCH_{_NONCE_VAR}: FAIL_TO_PASS_IDS_DO_NOT_COLLECT '
+            '(even with the patch applied)"\n'
+            "  tail -20 /tmp/collect.log\n"
+            "fi"
+        )
     else:
         # Pro: ``before_repo_set_cmd`` already checks out the oracle test
         # files from the fix commit, so applying test_patch on top CONFLICTS
         # ("patch does not apply") — it stays a fallback used only when the
         # ids do not collect.
-        before_cmd = inst.get("before_repo_set_cmd") or "true"
+        before_cmd = oracle["before_repo_set_cmd"] or "true"
         oracle_setup = (
             f"{before_cmd}\n"
             'echo "SWEBENCH_SETUP: before_repo_set_cmd rc=$?"\n'
@@ -1717,25 +2013,57 @@ def _grade_script_for(inst: dict[str, Any], prediction: str) -> str:
             "  fi\n"
             "fi"
         )
+        # FROZEN origin/main semantics: the fail_to_pass ids MUST collect
+        # pre-patch, or the instance is task_broken (excluded from the
+        # denominator, exactly as every published Pro archive was labeled).
+        baseline_gate = (
+            "if ! collect; then\n"
+            f'  echo "SWEBENCH_BASELINE_{_NONCE_VAR}: BROKEN_NO_COLLECT '
+            '(fail_to_pass ids do not exist)"\n'
+            "  tail -20 /tmp/collect.log\n"
+            "  exit 3\n"
+            "fi\n"
+            'if python -m pytest -q "${SWEBENCH_F2P[@]}" >/tmp/baseline.log 2>&1 </dev/null; then\n'
+            f'  echo "SWEBENCH_BASELINE_{_NONCE_VAR}: BROKEN_ALREADY_GREEN '
+            '(fail_to_pass passes unpatched)"\n'
+            "  tail -20 /tmp/baseline.log\n"
+            "  exit 3\n"
+            "fi\n"
+            f'echo "SWEBENCH_BASELINE_{_NONCE_VAR}: OK (red as expected)"'
+        )
+        post_patch_check = ""
     return _GRADE_SCRIPT.format(
         workdir=profile.container_workdir,
         env_setup=profile.env_setup.rstrip() or "true &&",
-        test_patch=_heredoc(inst["test_patch"]),
+        test_patch=_heredoc(oracle["test_patch"]),
         prediction=_heredoc(prediction),
         oracle_setup=oracle_setup,
-        f2p=" ".join(_shq(t) for t in inst["fail_to_pass"]),
-        p2p=" ".join(_shq(t) for t in inst["pass_to_pass"]),
+        baseline_gate=baseline_gate,
+        post_patch_check=post_patch_check,
+        f2p=" ".join(_shq(t) for t in oracle["fail_to_pass"]),
+        p2p=" ".join(_shq(t) for t in oracle["pass_to_pass"]),
     )
 
 
 # Runs inside the instance's official image. Order matters: the test patch
 # (the ORACLE) is applied first and the prediction second, so a prediction that
 # tries to undo the oracle fails loudly instead of silently winning.
+#
+# Verdict markers carry a ``_${SWEBENCH_NONCE}`` suffix (env-injected, never
+# in the script text) and every pytest invocation gets ``</dev/null``, so
+# arm-authored test code can neither forge a marker into the log nor consume
+# anything from stdin (which is already ``/dev/null`` — see ``_docker_bash``).
+# The hidden test ids live in bash ARRAYS: element quoting survives ids with
+# spaces (``test_sign_happy[some message]``) that unquoted expansion would
+# word-split and glob-expand.
 _GRADE_SCRIPT = r"""
 set -o pipefail
 cd {workdir} 2>/dev/null || cd "$(ls -d /*/ | head -1)"
 {env_setup} true
 git config --global --add safe.directory '*' 2>/dev/null || true
+
+SWEBENCH_F2P=({f2p})
+SWEBENCH_P2P=({p2p})
 
 cat > /tmp/test_patch.diff <<'SWEBENCH_TEST_PATCH_EOF'
 {test_patch}
@@ -1753,7 +2081,7 @@ SWEBENCH_PRED_EOF
 # as a failure marks healthy instances as broken — it scored 6 of these 10 as
 # unusable when they were fine.
 collect() {{
-  python -m pytest --collect-only -q {f2p} >/tmp/collect.log 2>&1
+  python -m pytest --collect-only -q "${{SWEBENCH_F2P[@]}}" >/tmp/collect.log 2>&1 </dev/null
   rc=$?
   if [ "$rc" = "4" ] || grep -qi "ERROR: not found\|ERROR: file or directory not found" /tmp/collect.log; then
     return 1
@@ -1771,53 +2099,31 @@ git reset --hard HEAD >/dev/null 2>&1 || true
 git clean -fd >/dev/null 2>&1 || true
 {oracle_setup}
 
-# Pre-patch collection MAY legitimately fail: a TDD-style instance's oracle
-# test imports API the fix itself introduces (measured on
-# pandas-dev__pandas-63945 — the test module import-errors until the patch
-# lands). The official SWE-bench semantic treats an import error as a red
-# baseline, so it is treated as red here — NOT as a broken instance. The
-# honest broken-instance signal moves POST-patch (below): ids that do not
-# collect even with the patch applied cannot ever pass, and `selftest`
-# grading the GOLD patch is what turns that into an exclusion.
-baseline_no_collect=0
-if ! collect; then
-  echo "SWEBENCH_BASELINE: NO_COLLECT_PRE_PATCH (collection fails before the patch; treated as a red baseline)"
-  tail -20 /tmp/collect.log
-  baseline_no_collect=1
-else
-  # Baseline: the fail_to_pass set MUST fail before the prediction is applied.
-  # If it already passes, the instance is not measuring what it claims to.
-  if python -m pytest -q {f2p} >/tmp/baseline.log 2>&1; then
-    echo "SWEBENCH_BASELINE: BROKEN_ALREADY_GREEN (fail_to_pass passes unpatched)"
-    tail -20 /tmp/baseline.log
-    exit 3
-  fi
-  echo "SWEBENCH_BASELINE: OK (red as expected)"
-fi
+# BASELINE GATE — profile-specific, built by `_grade_script_for`. Pro keeps
+# its frozen origin/main semantics (persistent no-collect = hard
+# BROKEN_NO_COLLECT exit -> task_broken); swe-rebench treats pre-patch
+# no-collect as a red baseline (TDD instances) and checks post-patch instead.
+{baseline_gate}
 
 if git apply -v /tmp/prediction.diff 2>&1 || git apply -v --3way /tmp/prediction.diff 2>&1; then
-  echo "SWEBENCH_APPLY: OK"
+  echo "SWEBENCH_APPLY_${{SWEBENCH_NONCE}}: OK"
 else
-  echo "SWEBENCH_APPLY: FAILED"
+  echo "SWEBENCH_APPLY_${{SWEBENCH_NONCE}}: FAILED"
   exit 2
 fi
 
-# pytest exits 4 ("file or directory not found") for a nonexistent id —
-# non-zero, and therefore indistinguishable from a healthy red run unless
-# checked separately. Ids that STILL do not collect with the patch applied
-# can never pass: under the gold patch (selftest) that means the instance is
-# broken as shipped; under an arm's prediction it simply stays UNRESOLVED.
-if [ "$baseline_no_collect" = "1" ] && ! collect; then
-  echo "SWEBENCH_POST_PATCH: FAIL_TO_PASS_IDS_DO_NOT_COLLECT (even with the patch applied)"
-  tail -20 /tmp/collect.log
-fi
+{post_patch_check}
 
 fail=0
-if ! python -m pytest -q {f2p} 2>&1 | tail -40; then fail=1; fi
-if [ -n "{p2p}" ]; then
-  if ! python -m pytest -q {p2p} 2>&1 | tail -40; then fail=1; fi
+if ! python -m pytest -q "${{SWEBENCH_F2P[@]}}" </dev/null 2>&1 | tail -40; then fail=1; fi
+if [ "${{#SWEBENCH_P2P[@]}}" -gt 0 ]; then
+  if ! python -m pytest -q "${{SWEBENCH_P2P[@]}}" </dev/null 2>&1 | tail -40; then fail=1; fi
 fi
-if [ "$fail" = "0" ]; then echo "SWEBENCH_RESULT: RESOLVED"; else echo "SWEBENCH_RESULT: UNRESOLVED"; fi
+if [ "$fail" = "0" ]; then
+  echo "SWEBENCH_RESULT_${{SWEBENCH_NONCE}}: RESOLVED"
+else
+  echo "SWEBENCH_RESULT_${{SWEBENCH_NONCE}}: UNRESOLVED"
+fi
 """
 
 
@@ -1839,11 +2145,11 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
     factory could not solve it", which OpenAI's audit says is ~30% of the
     public suite.
 
-    The gold patch is read from the pinned manifest where the profile ships
-    it in-row (swe-rebench), and fetched just-in-time from the dataset API
-    otherwise (Pro — a rate-limited path, which is one reason Pro is frozen).
-    Either way it is never written next to a run, so it cannot leak into an
-    arm's working tree.
+    The gold patch is read from the digest-verified oracle store where the
+    profile ships it in-row (swe-rebench), and fetched just-in-time from the
+    dataset API otherwise (old Pro pins — a rate-limited path, one reason Pro
+    is frozen). Either way it is never written next to a run, so it cannot
+    leak into an arm's working tree.
     """
     manifest = _manifest()
     targets = (
@@ -1854,17 +2160,18 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
     if not targets:
         raise SystemExit(f"{instance_id!r} is not in the pinned manifest")
 
-    # The HF lookup is only for instances whose profile does NOT pin the gold
-    # patch in the manifest. For swe-rebench this set is empty and no network
+    oracles = {i["instance_id"]: _oracle_for(i) for i in targets}
+    # The HF lookup is only for instances whose oracle record carries no gold
+    # patch (old Pro pins). For swe-rebench this set is empty and no network
     # call happens at all.
     needs_lookup = {
-        i["instance_id"] for i in targets if not str(i.get("gold_patch") or "").strip()
+        iid for iid, rec in oracles.items() if not rec["gold_patch"].strip()
     }
     gold = _gold_patches(needs_lookup, _profile_of(manifest)) if needs_lookup else {}
     results: list[dict[str, Any]] = []
     for inst in targets:
         iid = inst["instance_id"]
-        patch = str(inst.get("gold_patch") or "") or gold.get(iid, "")
+        patch = oracles[iid]["gold_patch"] or gold.get(iid, "")
         print(f"\n=== selftest {iid[:60]} ===", flush=True)
         if not patch.strip():
             results.append({"instance_id": iid, "gold_resolves": None, "note": "no gold patch"})
@@ -1889,25 +2196,26 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
         # dataset's `patch` ever included a test edit, grading it would validate
         # the oracle against a modified oracle.
         code_only, _, stripped = split_diff(patch)
+        nonce = secrets.token_hex(8)
         script = _grade_script_for(inst, code_only)
-        proc = _docker_bash(image, script, timeout_s)
+        proc = _docker_bash(image, script, timeout_s, nonce=nonce)
         log = (proc.stdout or "") + (proc.stderr or "")
         d = _run_dir(iid, "selftest")
         (d / "selftest.log").write_text(log, encoding="utf-8")
 
-        resolved = "SWEBENCH_RESULT: RESOLVED" in log
-        # The first marker is the current script's post-patch check (ids that
-        # do not collect even WITH the gold patch can never pass — broken as
-        # shipped); the second is the pre-2026-08 script's pre-patch check,
-        # kept so old logs re-read consistently.
+        resolved = f"{_marker('SWEBENCH_RESULT', nonce)}: RESOLVED" in log
+        # POST_PATCH is swe-rebench's broken-instance signal (ids that do not
+        # collect even WITH the gold patch can never pass); BROKEN_NO_COLLECT
+        # is Pro's frozen pre-patch equivalent.
         if (
-            "SWEBENCH_POST_PATCH: FAIL_TO_PASS_IDS_DO_NOT_COLLECT" in log
-            or "SWEBENCH_BASELINE: BROKEN_NO_COLLECT" in log
+            f"{_marker('SWEBENCH_POST_PATCH', nonce)}: FAIL_TO_PASS_IDS_DO_NOT_COLLECT"
+            in log
+            or f"{_marker('SWEBENCH_BASELINE', nonce)}: BROKEN_NO_COLLECT" in log
         ):
             note = "fail_to_pass_ids_do_not_collect"
-        elif "SWEBENCH_BASELINE: BROKEN_ALREADY_GREEN" in log:
+        elif f"{_marker('SWEBENCH_BASELINE', nonce)}: BROKEN_ALREADY_GREEN" in log:
             note = "baseline_already_green"
-        elif "SWEBENCH_APPLY: FAILED" in log:
+        elif f"{_marker('SWEBENCH_APPLY', nonce)}: FAILED" in log:
             note = "gold_patch_did_not_apply"
         elif resolved:
             note = "ok"
@@ -1948,13 +2256,13 @@ def gold_touched_files(instance_id: str) -> list[str]:
     indistinguishable from one that never located the code at all. Those are
     completely different failures and should never share a name.
 
-    The gold patch comes from the pinned manifest when the profile ships it
-    in-row; the network lookup is the Pro-only fallback (and was a measured
-    rate-limit failure mode under a parallel sweep — ``gold_files_lookup_ok``
-    exists because of it).
+    The gold patch comes from the digest-verified oracle store when the
+    profile ships it in-row; the network lookup is the old-Pro fallback (and
+    was a measured rate-limit failure mode under a parallel sweep —
+    ``gold_files_lookup_ok`` exists because of it).
     """
     inst = _instance(instance_id)
-    patch = str(inst.get("gold_patch") or "")
+    patch = _oracle_for(inst)["gold_patch"]
     if not patch.strip():
         patch = _gold_patches({instance_id}, _profile_of(inst)).get(instance_id, "")
     _, kept, _ = split_diff(patch)
@@ -2099,6 +2407,90 @@ def _trajectory_files(state_root: Path) -> list[Path]:
     return sorted((state_root / "state" / "events" / "trajectories").glob("*.ndjson"))
 
 
+# Strings whose appearance in an ARM's action trail mean it touched (or went
+# looking for) the harness's own answer material. Both arms execute on this
+# host filesystem, so the manifest and the oracle store are reachable; no
+# honest run has any reason to reference them. "bench/swebench" covers every
+# relative or absolute path into the harness dir (the absolute SWE_DIR path
+# ends with it); "oracle.json" catches the store's basename anywhere;
+# "swebench/manifest.json" catches the manifest specifically without
+# false-flagging a target repo's OWN manifest.json (web-app manifests are
+# common — bare "manifest.json" would fail honest runs).
+_ORACLE_PROBE_MARKERS: tuple[str, ...] = (
+    "bench/swebench",
+    "oracle.json",
+    "swebench/manifest.json",
+)
+
+
+def _scan_oracle_probes(
+    state_root: Path, run_dir: Path, result: dict[str, Any]
+) -> list[str]:
+    """Failures for any arm action that referenced the oracle/manifest paths.
+
+    Detection layer for the answer-leak threat: the compressed store defeats
+    grep, but a process that knows the format can still decode it — so the
+    arms' OWN action trails are scanned for any reference to the harness
+    paths. Sources: every OpenHands trajectory line (commands AND
+    observations — factory arm), the bare arm's UNTRUNCATED
+    ``bare-commands.ndjson``, and the result.json transcript as a fallback.
+    Any hit invalidates the run; no honest run has a reason to look there.
+    FAIL SAFE: a bare run that executed commands but left no full command
+    log cannot be cleared, and an unreadable trail is a finding, not a pass.
+    """
+    failures: list[str] = []
+    for traj in _trajectory_files(state_root):
+        try:
+            with traj.open(encoding="utf-8", errors="replace") as fh:
+                for n, line in enumerate(fh, 1):
+                    hits = [m for m in _ORACLE_PROBE_MARKERS if m in line]
+                    if hits:
+                        failures.append(
+                            f"oracle-probe: trajectory {traj.name}:{n} references "
+                            f"the harness's oracle/manifest paths {hits} — the arm "
+                            "went looking for the answer; the run is invalid"
+                        )
+        except OSError as exc:
+            failures.append(
+                f"oracle-probe: trajectory {traj.name} unreadable ({exc}) — "
+                "the arm's actions cannot be cleared of oracle access"
+            )
+
+    transcript = [s for s in (result.get("transcript") or []) if isinstance(s, dict)]
+    cmd_log = run_dir / "bare-commands.ndjson"
+    if cmd_log.exists():
+        try:
+            with cmd_log.open(encoding="utf-8", errors="replace") as fh:
+                for n, line in enumerate(fh, 1):
+                    hits = [m for m in _ORACLE_PROBE_MARKERS if m in line]
+                    if hits:
+                        failures.append(
+                            f"oracle-probe: bare-commands.ndjson:{n} references "
+                            f"the harness's oracle/manifest paths {hits} — the "
+                            "arm went looking for the answer; the run is invalid"
+                        )
+        except OSError as exc:
+            failures.append(
+                f"oracle-probe: bare-commands.ndjson unreadable ({exc}) — "
+                "the arm's commands cannot be cleared of oracle access"
+            )
+    elif any(s.get("action") == "bash" for s in transcript):
+        failures.append(
+            "oracle-probe: bare arm executed commands but left no "
+            "bare-commands.ndjson — the full command trail is missing, so the "
+            "run cannot be cleared of oracle access"
+        )
+    for step in transcript:
+        hits = [m for m in _ORACLE_PROBE_MARKERS if m in json.dumps(step)]
+        if hits:
+            failures.append(
+                f"oracle-probe: bare-arm transcript step {step.get('step')} "
+                f"references the harness's oracle/manifest paths {hits} — the "
+                "arm went looking for the answer; the run is invalid"
+            )
+    return failures
+
+
 _SHOW_TRAJ_LAST_N = 5
 
 
@@ -2182,7 +2574,10 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     3. no reviewer prompt contained an error string where the diff belonged;
     4. the first dev call did not fast-fail (failed in under ~5s) — the
        unrunnable-environment signature;
-    5. a failed collect precheck recorded in result.json fails the audit.
+    5. a failed collect precheck recorded in result.json fails the audit;
+    6. the arm's action trail (OpenHands trajectories; the bare arm's full
+       command log) never references the harness's manifest/oracle paths —
+       an arm that went looking for the answer invalidates the run.
 
     Response-side coverage (response bodies per call; a trajectory per dev
     call) is reported as WARNINGS, not failures: a size-capped trajectory or
@@ -2344,6 +2739,11 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     if pre is not None and not pre.get("collect_ok"):
         failures.append("result.json records a failed collect precheck")
 
+    # 6. oracle-probe scan: any reference to the harness's manifest/oracle
+    #    paths in the arm's own action trail means it went looking for the
+    #    answer — the run is invalid.
+    failures.extend(_scan_oracle_probes(state_root, run_dir, result))
+
     payload = {
         "instance_id": instance_id,
         "arm": arm,
@@ -2385,18 +2785,29 @@ _REPORT_META_NAME = "report-meta.json"
 
 def _collect_report_rows(
     base_dir: Path,
-) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    expected_sha: str | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]], list[dict[str, str]]]:
     """Read every ``<instance>/<arm>/result.json`` under ``base_dir``.
 
-    Returns ``(rows, refused)``. FAIL-CLOSED: a row whose backing artifacts
-    are missing or unreadable is never silently dropped and never emitted as
-    a table row — it lands in ``refused`` with the exact reason, which the
-    report prints. This is the same posture as the audit gate: evidence that
-    cannot be produced is a refusal, not a shrug (PLAN 1.5 — the July
-    retraction class was "reported rows with no raw artifacts").
+    Returns ``(rows, refused, foreign)``. FAIL-CLOSED: a row whose backing
+    artifacts are missing or unreadable is never silently dropped and never
+    emitted as a table row — it lands in ``refused`` with the exact reason,
+    which the report prints. This is the same posture as the audit gate:
+    evidence that cannot be produced is a refusal, not a shrug (PLAN 1.5 —
+    the July retraction class was "reported rows with no raw artifacts").
+
+    ``expected_sha`` pins the report to ONE pinned manifest: every
+    result.json records the ``manifest_sha256`` it ran under, and a row from
+    any other manifest (a previous dataset's runs still sitting in ``runs/``)
+    goes to ``foreign`` — named in the output, merged into NO table and NO
+    rate. Without this, the very next report after a dataset switch merged
+    the old profile's rows into the new headline (executed probe: a Pro +
+    rebench blended 100%). A row that records no sha at all is foreign too —
+    unverifiable provenance is not this manifest's evidence.
     """
     rows: list[dict[str, Any]] = []
     refused: list[dict[str, str]] = []
+    foreign: list[dict[str, str]] = []
     for f in sorted(base_dir.glob("*/*/result.json")):
         run_dir = f.parent
         row_id = f"{run_dir.parent.name}/{run_dir.name}"
@@ -2414,6 +2825,18 @@ def _collect_report_rows(
         if not isinstance(r, dict):
             refused.append({"row": row_id, "why": "result.json is not a JSON object"})
             continue
+        if expected_sha is not None:
+            row_sha = str(r.get("manifest_sha256") or "")
+            if row_sha != expected_sha:
+                foreign.append(
+                    {
+                        "row": row_id,
+                        "sha": row_sha or "(none recorded)",
+                        "why": f"ran under manifest {row_sha or '(none recorded)'}, "
+                        f"report is pinned to {expected_sha}",
+                    }
+                )
+                continue
         # The audit gate. Every run must be fully auditable; a row whose
         # audit failed must not be laundered into the headline number. An
         # unreadable audit.json is a FAIL, never a pass. (A MISSING audit.json
@@ -2433,7 +2856,7 @@ def _collect_report_rows(
         r["_run_failed"] = bool(r.get("error"))
         r["_run_dir"] = str(run_dir)
         rows.append(r)
-    return rows, refused
+    return rows, refused, foreign
 
 
 def _archive_report_artifacts(
@@ -2454,12 +2877,17 @@ def _archive_report_artifacts(
         dest.mkdir(parents=True, exist_ok=True)
         for name in _ROW_ARTIFACTS:
             shutil.copy2(run_dir / name, dest / name)
-    # The profile is pinned into the meta so ``--from-archive`` re-derives
-    # the SAME heading even after the live manifest moves to another dataset.
+    # The profile AND the manifest sha are pinned into the meta so
+    # ``--from-archive`` re-derives the SAME heading and the SAME row set
+    # even after the live manifest moves to another dataset. Because the
+    # rows were sha-filtered before archiving, the live manifest's identity
+    # IS the included rows' identity.
     try:
-        profile_name = _profile_of(_manifest()).name
+        manifest = _manifest()
+        profile_name = _profile_of(manifest).name
+        manifest_sha = str(manifest.get("manifest_sha256") or "")
     except SystemExit:
-        profile_name = _DEFAULT_PROFILE
+        profile_name, manifest_sha = _DEFAULT_PROFILE, ""
     (archive_dir / _REPORT_META_NAME).write_text(
         json.dumps(
             {
@@ -2467,6 +2895,7 @@ def _archive_report_artifacts(
                 "source": str(RUNS_DIR),
                 "rows": len(rows),
                 "profile": profile_name,
+                "manifest_sha256": manifest_sha,
             },
             indent=2,
         )
@@ -2504,12 +2933,28 @@ def report(*, from_archive: Path | None = None) -> str:
         # Pre-port archives carry no profile; they are all Pro by definition.
         archive_profile = str(meta.get("profile") or _DEFAULT_PROFILE)
 
-    rows, refused = _collect_report_rows(base_dir)
+    # The report is pinned to ONE manifest: live mode uses the live pinned
+    # manifest's sha; --from-archive uses the sha the archive recorded when
+    # it was made (a pre-port archive recorded none — its rows were curated
+    # by the snapshot itself, so no filter applies).
+    if from_archive is not None:
+        expected_sha = str(meta.get("manifest_sha256") or "") or None
+    else:
+        expected_sha = str(_manifest().get("manifest_sha256") or "") or None
+
+    rows, refused, foreign = _collect_report_rows(base_dir, expected_sha)
     if not rows:
-        detail = "; ".join(f"{x['row']}: {x['why']}" for x in refused)
+        detail = "; ".join(
+            f"{x['row']}: {x['why']}" for x in refused + foreign
+        )
         raise SystemExit(
-            f"no reportable results under {base_dir}"
-            + (f" — every row refused (fail-closed): {detail}" if refused else "")
+            f"no reportable results under {base_dir} for manifest "
+            f"{expected_sha or '(unpinned)'}"
+            + (
+                f" — every row refused (fail-closed) or foreign: {detail}"
+                if detail
+                else ""
+            )
         )
 
     # The heading names the profile the rows were produced under: the
@@ -2583,6 +3028,19 @@ def report(*, from_archive: Path | None = None) -> str:
             "",
         ]
         lines += [f"- `{x['row']}` — {x['why']}" for x in refused]
+
+    if foreign:
+        lines += [
+            "",
+            "## Excluded rows (other manifest/profile)",
+            "",
+            f"These runs did not run under the pinned manifest `{expected_sha}`,",
+            "so they are NOT table rows and count in NO rate above — merging",
+            "runs from two manifests (e.g. a previous dataset's leftovers in",
+            "`runs/`) would blend incomparable numbers into one headline.",
+            "",
+        ]
+        lines += [f"- `{x['row']}` — {x['why']}" for x in foreign]
 
     for arm in sorted({str(r.get("arm")) for r in rows}):
         arm_rows = [
@@ -3601,11 +4059,13 @@ def main() -> None:
     p = sub.add_parser("fetch", help="pin a manifest (do this BEFORE any run)")
     p.add_argument(
         "--dataset",
-        default=_DEFAULT_PROFILE,
+        required=True,
         choices=sorted(PROFILES),
         help="dataset profile; persisted in the manifest, which every later "
              "command reads it back from — a run never mixes profiles. "
-             "swebench-pro is FROZEN (do not extend); swe-rebench is primary.",
+             "REQUIRED, no default: defaulting silently to the FROZEN "
+             "swebench-pro profile pinned the wrong dataset. swe-rebench is "
+             "primary.",
     )
     p.add_argument("--language", default="python")
     p.add_argument("--limit", type=int, default=10)

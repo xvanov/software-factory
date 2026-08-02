@@ -2412,6 +2412,9 @@ def test_progress_line_surfaces_a_failure(A: Any) -> None:  # noqa: N803
 # --------------------------------------------------------------------------- #
 
 
+_TEST_MANIFEST_SHA = "test-manifest-sha"
+
+
 def _report_run(
     runs: Path,
     iid: str,
@@ -2420,6 +2423,7 @@ def _report_run(
     audit: bool | None,
     error: str | None = None,
     with_diff: bool = True,
+    manifest_sha: str = _TEST_MANIFEST_SHA,
 ) -> None:
     """One (instance, factory) run dir with a result.json and optional audit.json."""
     d = runs / iid / "factory"
@@ -2433,6 +2437,7 @@ def _report_run(
             {
                 "arm": "factory",
                 "instance_id": iid,
+                "manifest_sha256": manifest_sha,
                 "factory_says_green": resolved,
                 "error": error,
                 "tokens_in": 1000,
@@ -2469,9 +2474,7 @@ def test_report_headline_counts_only_audited_valid_rows(  # noqa: N803
         runs, "inst_run_failed_pass", resolved=True, audit=True,
         error="wall-clock cap 5400s hit",
     )
-    monkeypatch.setattr(A, "RUNS_DIR", runs)
-    monkeypatch.setattr(A, "SWE_DIR", tmp_path)
-    monkeypatch.setattr(A, "RESULTS_ARCHIVE_DIR", tmp_path / "results-archive")
+    _patch_report_dirs(A, tmp_path, monkeypatch)
 
     A.report()
 
@@ -2499,6 +2502,16 @@ def _patch_report_dirs(A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(A, "RUNS_DIR", runs)
     monkeypatch.setattr(A, "SWE_DIR", tmp_path)
     monkeypatch.setattr(A, "RESULTS_ARCHIVE_DIR", tmp_path / "results-archive")
+    # A live report is pinned to the live manifest's sha; give the fixture
+    # rows a matching manifest to run under.
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {"profile": "swebench-pro", "manifest_sha256": _TEST_MANIFEST_SHA, "instances": []}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(A, "MANIFEST_PATH", manifest)
     return runs
 
 
@@ -2818,9 +2831,12 @@ def test_grade_script_treats_pre_patch_no_collect_as_red_not_broken(A: Any) -> N
     script = A._grade_script_for(_rebench_instance(A), "diff --git a/x b/x\n")
     assert "NO_COLLECT_PRE_PATCH" in script
     assert "treated as a red baseline" in script
-    assert "SWEBENCH_POST_PATCH: FAIL_TO_PASS_IDS_DO_NOT_COLLECT" in script
-    # The old hard pre-patch exit is gone from the generated script.
-    assert "BROKEN_NO_COLLECT" not in script
+    assert (
+        "SWEBENCH_POST_PATCH_${SWEBENCH_NONCE}: FAIL_TO_PASS_IDS_DO_NOT_COLLECT"
+        in script
+    )
+    # The hard pre-patch exit is Pro-only; the rebench script never emits it.
+    assert "SWEBENCH_BASELINE_${SWEBENCH_NONCE}: BROKEN_NO_COLLECT" not in script
 
 
 def test_gold_patch_comes_from_the_row_with_no_network(
@@ -2915,6 +2931,249 @@ def test_declared_test_entries_reads_both_manifest_shapes(A: Any) -> None:  # no
         {"selected_test_files_to_run": '["tests/a.py::t1", "tests/a.py::t2"]'}
     ) == ["tests/a.py::t1", "tests/a.py::t2"]
     assert A._declared_test_entries({}) == []
+
+
+# --------------------------------------------------------------------------- #
+# adversarial-review fixes (PR #213): oracle store, report pinning, frozen Pro
+# semantics, verdict-channel integrity, image digests, cutoff parsing
+# --------------------------------------------------------------------------- #
+
+
+def test_fetch_keeps_oracle_material_out_of_the_manifest(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """FIX 1a: both arms shell around on this host filesystem, so a plaintext
+    manifest hands the gold patch to `grep <instance_id>`. Fetch must write
+    only digests into the manifest and the material into the compressed
+    store; consumers verify the digest and refuse a tampered store."""
+    row = _rebench_row()
+    monkeypatch.setattr(A, "MANIFEST_PATH", tmp_path / "manifest.json")
+    monkeypatch.setattr(A, "ORACLE_PATH", tmp_path / "oracle.json.z")
+    monkeypatch.setattr(A, "_all_rows", lambda profile: [row])
+    monkeypatch.setattr(A, "_resolve_image_digest", lambda image: f"{image.split(':')[0]}@sha256:{'0' * 64}")
+    A.fetch(dataset="swe-rebench", language="python", limit=1, seed=1, after=None)
+
+    manifest_text = (tmp_path / "manifest.json").read_text(encoding="utf-8")
+    gold_marker = row["patch"].splitlines()[0]          # "diff --git a/..."
+    f2p_id = row["FAIL_TO_PASS"][0].split("::", 1)[1]   # the hidden test NAME
+    assert gold_marker not in manifest_text
+    assert f2p_id not in manifest_text
+    assert row["test_patch"].splitlines()[0] not in manifest_text
+    # The store round-trips through the digest-verifying loader.
+    inst = json.loads(manifest_text)["instances"][0]
+    assert inst["oracle_sha256"]
+    oracle = A._oracle_for(inst)
+    assert oracle["gold_patch"] == row["patch"]
+    assert oracle["test_patch"] == row["test_patch"]
+    assert oracle["fail_to_pass"] == row["FAIL_TO_PASS"]
+    # Tampering with the store after the pin is a hard refusal, not a grade.
+    store = A._load_oracle_store()
+    store[inst["instance_id"]]["gold_patch"] = "diff --git a/evil b/evil\n"
+    A._write_oracle_store(store)
+    with pytest.raises(SystemExit, match="pinned digest"):
+        A._oracle_for(inst)
+
+
+def test_audit_fails_when_the_arm_probed_the_oracle_paths(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """FIX 1b (detection layer): any reference to the harness's oracle or
+    manifest paths in the arm's own action trail invalidates the run."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS, trajectories=1)
+    traj_dir = tmp_path / "inst1" / "factory" / "root" / "state" / "events" / "trajectories"
+    (traj_dir / "2-1.ndjson").write_text(
+        json.dumps(
+            {
+                "source": "agent",
+                "action": "run",
+                "args": {"command": "cat /home/k/software-factory/bench/swebench/oracle.json.z"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "factory")
+    failures = _audit_json(tmp_path)["failures"]
+    assert any("oracle-probe" in f for f in failures), failures
+    # An honest trail (no harness-path reference) stays clean — the marker
+    # must not fire on the target repo's OWN manifest.json.
+    (traj_dir / "2-1.ndjson").write_text(
+        json.dumps(
+            {"source": "agent", "action": "run",
+             "args": {"command": "cat static/manifest.json"}}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    A.audit("inst1", "factory")  # must not raise
+
+
+def test_bare_arm_without_a_full_command_log_cannot_be_cleared(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """FIX 1b: result.json keeps only 20 truncated steps — exactly where a
+    probe would hide. A bare run that executed commands but left no
+    untruncated bare-commands.ndjson fails the audit (fail safe)."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(
+        tmp_path,
+        arm="bare",
+        rows=[("t0", "dev", "m", None, 100, 10, 0, 2.0, 9.0, 1, None)],
+        result={
+            "cost_usd": 2.0, "tokens_in": 100, "tokens_out": 10,
+            "transcript": [{"step": 0, "action": "bash", "command": "ls", "exit": 0}],
+        },
+    )
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "bare")
+    failures = _audit_json(tmp_path, arm="bare")["failures"]
+    assert any("bare-commands.ndjson" in f for f in failures), failures
+    # With the full log present (and clean) the same run audits fine.
+    (tmp_path / "inst1" / "bare" / "bare-commands.ndjson").write_text(
+        json.dumps({"step": 0, "command": "ls"}) + "\n", encoding="utf-8"
+    )
+    A.audit("inst1", "bare")  # must not raise
+
+
+def test_report_excludes_rows_from_another_manifest(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]  # noqa: N803
+) -> None:
+    """FIX 2: runs/ still holding a previous dataset's rows must not blend
+    into the new manifest's headline (executed probe: Pro + rebench merged
+    into one 100% rate). Foreign rows are named, never counted."""
+    runs = _patch_report_dirs(A, tmp_path, monkeypatch)
+    _report_run(runs, "inst_current", resolved=True, audit=True)
+    _report_run(runs, "inst_old_pro", resolved=True, audit=True, manifest_sha="old-pro-sha")
+    d = runs / "inst_no_sha" / "factory"
+    _report_run(runs, "inst_no_sha", resolved=True, audit=True, manifest_sha="")
+    assert d.exists()
+
+    text = A.report()
+    capsys.readouterr()
+    assert "inst_current" in text.split("## Excluded rows")[0]
+    assert "## Excluded rows (other manifest/profile)" in text
+    assert "inst_old_pro" in text.split("## Excluded rows")[1]
+    assert "inst_no_sha" in text.split("## Excluded rows")[1]
+    # The rates count ONLY the pinned manifest's row.
+    assert "resolve rate: **1/1 = 100% audited-valid**" in text
+    # And the archive meta records the sha the rows actually ran under.
+    archives = list((tmp_path / "results-archive").iterdir())
+    meta = json.loads((archives[0] / "report-meta.json").read_text(encoding="utf-8"))
+    assert meta["manifest_sha256"] == _TEST_MANIFEST_SHA
+
+
+def test_pro_grade_script_keeps_frozen_no_collect_semantics(A: Any) -> None:  # noqa: N803
+    """FIX 3: Pro is FROZEN — persistent no-collect stays a hard
+    BROKEN_NO_COLLECT exit (task_broken, excluded from the denominator),
+    exactly as every published Pro archive was labeled. The TDD-red-baseline
+    semantics are swe-rebench-only."""
+    pro_inst = _pro_manifest()["instances"][0]
+    pro_script = A._grade_script_for(pro_inst, "diff --git a/x b/x\n")
+    assert "SWEBENCH_BASELINE_${SWEBENCH_NONCE}: BROKEN_NO_COLLECT" in pro_script
+    assert "exit 3" in pro_script
+    assert "NO_COLLECT_PRE_PATCH" not in pro_script
+    assert "SWEBENCH_POST_PATCH" not in pro_script
+
+    rebench_script = A._grade_script_for(_rebench_instance(A), "diff --git a/x b/x\n")
+    assert "SWEBENCH_BASELINE_${SWEBENCH_NONCE}: BROKEN_NO_COLLECT" not in rebench_script
+    assert "NO_COLLECT_PRE_PATCH" in rebench_script
+
+
+def test_verdict_channel_is_not_forgeable_or_swallowable(A: Any) -> None:  # noqa: N803
+    """FIX 4: the script must not sit on stdin while arm-authored tests run
+    (a stdin-reader ate the verdict echo; a stdin-echoer forged a RESOLVED
+    line), and the verdict markers must be nonce-suffixed so no static text
+    can ever match the checked string."""
+    from types import SimpleNamespace
+    seen: dict[str, Any] = {}
+
+    def fake_run(argv: Any, **kw: Any) -> Any:
+        seen["argv"], seen["kw"] = argv, kw
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    orig_run = A.subprocess.run
+    A.subprocess.run = fake_run
+    try:
+        A._docker_bash("img:latest", "echo hi", 60, nonce="cafe1234")
+    finally:
+        A.subprocess.run = orig_run
+    argv = seen["argv"]
+    # Script travels via stdin, is drained to a file, and executes with
+    # stdin re-pointed at /dev/null — never left readable to test code.
+    assert "-i" in argv
+    launcher = argv[-1]
+    assert "cat > /tmp/.swebench_grade.sh" in launcher
+    assert "exec bash -l /tmp/.swebench_grade.sh < /dev/null" in launcher
+    assert seen["kw"]["input"] == "echo hi"
+    assert "SWEBENCH_NONCE=cafe1234" in argv
+    # Every verdict marker in the generated script carries the nonce var, and
+    # every pytest invocation is cut off from stdin.
+    script = A._grade_script_for(_rebench_instance(A), "diff --git a/x b/x\n")
+    for name in ("SWEBENCH_RESULT", "SWEBENCH_APPLY", "SWEBENCH_BASELINE"):
+        assert f"{name}_${{SWEBENCH_NONCE}}:" in script, name
+    assert "SWEBENCH_RESULT:" not in script  # no un-nonced verdict marker
+    for line in script.splitlines():
+        if "python -m pytest" in line:
+            assert "</dev/null" in line.replace("< /dev/null", "</dev/null"), line
+
+
+def test_fetch_pins_image_digests(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """FIX 5: `:latest` tags are mutable upstream — the selftest certifies an
+    environment only as of the day it ran. Fetch resolves each image to its
+    immutable repo@sha256 digest and every later command pulls by digest."""
+    row = _rebench_row()
+    repo = row["docker_image"].rsplit(":", 1)[0]
+    digest_ref = f"{repo}@sha256:{'a' * 64}"
+    monkeypatch.setattr(A, "MANIFEST_PATH", tmp_path / "manifest.json")
+    monkeypatch.setattr(A, "ORACLE_PATH", tmp_path / "oracle.json.z")
+    monkeypatch.setattr(A, "_all_rows", lambda profile: [row])
+    monkeypatch.setattr(A, "_resolve_image_digest", lambda image: digest_ref)
+    A.fetch(dataset="swe-rebench", language="python", limit=1, seed=1, after=None)
+    inst = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))["instances"][0]
+    assert inst["docker_image_digest"] == digest_ref
+    assert A._image_for(inst) == digest_ref, "digest must win over the mutable tag"
+    # A digest that cannot be resolved keeps the tag (loudly), never fails fetch.
+    monkeypatch.setattr(A, "_resolve_image_digest", lambda image: None)
+    A.fetch(dataset="swe-rebench", language="python", limit=1, seed=1, after=None)
+    inst = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))["instances"][0]
+    assert inst["docker_image_digest"] is None
+    assert A._image_for(inst) == row["docker_image"]
+
+
+def test_cutoff_excludes_the_cutoff_day_itself(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """FIX 6a: created_at was compared as a STRING, so cutoff-day instances
+    slipped in ("2026-01-01 00:00:01" > "2026-01-01" is string-true) while
+    the docs said "strictly after". Parsed as datetimes, the whole cutoff
+    DAY is excluded; unparseable created_at is excluded too (fail safe)."""
+    on_cutoff = dict(_rebench_row(), instance_id="on__cutoff-1", created_at="2026-01-01 23:59:59")
+    day_after = dict(_rebench_row(), instance_id="day__after-1", created_at="2026-01-02 00:00:00")
+    unparseable = dict(_rebench_row(), instance_id="bad__date-1", created_at="not-a-date")
+    monkeypatch.setattr(A, "MANIFEST_PATH", tmp_path / "manifest.json")
+    monkeypatch.setattr(A, "ORACLE_PATH", tmp_path / "oracle.json.z")
+    monkeypatch.setattr(A, "_all_rows", lambda profile: [on_cutoff, day_after, unparseable])
+    monkeypatch.setattr(A, "_resolve_image_digest", lambda image: None)
+    A.fetch(dataset="swe-rebench", language="python", limit=10, seed=1, after=None)
+    m = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert [i["instance_id"] for i in m["instances"]] == ["day__after-1"]
+    with pytest.raises(SystemExit, match="YYYY-MM-DD"):
+        A._created_after(day_after, "01/02/2026")
+
+
+def test_fetch_cli_requires_an_explicit_dataset(A: Any, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: N803
+    """FIX 6b: defaulting --dataset to the FROZEN pro profile pinned the
+    wrong dataset silently; the flag is now required."""
+    monkeypatch.setattr(
+        A.sys, "argv", ["swebench_adapter.py", "fetch", "--seed", "1"]
+    )
+    with pytest.raises(SystemExit) as exc:
+        A.main()
+    assert exc.value.code == 2  # argparse usage error, not a fetch attempt
 
 
 def test_pre_port_archive_rerenders_with_the_pro_heading(

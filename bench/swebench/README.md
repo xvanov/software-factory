@@ -163,9 +163,12 @@ which the gold-patch control surfaced before any model spend:
    at ~128KB and `pandas-63945` (16k fail_to_pass ids) exceeds it. The script
    now goes in on stdin.
 2. **TDD instances misread as broken.** The oracle test module can
-   legitimately import-error until the fix lands; pre-patch no-collect is now
-   a red baseline (official SWE-bench semantics), and the broken-instance
-   signal moved post-patch, where only the gold patch can decide it.
+   legitimately import-error until the fix lands; for **swe-rebench** pre-patch
+   no-collect is a red baseline (official SWE-bench semantics), and the
+   broken-instance signal moved post-patch, where only the gold patch can
+   decide it. Pro keeps its frozen origin/main semantics (persistent
+   no-collect = hard `task_broken_no_collect`), so old archives' outcome
+   labels stay reproducible.
 3. **False `BROKEN_ALREADY_GREEN`.** Applying `test_patch` only as a
    collect-fallback (the Pro flow) skips it when the fail_to_pass test NAMES
    exist at base with old assertions (`nicegui-5858`). swe-rebench applies it
@@ -180,13 +183,35 @@ which the gold-patch control surfaced before any model spend:
 - **Test edits are stripped and the strip is asserted** in code, at run time
   and again at grade time. The factory's dev owns its tests, so an unstripped
   diff would let the arm rewrite the oracle judging it.
+- **Oracle material is never greppable.** Both arms execute on this host
+  filesystem, so the gold patch, test patch and hidden test ids live in
+  `oracle.json.z` (zlib+base64 — defeats text-scavenging, NOT cryptography;
+  a determined process that knows the format can still decode it), with only
+  sha256 digests in the manifest. Every consumer verifies the digest; a
+  tampered store refuses. `audit` additionally scans the arms' action trails
+  (OpenHands trajectories; the bare arm's untruncated `bare-commands.ndjson`)
+  for any reference to the harness paths — a hit invalidates the run.
+- **The verdict channel is not forgeable or swallowable.** The grade script
+  travels on stdin (argv caps at ~128KB), is drained to a container-local
+  file and exec'd with stdin at `/dev/null`, so arm-authored test code can
+  neither eat the trailing verdict echo nor replay the script text; verdict
+  markers carry an env-injected per-invocation nonce, so no static text can
+  match the checked string.
+- **Images are digest-pinned.** Upstream `:latest` tags are mutable; fetch
+  resolves each image to `repo@sha256:…` so every later pull is byte-identical
+  to what the selftest certified.
+- **Reports are pinned to one manifest.** Every `result.json` records the
+  `manifest_sha256` it ran under; `report` counts only rows matching the
+  pinned manifest and lists any other manifest's leftovers under an explicit
+  "excluded" section — two datasets can never blend into one headline.
 - **`--depth 1` clone**, no history: Cursor found Pro scores collapse when
   agents lose git history because some were retrieving the gold patch.
 - **`--network none`** during grading.
 - **Isolated `FACTORY_STATE_ROOT`** per run — a prior session lost a week to
   bench runs writing synthetic failures into production telemetry.
 - **Pinned manifest** with a published seed and a per-instance
-  problem-statement hash, frozen before any run.
+  problem-statement hash, frozen before any run. The `--after` cutoff is
+  parsed as a date and excludes the whole cutoff DAY (strictly after).
 
 ## Auditing
 
