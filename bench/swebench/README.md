@@ -190,7 +190,32 @@ which the gold-patch control surfaced before any model spend:
   sha256 digests in the manifest. Every consumer verifies the digest; a
   tampered store refuses. `audit` additionally scans the arms' action trails
   (OpenHands trajectories; the bare arm's untruncated `bare-commands.ndjson`)
-  for any reference to the harness paths — a hit invalidates the run.
+  for any reference to the harness paths — a hit invalidates the run. The
+  scan discriminates: the run's OWN `runs/<instance>/` subtree is the arm's
+  cwd and echoes constantly (commands, tracebacks, listings, clipped
+  observations, condensed summaries — every flagged row of the first live
+  sweep was such an echo), so it is exempt — EXCEPT its `selftest/` and
+  other-arm subdirs, whose logs carry the hidden test ids. Harness-authored
+  trajectory events (the system prompt, the task message) are not arm
+  actions and are not scanned.
+- **`selftest`/`run`/`run-all` refuse BEFORE spend if the oracle store
+  cannot serve every pinned instance** (digest-verified per instance).
+  `grade` — the last step — used to be the first consumer to notice a
+  broken store, after $24.78 of model spend had already happened. Unit
+  tests are hard-isolated from the repo's pinned artifacts by an autouse
+  fixture (a test once clobbered the committed store with one fixture
+  record — the exact test-pollution class this repo has been bitten by
+  before).
+- **Control = measurement topology (swe-rebench).** `selftest`, `run` and
+  `grade` all operate on a MOUNTED fresh clone prepared by replaying the
+  dataset's own `install_cmd` inside the instance image (generated build
+  artifacts — setuptools-scm version files, compiled extensions — are then
+  committed onto `swebench-base` so per-story worktrees and in-container
+  resets keep them). Grading the image's baked `/testbed` while running a
+  fresh mount let three instances pass the control and die at the run's
+  collect gate (proxy ≠ real). An instance whose install step cannot
+  succeed in this topology is excluded by selftest before any model spend.
+  Pro (frozen) keeps its baked-tree behavior.
 - **The verdict channel is not forgeable or swallowable.** The grade script
   travels on stdin (argv caps at ~128KB), is drained to a container-local
   file and exec'd with stdin at `/dev/null`, so arm-authored test code can

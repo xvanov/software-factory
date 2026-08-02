@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,31 @@ def _load() -> Any:
 @pytest.fixture(scope="module")
 def A() -> Any:  # noqa: N802
     return _load()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_bench_store_paths(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No test may ever touch the REPO's pinned bench artifacts.
+
+    The first live sweep produced ZERO audited-valid rows because a unit
+    test invoked ``fetch`` with only ``MANIFEST_PATH`` patched — the fetch
+    then wrote its one fixture record over the real committed
+    ``bench/swebench/oracle.json.z``, and every live grade refused with
+    "oracle store has no record" AFTER $24.78 of model spend. Exactly the
+    test-pollution class this repo has been bitten by before (the FMS
+    sm-truncation noise). Every store/manifest read+write path is
+    parameterized via these module globals; this autouse fixture points them
+    at tmp_path for EVERY test, so forgetting a patch in one test can never
+    reach the repo again. Tests that need specific paths still set their own
+    (their setattr simply overrides this one).
+    """
+    if "A" not in request.fixturenames:
+        return  # test doesn't touch the adapter at all
+    a = request.getfixturevalue("A")
+    monkeypatch.setattr(a, "MANIFEST_PATH", tmp_path / "isolated-manifest.json")
+    monkeypatch.setattr(a, "ORACLE_PATH", tmp_path / "isolated-oracle.json.z")
 
 
 # --------------------------------------------------------------------------- #
@@ -2673,6 +2699,8 @@ def test_fetch_pins_the_profile_in_manifest_and_instances(
     """Every later command reads the profile back FROM the manifest, so fetch
     must persist it at both levels (instances travel alone through helpers)."""
     monkeypatch.setattr(A, "MANIFEST_PATH", tmp_path / "manifest.json")
+    monkeypatch.setattr(A, "ORACLE_PATH", tmp_path / "oracle.json.z")
+    monkeypatch.setattr(A, "_resolve_image_digest", lambda image: None)
     monkeypatch.setattr(A, "_all_rows", lambda profile: [_rebench_row()])
     A.fetch(dataset="swe-rebench", language="python", limit=5, seed=1, after=None)
     m = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
@@ -2690,6 +2718,8 @@ def test_fetch_filters_to_post_cutoff_instances_by_default(
     fresh = _rebench_row()                      # created_at 2026-02-19
     stale = dict(_rebench_row(), instance_id="old__one-1", created_at="2025-06-01 00:00:00")
     monkeypatch.setattr(A, "MANIFEST_PATH", tmp_path / "manifest.json")
+    monkeypatch.setattr(A, "ORACLE_PATH", tmp_path / "oracle.json.z")
+    monkeypatch.setattr(A, "_resolve_image_digest", lambda image: None)
     monkeypatch.setattr(A, "_all_rows", lambda profile: [fresh, stale])
     A.fetch(dataset="swe-rebench", language="python", limit=10, seed=1, after=None)
     m = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
@@ -3217,3 +3247,281 @@ def test_pre_port_archive_rerenders_with_the_pro_heading(
     text = A.report(from_archive=archive)
     assert text.startswith("# SWE-bench Pro — externally graded")
     assert "OpenAI's" in text  # the Pro broken-task note, not the rebench one
+
+
+# --------------------------------------------------------------------------- #
+# live-sweep fixes: store integrity, probe discrimination, topology parity
+# --------------------------------------------------------------------------- #
+
+
+def test_store_paths_are_isolated_from_the_repo_under_pytest(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """FIX 1a: the first live sweep died because a unit test's fetch wrote
+    ONE fixture record over the real committed oracle.json.z (only
+    MANIFEST_PATH was patched). The autouse fixture must redirect BOTH store
+    paths for every test, so a forgotten patch can never reach the repo."""
+    repo_swe_dir = A.SWE_DIR  # the real bench/swebench dir (module constant)
+    assert not str(A.ORACLE_PATH).startswith(str(repo_swe_dir))
+    assert not str(A.MANIFEST_PATH).startswith(str(repo_swe_dir))
+    # A fetch with NO explicit path patches (the exact pollution shape that
+    # clobbered the store) lands entirely inside the isolated paths.
+    real_store_before = (
+        (repo_swe_dir / "oracle.json.z").read_bytes()
+        if (repo_swe_dir / "oracle.json.z").exists()
+        else None
+    )
+    monkeypatch.setattr(A, "_resolve_image_digest", lambda image: None)
+    monkeypatch.setattr(A, "_all_rows", lambda profile: [_rebench_row()])
+    A.fetch(dataset="swe-rebench", language="python", limit=1, seed=1, after=None)
+    assert A.ORACLE_PATH.exists() and A.MANIFEST_PATH.exists()
+    real_store_after = (
+        (repo_swe_dir / "oracle.json.z").read_bytes()
+        if (repo_swe_dir / "oracle.json.z").exists()
+        else None
+    )
+    assert real_store_after == real_store_before, (
+        "a test fetch reached the repo's committed oracle store"
+    )
+
+
+def test_spend_paths_refuse_before_spend_when_the_store_is_incomplete(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """FIX 1c: grade was the FIRST place a broken store was consulted — after
+    $24.78 of model spend. selftest, run-all and run must refuse at START."""
+    inst = dict(_rebench_instance(A))
+    inst["oracle_sha256"] = "f" * 64  # pinned, but the store has no record
+    for k in A._ORACLE_FIELDS:
+        inst.pop(k, None)
+    manifest = {
+        "profile": "swe-rebench",
+        "manifest_sha256": "shaX",
+        "instances": [inst],
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(A, "MANIFEST_PATH", tmp_path / "manifest.json")
+    A._write_oracle_store({}, tmp_path / "oracle.json.z")
+    monkeypatch.setattr(A, "ORACLE_PATH", tmp_path / "oracle.json.z")
+
+    with pytest.raises(SystemExit, match="BEFORE"):
+        A._assert_oracle_store_complete([inst])
+    # selftest refuses before any docker work…
+    with pytest.raises(SystemExit, match="refusing BEFORE any spend"):
+        A.selftest(None, timeout_s=60)
+    # …and so does run-all, including its dry-run preview.
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path / "runs")
+    with pytest.raises(SystemExit, match="refusing BEFORE any spend"):
+        A.run_all(
+            arm="factory", workers=1, instances=None, only_working=False,
+            max_steps=1, run_timeout_s=1, grade_timeout_s=1,
+            force_over_cap=False, dry_run=True,
+        )
+    # A complete store passes the guard.
+    good = dict(_rebench_instance(A))
+    record = {k: good.pop(k) for k in A._ORACLE_FIELDS if k in good}
+    good["oracle_sha256"] = A._oracle_record_digest(record)
+    A._write_oracle_store({good["instance_id"]: record}, tmp_path / "oracle.json.z")
+    A._assert_oracle_store_complete([good])  # must not raise
+
+
+def test_probe_ignores_the_runs_own_cwd_and_the_system_prompt(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """FIX 2: the first live sweep false-flagged 13/19 factory rows (the
+    OpenHands system prompt carries the run's own cwd) and both bare rows
+    (the arm referencing its OWN repo by absolute path). Own-subtree
+    references and harness-authored events are not probes; everything else
+    stays fail-closed."""
+    iid, arm = "inst1", "factory"
+    own = f"/home/k/software-factory/bench/swebench/runs/{iid}/{arm}/root/x"
+    # Own-run references: never a hit. All four shapes measured live:
+    assert A._probe_line_hits(f"cwd is {own}", iid, arm) == []
+    assert A._probe_line_hits(
+        f'{{"command": "cat > {own}/repo/pkg/mod.py <<EOF"}}', iid, arm
+    ) == []
+    # find/ls targeting the own run DIR itself (no arm suffix)…
+    assert A._probe_line_hits(
+        f'find /home/k/sf/bench/swebench/runs/{iid} -name "*.md"', iid, arm
+    ) == []
+    # …a condenser-abbreviated own path…
+    assert A._probe_line_hits(
+        f"work done in bench/swebench/runs/{iid}/.../worktrees/x`", iid, arm
+    ) == []
+    # …and an observation clipped MID-PATH at the OpenHands sentinel.
+    assert A._probe_line_hits(
+        "listing bench/swebench/ru<response clipped><NOTE>use ls -la</NOTE>",
+        iid, arm,
+    ) == []
+    # Genuine probes: the store, the manifest, another run's subtree
+    # (its grade log carries oracle test ids), the harness dir itself, a
+    # non-sentinel truncation, an id-prefix collision — and the own run's
+    # oracle-bearing subdirs (selftest logs / the other arm's grade log).
+    assert A._probe_line_hits("cat bench/swebench/oracle.json.z", iid, arm)
+    assert A._probe_line_hits("cat bench/swebench/manifest.json", iid, arm)
+    assert A._probe_line_hits(
+        "cat bench/swebench/runs/OTHER__inst-9/factory/grade.log", iid, arm
+    )
+    assert A._probe_line_hits("ls /home/k/software-factory/bench/swebench", iid, arm)
+    assert A._probe_line_hits("ls bench/swebench/ru", iid, arm)
+    assert A._probe_line_hits(f"ls bench/swebench/runs/{iid}22/x", iid, arm)
+    assert A._probe_line_hits(
+        f"cat bench/swebench/runs/{iid}/selftest/selftest.log", iid, arm
+    ) == ["own run's oracle-bearing subdir runs/…/selftest"]
+    assert A._probe_line_hits(
+        f"cat bench/swebench/runs/{iid}/bare/grade.log", iid, arm
+    ) == ["own run's oracle-bearing subdir runs/…/bare"]
+
+    # End-to-end through audit: a trajectory whose SYSTEM PROMPT carries the
+    # cwd (line 1, exactly as OpenHands writes it) plus an ActionEvent that
+    # echoes the own cwd must audit CLEAN…
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS, trajectories=0)
+    traj_dir = tmp_path / "inst1" / "factory" / "root" / "state" / "events" / "trajectories"
+    traj_dir.mkdir(parents=True, exist_ok=True)
+    (traj_dir / "1-1.ndjson").write_text(
+        json.dumps(
+            {"kind": "SystemPromptEvent", "source": "agent",
+             "system_prompt": f"Your current working directory is: {own}"}
+        )
+        + "\n"
+        + json.dumps(
+            {"kind": "ActionEvent", "source": "agent",
+             "action": {"command": f"ls {own}/repo"},
+             "llm_message": {"content": [{"type": "text", "text": "listing"}]}}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    A.audit("inst1", "factory")  # must not raise
+    # …while an ActionEvent that reads ANOTHER path under bench/swebench
+    # still fails, and the system prompt cannot launder it.
+    (traj_dir / "1-1.ndjson").write_text(
+        json.dumps(
+            {"kind": "ActionEvent", "source": "agent",
+             "action": {"command": "cat ../../../../../../manifest.json "
+                        "/home/k/software-factory/bench/swebench/oracle.json.z"}}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "factory")
+    failures = _audit_json(tmp_path)["failures"]
+    assert any("oracle-probe" in f and "ActionEvent" in f for f in failures), failures
+
+
+def test_prepare_cloned_tree_replays_install_and_commits_artifacts(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,  # noqa: N803
+    submodule_fixture: tuple[Path, Path, str],
+) -> None:
+    """FIX 3 (proxy≠real): selftest graded the image's BAKED tree while run
+    mounted a fresh clone missing build-generated artifacts — 3 live rows
+    died at the collect gate. The prepare step replays the dataset's install
+    command against the mounted clone (as root, chowning back) and COMMITS
+    what it generates, so per-story worktrees and the grade script's
+    `git clean -fd` keep the artifacts."""
+    import subprocess as sp
+
+    main, _sub, sha = submodule_fixture
+    monkeypatch.setattr(A, "_clone_url", lambda inst: f"file://{main}")
+    inst = dict(
+        _rebench_instance(A),
+        instance_id="local__main-abc", repo="local/main", base_commit=sha,
+        install_cmd="pip install -e . --quiet",
+    )
+    dest = tmp_path / "clone"
+    A._clone(inst, dest)
+
+    real_run = A.subprocess.run
+    seen: dict[str, Any] = {}
+
+    def fake_run(argv: Any, **kw: Any) -> Any:
+        if isinstance(argv, list) and argv and argv[0] == "docker":
+            seen["argv"], seen["input"] = argv, kw.get("input")
+            # Simulate the install step generating an untracked artifact
+            # in the mounted tree (what setuptools-scm / a C build does).
+            (dest / "pkg_version.py").write_text("__version__ = '1.0'\n")
+            from types import SimpleNamespace
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(A.subprocess, "run", fake_run)
+    assert A._prepare_cloned_tree(inst, dest) is None
+    monkeypatch.setattr(A.subprocess, "run", real_run)
+
+    # The docker invocation: mounted over /testbed, script via stdin, runs
+    # the dataset's install command and chowns back to the invoking uid.
+    assert f"{dest}:/testbed" in " ".join(seen["argv"])
+    assert "--user" not in seen["argv"], "install must run as root (conda writes)"
+    assert "pip install -e . --quiet" in seen["input"]
+    assert f"chown -R {os.getuid()}:{os.getgid()} /testbed" in seen["input"]
+    # The generated artifact is COMMITTED: a derived worktree carries it and
+    # the base ref points at the final commit (empty review diff).
+    tracked = sp.run(
+        ["git", "-C", str(dest), "ls-files", "pkg_version.py"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    assert tracked == "pkg_version.py"
+    wt = tmp_path / "story-wt"
+    sp.run(
+        ["git", "-C", str(dest), "worktree", "add", "-b", "swebench-95000-y", str(wt)],
+        check=True, capture_output=True, text=True,
+    )
+    assert (wt / "pkg_version.py").exists(), "worktree lost the build artifact"
+    ref = sp.run(
+        ["git", "-C", str(dest), "rev-parse", "refs/remotes/origin/swebench-base"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    head = sp.run(
+        ["git", "-C", str(dest), "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    assert ref == head
+
+
+def test_prepare_failure_is_an_error_and_pro_is_untouched(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """A failing install step must come back as an error string (selftest
+    excludes the instance, run fails at $0); the frozen Pro profile never
+    runs a prepare step at all."""
+    from types import SimpleNamespace
+
+    inst = dict(_rebench_instance(A), install_cmd="exit 1")
+    calls: list[Any] = []
+
+    def fake_run(argv: Any, **kw: Any) -> Any:
+        calls.append(argv)
+        return SimpleNamespace(returncode=97, stdout="boom", stderr="")
+
+    monkeypatch.setattr(A.subprocess, "run", fake_run)
+    err = A._prepare_cloned_tree(inst, tmp_path / "clone")
+    assert err is not None and "install step failed" in err
+
+    calls.clear()
+    pro = _pro_manifest()["instances"][0]
+    assert A._prepare_cloned_tree(pro, tmp_path / "clone") is None
+    assert calls == [], "Pro is frozen — no prepare container may run"
+
+
+def test_docker_bash_mounts_the_prepared_tree_as_the_invoking_uid(A: Any, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: N803
+    """Grade/selftest for swe-rebench must operate on the mounted prepared
+    clone as the invoking uid; Pro (no mount) keeps the baked-tree call."""
+    from types import SimpleNamespace
+
+    seen: dict[str, Any] = {}
+
+    def fake_run(argv: Any, **kw: Any) -> Any:
+        seen["argv"] = argv
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(A.subprocess, "run", fake_run)
+    A._docker_bash("img", "echo hi", 60, nonce="n1", mount=Path("/x/repo"))
+    argv = " ".join(seen["argv"])
+    assert "-v /x/repo:/testbed" in argv
+    assert f"--user {os.getuid()}:{os.getgid()}" in argv
+    assert "--network none" in argv
+
+    A._docker_bash("img", "echo hi", 60, nonce="n1")
+    argv = " ".join(seen["argv"])
+    assert "-v" not in seen["argv"] and "--user" not in seen["argv"]

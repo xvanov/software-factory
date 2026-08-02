@@ -387,6 +387,33 @@ def _oracle_for(inst: dict[str, Any]) -> dict[str, Any]:
     return _normalize_oracle(rec)
 
 
+def _assert_oracle_store_complete(instances: list[dict[str, Any]]) -> None:
+    """Hard-fail BEFORE any spend when the oracle store cannot serve every
+    pinned instance.
+
+    The store is only consulted by ``grade`` — the LAST step — so a missing
+    or stale store used to surface after the money was spent: the first live
+    sweep burned $24.78 producing runs whose every grade then refused with
+    "oracle store has no record". Every entry point that leads to spend
+    (``run``, ``run-all``, ``selftest``) calls this first; instances from
+    pre-store manifests (material inline, no ``oracle_sha256``) are exempt.
+    """
+    problems: list[str] = []
+    for inst in instances:
+        if not inst.get("oracle_sha256"):
+            continue
+        try:
+            _oracle_for(inst)
+        except SystemExit as exc:
+            problems.append(f"  {inst.get('instance_id')}: {exc}")
+    if problems:
+        raise SystemExit(
+            "oracle store cannot serve the pinned manifest — refusing BEFORE "
+            f"any spend ({len(problems)} instance(s)):\n" + "\n".join(problems)
+            + "\nRe-run `fetch` to rebuild manifest.json and oracle.json.z together."
+        )
+
+
 def _declared_test_entries(inst: dict[str, Any]) -> list[str]:
     """The instance's declared test targets, as raw entries (may hold ::ids).
 
@@ -551,6 +578,12 @@ def _row_to_instance(profile: DatasetProfile, r: dict[str, Any]) -> dict[str, An
                 "language": "python",  # the leaderboard split is Python-only
                 "docker_image": r.get("docker_image") or "",
                 "created_at": r.get("created_at") or "",
+                # The dataset's own install/build step — what the image was
+                # baked with. Public (environment plumbing, not answer
+                # material): `_prepare_cloned_tree` replays it against the
+                # mounted fresh clone so control and measurement share one
+                # topology.
+                "install_cmd": _install_cmd_from(r),
                 "fail_to_pass": fail_to_pass,
                 "pass_to_pass": _repair_truncated_param_ids(
                     _as_list(r.get("PASS_TO_PASS"))
@@ -585,6 +618,25 @@ def _row_to_instance(profile: DatasetProfile, r: dict[str, Any]) -> dict[str, An
             }
         )
     return inst
+
+
+def _install_cmd_from(row: dict[str, Any]) -> str:
+    """The dataset's install/build command from ``install_config``.
+
+    ``pre_install`` (a list) runs before ``install``; both are optional. The
+    rows API serves the config as a dict, but tolerate a JSON string too.
+    """
+    ic = row.get("install_config") or {}
+    if isinstance(ic, str):
+        try:
+            ic = json.loads(ic)
+        except json.JSONDecodeError:
+            return ""
+    if not isinstance(ic, dict):
+        return ""
+    parts = [str(p).strip() for p in (ic.get("pre_install") or [])]
+    parts.append(str(ic.get("install") or "").strip())
+    return " && ".join(p for p in parts if p)
 
 
 def _split_oracle(inst: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -921,6 +973,9 @@ def _reset_run_artifacts(run_dir: Path) -> None:
     ):
         (run_dir / name).unlink(missing_ok=True)
     shutil.rmtree(run_dir / "state", ignore_errors=True)
+    # The previous grade's prepared clone (swe-rebench grades mount a fresh
+    # prepared tree) — a new run means a new grade, so it is stale too.
+    shutil.rmtree(run_dir / "grade-repo", ignore_errors=True)
 
 
 def _clone_url(inst: dict[str, Any]) -> str:
@@ -1035,6 +1090,101 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True
     )
+
+
+_PREPARE_TIMEOUT_S = 3600
+
+
+def _prepare_cloned_tree(
+    inst: dict[str, Any], repo: Path, *, timeout_s: int = _PREPARE_TIMEOUT_S
+) -> str | None:
+    """Make a fresh clone equivalent to the image's baked tree. rebench-only.
+
+    proxy ≠ real, measured on the first live sweep: ``selftest`` graded gold
+    patches inside the image's BAKED ``/testbed`` — which contains
+    build-generated artifacts (setuptools-scm ``_version.py``, compiled
+    extensions) — while ``run`` mounts a FRESH clone over ``/testbed`` and
+    loses them. Three instances (tox, vyper, pandas) passed the control and
+    then died at the run's collect gate. The control must exercise the
+    MEASUREMENT's topology, so both now operate on a mounted fresh clone
+    prepared by this function:
+
+    1. run the dataset's own install/build step (``install_cmd``, from the
+       row's ``install_config`` — the exact command the image was baked
+       with) inside the instance image against the mounted clone. As ROOT,
+       because editable installs write into the image's conda env; with
+       network, because this is the dataset's bake step at the pristine base
+       commit — no arm code exists yet. Ownership is chowned back to the
+       invoking uid so later host git operations and cleanup work.
+    2. COMMIT whatever the step generated onto ``swebench-base``: untracked
+       files survive neither ``git worktree add`` (dev's per-story tree) nor
+       the grade script's ``git clean -fd`` — the same clone-passes/
+       worktree-fails class the submodule vendoring closed.
+
+    Returns an error string when the install step fails — the caller treats
+    that as environment-not-preparable BEFORE any model spend (for selftest
+    that honestly excludes the instance; for run it fails the run at $0).
+    Pro stays on its frozen baked topology and returns None untouched.
+    """
+    profile = _profile_of(inst)
+    if profile.name != "swe-rebench":
+        return None
+    install = str(inst.get("install_cmd") or "").strip()
+    if install:
+        wd = profile.container_workdir
+        uid, gid = os.getuid(), os.getgid()
+        script = (
+            "set -o pipefail\n"
+            f"cd {wd} || exit 97\n"
+            # The mounted tree is HOST-uid-owned while this container runs as
+            # root: git (invoked by setuptools-scm / uv-dynamic-versioning
+            # during the install) refuses with "dubious ownership" without
+            # this — measured on 3 of the pinned 20.
+            "git config --global --add safe.directory '*' 2>/dev/null || true\n"
+            # A --depth 1 clone (the contamination control) has no tags, so
+            # scm-version backends cannot derive a version. These are the
+            # backends' own documented fallbacks; a test that asserts a real
+            # version string will fail the gold run and exclude the instance
+            # VISIBLY at selftest rather than silently passing a wrong env.
+            "export SETUPTOOLS_SCM_PRETEND_VERSION=0.0.1.dev0\n"
+            "export PDM_BUILD_SCM_VERSION=0.0.1.dev0\n"
+            f"{profile.env_setup.rstrip() or 'true &&'} true\n"
+            f"({install})\n"
+            "rc=$?\n"
+            f"chown -R {uid}:{gid} {wd}\n"
+            'exit "$rc"\n'
+        )
+        try:
+            proc = subprocess.run(
+                ["docker", "run", "--rm", "-i",
+                 "-v", f"{repo}:{wd}", "-w", wd,
+                 "--entrypoint", "bash", _image_for(inst), "-lc",
+                 "cat > /tmp/.swebench_prepare.sh && "
+                 "exec bash -l /tmp/.swebench_prepare.sh < /dev/null"],
+                input=script,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return f"install step could not run: {exc}"
+        if proc.returncode != 0:
+            tail = ((proc.stdout or "") + (proc.stderr or ""))[-1500:]
+            return f"install step failed rc={proc.returncode}: {tail}"
+    # Commit generated artifacts even when install_cmd is empty (a no-op
+    # commit path): derived worktrees and in-container resets must see the
+    # exact prepared state.
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], capture_output=True)
+    staged = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--cached", "--quiet"], capture_output=True
+    )
+    if staged.returncode != 0:
+        _git(
+            repo, "commit", "-q", "-m",
+            "bench: commit build-generated artifacts so derived trees keep them",
+        )
+    _git(repo, "update-ref", "refs/remotes/origin/swebench-base", "HEAD")
+    return None
 
 
 _STORY_TEMPLATE = """# {instance_id}
@@ -1343,6 +1493,9 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     # setup, so reported wall_clock_s silently excluded that work.
     entered = time.monotonic()
     inst = _instance(instance_id)
+    # BEFORE anything costs money or time: the oracle store must be able to
+    # grade this run, or the whole run is a write-off (the $24.78 class).
+    _assert_oracle_store_complete([inst])
     run_dir = _run_dir(instance_id, "factory")
     # BEFORE any exit path (image pull, clone, precheck): a stale
     # prediction.diff must never outlive the run that produced it.
@@ -1354,6 +1507,34 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         )
     repo = run_dir / "repo"
     _clone(inst, repo)
+    # Same topology as the control: replay the dataset's install/build step
+    # against the fresh clone and commit what it generates, so dev's derived
+    # worktrees carry the build artifacts the baked image had.
+    prep_error = _prepare_cloned_tree(inst, repo)
+    if prep_error:
+        error = f"prepare: {prep_error}"
+        _write_result(
+            instance_id,
+            "factory",
+            {
+                "arm": "factory",
+                "instance_id": instance_id,
+                "repo": inst["repo"],
+                "base_commit": inst["base_commit"],
+                "problem_statement_sha256": inst["problem_statement_sha256"],
+                "manifest_sha256": _manifest()["manifest_sha256"],
+                "ts": datetime.now(UTC).isoformat(),
+                "wall_clock_s": round(time.monotonic() - entered, 1),
+                "final_state": None,  # no story was ever dispatched
+                "error": error,
+                "factory_says_green": False,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cost_usd": 0.0,
+                "persona_calls": 0,
+            },
+        )
+        raise SystemExit(error)
     root = _build_bench_root(inst, repo)
 
     # PRE-DISPATCH COLLECT GATE. Fail the run NOW, loudly, if the test command
@@ -1591,6 +1772,8 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     # run_factory); ``started`` below still scopes the step-loop budget.
     entered = time.monotonic()
     inst = _instance(instance_id)
+    # A run the store cannot grade is a write-off — refuse before any spend.
+    _assert_oracle_store_complete([inst])
     run_dir = _run_dir(instance_id, "bare")
     # BEFORE any exit path: clears stale prediction/grade artifacts AND wipes
     # ``state/`` — unlike the factory arm's rebuilt root, the bare arm's
@@ -1803,12 +1986,39 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
             print(json.dumps(verdict, indent=2))
             return
 
+    # Same topology as the run and the control (swe-rebench): grade against
+    # a PREPARED fresh clone mounted over the workdir, not the image's baked
+    # tree — the baked tree carries build artifacts a fresh clone lacks, and
+    # grading a different environment from the one measured is proxy ≠ real.
+    # Pro (frozen) keeps its baked-tree grading unchanged.
+    profile = _profile_of(inst)
+    mount: Path | None = None
+    if profile.name == "swe-rebench":
+        grade_repo = run_dir / "grade-repo"
+        _clone(inst, grade_repo)
+        prep_error = _prepare_cloned_tree(inst, grade_repo, timeout_s=timeout_s)
+        if prep_error:
+            verdict.update(
+                {
+                    "oracle_resolved": None,
+                    "outcome": "environment_prepare_failed",
+                    "log_tail": prep_error[-2000:],
+                }
+            )
+            _write_result(instance_id, arm, {"grade": verdict}, merge=True)
+            print(json.dumps(verdict, indent=2))
+            return
+        mount = grade_repo
+
     # Nonce-suffixed markers (env-injected, never in the script text): a
     # marker echoed by arm-authored test code, or replayed from any static
     # text, can never match the strings checked below.
     nonce = secrets.token_hex(8)
     script = _grade_script_for(inst, diff_text)
-    proc = _docker_bash(image, script, timeout_s, nonce=nonce)
+    proc = _docker_bash(
+        image, script, timeout_s, nonce=nonce, mount=mount,
+        workdir=profile.container_workdir,
+    )
     log = (proc.stdout or "") + (proc.stderr or "")
     (run_dir / "grade.log").write_text(log, encoding="utf-8")
 
@@ -1876,7 +2086,13 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
 
 
 def _docker_bash(
-    image: str, script: str, timeout_s: int, *, nonce: str = ""
+    image: str,
+    script: str,
+    timeout_s: int,
+    *,
+    nonce: str = "",
+    mount: Path | None = None,
+    workdir: str = "/testbed",
 ) -> subprocess.CompletedProcess[str]:
     """Run ``script`` in ``image``.
 
@@ -1901,12 +2117,28 @@ def _docker_bash(
     graded code runs can see, eat, or replay the script. The verdict markers
     are additionally nonce-suffixed (``SWEBENCH_NONCE``, env-injected) so a
     marker echoed from any static text can never match the checked string.
+
+    ``mount`` switches the topology: the given host tree is mounted over
+    ``workdir`` and the container runs as the invoking uid (the tree is
+    host-owned; the swe-rebench control and measurement both grade a
+    prepared fresh clone, not the image's baked tree). Without it (Pro,
+    frozen) the image's own baked tree is graded as before.
     """
+    args = [
+        "docker", "run", "--rm", "-i", "--network", "none",
+        "-e", f"SWEBENCH_NONCE={nonce}",
+    ]
+    if mount is not None:
+        args += [
+            "-v", f"{mount}:{workdir}", "-w", workdir,
+            "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp",
+        ]
+    args += [
+        "--entrypoint", "bash", image, "-lc",
+        "cat > /tmp/.swebench_grade.sh && exec bash -l /tmp/.swebench_grade.sh < /dev/null",
+    ]
     return subprocess.run(
-        ["docker", "run", "--rm", "-i", "--network", "none",
-         "-e", f"SWEBENCH_NONCE={nonce}",
-         "--entrypoint", "bash", image, "-lc",
-         "cat > /tmp/.swebench_grade.sh && exec bash -l /tmp/.swebench_grade.sh < /dev/null"],
+        args,
         input=script,
         capture_output=True,
         text=True,
@@ -2159,6 +2391,9 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
     )
     if not targets:
         raise SystemExit(f"{instance_id!r} is not in the pinned manifest")
+    # Refuse up front (with the actionable fix) rather than crashing on the
+    # first instance mid-way through docker pulls.
+    _assert_oracle_store_complete(targets)
 
     oracles = {i["instance_id"]: _oracle_for(i) for i in targets}
     # The HF lookup is only for instances whose oracle record carries no gold
@@ -2192,13 +2427,42 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
                 print("  image unavailable")
                 continue
 
+        # CONTROL = MEASUREMENT (swe-rebench): the gold patch is graded in
+        # the same topology the arms run and are graded in — a PREPARED
+        # fresh clone mounted over the workdir. Grading the image's baked
+        # tree instead let three instances pass the control and then die at
+        # the run's collect gate on missing build artifacts (proxy ≠ real).
+        # An instance whose install step cannot succeed in this topology is
+        # excluded HERE, before any model spend. Pro (frozen) stays baked.
+        profile = _profile_of(inst)
+        mount: Path | None = None
+        if profile.name == "swe-rebench":
+            repo = _run_dir(iid, "selftest") / "repo"
+            _clone(inst, repo)
+            prep_error = _prepare_cloned_tree(inst, repo, timeout_s=timeout_s)
+            if prep_error:
+                results.append(
+                    {
+                        "instance_id": iid,
+                        "gold_resolves": None,
+                        "note": "install_failed_in_mounted_topology",
+                        "detail": prep_error[-500:],
+                    }
+                )
+                print("  install step failed in the mounted-clone topology")
+                continue
+            mount = repo
+
         # The gold patch is code-only by construction, but strip anyway: if the
         # dataset's `patch` ever included a test edit, grading it would validate
         # the oracle against a modified oracle.
         code_only, _, stripped = split_diff(patch)
         nonce = secrets.token_hex(8)
         script = _grade_script_for(inst, code_only)
-        proc = _docker_bash(image, script, timeout_s, nonce=nonce)
+        proc = _docker_bash(
+            image, script, timeout_s, nonce=nonce, mount=mount,
+            workdir=profile.container_workdir,
+        )
         log = (proc.stdout or "") + (proc.stderr or "")
         d = _run_dir(iid, "selftest")
         (d / "selftest.log").write_text(log, encoding="utf-8")
@@ -2407,49 +2671,131 @@ def _trajectory_files(state_root: Path) -> list[Path]:
     return sorted((state_root / "state" / "events" / "trajectories").glob("*.ndjson"))
 
 
-# Strings whose appearance in an ARM's action trail mean it touched (or went
-# looking for) the harness's own answer material. Both arms execute on this
-# host filesystem, so the manifest and the oracle store are reachable; no
-# honest run has any reason to reference them. "bench/swebench" covers every
-# relative or absolute path into the harness dir (the absolute SWE_DIR path
-# ends with it); "oracle.json" catches the store's basename anywhere;
-# "swebench/manifest.json" catches the manifest specifically without
-# false-flagging a target repo's OWN manifest.json (web-app manifests are
-# common — bare "manifest.json" would fail honest runs).
-_ORACLE_PROBE_MARKERS: tuple[str, ...] = (
-    "bench/swebench",
-    "oracle.json",
-    "swebench/manifest.json",
-)
+# Characters that legitimately terminate a path mention. Used to decide
+# whether a ``bench/swebench/runs/<id>/<arm>`` reference stayed inside the
+# run's own subtree ("/" continues INTO the subtree) or merely named the dir.
+_PATH_BOUNDARY = set("/'\"`)]}>,;: \t\n\\")
+
+# Trajectory events that are HARNESS-authored, not arm actions. The
+# SystemPromptEvent legitimately contains the run's own cwd (measured: it
+# false-flagged 13/19 factory rows in the first live sweep), and user-source
+# MessageEvents are the harness's task prompt. Only the arm's actions and
+# the environment's responses to them can constitute a probe.
+_HARNESS_AUTHORED_KINDS = ("SystemPromptEvent",)
+
+
+# OpenHands truncates oversized observations with this sentinel — sometimes
+# MID-PATH, leaving a fragment like ``bench/swebench/ru<response clipped``
+# that no prefix rule can resolve. A fragment is allowed ONLY when it is a
+# strict prefix of the run's own subtree AND the divergence point is exactly
+# this sentinel; any other truncated form stays flagged.
+_CLIP_SENTINEL = "<response clipped"
+
+
+def _probe_line_hits(line: str, instance_id: str, arm: str) -> list[str]:
+    """Oracle-probe markers in one trail line, own-run references excluded.
+
+    Flags, fail-closed:
+    * ``oracle.json`` anywhere — the store's basename never legitimately
+      appears in a run subtree;
+    * ``swebench/manifest.json`` — the pinned manifest, in any path form (a
+      target repo's OWN manifest.json — web-app manifests are common — does
+      not match);
+    * any other ``bench/swebench`` path that does NOT stay inside the run's
+      own ``runs/<instance>/`` subtree. The arm's cwd IS under that subtree,
+      so its own paths echo constantly in commands, tracebacks, directory
+      listings and condensed summaries (measured: every flagged row of the
+      first live sweep was such an echo). Two subdirs of the OWN run dir are
+      still flagged — ``selftest/`` and the OTHER arm's dir — because their
+      grade/selftest logs carry the hidden test ids. So are other
+      instances' run dirs, the manifest, the store, and the harness dir
+      itself.
+    """
+    hits: list[str] = []
+    if "oracle.json" in line:
+        hits.append("oracle.json")
+    if "swebench/manifest.json" in line:
+        hits.append("swebench/manifest.json")
+    own_dir = f"bench/swebench/runs/{instance_id}"
+    other_arm = "bare" if arm == "factory" else "factory"
+    for m in re.finditer(r"bench/swebench", line):
+        reason = _classify_bench_ref(line[m.start():], own_dir, other_arm)
+        if reason:
+            hits.append(reason)
+            break
+    return hits
+
+
+def _classify_bench_ref(rest: str, own_dir: str, other_arm: str) -> str | None:
+    """None when ``rest`` is an own-run reference; the flag reason otherwise."""
+    if rest.startswith(own_dir):
+        after = rest[len(own_dir):]
+        if not after or (after[0] in _PATH_BOUNDARY and after[0] != "/"):
+            return None  # dir-level mention of the own run dir (find/ls target)
+        if after[0] == "/":
+            seg = re.match(r"[^/'\"`)\]}>,;: \t\n\\]*", after[1:])
+            first = seg.group(0) if seg else ""
+            if first in ("selftest", other_arm):
+                return f"own run's oracle-bearing subdir runs/…/{first}"
+            return None  # anywhere else under the own run dir — cwd echo
+        # e.g. runs/<id>SUFFIX — an id-prefix collision is NOT the own dir.
+        return "bench/swebench path outside the run's own subtree"
+    # A truncated own path is tolerated ONLY when it diverges exactly at the
+    # observation clipper's sentinel; every other divergence is foreign.
+    probe = f"{own_dir}/"
+    j = 0
+    while j < len(rest) and j < len(probe) and rest[j] == probe[j]:
+        j += 1
+    if j < len(probe) and rest[j:].startswith(_CLIP_SENTINEL):
+        return None
+    return "bench/swebench path outside the run's own subtree"
 
 
 def _scan_oracle_probes(
-    state_root: Path, run_dir: Path, result: dict[str, Any]
+    state_root: Path,
+    run_dir: Path,
+    result: dict[str, Any],
+    *,
+    instance_id: str,
+    arm: str,
 ) -> list[str]:
     """Failures for any arm action that referenced the oracle/manifest paths.
 
     Detection layer for the answer-leak threat: the compressed store defeats
     grep, but a process that knows the format can still decode it — so the
-    arms' OWN action trails are scanned for any reference to the harness
-    paths. Sources: every OpenHands trajectory line (commands AND
-    observations — factory arm), the bare arm's UNTRUNCATED
-    ``bare-commands.ndjson``, and the result.json transcript as a fallback.
-    Any hit invalidates the run; no honest run has a reason to look there.
-    FAIL SAFE: a bare run that executed commands but left no full command
-    log cannot be cleared, and an unreadable trail is a finding, not a pass.
+    arms' OWN action trails are scanned. Sources: OpenHands trajectory
+    events (the arm's actions and the environment's observations — NOT the
+    harness-authored system prompt or task message, which legitimately carry
+    the run's own cwd), the bare arm's UNTRUNCATED ``bare-commands.ndjson``,
+    and the result.json transcript as a fallback. References inside the
+    run's own ``runs/<instance>/<arm>/`` subtree are the arm's cwd, never a
+    probe; everything else stays fail-closed. A bare run that executed
+    commands but left no full command log cannot be cleared, and an
+    unreadable trail is a finding, not a pass.
     """
     failures: list[str] = []
     for traj in _trajectory_files(state_root):
         try:
             with traj.open(encoding="utf-8", errors="replace") as fh:
                 for n, line in enumerate(fh, 1):
-                    hits = [m for m in _ORACLE_PROBE_MARKERS if m in line]
-                    if hits:
-                        failures.append(
-                            f"oracle-probe: trajectory {traj.name}:{n} references "
-                            f"the harness's oracle/manifest paths {hits} — the arm "
-                            "went looking for the answer; the run is invalid"
-                        )
+                    hits = _probe_line_hits(line, instance_id, arm)
+                    if not hits:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except json.JSONDecodeError:
+                        ev = {}
+                    kind = str(ev.get("kind") or "")
+                    if kind in _HARNESS_AUTHORED_KINDS:
+                        continue  # the harness's own system prompt
+                    if kind == "MessageEvent" and ev.get("source") == "user":
+                        continue  # the harness's task message
+                    failures.append(
+                        f"oracle-probe: trajectory {traj.name}:{n} "
+                        f"({kind or 'unparsed'}) references the harness's "
+                        f"oracle/manifest paths {hits} — the arm went looking "
+                        "for the answer; the run is invalid"
+                    )
         except OSError as exc:
             failures.append(
                 f"oracle-probe: trajectory {traj.name} unreadable ({exc}) — "
@@ -2462,7 +2808,7 @@ def _scan_oracle_probes(
         try:
             with cmd_log.open(encoding="utf-8", errors="replace") as fh:
                 for n, line in enumerate(fh, 1):
-                    hits = [m for m in _ORACLE_PROBE_MARKERS if m in line]
+                    hits = _probe_line_hits(line, instance_id, arm)
                     if hits:
                         failures.append(
                             f"oracle-probe: bare-commands.ndjson:{n} references "
@@ -2481,7 +2827,7 @@ def _scan_oracle_probes(
             "run cannot be cleared of oracle access"
         )
     for step in transcript:
-        hits = [m for m in _ORACLE_PROBE_MARKERS if m in json.dumps(step)]
+        hits = _probe_line_hits(json.dumps(step), instance_id, arm)
         if hits:
             failures.append(
                 f"oracle-probe: bare-arm transcript step {step.get('step')} "
@@ -2742,7 +3088,11 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     # 6. oracle-probe scan: any reference to the harness's manifest/oracle
     #    paths in the arm's own action trail means it went looking for the
     #    answer — the run is invalid.
-    failures.extend(_scan_oracle_probes(state_root, run_dir, result))
+    failures.extend(
+        _scan_oracle_probes(
+            state_root, run_dir, result, instance_id=instance_id, arm=arm
+        )
+    )
 
     payload = {
         "instance_id": instance_id,
@@ -3728,6 +4078,15 @@ def run_all(
     )
     if not chosen:
         raise SystemExit("nothing to sweep: the pinned manifest is empty")
+    # The oracle store must be able to grade EVERY chosen instance before a
+    # single child spawns: the first live sweep burned $24.78 and produced
+    # zero audited-valid rows because grade — the last step — was the first
+    # place the clobbered store was consulted. Applies to --dry-run too: a
+    # preview of a sweep that would refuse should say so.
+    chosen_set = set(chosen)
+    _assert_oracle_store_complete(
+        [i for i in manifest["instances"] if i["instance_id"] in chosen_set]
+    )
     workers = max(1, min(workers, len(chosen)))
 
     hourly_cap, daily_cap = load_spend_caps()
