@@ -2557,8 +2557,14 @@ def run_bare(
             f"image for {instance_id} is unavailable; the bare arm's test "
             "command runs inside it (see instance_test_command)"
         )
-    repo = run_dir / "repo"
+    # OUTSIDE the repo. The arm's shell runs with cwd inside this clone, and at
+    # `runs/<id>/bare/repo` that was three `..` from `bench/swebench/
+    # oracle.json.z` and one from every other arm's `grade.log`. `state/` stays
+    # under `run_dir` — it is where `audit` reads the ledger from and is no
+    # longer an ancestor of the agent's cwd.
+    repo = _work_dir(instance_id, "bare", fresh=True) / "repo"
     _clone(inst, repo)
+    assert_workspace_isolated(repo)
     # Same topology as the factory arm and the selftest control: replay the
     # dataset's install/build step so the test command handed to the model
     # below actually collects from this clone (rebench-only; Pro is a no-op).
@@ -3628,8 +3634,14 @@ def run_openhands(
             f"image for {instance_id} is unavailable; the openhands arm's test "
             "command runs inside it (see instance_test_command)"
         )
-    repo = run_dir / "repo"
+    # OUTSIDE the repo, same reason as every other arm: the OpenHands agent's
+    # working directory IS this clone, and at `runs/<id>/openhands/repo` the
+    # oracle store was three `..` up. `state/` stays under `run_dir` (the
+    # trajectory the audit scans lives there) and is not an ancestor of the
+    # agent's cwd.
+    repo = _work_dir(instance_id, "openhands", fresh=True) / "repo"
     _clone(inst, repo)
+    assert_workspace_isolated(repo)
     prep_error = _prepare_cloned_tree(inst, repo)
     if prep_error:
         _fail(f"prepare: {prep_error}")
@@ -5579,7 +5591,7 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
         warnings.extend(c_warnings)
     else:
         failures, warnings, calls, responses, ledger = _audit_factory_ledger(
-            state_root, result, result_valid, failures
+            state_root, result, result_valid, failures, arm
         )
         ledger_cost, ledger_in, ledger_out = ledger
 
@@ -5667,11 +5679,83 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     )
 
 
+# How many OpenHands trajectory files a HEALTHY run of each arm leaves behind.
+# Keyed by ARM, not by "is some other artifact present" — an arm's identity is
+# what decides whether a trajectory should exist, and inferring it from a file
+# on disk is the `proxy != real` class: a FACTORY run that lost its trajectories
+# would have been waved through by a stray `bare-commands.ndjson` in its state
+# root.
+#
+#   factory   — every dev call is a whole OpenHands conversation, so ONE
+#               trajectory PER dev call. Fewer means the reasoning trail is
+#               incomplete.
+#   openhands — ONE conversation for the entire run, copied out whole as
+#               `nostory-1.ndjson`, against exactly one dev Run row. The rule is
+#               "at least one", never one-per-call.
+#   bare      — single litellm completions, no OpenHands conversation at any
+#               point, so there is no trajectory to capture and never was. Its
+#               full action+observation trail is `bare-commands.ndjson`, which
+#               the oracle-probe scan reads and whose absence beside executed
+#               commands is already a hard FAILURE there. Warning "0 trajectory
+#               files" on every bare row trained the reader to ignore the one
+#               warning that matters.
+#   claude    — never reaches this function (transcript-backed, see
+#               `_audit_claude_run`).
+_TRAJECTORIES_PER_DEV_CALL = "per-call"
+_TRAJECTORIES_AT_LEAST_ONE = "at-least-one"
+_TRAJECTORIES_NONE_EXPECTED = "none"
+_ARM_TRAJECTORY_EXPECTATION = {
+    "factory": _TRAJECTORIES_PER_DEV_CALL,
+    "openhands": _TRAJECTORIES_AT_LEAST_ONE,
+    "bare": _TRAJECTORIES_NONE_EXPECTED,
+}
+
+
+def _trajectory_coverage_warnings(
+    state_root: Path, arm: str, call_counts: dict[str, int]
+) -> list[str]:
+    """Trajectory-coverage warnings for one arm, scoped by what it can produce.
+
+    An UNKNOWN arm gets the strictest rule (one trajectory per dev call), so a
+    newly added arm is noisy rather than silently unchecked.
+
+    Warnings only, never failures, in both directions: a size-capped or
+    scope-disabled capture must not invalidate an otherwise-sound run. The
+    fail-CLOSED rule lives in ``audit`` — an arm reporting model calls with
+    ``trails_scanned == 0`` FAILS — and it is untouched by this: for bare, the
+    command log is the trail that satisfies it, and for factory and openhands
+    it is the trajectory itself.
+    """
+    dev_calls = call_counts.get("dev", 0)
+    if not dev_calls:
+        return []
+    rule = _ARM_TRAJECTORY_EXPECTATION.get(arm, _TRAJECTORIES_PER_DEV_CALL)
+    n = len(_trajectory_files(state_root))
+    if rule == _TRAJECTORIES_NONE_EXPECTED:
+        # Not "and never was" in the abstract: its trail must actually be there.
+        if not (state_root / "bare-commands.ndjson").exists():
+            return [
+                f"{arm}: {dev_calls} dev call(s) and no bare-commands.ndjson — "
+                "this arm's only action trail is missing (a hard FAILURE in the "
+                "oracle-probe scan if it executed anything)"
+            ]
+        return []
+    expected = dev_calls if rule == _TRAJECTORIES_PER_DEV_CALL else 1
+    if n < expected:
+        return [
+            f"dev: {dev_calls} call(s) but only {n} trajectory file(s) under "
+            f"state/events/trajectories (expected at least {expected} for the "
+            f"{arm} arm) — the agent's reasoning trail is incomplete"
+        ]
+    return []
+
+
 def _audit_factory_ledger(
     state_root: Path,
     result: dict[str, Any],
     result_valid: bool,
     failures: list[str],
+    arm: str,
 ) -> tuple[
     list[str], list[str], list[dict[str, Any]], list[dict[str, Any]],
     tuple[float, int, int],
@@ -5731,20 +5815,7 @@ def _audit_factory_ledger(
                 "body(ies) captured — response_bodies.ndjson is incomplete "
                 "(rotated away, capture disabled, or a failed call)"
             )
-    # The bare arm's dev "calls" are single litellm completions, not OpenHands
-    # conversations, so there is no trajectory to capture and never was: its
-    # full action+observation trail is ``bare-commands.ndjson`` (which the
-    # oracle-probe scan above reads, and whose absence beside executed commands
-    # is a hard FAILURE, not a warning). Warning "0 trajectory files" on every
-    # bare row trained the reader to ignore the one warning that matters.
-    dev_calls_n = call_counts.get("dev", 0)
-    has_command_log = (state_root / "bare-commands.ndjson").exists()
-    if dev_calls_n and len(traj_files) < dev_calls_n and not has_command_log:
-        warnings.append(
-            f"dev: {dev_calls_n} call(s) but only {len(traj_files)} trajectory "
-            "file(s) under state/events/trajectories — the agent's reasoning "
-            "trail is incomplete"
-        )
+    warnings.extend(_trajectory_coverage_warnings(state_root, arm, call_counts))
 
     # 2. ledger vs result.json — the number every A/B is measured against.
     ledger_cost = round(sum(float(c["cost_usd"] or 0.0) for c in calls), 4)

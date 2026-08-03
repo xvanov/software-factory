@@ -315,9 +315,13 @@ which the gold-patch control surfaced before any model spend:
   `runs/<id>/factory/root/state/worktrees/<name>/`, six `..` from
   `oracle.json.z` and three from the other arms' `grade.log`. Four factory rows
   in `results-archive/2026-08-03T02-21-23.249790Z` are `ok: false` because that
-  actually happened. Live trees now go under `$XDG_CACHE_HOME/swebench-work`
-  (override with `SWEBENCH_WORK_ROOT`) and only finished artifacts are copied
-  back into `runs/<id>/<arm>/` after the arm has stopped. The prepared trees
+  actually happened. **All four arms'** live trees now go under
+  `$XDG_CACHE_HOME/swebench-work/<instance>__<arm>/` (override with
+  `SWEBENCH_WORK_ROOT`) — flat, not nested, so no arm is a sibling `..` away —
+  and only finished artifacts are copied back into `runs/<id>/<arm>/` after the
+  arm has stopped. `state/` stays under the run dir: it is where `audit` reads
+  the ledger and trajectory from, and it is not an ancestor of the agent's cwd.
+  The prepared trees
   that `grade` and `selftest` mount are worse than reachable — the grade script
   applies the test patch, and the control applies the GOLD patch, *into* them —
   so they get an unguessable `mkdtemp` name and are deleted the moment grading

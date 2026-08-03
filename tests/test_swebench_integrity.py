@@ -964,3 +964,36 @@ def test_a_working_tree_left_inside_the_run_dir_fails_the_audit(A: Any, tmp_path
     assert "inside the harness directory" in failures[0]
     (run_dir / "grade-repo").mkdir()
     assert len(A._audit_workspace_layout(run_dir, "bare")) == 2
+
+
+def test_every_arm_clones_outside_the_repo(A: Any) -> None:  # noqa: N803
+    """Defect 1a, for all four arms.
+
+    Asserted on the source because the alternative is four live clones. The
+    behavioural half is `_audit_workspace_layout` (below) plus the arm tests in
+    `test_swebench_bare_openhands_arms.py`, which now assert the tree really
+    lands under `_work_dir`. `run_bare` and `run_openhands` shipped in #223
+    still doing `repo = run_dir / "repo"` — three `..` from `oracle.json.z`.
+    """
+    import inspect
+
+    for fn_name in ("run_factory", "run_bare", "run_claude", "run_openhands"):
+        src = inspect.getsource(getattr(A, fn_name))
+        assert '= run_dir / "repo"' not in src, (
+            f"{fn_name} puts its live working tree inside bench/swebench/"
+        )
+        assert "_work_dir(" in src, f"{fn_name} does not use the scratch work root"
+        assert "assert_workspace_isolated(" in src, (
+            f"{fn_name} never checks its workspace's ancestry before spend"
+        )
+
+
+def test_the_isolation_backstop_covers_every_arm(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """The audit-side check is arm-agnostic on purpose: a fifth arm inherits it
+    without anyone remembering to add it."""
+    for arm in ("factory", "bare", "claude", "openhands", "claude-opus-4-8", "future"):
+        run_dir = tmp_path / arm
+        (run_dir / "repo").mkdir(parents=True)
+        failures = A._audit_workspace_layout(run_dir, arm)
+        assert len(failures) == 1, (arm, failures)
+        assert "inside the harness directory" in failures[0]
