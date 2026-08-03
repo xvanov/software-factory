@@ -588,6 +588,26 @@ chain-verdict precision 1/5, recall 1/1. **Start at 1.4.**
 
 ---
 
+### Phase 1 outcome (2026-08-03) — read before starting Phase 2
+
+Three-arm result on the SWE-rebench pinned manifest (19 working-oracle
+instances, all rows audit-valid, evidence archived): **factory 11/19 = 58%
+(dev=deepseek-v4-pro + reviewer=gpt-5.4) · bare deepseek 0/19 · Claude Code
+(claude-opus-5) 16/18 = 89%**. First measured scaffold lift: +58 pp at
+matched weights. Phase 2 adjustments this implies:
+
+- Build the 120-task manifest from SWE-rebench monthly splits (+ the 30
+  SWE-bench-Live control), NOT SWE-bench Pro — Pro is frozen (see STATUS).
+- Add k≥3 repetitions per instance per arm; single-seed n=19 flips
+  instances run-to-run.
+- Keep the claude arm in every sweep as the frontier reference; the
+  factory-vs-claude gap (31 pp here) is the roadmap metric, and
+  factory-vs-bare is the product metric.
+- Known harness debts, small: sweep cost-estimation pools clean runs across
+  profiles (poisoned projections → needless --force-over-cap); a claude-arm
+  row whose CLI never starts counts as a gradable empty_patch instead of
+  run_failed; systemd-unit sweeps need PATH set explicitly (uv, claude).
+
 ## Phase 2 — the trustworthy benchmark
 
 **Effort ~2 weeks. Cost ~$510.** **[OPERATOR-PR-ONLY throughout — `bench/**`]**
