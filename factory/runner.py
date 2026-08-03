@@ -2240,6 +2240,7 @@ def text_run(
     direction_id: str | None = None,
     model_tier: str | None = None,
     software_factory_root: Path | None = None,
+    messages: list[dict[str, str]] | None = None,
 ) -> str | dict[str, Any]:
     """Single ``litellm.completion()`` call. Returns text, or a dict if ``schema`` set.
 
@@ -2247,6 +2248,16 @@ def text_run(
     to return JSON matching the schema; the response is parsed and validated
     via ``jsonschema`` if installed, falling back to a minimal key-presence
     check otherwise.
+
+    ``messages`` sends a real multi-turn role list instead of the default
+    single ``user`` turn. Multi-turn callers need it for a reason that is not
+    cosmetic: collapsing a conversation into ONE flat user string leaves the
+    model unable to tell its own previous text from the environment's replies,
+    and a model that cannot see that boundary will happily read its own
+    fabricated ``Exit 0 / Output:`` lines back as real tool results. ``prompt``
+    stays the telemetry/logging view of the call (prompt bodies, metadata,
+    hashes) so one call is one auditable record either way. Ignored when
+    ``schema`` is set — JSON mode owns the message shape.
     """
     # Log prompt metadata (length, section headers, placeholder markers, hash)
     # to ``state/events/prompts.ndjson`` BEFORE any failure path — including
@@ -2362,12 +2373,17 @@ def text_run(
             "AZURE_FOUNDRY_API_VERSION"
         )
 
-    messages = [{"role": "user", "content": prompt}]
-    if schema is not None:
-        messages[0]["content"] = (
-            f"{prompt}\n\nReturn ONLY a JSON object matching this schema:\n"
-            f"{json.dumps(schema, indent=2)}"
-        )
+    # A caller-supplied role list wins, EXCEPT in JSON mode, which owns the
+    # message shape (the schema instruction is appended to the sole user turn).
+    if messages is not None and schema is None:
+        wire_messages = [dict(m) for m in messages]
+    else:
+        wire_messages = [{"role": "user", "content": prompt}]
+        if schema is not None:
+            wire_messages[0]["content"] = (
+                f"{prompt}\n\nReturn ONLY a JSON object matching this schema:\n"
+                f"{json.dumps(schema, indent=2)}"
+            )
 
     # Retry loop for JSON-mode truncation: when finish_reason == "length"
     # OR the response fails to parse, double max_tokens and retry. Hard
@@ -2415,7 +2431,7 @@ def text_run(
     for attempt in range(1, _MAX_OUTPUT_RETRIES + 1):
         kwargs: dict[str, Any] = {
             "model": model_id,
-            "messages": messages,
+            "messages": wire_messages,
             "api_key": resolved_key,
         }
         if effective_base_url:
