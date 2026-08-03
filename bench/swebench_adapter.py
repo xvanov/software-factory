@@ -1762,10 +1762,37 @@ Task:
 {statement}
 
 Fix the PRODUCTION code so this is resolved. A hidden test suite will judge it.
+
+This checkout has no dependencies installed; the command below runs the repo's
+tests inside a docker image that has them, with your working tree mounted. Run
+it to check your fix before replying DONE:
+
+{test_command}
 """
 
 _BARE_STEP_CAP = 40
 _BARE_OUTPUT_CAP = 4000
+_FACTORY_STEP_DEFAULT = 16
+
+
+def _resolve_max_steps(arm: str, requested: int | None) -> int:
+    """Per-arm default step budget; an explicit ``--max-steps`` always wins.
+
+    The ONE place per-arm budgets resolve — the units differ per arm: a
+    factory "step" is one orchestrator tick (a whole dev/review/gate pass),
+    a bare "step" is ONE shell command, a claude "step" is one CLI turn
+    (``--max-turns``). All 19 bare runs of the first rebench sweep inherited
+    the factory's default of 16 while ``_BARE_STEP_CAP`` sat unused, so the
+    bare arm ran at less than half its intended budget. Bare now defaults to
+    its cap, claude to its turn cap; the factory keeps its 16 ticks.
+    """
+    if requested is not None:
+        return requested
+    if arm == "bare":
+        return _BARE_STEP_CAP
+    if arm == "claude":
+        return _CLAUDE_TURN_CAP
+    return _FACTORY_STEP_DEFAULT
 
 
 def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
@@ -1780,7 +1807,10 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
 
     Deliberately unsophisticated: one command per turn, truncated output, no
     planning, no retrieval, no review. That is the point — it is the floor the
-    factory has to beat.
+    factory has to beat. It DOES get the same docker test one-liner the
+    factory dev gets: an arm with no way to run anything measures
+    verification-blindness, not scaffold lift (0 of 19 first-sweep bare runs
+    ever invoked pytest).
     """
     # Wall clock starts at ENTRY so clone/setup time is counted (same fix as
     # run_factory); ``started`` below still scopes the step-loop budget.
@@ -1794,8 +1824,22 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     # ledger lives directly under run_dir and would accumulate Run rows
     # across re-runs, inflating the sum-all totals the audit certifies.
     _reset_run_artifacts(run_dir)
+    if not _ensure_image(inst):
+        raise SystemExit(
+            f"image for {instance_id} is unavailable; the bare arm's test "
+            "command runs inside it (see instance_test_command)"
+        )
     repo = run_dir / "repo"
     _clone(inst, repo)
+    # Same topology as the factory arm and the selftest control: replay the
+    # dataset's install/build step so the test command handed to the model
+    # below actually collects from this clone (rebench-only; Pro is a no-op).
+    # Fresh unprepared clones lose build-generated artifacts and die at
+    # collect — handing the model a command that cannot run would be the same
+    # broken-tool class this fix removes. Failing here costs $0.
+    prep_error = _prepare_cloned_tree(inst, repo)
+    if prep_error:
+        raise SystemExit(f"prepare: {prep_error}")
 
     sys.path.insert(0, str(FACTORY_ROOT))
     from factory.model_router import route
@@ -1810,7 +1854,16 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
 
     history = [
         _BARE_SYSTEM,
-        _BARE_TASK.format(repo=inst["repo"], statement=inst["problem_statement"]),
+        _BARE_TASK.format(
+            repo=inst["repo"],
+            statement=inst["problem_statement"],
+            # SAME derivation, SAME call shape as the factory story template
+            # (_STORY_TEMPLATE): no privileged targets, no extra wording. A
+            # bare arm with no way to run tests measures verification, not
+            # scaffold lift — 0 of 19 first-sweep bare runs ever invoked
+            # pytest; one shipped syntactically invalid Python.
+            test_command=instance_test_command(inst, repo=repo),
+        ),
     ]
     steps = min(max_steps, _BARE_STEP_CAP)
     for step in range(steps):
@@ -1918,18 +1971,47 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     print(f"bare arm done: {out}")
 
 
-_BASH_BLOCK = re.compile(r"BASH\s*\n(.+?)(?:\n\s*(?:BASH|DONE)\s*$|\Z)", re.S)
+# The command starts after the first line that is exactly "BASH" …
+_BASH_MARKER = re.compile(r"^\s*BASH\s*$")
+# … and ends at the first line that opens ANOTHER block (BASH/DONE), closes a
+# code fence, or looks like a fabricated observation. The old greedy regex
+# captured to end-of-reply, so when the model hallucinated a whole transcript
+# ("Exit 0. Output:\nimport collections…\nBASH\npytest …") the fabricated
+# tail was executed as real shell — one measured run executed 4 fabricated
+# commands while its actual patch script was written but never run.
+_BARE_STOP = re.compile(
+    r"^\s*(?:BASH|DONE)\s*$"  # a second block: only the FIRST is executed
+    r"|^\s*```"               # closing/next code fence
+    r"|^\s*Exit\s+-?\d+\b"    # hallucinated exit status
+    r"|^\s*Output:"           # hallucinated command output
+)
 
 
 def _parse_bash(reply: str) -> str | None:
+    """Extract exactly ONE command: the first BASH block, minus any
+    model-fabricated 'observations'. Truncating mid-heredoc on a fabricated
+    line is fail-safe — bash errors, the model sees it, and retries."""
     text = reply.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\n|\n```$", "", text)
-    m = _BASH_BLOCK.search(text)
-    if not m:
+    lines = text.splitlines()
+    start: int | None = None
+    for i, line in enumerate(lines):
+        if _BASH_MARKER.match(line):
+            start = i + 1
+            break
+    if start is None:
         return None
-    cmd = m.group(1).strip()
-    cmd = re.sub(r"^```[a-zA-Z]*\n|\n```$", "", cmd).strip()
+    # An inner fence directly under the marker wraps the command; skip it and
+    # let the fence rule in _BARE_STOP terminate the block.
+    if start < len(lines) and lines[start].lstrip().startswith("```"):
+        start += 1
+    cmd_lines: list[str] = []
+    for line in lines[start:]:
+        if _BARE_STOP.match(line):
+            break
+        cmd_lines.append(line)
+    cmd = "\n".join(cmd_lines).strip()
     return cmd or None
 
 
@@ -5049,8 +5131,10 @@ def main() -> None:
         "--max-steps",
         type=int,
         default=None,
-        help="per-arm step/turn budget; defaults to 16 (factory dispatch "
-             f"steps, bare bash turns) or {_CLAUDE_TURN_CAP} claude CLI turns",
+        help=f"explicit step/turn budget; default is per-arm — "
+             f"{_FACTORY_STEP_DEFAULT} orchestrator ticks for factory, "
+             f"{_BARE_STEP_CAP} shell turns for bare, "
+             f"{_CLAUDE_TURN_CAP} claude CLI turns",
     )
     p.add_argument("--timeout-s", type=int, default=5400)
 
@@ -5075,8 +5159,10 @@ def main() -> None:
         "--max-steps",
         type=int,
         default=None,
-        help=f"per-arm step/turn budget; defaults to 16, or {_CLAUDE_TURN_CAP} "
-             "for the claude arm",
+        help=f"explicit step/turn budget; default is per-arm — "
+             f"{_FACTORY_STEP_DEFAULT} orchestrator ticks for factory, "
+             f"{_BARE_STEP_CAP} shell turns for bare, "
+             f"{_CLAUDE_TURN_CAP} claude CLI turns",
     )
     p.add_argument("--timeout-s", type=int, default=5400, help="per-instance run cap")
     p.add_argument("--grade-timeout-s", type=int, default=3600)
@@ -5122,11 +5208,6 @@ def main() -> None:
         default=None,
         help="re-derive the table purely from a results-archive dir (no live runs)",
     )
-
-    def _resolve_max_steps(arm: str, max_steps: int | None) -> int:
-        if max_steps is not None:
-            return max_steps
-        return _CLAUDE_TURN_CAP if arm == "claude" else 16
 
     args = ap.parse_args()
     if args.cmd == "fetch":
