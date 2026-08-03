@@ -53,6 +53,36 @@ Three things this table is designed to stop being misread:
 `openhands` is the arm the previous run lacked, and the reason its headline was
 unattributable.
 
+### `bare` is demoted, capped, and on probation
+
+It was the incumbent baseline and the basis of the retracted "+58 pp". With
+`openhands` in the suite it is **no longer a baseline for anything the product
+claims**, because the only question it uniquely answers — how much value comes
+from merely having usable tools — is one no decision depends on. We are never
+shipping a no-tools harness.
+
+It stays for exactly two reasons, both cheap:
+
+1. **A ~$5 sanity canary.** If `bare` ≈ `openhands` ≈ `factory`, the tasks are
+   too easy or the oracle is broken. That failure mode has bitten this harness
+   before and deserves a tripwire.
+2. **Public comparability.** Minimal-scaffold numbers are the leaderboard
+   convention. Nebius publishes this same `deepseek-v4-pro` deployment at
+   **40.2%** under a minimal scaffold; without our own bare row we cannot place
+   our model against that figure *on our instances* — only against their pool,
+   which is not paired with ours.
+
+For the record, a minimal loop is not inherently useless: mini-SWE-agent is a
+~100-line bash-only loop with no tool-calling API, and its authors report it in
+the mid-60s% on SWE-bench Verified with a frontier model (their published claim,
+not our measurement). Our arm's 0/19 was a defect, not a refutation of the
+design — 10 of its 19 rows located the correct file and then fumbled the fix.
+
+**Pre-committed cap: ONE repaired run, no iteration.** If the repaired arm reads
+0/19 again, **delete the arm** and cite the published 40.2% as the external
+anchor instead. Debugging a number no decision depends on is not a good use of
+the budget. Under no circumstances does `bare` anchor a headline again.
+
 ## Table 1 — headline, one row per arm
 
 Harness and models are repeated here, not cross-referenced — a headline row torn
