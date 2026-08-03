@@ -1,0 +1,79 @@
+{
+  "instance_id": "idaholab__montepy-933_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-03T01:14:43.564965+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T00:58:12.716727+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1669886,
+      "tokens_out": 11749,
+      "cached_input_tokens": 1091584,
+      "cost_usd": 1.3368665540000004,
+      "duration_s": 425.268,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-03T01:01:54.520994+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 1031196,
+      "tokens_out": 13575,
+      "cached_input_tokens": 985600,
+      "cost_usd": 0.4423230000000001,
+      "duration_s": 221.402,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:02:04.300166+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5894,
+      "tokens_out": 1006,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.024065000000000003,
+      "duration_s": 8.788,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:14:31.839163+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 1479392,
+      "tokens_out": 18675,
+      "cached_input_tokens": 1405312,
+      "cost_usd": 0.6370196000000002,
+      "duration_s": 747.067,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:14:34.476139+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 6912,
+      "tokens_out": 124,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.013380000000000001,
+      "duration_s": 1.935,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.4537,
+  "ledger_tokens_in": 4193280,
+  "ledger_tokens_out": 45129,
+  "result_cost_usd": 2.4537
+}

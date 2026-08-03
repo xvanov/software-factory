@@ -1,0 +1,78 @@
+{
+  "arm": "bare",
+  "instance_id": "zauberzeug__nicegui-5858",
+  "repo": "zauberzeug/nicegui",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-02T23:38:19.061613+00:00",
+  "wall_clock_s": 19.9,
+  "steps_used": 4,
+  "step_cap": 16,
+  "tokens_in": 7547,
+  "tokens_out": 1586,
+  "cost_usd": 0.012,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 4,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "nicegui/elements/xterm/xterm.js",
+    "nicegui/elements/xterm/xterm.py"
+  ],
+  "test_files_stripped": [],
+  "diff_bytes": 13723,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "cat > nicegui/elements/xterm/xterm.py <<'EOF'\nfrom __future__ import annotations\n\nimport asyncio\nimport fcntl\nimport os\nimport struct\nimport termios\nfrom typing import Any, Callable, Optional\n\nfrom nicegui import ui\nfrom nicegui.element import Element\nfrom nicegui.events import UiEventArguments, han",
+      "exit": 0
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "cat > nicegui/elements/xterm/xterm.js <<'EOF'\nexport default {\n  template: '<div class=\"xterm-container\" ref=\"container\"></div>',\n  props: {\n    options: Object,\n    auto_fit: Boolean,\n  },\n  data() {\n    return {\n      terminal: null,\n      fitAddon: null,\n      resizeObserver: null,\n    };\n  },\n  ",
+      "exit": 0
+    },
+    {
+      "step": 2,
+      "action": "bash",
+      "command": "sed -i 's/auto_fit/autoFit/g' nicegui/elements/xterm/xterm.py nicegui/elements/xterm/xterm.js",
+      "exit": 0
+    },
+    {
+      "step": 3,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "zauberzeug__nicegui-5858",
+    "image": "swerebench/sweb.eval.x86_64.zauberzeug_1776_nicegui-5858@sha256:0774c1c1d9caf26fc590c840482c262c82a76ccc5150c9dd58501114371bc2d2",
+    "graded_at": "2026-08-02T23:38:19.423586+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 3,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "examples/xterm/main.py",
+      "nicegui/elements/xterm/xterm.py",
+      "nicegui/events.py",
+      "website/documentation/content/xterm_documentation.py"
+    ],
+    "touched_files": [
+      "nicegui/elements/xterm/xterm.js",
+      "nicegui/elements/xterm/xterm.py"
+    ],
+    "gold_files_overlap": [
+      "nicegui/elements/xterm/xterm.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 69.2,
+    "log_tail": "icegui/page.py\", line 159, in decorated\n    result = func(*dec_args, **dec_kwargs)\n  File \"/testbed/tests/test_xterm.py\", line 82, in main\n    ui.button('Fit', on_click=terminal.fit)\n                              ^^^^^^^^^^^^\nAttributeError: 'NoneType' object has no attribute 'fit'\n=========================== short test summary info ============================\nFAILED tests/test_xterm.py::test_bell_and_data_events - AssertionError: Could...\nFAILED tests/test_xterm.py::test_fit_and_resize_event - AssertionError: Could...\nERROR tests/test_xterm.py::test_bell_and_data_events - Failed: There were une...\nERROR tests/test_xterm.py::test_fit_and_resize_event - Failed: There were une...\n2 failed, 2 errors in 14.94s\n            # HACK: repeat check after a short delay to avoid timing issue on fast machines\n            for _ in range(5):\n                element = self.selenium.find_element(By.XPATH, query)\n                with suppress(StaleElementReferenceException):\n                    if element.is_displayed():\n                        return element\n                self.wait(0.2)\n            raise AssertionError(f'Found \"{text}\" but it is hidden')\n        except NoSuchElementException as e:\n>           raise AssertionError(f'Could not find \"{text}\"') from e\nE           AssertionError: Could not find \"Hello NiceGUI!\"\n\nnicegui/testing/screen.py:222: AssertionError\n----------------------------- Captured stdout call -----------------------------\nNiceGUI ready to go on http://localhost:3392\n------------------------------ Captured log call -------------------------------\nERROR    nicegui:app.py:160 'Xterm' object has no attribute 'write'\nTraceback (most recent call last):\n  File \"/testbed/nicegui/page.py\", line 116, in check_for_late_return_value\n    if task.result() is not None:\n       ~~~~~~~~~~~^^\n  File \"/testbed/nicegui/page.py\", line 170, in wait_for_result\n    return create_500_error_page(e, request)\n  File \"/testbed/nicegui/page.py\", line 130, in create_500_error_page\n    raise e\n  File \"/testbed/nicegui/page.py\", line 167, in wait_for_result\n    return await result\n           ^^^^^^^^^^^^\n  File \"/testbed/tests/test_xterm.py\", line 95, in main\n    await terminal.write('\\n\\n\\n' + 'Hello NiceGUI!' + '\\n\\r' + 'https://nicegui.io/' + '\\n\\n\\n\\n')\n          ^^^^^^^^^^^^^^\nAttributeError: 'Xterm' object has no attribute 'write'\n=========================== short test summary info ============================\nFAILED tests/test_xterm.py::test_init - AssertionError: Could not find \"Defau...\nFAILED tests/test_xterm.py::test_write - selenium.common.exceptions.NoSuchEle...\nFAILED tests/test_xterm.py::test_run_terminal_method - AssertionError: Could ...\nERROR tests/test_xterm.py::test_init - Failed: There were unexpected ERROR logs.\nERROR tests/test_xterm.py::test_write - Failed: There were unexpected ERROR l...\nERROR tests/test_xterm.py::test_run_terminal_method - Failed: There were unex...\n3 failed, 3 errors in 19.09s\nSWEBENCH_RESULT_f23f513f268dc8cb: UNRESOLVED\n"
+  }
+}

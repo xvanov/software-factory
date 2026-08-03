@@ -1,0 +1,55 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "bare",
+  "audited_at": "2026-08-02T23:40:23.742239+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 3 call(s) but only 0 trajectory file(s) under state/events/trajectories \u2014 the agent's reasoning trail is incomplete"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-02T23:39:51.202338+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 653,
+      "tokens_out": 2920,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.01244389,
+      "duration_s": 29.58,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T23:40:12.500362+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 3579,
+      "tokens_out": 2920,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.01809107,
+      "duration_s": 21.285,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T23:40:13.135259+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 6505,
+      "tokens_out": 3,
+      "cached_input_tokens": 512,
+      "cost_usd": 0.011660412,
+      "duration_s": 0.62,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.0422,
+  "ledger_tokens_in": 10737,
+  "ledger_tokens_out": 5843,
+  "result_cost_usd": 0.0422
+}

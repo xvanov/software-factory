@@ -1,0 +1,16 @@
+diff --git a/src/pyinfra/api/host.py b/src/pyinfra/api/host.py
+index 645408c..17fb101 100644
+--- a/src/pyinfra/api/host.py
++++ b/src/pyinfra/api/host.py
+@@ -420,6 +420,11 @@ class Host:
+         """
+         self._check_state()
+ 
++        try:
++            remove_any_sudo_askpass_file(self)
++        except Exception:
++            pass
++
+         # Disconnect is an optional function for connectors if needed
+         disconnect_func = getattr(self.connector, "disconnect", None)
+         if disconnect_func:

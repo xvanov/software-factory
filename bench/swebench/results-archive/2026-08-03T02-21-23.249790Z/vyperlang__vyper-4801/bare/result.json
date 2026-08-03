@@ -1,0 +1,117 @@
+{
+  "arm": "bare",
+  "instance_id": "vyperlang__vyper-4801",
+  "repo": "vyperlang/vyper",
+  "base_commit": "7d53bab7f8cce2a5fb037052663d85596d7eb2d1",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-02T23:39:15.740610+00:00",
+  "wall_clock_s": 94.3,
+  "steps_used": 14,
+  "step_cap": 16,
+  "tokens_in": 23685,
+  "tokens_out": 8489,
+  "cost_usd": 0.0551,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 14,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [],
+  "test_files_stripped": [],
+  "diff_bytes": 0,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "git log --oneline -10",
+      "exit": 0
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "git show 418dbda60c16ed69508b62ebc282d06a2bbd456b --stat",
+      "exit": 128
+    },
+    {
+      "step": 2,
+      "action": "bash",
+      "command": "git log --oneline --all | head -20",
+      "exit": 0
+    },
+    {
+      "step": 3,
+      "action": "invalid",
+      "reply": "7d53bab fix[venom]: improve sccp `sar`, `addmod` and `mulmod` (#4805)"
+    },
+    {
+      "step": 4,
+      "action": "bash",
+      "command": "git log --oneline --all --graph | head -30",
+      "exit": 0
+    },
+    {
+      "step": 5,
+      "action": "bash",
+      "command": "git diff HEAD~1 HEAD -- vyper/venom/",
+      "exit": 128
+    },
+    {
+      "step": 6,
+      "action": "bash",
+      "command": "git diff 7d53bab~1 7d53bab -- vyper/venom/",
+      "exit": 128
+    },
+    {
+      "step": 7,
+      "action": "bash",
+      "command": "grep -r \"InvalidOperand\" vyper/",
+      "exit": 1
+    },
+    {
+      "step": 8,
+      "action": "bash",
+      "command": "grep -r \"InvalidOperand\" --include=\"*.py\" --include=\"*.vy\" .",
+      "exit": 1
+    },
+    {
+      "step": 9,
+      "action": "bash",
+      "command": "find vyper/venom -name \"*.py\" -exec grep -l \"addmod\\|mulmod\\|sar\" {} \\;",
+      "exit": 0
+    },
+    {
+      "step": 10,
+      "action": "bash",
+      "command": "cat vyper/venom/passes/sccp/eval.py",
+      "exit": 0
+    },
+    {
+      "step": 11,
+      "action": "bash",
+      "command": "cat vyper/venom/passes/sccp/eval.py | head -60",
+      "exit": 0
+    },
+    {
+      "step": 12,
+      "action": "bash",
+      "command": "git log --oneline --all --graph -30",
+      "exit": 0
+    },
+    {
+      "step": 13,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "vyperlang__vyper-4801",
+    "image": "swerebench/sweb.eval.x86_64.vyperlang_1776_vyper-4801@sha256:dc4b97c064a4bb67707e45875ccc0556aba2facc7d024a0172b9e53e3a3361ff",
+    "graded_at": "2026-08-02T23:39:16.119911+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 1,
+    "empty_patch": true,
+    "oracle_resolved": false,
+    "outcome": "empty_patch",
+    "log_tail": ""
+  }
+}

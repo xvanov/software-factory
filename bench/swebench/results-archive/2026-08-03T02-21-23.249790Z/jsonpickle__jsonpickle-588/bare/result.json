@@ -1,0 +1,124 @@
+{
+  "arm": "bare",
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "repo": "jsonpickle/jsonpickle",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-02T23:36:30.376227+00:00",
+  "wall_clock_s": 22.8,
+  "steps_used": 12,
+  "step_cap": 16,
+  "tokens_in": 26160,
+  "tokens_out": 493,
+  "cost_usd": 0.0166,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 12,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "jsonpickle/pickler.py"
+  ],
+  "test_files_stripped": [],
+  "diff_bytes": 437,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "python - <<'EOF'\nimport jsonpickle.pickler as p\nimport inspect, textwrap\n\nsrc = inspect.getsource(p.Pickler._flatten_obj_instance)\n# Find the place where 'if util.is_dictionary_subclass(obj):' causes bypass of reduce\nnew_src = src.replace(\n    \"if util.is_dictionary_subclass(obj):\",\n    \"if type(obj",
+      "exit": 0
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "sed -i 's/if util\\.is_dictionary_subclass(obj):/if type(obj) is dict:/' jsonpickle/pickler.py",
+      "exit": 0
+    },
+    {
+      "step": 2,
+      "action": "bash",
+      "command": "sed -i 's/if type(obj) is dict:/type(obj) is dict/' jsonpickle/pickler.py && python - <<'EOF'\nimport jsonpickle.pickler, inspect\nlines = inspect.getsource(jsonpickle.pickler.Pickler._flatten_obj_instance)\nprint(lines[:500])\nEOF",
+      "exit": 1
+    },
+    {
+      "step": 3,
+      "action": "bash",
+      "command": "sed -i '1s/^/from typing import Optional\\n/' jsonpickle/pickler.py",
+      "exit": 0
+    },
+    {
+      "step": 4,
+      "action": "bash",
+      "command": "git checkout -- jsonpickle/pickler.py\n\nExit 0. Output:",
+      "exit": 127
+    },
+    {
+      "step": 5,
+      "action": "bash",
+      "command": "git checkout jsonpickle/pickler.py",
+      "exit": 0
+    },
+    {
+      "step": 6,
+      "action": "bash",
+      "command": "sed -i 's/if util\\.is_dictionary_subclass(obj):/if type(obj) is dict:/' jsonpickle/pickler.py",
+      "exit": 0
+    },
+    {
+      "step": 7,
+      "action": "bash",
+      "command": "grep -n \"if type(obj) is dict:\" jsonpickle/pickler.py",
+      "exit": 1
+    },
+    {
+      "step": 8,
+      "action": "bash",
+      "command": "grep -n \"is_dictionary_subclass\\|is_dictionary\" jsonpickle/pickler.py",
+      "exit": 0
+    },
+    {
+      "step": 9,
+      "action": "bash",
+      "command": "grep -n \"_is_dictionary_subclass\" jsonpickle/pickler.py",
+      "exit": 0
+    },
+    {
+      "step": 10,
+      "action": "bash",
+      "command": "sed -i 's/util\\._is_dictionary_subclass(obj)/type(obj) is dict/' jsonpickle/pickler.py",
+      "exit": 0
+    },
+    {
+      "step": 11,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "jsonpickle__jsonpickle-588",
+    "image": "swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588@sha256:0eae843824198c5cfb0b6bb25b5c9b50c1b415ea7295867a314a3a8ce65c7fb4",
+    "graded_at": "2026-08-02T23:36:31.134373+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 82,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "CHANGES.rst",
+      "jsonpickle/pickler.py",
+      "jsonpickle/tags.py",
+      "jsonpickle/unpickler.py"
+    ],
+    "touched_files": [
+      "jsonpickle/pickler.py"
+    ],
+    "gold_files_overlap": [
+      "jsonpickle/pickler.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 21.2,
+    "log_tail": "=== FAILURES ===================================\n________________ test_defaultdict_preserves_default_factory_key ________________\n\n    def test_defaultdict_preserves_default_factory_key():\n        \"\"\"defaultdict should roundtrip keys that collide with default_factory attr\"\"\"\n        defdict = collections.defaultdict(int)\n        defdict[\"default_factory\"] = 42\n        defdict[\"other_key\"] = 100\n    \n        encoded = jsonpickle.encode(defdict)\n        decoded = jsonpickle.decode(encoded)\n    \n        assert isinstance(decoded, collections.defaultdict)\n>       assert decoded.default_factory is int\nE       assert None is int\nE        +  where None = defaultdict(None, {}).default_factory\n\ntests/object_test.py:686: AssertionError\n=========================== short test summary info ============================\nFAILED tests/object_test.py::test_defaultdict_preserves_default_factory_key\n1 failed in 0.11s\nE       AssertionError: assert OrderedDict({...': 1, 'b': 2}) == {}\nE         \nE         Left contains 3 more items:\nE         {'a': 1, 'b': 2, 'c': 3}\nE         Use -v to get more diff\n\ntests/object_test.py:852: AssertionError\n___________________________ test_ordered_dict_nested ___________________________\n\n    def test_ordered_dict_nested():\n        \"\"\"Serialize nested dicts with OrderedDict values\"\"\"\n        bottom = collections.OrderedDict([(\"z\", 1), (\"a\", 2)])\n        middle = collections.OrderedDict([(\"c\", bottom)])\n        top = collections.OrderedDict([(\"b\", middle)])\n        encoded = jsonpickle.encode(top)\n        decoded = jsonpickle.decode(encoded)\n        assert top == decoded\n        # test unpicklable=False\n        encoded = jsonpickle.encode(top, unpicklable=False)\n        decoded = jsonpickle.decode(encoded)\n>       assert top == decoded\nE       AssertionError: assert OrderedDict({..., 'a': 2})})}) == {}\nE         \nE         Left contains 1 more item:\nE         {'b': OrderedDict({'c': OrderedDict({'z': 1, 'a': 2})})}\nE         Use -v to get more diff\n\ntests/object_test.py:899: AssertionError\n=========================== short test summary info ============================\nFAILED tests/object_test.py::test_dictsubclass - AssertionError: assert {'__d...\nFAILED tests/object_test.py::test_dictsubclass_notunpickable - KeyError: 'key1'\nFAILED tests/object_test.py::test_defaultdict_roundtrip - KeyError: 'a'\nFAILED tests/object_test.py::test_defaultdict_roundtrip_simple_lambda - KeyEr...\nFAILED tests/object_test.py::test_defaultdict_roundtrip_simple_lambda2 - KeyE...\nFAILED tests/object_test.py::test_defaultdict_and_things_roundtrip_simple_lambda\nFAILED tests/object_test.py::test_defaultdict_subclass_with_self_as_default_factory\nFAILED tests/object_test.py::test_defaultdict_subclass_with_class_as_default_factory\nFAILED tests/object_test.py::test_ordered_dict_unpicklable - AssertionError: ...\nFAILED tests/object_test.py::test_ordered_dict_nested - AssertionError: asser...\n10 failed, 72 passed in 0.50s\nSWEBENCH_RESULT_f4c554731661a180: UNRESOLVED\n"
+  }
+}

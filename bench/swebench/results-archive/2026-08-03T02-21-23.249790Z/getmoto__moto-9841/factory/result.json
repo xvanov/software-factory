@@ -1,0 +1,58 @@
+{
+  "arm": "factory",
+  "instance_id": "getmoto__moto-9841",
+  "repo": "getmoto/moto",
+  "base_commit": "830a798c567bcdded2447efb7e98ca6d89b6a8c5",
+  "problem_statement_sha256": "15ec984f6cff0c04279f9cdcd95c41174f1d234491f4a5f968ead9e4b8ea565b",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T01:43:39.732559+00:00",
+  "wall_clock_s": 266.8,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "tokens_in": 1478679,
+  "tokens_out": 14823,
+  "cached_input_tokens": 1190400,
+  "cost_usd": 0.8084,
+  "persona_calls": 2,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.6,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_kms/test_kms.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "moto/kms/models.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_kms/test_kms.py"
+  ],
+  "diff_bytes": 1467,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "getmoto__moto-9841",
+    "image": "swerebench/sweb.eval.x86_64.getmoto_1776_moto-9841@sha256:25cb9ea1e18acfadbf1a8b4a5746153746cd994e138c01f295d83813ab63a171",
+    "graded_at": "2026-08-03T01:43:40.271215+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 149,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 16.5,
+    "log_tail": "Checking patch tests/test_kms/test_kms.py...\nChecking patch tests/test_kms/test_kms_cloudformation.py...\nApplied patch tests/test_kms/test_kms.py cleanly.\nApplied patch tests/test_kms/test_kms_cloudformation.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_86286b7a9a8f401e: OK (red as expected)\nChecking patch moto/kms/models.py...\nApplied patch moto/kms/models.py cleanly.\nSWEBENCH_APPLY_86286b7a9a8f401e: OK\n\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m                                                                       [100%]\u001b[0m\n\u001b[32m\u001b[32m\u001b[1m2 passed\u001b[0m\u001b[32m in 0.23s\u001b[0m\u001b[0m\n\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m [ 47%]\n\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m [ 94%]\n\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m                                                                [100%]\u001b[0m\n\u001b[32m\u001b[32m\u001b[1m153 passed\u001b[0m\u001b[32m in 6.37s\u001b[0m\u001b[0m\nSWEBENCH_RESULT_86286b7a9a8f401e: RESOLVED\n"
+  }
+}

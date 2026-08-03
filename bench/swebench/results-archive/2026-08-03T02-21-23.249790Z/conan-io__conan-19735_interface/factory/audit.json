@@ -1,0 +1,42 @@
+{
+  "instance_id": "conan-io__conan-19735_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-03T01:50:23.660471+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory 1-1.ndjson:34 (ObservationEvent) references the harness's oracle/manifest paths [\"own run's oracle-bearing subdir runs/\u2026/bare\"] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T01:50:13.948633+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 520555,
+      "tokens_out": 5378,
+      "cached_input_tokens": 328192,
+      "cost_usd": 0.44469724199999994,
+      "duration_s": 130.814,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:50:16.185844+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 4033,
+      "tokens_out": 104,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.0058825,
+      "duration_s": 1.459,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.4506,
+  "ledger_tokens_in": 524588,
+  "ledger_tokens_out": 5482,
+  "result_cost_usd": 0.4506
+}

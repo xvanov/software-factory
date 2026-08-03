@@ -1,0 +1,735 @@
+diff --git a/src/tox/tox.schema.json b/src/tox/tox.schema.json
+index e2b5b38..95f8453 100644
+--- a/src/tox/tox.schema.json
++++ b/src/tox/tox.schema.json
+@@ -11,7 +11,17 @@
+   "type": "object",
+   "properties": {
+     "tox_root": {
+-      "type": "string",
++      "oneOf": [
++        {
++          "type": "string"
++        },
++        {
++          "type": "array",
++          "items": {
++            "type": "string"
++          }
++        }
++      ],
+       "description": "the root directory (where the configuration file is found)"
+     },
+     "toxinidir": {
+@@ -20,7 +30,17 @@
+       "deprecated": true
+     },
+     "work_dir": {
+-      "type": "string",
++      "oneOf": [
++        {
++          "type": "string"
++        },
++        {
++          "type": "array",
++          "items": {
++            "type": "string"
++          }
++        }
++      ],
+       "description": "working directory"
+     },
+     "toxworkdir": {
+@@ -29,7 +49,17 @@
+       "deprecated": true
+     },
+     "temp_dir": {
+-      "type": "string",
++      "oneOf": [
++        {
++          "type": "string"
++        },
++        {
++          "type": "array",
++          "items": {
++            "type": "string"
++          }
++        }
++      ],
+       "description": "a folder for temporary files (is not cleaned at start)"
+     },
+     "env_list": {
+@@ -52,7 +82,17 @@
+       "description": "inherit missing keys from these sections"
+     },
+     "min_version": {
+-      "type": "string",
++      "oneOf": [
++        {
++          "type": "string"
++        },
++        {
++          "type": "array",
++          "items": {
++            "type": "string"
++          }
++        }
++      ],
+       "description": "Define the minimal tox version required to run"
+     },
+     "minversion": {
+@@ -61,7 +101,17 @@
+       "deprecated": true
+     },
+     "provision_tox_env": {
+-      "type": "string",
++      "oneOf": [
++        {
++          "type": "string"
++        },
++        {
++          "type": "array",
++          "items": {
++            "type": "string"
++          }
++        }
++      ],
+       "description": "Name of the virtual environment used to provision a tox."
+     },
+     "requires": {
+@@ -104,7 +154,17 @@
+       "deprecated": true
+     },
+     "package_env": {
+-      "type": "string",
++      "oneOf": [
++        {
++          "type": "string"
++        },
++        {
++          "type": "array",
++          "items": {
++            "type": "string"
++          }
++        }
++      ],
+       "description": "tox environment used to package"
+     },
+     "isolated_build_env": {
+@@ -113,7 +173,17 @@
+       "deprecated": true
+     },
+     "package_root": {
+-      "type": "string",
++      "oneOf": [
++        {
++          "type": "string"
++        },
++        {
++          "type": "array",
++          "items": {
++            "type": "string"
++          }
++        }
++      ],
+       "description": "indicates where the packaging root file exists (historically setup.py file or pyproject.toml now)"
+     },
+     "setupdir": {
+@@ -150,11 +220,31 @@
+           "description": "inherit missing keys from these sections"
+         },
+         "runner": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "the tox execute used to evaluate this environment"
+         },
+         "description": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "description attached to the tox environment"
+         },
+         "depends": {
+@@ -172,7 +262,17 @@
+           "description": "labels attached to the tox environment"
+         },
+         "env_dir": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "directory assigned to the tox environment"
+         },
+         "envdir": {
+@@ -181,7 +281,17 @@
+           "deprecated": true
+         },
+         "env_tmp_dir": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "a folder that is always reset at the start of the run"
+         },
+         "envtmpdir": {
+@@ -190,7 +300,17 @@
+           "deprecated": true
+         },
+         "env_log_dir": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "a folder for logging where tox will put logs of tool invocation"
+         },
+         "envlogdir": {
+@@ -211,7 +331,17 @@
+           "description": "timeout before sending SIGKILL after SIGTERM"
+         },
+         "platform": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "run on platforms that match this regular expression (empty means any platform)"
+         },
+         "pass_env": {
+@@ -267,7 +397,17 @@
+           "description": "command used to install packages"
+         },
+         "constraints": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "constraints to apply to installed python dependencies"
+         },
+         "constrain_package_deps": {
+@@ -323,7 +463,17 @@
+           "description": "commands to run before the environment is removed during recreation (e.g. cache cleanup)"
+         },
+         "change_dir": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "change to this working directory when executing the test command"
+         },
+         "changedir": {
+@@ -353,7 +503,7 @@
+           "description": "if set to true, tox will stop executing remaining environments when this environment fails"
+         },
+         "default_base_python": {
+-          "oneOf": [
++          "anyOf": [
+             {
+               "type": "array",
+               "items": {
+@@ -361,13 +511,23 @@
+               }
+             },
+             {
+-              "type": "string"
++              "oneOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "array",
++                  "items": {
++                    "type": "string"
++                  }
++                }
++              ]
+             }
+           ],
+           "description": "fallback python interpreter used when no factor or explicit base_python is defined"
+         },
+         "base_python_file": {
+-          "oneOf": [
++          "anyOf": [
+             {
+               "type": "array",
+               "items": {
+@@ -375,13 +535,23 @@
+               }
+             },
+             {
+-              "type": "string"
++              "oneOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "array",
++                  "items": {
++                    "type": "string"
++                  }
++                }
++              ]
+             }
+           ],
+           "description": "file(s) containing the Python version to use (e.g. .python-version), first one found wins; used when base_python is not explicitly set and the env name has no Python factor"
+         },
+         "base_python": {
+-          "oneOf": [
++          "anyOf": [
+             {
+               "type": "array",
+               "items": {
+@@ -389,7 +559,17 @@
+               }
+             },
+             {
+-              "type": "string"
++              "oneOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "array",
++                  "items": {
++                    "type": "string"
++                  }
++                }
++              ]
+             }
+           ],
+           "description": "environment identifier for python, first one found wins"
+@@ -400,7 +580,17 @@
+           "deprecated": true
+         },
+         "deps": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "python dependencies with optional version specifiers, as specified by PEP-440"
+         },
+         "dependency_groups": {
+@@ -418,7 +608,17 @@
+           "description": "extras to install of the target package"
+         },
+         "pylock": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "PEP 751 pylock.toml lock file path to install locked dependencies from"
+         },
+         "extra_setup_commands": {
+@@ -458,7 +658,17 @@
+           "description": "true if you want virtualenv to upgrade pip/wheel/setuptools to the latest version"
+         },
+         "virtualenv_spec": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "PEP 440 version spec for virtualenv (e.g. virtualenv<20.22.0). When set, tox bootstraps this version in an isolated environment and runs it via subprocess, enabling Python versions incompatible with the installed virtualenv."
+         },
+         "skip_install": {
+@@ -475,11 +685,31 @@
+           "deprecated": true
+         },
+         "package": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "package installation mode - wheel | sdist | sdist-wheel | editable | editable-legacy | deps-only | skip | external "
+         },
+         "package_env": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ],
+           "description": "tox environment used to package"
+         }
+       },
+@@ -511,7 +741,17 @@
+       }
+     },
+     "legacy_tox_ini": {
+-      "type": "string",
++      "oneOf": [
++        {
++          "type": "string"
++        },
++        {
++          "type": "array",
++          "items": {
++            "type": "string"
++          }
++        }
++      ],
+       "description": "tox configuration in INI format embedded in a TOML file",
+       "x-taplo": {
+         "links": {
+@@ -525,22 +765,62 @@
+     "subs": {
+       "anyOf": [
+         {
+-          "type": "string"
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ]
+         },
+         {
+           "type": "object",
+           "properties": {
+             "replace": {
+-              "type": "string"
++              "oneOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "array",
++                  "items": {
++                    "type": "string"
++                  }
++                }
++              ]
+             },
+             "name": {
+-              "type": "string"
+-            },
+-            "default": {
+               "oneOf": [
+                 {
+                   "type": "string"
+                 },
++                {
++                  "type": "array",
++                  "items": {
++                    "type": "string"
++                  }
++                }
++              ]
++            },
++            "default": {
++              "anyOf": [
++                {
++                  "oneOf": [
++                    {
++                      "type": "string"
++                    },
++                    {
++                      "type": "array",
++                      "items": {
++                        "type": "string"
++                      }
++                    }
++                  ]
++                },
+                 {
+                   "type": "array",
+                   "items": {
+@@ -553,25 +833,57 @@
+               "type": "boolean"
+             }
+           },
+-          "required": ["replace"],
++          "required": [
++            "replace"
++          ],
+           "additionalProperties": false
+         },
+         {
+           "type": "object",
+           "properties": {
+             "replace": {
+-              "type": "string"
++              "oneOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "array",
++                  "items": {
++                    "type": "string"
++                  }
++                }
++              ]
+             },
+             "of": {
+               "type": "array",
+               "items": {
+-                "type": "string"
++                "oneOf": [
++                  {
++                    "type": "string"
++                  },
++                  {
++                    "type": "array",
++                    "items": {
++                      "type": "string"
++                    }
++                  }
++                ]
+               }
+             },
+             "default": {
+-              "oneOf": [
++              "anyOf": [
+                 {
+-                  "type": "string"
++                  "oneOf": [
++                    {
++                      "type": "string"
++                    },
++                    {
++                      "type": "array",
++                      "items": {
++                        "type": "string"
++                      }
++                    }
++                  ]
+                 },
+                 {
+                   "type": "array",
+@@ -585,17 +897,32 @@
+               "type": "boolean"
+             }
+           },
+-          "required": ["replace", "of"],
++          "required": [
++            "replace",
++            "of"
++          ],
+           "additionalProperties": false
+         }
+       ]
+     },
+     "factor_range_dict": {
+       "type": "object",
+-      "required": ["prefix"],
++      "required": [
++        "prefix"
++      ],
+       "properties": {
+         "prefix": {
+-          "type": "string"
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ]
+         },
+         "start": {
+           "type": "integer"
+@@ -612,22 +939,44 @@
+       "minProperties": 1,
+       "maxProperties": 1,
+       "not": {
+-        "required": ["prefix"]
++        "required": [
++          "prefix"
++        ]
+       },
+       "additionalProperties": {
+         "type": "array",
+         "items": {
+-          "type": "string"
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "type": "string"
++              }
++            }
++          ]
+         }
+       },
+       "description": "labeled factor group for {factor:label} substitution"
+     },
+     "product_factor_group": {
+-      "oneOf": [
++      "anyOf": [
+         {
+           "type": "array",
+           "items": {
+-            "type": "string"
++            "oneOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "array",
++                "items": {
++                  "type": "string"
++                }
++              }
++            ]
+           }
+         },
+         {
+@@ -639,13 +988,15 @@
+       ]
+     },
+     "env_list_item": {
+-      "oneOf": [
++      "anyOf": [
+         {
+           "$ref": "#/definitions/subs"
+         },
+         {
+           "type": "object",
+-          "required": ["product"],
++          "required": [
++            "product"
++          ],
+           "properties": {
+             "product": {
+               "type": "array",
+@@ -657,7 +1008,17 @@
+             "exclude": {
+               "type": "array",
+               "items": {
+-                "type": "string"
++                "oneOf": [
++                  {
++                    "type": "string"
++                  },
++                  {
++                    "type": "array",
++                    "items": {
++                      "type": "string"
++                    }
++                  }
++                ]
+               },
+               "description": "environment names to exclude from product"
+             }
+@@ -673,4 +1034,4 @@
+       ]
+     }
+   }
+-}
++}
+\ No newline at end of file

@@ -1,0 +1,55 @@
+{
+  "instance_id": "pandas-dev__pandas-63945",
+  "arm": "factory",
+  "audited_at": "2026-08-03T01:18:10.628553+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory 1-1.ndjson:54 (ObservationEvent) references the harness's oracle/manifest paths [\"own run's oracle-bearing subdir runs/\u2026/bare\"] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T01:00:08.756201+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1108054,
+      "tokens_out": 10799,
+      "cached_input_tokens": 616448,
+      "cost_usd": 1.089407878,
+      "duration_s": 491.377,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-03T01:12:11.576333+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 1090504,
+      "tokens_out": 15458,
+      "cached_input_tokens": 1031040,
+      "cost_usd": 0.500906,
+      "duration_s": 722.445,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-03T01:16:08.479494+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 454329,
+      "tokens_out": 6294,
+      "cached_input_tokens": 420480,
+      "cost_usd": 0.22093575000000001,
+      "duration_s": 236.558,
+      "success": 0,
+      "error": "tests not green after run"
+    }
+  ],
+  "ledger_cost_usd": 1.8112,
+  "ledger_tokens_in": 2652887,
+  "ledger_tokens_out": 32551,
+  "result_cost_usd": 1.8112
+}

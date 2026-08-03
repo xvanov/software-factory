@@ -1,0 +1,17 @@
+diff --git a/keras/src/layers/attention/grouped_query_attention.py b/keras/src/layers/attention/grouped_query_attention.py
+index 308ee53..90c67a3 100644
+--- a/keras/src/layers/attention/grouped_query_attention.py
++++ b/keras/src/layers/attention/grouped_query_attention.py
+@@ -494,7 +494,11 @@ class GroupedQueryAttention(Layer):
+                 f"key_shape={key_shape}"
+             )
+ 
+-        return query_shape
++        if query_shape[0] is None:
++                if query_shape[0] is None:
++                return query_shape
++            return (query_shape[0],) + query_shape
++            return (query_shape[0],) + query_shape
+ 
+     def get_config(self):
+         config = {

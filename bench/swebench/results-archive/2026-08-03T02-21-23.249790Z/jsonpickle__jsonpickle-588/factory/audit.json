@@ -1,0 +1,53 @@
+{
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "arm": "factory",
+  "audited_at": "2026-08-03T01:47:57.206756+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T01:42:36.908332+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 6441951,
+      "tokens_out": 75410,
+      "cached_input_tokens": 4820992,
+      "cost_usd": 4.1934508820000005,
+      "duration_s": 1760.657,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-03T01:47:44.504895+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 666362,
+      "tokens_out": 12236,
+      "cached_input_tokens": 628736,
+      "cost_usd": 0.3471783,
+      "duration_s": 307.238,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:47:46.767026+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 6050,
+      "tokens_out": 101,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.01088,
+      "duration_s": 1.59,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 4.5515,
+  "ledger_tokens_in": 7114363,
+  "ledger_tokens_out": 87747,
+  "result_cost_usd": 4.5515
+}

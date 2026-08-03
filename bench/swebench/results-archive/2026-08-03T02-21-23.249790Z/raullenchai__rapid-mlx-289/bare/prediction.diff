@@ -1,0 +1,118 @@
+diff --git a/vllm_mlx/reasoning/gemma4_parser.py b/vllm_mlx/reasoning/gemma4_parser.py
+index 311acc0..9411cac 100644
+--- a/vllm_mlx/reasoning/gemma4_parser.py
++++ b/vllm_mlx/reasoning/gemma4_parser.py
+@@ -71,61 +71,71 @@ class Gemma4ReasoningParser(ReasoningParser):
+     def extract_reasoning_streaming(
+         self, previous_text: str, current_text: str, delta_text: str
+     ) -> DeltaMessage | None:
+-        """Extract reasoning from streaming delta."""
+         if not delta_text:
+             return None
+ 
+-        # Track channel state based on accumulated text
+-        # Check if we just entered thought channel
+-        if "<|channel>thought" in current_text and not self._in_content:
+-            self._in_thought = True
+-            self._saw_any_channel = True
++        # Find any channel marker that flips state inside this delta
++        transition_pos = None
++        marker_len = 0
+ 
+-        # Check if we just entered content channel
+-        if "<|channel>content" in current_text or "<|channel>final" in current_text:
++        # Thought-to-content transition: <channel|>
++        if self._in_thought:
++            # Marker may have started in previous_text and completed in delta_text
++            combined = previous_text + delta_text
++            marker = "<channel|>"
++            for prefix_len in range(max(0, len(previous_text) - len(marker) + 1), len(previous_text) + 1):
++                tail = combined[prefix_len:prefix_len + len(marker)]
++                if tail == marker:
++                    marker_start = prefix_len - len(previous_text)
++                    if 0 <= marker_start < len(delta_text):
++                        transition_pos = marker_start
++                        marker_len = len(marker)
++                        break
++            # Also check if marker is entirely within delta_text
++            if transition_pos is None and marker in delta_text:
++                transition_pos = delta_text.index(marker)
++                marker_len = len(marker)
++
++        if transition_pos is not None:
++            pre = delta_text[:transition_pos]
++            post = delta_text[transition_pos + marker_len:]
++
++            # Update state: thought -> content transition
+             self._in_thought = False
+             self._in_content = True
+ 
+-        # Check if thought ended (first <channel|> after thought start)
++            # Clean any remaining markers from post content
++            if "<channel|>" in post:
++                post = post.replace("<channel|>", "")
++
++            return DeltaMessage(
++                reasoning=pre if pre else None,
++                content=post if post else None,
++            )
++
++        # Original logic for deltas without a transition
++        # Check for transition from thought to content
+         if self._in_thought and "<channel|>" in current_text:
+-            thought_starts = current_text.count("<|channel>thought")
+-            channel_ends = current_text.count("<channel|>")
+-            if channel_ends >= thought_starts:
+-                self._in_thought = False
+-                # If no explicit content channel follows, switch to content mode
+-                if (
+-                    "<|channel>content" not in current_text
+-                    and "<|channel>final" not in current_text
+-                ):
+-                    self._in_content = True
+-
+-        # Filter out channel markers from delta
++            self._in_thought = False
++            self._in_content = True
++
++        # Check for transition from content to thought (unlikely but handle it)
++        if self._in_content and "<channel|>" in current_text:
++            self._in_content = False
++            self._in_thought = True
++
+         clean = delta_text
+-        for marker in [
+-            "<|channel>",
+-            "<channel|>",
+-            "<|turn>",
+-            "<turn|>",
+-            "thought\n",
+-            "content\n",
+-            "final\n",
+-        ]:
+-            clean = clean.replace(marker, "")
+-
+-        if not clean:
+-            return None  # pure marker token, skip
++
++        # For Gemma 4, we need to strip the channel markers from the delta
++        if self._in_thought and "<channel|>" in delta_text:
++            clean = delta_text.replace("<channel|>", "")
++        elif self._in_content and "<channel|>" in delta_text:
++            clean = delta_text.replace("<channel|>", "")
+ 
+         if self._in_thought:
+             return DeltaMessage(reasoning=clean)
+         elif self._in_content:
+             return DeltaMessage(content=clean)
+-        elif not self._saw_any_channel:
+-            # No channel tokens seen — plain content (no thinking)
+-            return DeltaMessage(content=clean)
+-        else:
+-            # Between channels — treat as reasoning
+-            return DeltaMessage(reasoning=clean)
+ 
+-    def finalize_streaming(self, accumulated_text: str) -> DeltaMessage | None:
+-        """Handle end of stream — emit any remaining content."""
+         return None
++

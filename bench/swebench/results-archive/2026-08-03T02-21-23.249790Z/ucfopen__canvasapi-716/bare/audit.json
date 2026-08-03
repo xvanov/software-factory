@@ -1,0 +1,42 @@
+{
+  "instance_id": "ucfopen__canvasapi-716",
+  "arm": "bare",
+  "audited_at": "2026-08-02T23:34:29.184550+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 2 call(s) but only 0 trajectory file(s) under state/events/trajectories \u2014 the agent's reasoning trail is incomplete"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-02T23:34:27.853107+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 421,
+      "tokens_out": 373,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.00224112,
+      "duration_s": 3.919,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T23:34:28.610229+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 800,
+      "tokens_out": 3,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0015554900000000003,
+      "duration_s": 0.729,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.0038,
+  "ledger_tokens_in": 1221,
+  "ledger_tokens_out": 376,
+  "result_cost_usd": 0.0038
+}

@@ -1,0 +1,55 @@
+{
+  "instance_id": "alibaba__opensandbox-816",
+  "arm": "bare",
+  "audited_at": "2026-08-02T23:34:06.234877+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 3 call(s) but only 0 trajectory file(s) under state/events/trajectories \u2014 the agent's reasoning trail is incomplete"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-02T23:33:45.392029+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 452,
+      "tokens_out": 471,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.00267629,
+      "duration_s": 7.405,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T23:33:49.474826+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 949,
+      "tokens_out": 479,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.00366614,
+      "duration_s": 4.072,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-02T23:33:50.086271+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1434,
+      "tokens_out": 3,
+      "cached_input_tokens": 256,
+      "cost_usd": 0.002326246,
+      "duration_s": 0.598,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.0087,
+  "ledger_tokens_in": 2835,
+  "ledger_tokens_out": 953,
+  "result_cost_usd": 0.0087
+}

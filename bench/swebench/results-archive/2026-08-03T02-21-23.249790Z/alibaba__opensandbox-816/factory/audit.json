@@ -1,0 +1,40 @@
+{
+  "instance_id": "alibaba__opensandbox-816",
+  "arm": "factory",
+  "audited_at": "2026-08-03T00:41:14.777620+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T00:40:56.317933+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1927847,
+      "tokens_out": 15529,
+      "cached_input_tokens": 1618944,
+      "cost_usd": 0.9163088440000001,
+      "duration_s": 626.241,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T00:40:58.771580+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5424,
+      "tokens_out": 100,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.009300000000000001,
+      "duration_s": 1.646,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.9256,
+  "ledger_tokens_in": 1933271,
+  "ledger_tokens_out": 15629,
+  "result_cost_usd": 0.9256
+}
