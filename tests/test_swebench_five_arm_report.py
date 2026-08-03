@@ -396,6 +396,26 @@ def test_a_claude_probe_row_can_never_reach_a_rate(A: Any) -> None:  # noqa: N80
     assert "PLUMBING PROBE" in str(detail)
 
 
+def test_a_leftover_unregistered_arm_dir_is_named_not_hidden(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]  # noqa: N803
+) -> None:
+    """The registry fails loud where a WRONG value would be spent or reported
+    (budgets, cost guards), and degrades VISIBLY where refusing would throw away
+    evidence already on disk. A row from an arm nobody registered still renders,
+    labelled `(unregistered arm X)` — the failure mode to avoid is a row that
+    silently reads like a registered arm's."""
+    runs = _patch_dirs(A, tmp_path, monkeypatch)
+    _row(runs, "inst_old", "junk", resolved=True)
+    _row(runs, "inst_old", "factory", resolved=True)
+    text = A.report()
+    capsys.readouterr()
+    assert "| junk | (unregistered arm junk) |" in text
+    row = next(
+        ln for ln in text.splitlines() if ln.startswith("| factory vs junk |")
+    )
+    assert "n/a (unregistered arm)" in row
+
+
 def test_argparse_choices_are_derived_not_listed(A: Any) -> None:  # noqa: N803
     import inspect
 
