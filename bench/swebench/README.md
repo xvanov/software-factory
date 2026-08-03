@@ -49,6 +49,34 @@ uv run python bench/swebench_adapter.py report
 must come back `RESOLVED`. Any instance where it does not is excluded — a score
 computed over broken instances measures the harness, not the arm.
 
+## The three arms
+
+| arm | agent | models | cost ledger |
+|---|---|---|---|
+| `factory` | the chain's dev+review handlers | `azure/deepseek-v4-pro` dev + `azure/gpt-5.4` reviewer (`routes.yaml`) | isolated factory DB, priced from the Azure price table |
+| `bare` | minimal bash loop | the SAME dev deployment | isolated factory DB, same price table |
+| `claude` | local Claude Code CLI, headless | pinned `claude-opus-5` (the CLI default discovered 2026-08-02; the exact ids the CLI reports land in `result.json`) | **the CLI's own report** (`cost_source: "claude-cli-reported"`) |
+
+The claude arm gets the SAME preparation (pinned-manifest `--depth 1` clone,
+install replay, collect precheck) and the SAME task text (the shared story
+template: statement + test command + the test-edits-are-stripped note). The
+CLI runs hermetically — `--safe-mode --strict-mcp-config --setting-sources ""
+--disallowedTools WebFetch WebSearch --no-session-persistence
+--dangerously-skip-permissions --max-turns 60`, `CLAUDE*`/`ANTHROPIC*` env
+scrubbed — so none of the operator's MCP servers, skills, memory or project
+state leak in, and it cannot browse the web for the (public, post-cutoff)
+gold PR. Its full stream-json transcript is persisted as
+`claude-transcript.ndjson` and audited like the bare arm's command log.
+Residual risk, shared with the bare arm: shell-level network (a `curl` or
+`git fetch` from the Bash tool) is not technically blocked, only forbidden by
+the prompt — the transcript preserves any such command for review.
+
+**Spend warning:** the claude arm bills the operator's **Anthropic
+subscription/API** — it never appears in the Azure ledger or the factory's own
+spend enforcer. The sweep's spend guard still counts its CLI-reported
+`cost_usd` against the `factory_settings.yaml` caps, which is conservative but
+means one shared budget covers two different bills.
+
 ## Sweeping in parallel
 
 One instance at a time is fine for six and impractical for a hundred.
@@ -183,13 +211,14 @@ which the gold-patch control surfaced before any model spend:
 - **Test edits are stripped and the strip is asserted** in code, at run time
   and again at grade time. The factory's dev owns its tests, so an unstripped
   diff would let the arm rewrite the oracle judging it.
-- **Oracle material is never greppable.** Both arms execute on this host
+- **Oracle material is never greppable.** All arms execute on this host
   filesystem, so the gold patch, test patch and hidden test ids live in
   `oracle.json.z` (zlib+base64 — defeats text-scavenging, NOT cryptography;
   a determined process that knows the format can still decode it), with only
   sha256 digests in the manifest. Every consumer verifies the digest; a
   tampered store refuses. `audit` additionally scans the arms' action trails
-  (OpenHands trajectories; the bare arm's untruncated `bare-commands.ndjson`)
+  (OpenHands trajectories; the bare arm's untruncated `bare-commands.ndjson`;
+  the claude arm's `claude-transcript.ndjson`)
   for any reference to the harness paths — a hit invalidates the run. The
   scan discriminates: the run's OWN `runs/<instance>/` subtree is the arm's
   cwd and echoes constantly (commands, tracebacks, listings, clipped
@@ -256,6 +285,13 @@ rc=`, `(diff is empty`, …), and flags a first dev call that failed in under
 ~5 s — the unrunnable-environment signature. Any finding exits non-zero.
 FAIL SAFE: a missing artifact (no DB, no prompt bodies) is an audit failure,
 not a pass. The findings are written to `audit.json` next to `result.json`.
+
+The claude arm has no factory ledger, so its audit certifies `result.json`
+against the CLI's stream-json transcript instead (per-model usage and
+`total_cost_usd` from the `result` event) and additionally proves the
+hermetic config actually loaded (the `init` event must show zero MCP servers
+and no WebFetch/WebSearch). A transcript missing when the run made calls is
+an oracle-probe failure, same as the bare arm's missing command log.
 
 ## Reporting rule
 
