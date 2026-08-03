@@ -395,7 +395,7 @@ def test_wall_clock_starts_before_clone_and_setup(A: Any) -> None:  # noqa: N803
     import ast
 
     tree = ast.parse(_ADAPTER.read_text(encoding="utf-8"))
-    for fname in ("run_factory", "run_bare"):
+    for fname in ("run_factory", "run_bare", "run_claude"):
         fn = next(
             n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == fname
         )
@@ -458,6 +458,7 @@ def test_run_functions_reset_artifacts_before_any_exit_path(A: Any) -> None:  # 
     for fname, must_precede in (
         ("run_factory", ("_ensure_image", "_clone")),
         ("run_bare", ("_clone",)),
+        ("run_claude", ("_ensure_image", "_clone")),
     ):
         fn = next(
             n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == fname
@@ -3525,3 +3526,413 @@ def test_docker_bash_mounts_the_prepared_tree_as_the_invoking_uid(A: Any, monkey
     A._docker_bash("img", "echo hi", 60, nonce="n1")
     argv = " ".join(seen["argv"])
     assert "-v" not in seen["argv"] and "--user" not in seen["argv"]
+
+
+# --------------------------------------------------------------------------- #
+# claude arm — hermetic CLI invocation, prompt parity, transcript-backed audit
+# --------------------------------------------------------------------------- #
+
+
+def test_claude_prompt_is_built_from_the_shared_story_template(A: Any) -> None:  # noqa: N803
+    """No arm gets privileged wording: the claude prompt is the SAME story
+    template the factory dev receives (statement + test command + the
+    test-edits-are-stripped note), and none of the oracle reaches it."""
+    inst = _rebench_instance(A)
+    prompt = A._claude_task_prompt(inst, Path("/nonexistent"))
+    # Same pieces, same source (_STORY_TEMPLATE):
+    assert prompt.startswith(f"# {inst['instance_id']}")
+    assert inst["problem_statement"] in prompt
+    assert A.instance_test_command(inst, repo=Path("/nonexistent")) in prompt
+    assert "Your test edits are removed from the diff" in prompt
+    # Byte-identical to what run_factory writes into the story file.
+    story = A._STORY_TEMPLATE.format(
+        instance_id=inst["instance_id"],
+        statement=inst["problem_statement"],
+        test_command=A.instance_test_command(inst, repo=Path("/nonexistent")),
+    )
+    assert prompt.startswith(story)
+    # The only addition is the no-network rule (the bare arm has it too).
+    assert prompt == story + A._CLAUDE_RULES
+    # Oracle material must be absent.
+    assert "oracle.json" not in prompt
+    assert "manifest.json" not in prompt
+    for f2p_id in inst["fail_to_pass"]:
+        assert f2p_id not in prompt, "hidden test id leaked into the prompt"
+
+
+def test_claude_cli_argv_is_hermetic_and_oracle_free(A: Any) -> None:  # noqa: N803
+    """The flags ARE the isolation: MCP dropped, settings dropped, web tools
+    disallowed, sessions unpersisted, model pinned, turns bounded."""
+    inst = _rebench_instance(A)
+    prompt = A._claude_task_prompt(inst, Path("/nonexistent"))
+    argv = A._claude_cli_argv(prompt, model=A._CLAUDE_MODEL, max_turns=60)
+    assert argv[0] == "claude"
+    joined = "\x00".join(argv)
+    for flag in (
+        "--safe-mode",
+        "--strict-mcp-config",
+        "--setting-sources",
+        "--no-session-persistence",
+        "--dangerously-skip-permissions",
+        "--output-format",
+    ):
+        assert flag in argv, flag
+    assert argv[argv.index("--model") + 1] == A._CLAUDE_MODEL
+    assert argv[argv.index("--max-turns") + 1] == "60"
+    assert argv[argv.index("--output-format") + 1] == "stream-json"
+    assert "--verbose" in argv  # the CLI requires it for -p stream-json
+    i = argv.index("--disallowedTools")
+    assert argv[i + 1 : i + 3] == ["WebFetch", "WebSearch"]
+    # No oracle material anywhere in the constructed command.
+    assert "oracle.json" not in joined
+    assert "manifest.json" not in joined
+    for f2p_id in inst["fail_to_pass"]:
+        assert f2p_id not in joined
+
+
+def test_claude_child_env_scrubs_claude_and_anthropic_vars(
+    A: Any, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """The dogfooding hazard: this harness runs where Claude Code is the daily
+    tool, and the factory .env exports ANTHROPIC_API_KEY. The child must see
+    neither this session's nesting markers nor a billing/routing override."""
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-nope")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://evil")
+    monkeypatch.setenv("FACTORY_STATE_ROOT", "/x")
+    monkeypatch.setenv("HOME", "/home/k")
+    env = A._claude_child_env()
+    assert "CLAUDECODE" not in env
+    assert "CLAUDE_CODE_ENTRYPOINT" not in env
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "ANTHROPIC_BASE_URL" not in env
+    assert "FACTORY_STATE_ROOT" not in env
+    assert env["HOME"] == "/home/k"  # auth needs the CLI's stored login
+
+
+def _claude_stream_events(
+    *, model: str = "claude-opus-5", cost: float = 0.5, mcp: list[Any] | None = None,
+    tools: list[str] | None = None, probe_line: str | None = None,
+    with_result: bool = True,
+) -> str:
+    events: list[dict[str, Any]] = [
+        {
+            "type": "system", "subtype": "init", "model": model,
+            "mcp_servers": mcp or [], "tools": tools or ["Bash", "Edit", "Read"],
+            "permissionMode": "bypassPermissions", "session_id": "s1",
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m1", "model": model,
+                "content": [{"type": "text", "text": "on it"}],
+                "usage": {
+                    "input_tokens": 10, "output_tokens": 5,
+                    "cache_read_input_tokens": 3, "cache_creation_input_tokens": 2,
+                },
+            },
+        },
+    ]
+    if probe_line is not None:
+        events.append(
+            {
+                "type": "user",
+                "message": {
+                    "content": [{"type": "tool_result", "content": probe_line}]
+                },
+            }
+        )
+    if with_result:
+        events.append(
+            {
+                "type": "result", "is_error": False, "num_turns": 2,
+                "total_cost_usd": cost, "session_id": "s1",
+                "modelUsage": {
+                    model: {
+                        "inputTokens": 10, "outputTokens": 5,
+                        "cacheReadInputTokens": 3, "cacheCreationInputTokens": 2,
+                        "costUSD": cost,
+                    }
+                },
+            }
+        )
+    return "\n".join(json.dumps(e) for e in events) + "\n"
+
+
+def test_run_claude_end_to_end_with_a_mocked_cli(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """The full run path with the CLI mocked at the subprocess boundary:
+    transcript persisted, usage/cost taken from the CLI's own report, the
+    pinned AND reported model ids recorded, diff captured from the clone."""
+    import subprocess as sp
+
+    inst = dict(_rebench_instance(A), instance_id="inst1")
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(A, "_instance", lambda iid: inst)
+    monkeypatch.setattr(A, "_assert_oracle_store_complete", lambda insts: None)
+    monkeypatch.setattr(A, "_manifest", lambda: {"manifest_sha256": "shaX"})
+    monkeypatch.setattr(A, "_ensure_image", lambda i: True)
+    monkeypatch.setattr(A, "_prepare_cloned_tree", lambda i, r, **kw: None)
+    monkeypatch.setattr(A, "_claude_cli_version", lambda: "2.1.220 (Claude Code)")
+    monkeypatch.setattr(
+        A, "_precheck_collect",
+        lambda i, r: {"collect_ok": True, "duration_s": 0.1, "mode": "existing-targets",
+                      "collected_targets": [], "exit_code": 0, "tail": ""},
+    )
+
+    def fake_clone(i: dict[str, Any], dest: Path) -> None:
+        _mk_git_repo(dest, {"pkg/mod.py": "BROKEN = True\n"})
+        sp.run(
+            ["git", "-C", str(dest), "checkout", "-q", "-B", "swebench-base"],
+            check=True, capture_output=True,
+        )
+
+    monkeypatch.setattr(A, "_clone", fake_clone)
+
+    seen: dict[str, Any] = {}
+    real_popen = sp.Popen
+
+    def _fake_popen(argv: list[str], **kw: Any) -> Any:
+        # subprocess.run (git plumbing, _capture_diff) also goes through
+        # Popen — only the CLI spawn is mocked; everything else stays real.
+        if argv[0] != "claude":
+            return real_popen(argv, **kw)
+
+        class _FakeCli:
+            returncode = 0
+
+            def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+                return "", ""
+
+        seen["argv"] = argv
+        seen["cwd"] = kw["cwd"]
+        seen["env"] = kw["env"]
+        mod = Path(kw["cwd"]) / "pkg" / "mod.py"
+        mod.write_text("BROKEN = False\n", encoding="utf-8")
+        kw["stdout"].write(_claude_stream_events())
+        return _FakeCli()
+
+    monkeypatch.setattr(A.subprocess, "Popen", _fake_popen)
+    A.run_claude("inst1", max_steps=60, timeout_s=300)
+
+    run_dir = tmp_path / "inst1" / "claude"
+    # The child ran IN the clone with a scrubbed env and the pinned model.
+    assert seen["cwd"] == str(run_dir / "repo")
+    assert "ANTHROPIC_API_KEY" not in seen["env"]
+    assert seen["argv"][seen["argv"].index("--model") + 1] == A._CLAUDE_MODEL
+    # Transcript persisted verbatim.
+    transcript = (run_dir / "claude-transcript.ndjson").read_text(encoding="utf-8")
+    assert '"subtype": "init"' in transcript and '"type": "result"' in transcript
+    # result.json: CLI-reported usage/cost, both model ids, no gate verdict.
+    result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["arm"] == "claude"
+    assert result["model"] == A._CLAUDE_MODEL
+    assert result["model_reported"] == "claude-opus-5"
+    assert result["models_observed"] == ["claude-opus-5"]
+    assert result["cost_usd"] == 0.5
+    assert result["cost_source"] == "claude-cli-reported"
+    assert result["tokens_in"] == 15  # raw 10 + cacheRead 3 + cacheCreation 2
+    assert result["tokens_out"] == 5
+    assert result["cached_input_tokens"] == 3
+    assert result["num_turns"] == 2
+    assert result["error"] is None
+    assert result["factory_says_green"] is None
+    assert result["mcp_servers"] == []
+    assert result["claude_cli_version"] == "2.1.220 (Claude Code)"
+    # The diff came from the clone, test-edit-stripped and graded-ready.
+    diff = (run_dir / "prediction.diff").read_text(encoding="utf-8")
+    assert "pkg/mod.py" in diff and "BROKEN = False" in diff
+    # And the run is audit-clean end-to-end (no factory ledger required).
+    A.audit("inst1", "claude")  # must not raise
+    audit = json.loads((run_dir / "audit.json").read_text(encoding="utf-8"))
+    assert audit["ok"] is True
+    assert audit["ledger_cost_usd"] == 0.5
+
+
+def _mk_claude_run(
+    runs_root: Path,
+    *,
+    result: dict[str, Any] | None = None,
+    transcript: str | None = None,
+) -> Path:
+    run_dir = runs_root / "inst1" / "claude"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "claude-transcript.ndjson").unlink(missing_ok=True)
+    if result is None:
+        result = {
+            "arm": "claude", "model": "claude-opus-5", "cost_usd": 0.5,
+            "tokens_in": 15, "tokens_out": 5, "num_turns": 2, "error": None,
+        }
+    (run_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    if transcript is not None:
+        (run_dir / "claude-transcript.ndjson").write_text(transcript, encoding="utf-8")
+    return run_dir
+
+
+def test_claude_audit_fails_on_cost_or_token_mismatch(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """The transcript is this arm's ledger: result.json must report exactly
+    what the CLI's result event says, or the number is not the real spend."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_claude_run(
+        tmp_path,
+        result={"arm": "claude", "model": "claude-opus-5", "cost_usd": 0.1,
+                "tokens_in": 15, "tokens_out": 5, "num_turns": 2, "error": None},
+        transcript=_claude_stream_events(cost=0.5),
+    )
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "claude")
+    failures = _audit_json(tmp_path, "claude")["failures"]
+    assert any("cost mismatch" in f for f in failures), failures
+
+
+def test_claude_audit_fails_when_the_transcript_probed_the_oracle(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """The transcript's tool calls/results are the command-log equivalent —
+    a reference to the store or another arm's run dir invalidates the run."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    for probe in (
+        "cat bench/swebench/oracle.json.z",
+        "cat bench/swebench/runs/inst1/bare/grade.log",  # sibling arm's dir
+    ):
+        _mk_claude_run(tmp_path, transcript=_claude_stream_events(probe_line=probe))
+        with pytest.raises(SystemExit, match="audit FAILED"):
+            A.audit("inst1", "claude")
+        failures = _audit_json(tmp_path, "claude")["failures"]
+        assert any(
+            "oracle-probe" in f and "claude-transcript.ndjson" in f for f in failures
+        ), failures
+
+
+def test_claude_audit_fails_closed_without_a_transcript(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """Same posture as the bare arm's missing command log: a run that made
+    model calls but left no action trail cannot be cleared of oracle access."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_claude_run(tmp_path, transcript=None)  # result says num_turns=2
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "claude")
+    failures = _audit_json(tmp_path, "claude")["failures"]
+    assert any("no claude-transcript.ndjson" in f for f in failures), failures
+
+
+def test_claude_audit_fails_when_the_hermetic_config_did_not_load(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """The init event is the artifact proving what config REALLY loaded: an
+    MCP server or a web tool present means the contamination control failed
+    — gate on the real artifact, not on the flags we intended to pass."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_claude_run(
+        tmp_path,
+        transcript=_claude_stream_events(mcp=[{"name": "hubspot", "status": "connected"}]),
+    )
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "claude")
+    assert any(
+        "hermetic-config" in f and "MCP" in f
+        for f in _audit_json(tmp_path, "claude")["failures"]
+    )
+
+    _mk_claude_run(
+        tmp_path, transcript=_claude_stream_events(tools=["Bash", "WebSearch"])
+    )
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "claude")
+    assert any(
+        "hermetic-config" in f and "WebSearch" in f
+        for f in _audit_json(tmp_path, "claude")["failures"]
+    )
+
+
+def test_claude_audit_fails_a_truncated_stream_that_claims_success(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """No result event (killed run) is only acceptable when the run recorded
+    an error; a clean-looking result.json with a truncated transcript is a
+    run whose spend cannot be certified."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
+    _mk_claude_run(
+        tmp_path,
+        result={"arm": "claude", "model": "claude-opus-5", "cost_usd": 0.0,
+                "tokens_in": 15, "tokens_out": 5, "num_turns": 0, "error": None},
+        transcript=_claude_stream_events(with_result=False),
+    )
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "claude")
+    failures = _audit_json(tmp_path, "claude")["failures"]
+    assert any("must not read as clean" in f for f in failures), failures
+    # With the error recorded (the wall-clock kill path), the same artifacts
+    # audit clean — truncation becomes a warning, not a finding.
+    _mk_claude_run(
+        tmp_path,
+        result={"arm": "claude", "model": "claude-opus-5", "cost_usd": 0.0,
+                "tokens_in": 15, "tokens_out": 5, "num_turns": 0,
+                "error": "wall-clock cap 300s hit; partial work is still graded"},
+        transcript=_claude_stream_events(with_result=False),
+    )
+    A.audit("inst1", "claude")  # must not raise
+    assert _audit_json(tmp_path, "claude")["ok"] is True
+
+
+def test_probe_flags_every_sibling_arm_dir_not_just_one(A: Any) -> None:  # noqa: N803
+    """Three arms now: for any arm, EVERY other arm's subdir under the own run
+    dir is oracle-bearing (their grade logs carry hidden test ids)."""
+    iid = "inst1"
+    for arm, foreign in (
+        ("claude", ("bare", "factory")),
+        ("factory", ("bare", "claude")),
+        ("bare", ("factory", "claude")),
+    ):
+        assert (
+            A._probe_line_hits(f"ls bench/swebench/runs/{iid}/{arm}/repo", iid, arm) == []
+        ), f"{arm}: own cwd must not be a probe"
+        for other in foreign:
+            assert A._probe_line_hits(
+                f"cat bench/swebench/runs/{iid}/{other}/grade.log", iid, arm
+            ) == [f"own run's oracle-bearing subdir runs/…/{other}"], (arm, other)
+
+
+def test_reset_run_artifacts_deletes_the_claude_transcript(
+    A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    (tmp_path / "claude-transcript.ndjson").write_text("stale", encoding="utf-8")
+    (tmp_path / "claude-stderr.log").write_text("stale", encoding="utf-8")
+    A._reset_run_artifacts(tmp_path)
+    assert not (tmp_path / "claude-transcript.ndjson").exists()
+    assert not (tmp_path / "claude-stderr.log").exists()
+
+
+def test_cli_claude_arm_defaults_to_the_turn_cap(
+    A: Any, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """--max-steps means CLI turns for the claude arm; when omitted the arm
+    gets its own generous-but-bounded default, the others keep 16."""
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(A, "_load_env", lambda: None)
+    monkeypatch.setattr(
+        A, "run_claude", lambda iid, *, max_steps, timeout_s: seen.update(
+            iid=iid, max_steps=max_steps, timeout_s=timeout_s
+        )
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["swebench_adapter.py", "run", "--instance", "i1", "--arm", "claude"]
+    )
+    A.main()
+    assert seen["max_steps"] == A._CLAUDE_TURN_CAP
+
+    monkeypatch.setattr(
+        A, "run_factory", lambda iid, *, max_steps, timeout_s: seen.update(
+            factory_steps=max_steps
+        )
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["swebench_adapter.py", "run", "--instance", "i1", "--arm", "factory"]
+    )
+    A.main()
+    assert seen["factory_steps"] == 16

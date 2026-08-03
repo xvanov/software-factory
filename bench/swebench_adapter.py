@@ -55,13 +55,24 @@ instance's own image with the working tree mounted over the profile's workdir
 empty diff after 870k tokens before, ``reviewer_done`` with a real patch in
 104s / 355k tokens after.
 
+Three arms
+----------
+* ``factory`` — the chain's dev+review handlers (azure/deepseek-v4-pro dev,
+  azure/gpt-5.4 reviewer, per ``routes.yaml``).
+* ``bare`` — the SAME weights with a minimal bash-loop scaffold; the harness
+  delta is factory minus bare.
+* ``claude`` — the local Claude Code CLI, headless, hermetically configured
+  (see ``run_claude``); the frontier-tool comparator. Its spend bills the
+  operator's ANTHROPIC subscription/API, not the Azure ledger, and its cost
+  numbers are the CLI's own report (``cost_source: "claude-cli-reported"``).
+
 Usage (from the factory root):
   uv run python bench/swebench_adapter.py fetch --dataset swe-rebench \
       --language python --limit 20 --seed 20260802
   uv run python bench/swebench_adapter.py selftest            # validate the ORACLE first
-  uv run python bench/swebench_adapter.py run   --instance <id> --arm bare|factory
-  uv run python bench/swebench_adapter.py grade --instance <id> --arm bare|factory
-  uv run python bench/swebench_adapter.py audit --instance <id> --arm bare|factory
+  uv run python bench/swebench_adapter.py run   --instance <id> --arm bare|factory|claude
+  uv run python bench/swebench_adapter.py grade --instance <id> --arm bare|factory|claude
+  uv run python bench/swebench_adapter.py audit --instance <id> --arm bare|factory|claude
   uv run python bench/swebench_adapter.py run-all --arm factory --workers 4 \
       --only-working --dry-run          # ALWAYS preview: a sweep costs real money
   uv run python bench/swebench_adapter.py run-all --arm factory --workers 4 --only-working
@@ -284,8 +295,9 @@ def _image_for(inst: dict[str, Any]) -> str:
 # the oracle store — answer material must not be greppable from the manifest
 # --------------------------------------------------------------------------- #
 #
-# Both arms execute on THIS host filesystem (OpenHands LocalWorkspace; the
-# bare arm's bash loop), so anything the harness stores in plaintext is one
+# Every arm executes on THIS host filesystem (OpenHands LocalWorkspace; the
+# bare arm's bash loop; the claude arm's CLI tools), so anything the harness
+# stores in plaintext is one
 # ``grep -r <instance_id>`` away from the arm under test. The gold patch, the
 # test patch and the hidden test ids therefore live OUTSIDE the manifest, in
 # ``oracle.json.z`` — zlib-compressed, base64-wrapped JSON. That defeats
@@ -970,6 +982,8 @@ def _reset_run_artifacts(run_dir: Path) -> None:
         "result.json",
         "audit.json",
         "bare-commands.ndjson",  # APPENDED per step; must not span runs
+        "claude-transcript.ndjson",  # the claude arm's action trail
+        "claude-stderr.log",
     ):
         (run_dir / name).unlink(missing_ok=True)
     shutil.rmtree(run_dir / "state", ignore_errors=True)
@@ -1920,6 +1934,386 @@ def _parse_bash(reply: str) -> str | None:
 
 
 # --------------------------------------------------------------------------- #
+# claude arm — the local Claude Code CLI, headless and hermetic
+# --------------------------------------------------------------------------- #
+
+# Every arm this harness knows. The oracle-probe scanner derives "which
+# sibling run dirs carry hidden test ids" from this — hardcoding one other
+# arm broke the moment a third arm existed.
+_ARM_NAMES = ("factory", "bare", "claude")
+
+# Pinned EXPLICITLY (the operator wants the models named). Discovered
+# 2026-08-02 by running the CLI (v2.1.220) with no --model: the default
+# resolved to ``claude-opus-5[1m]`` (canonical ``claude-opus-5``; the ``[1m]``
+# suffix is only the 1M-context variant of the same weights). The canonical id
+# is pinned; the ids the CLI actually reports land in result.json
+# (``model_reported``, ``models_observed``) so the record is the CLI's own,
+# not this constant's claim.
+_CLAUDE_MODEL = "claude-opus-5"
+
+# Generous but bounded (CLAUDE.md: nothing loops without a cap). ``--max-turns``
+# is accepted by CLI 2.1.220 (hidden from --help but validated: an unknown
+# option fails argv parsing immediately, this one does not). The wall clock is
+# the second bound, via the run's existing ``timeout_s``.
+_CLAUDE_TURN_CAP = 60
+
+_CLAUDE_TRANSCRIPT_NAME = "claude-transcript.ndjson"
+
+# Appended AFTER the shared story template. Mirrors the bare arm's "You cannot
+# access the network" rule — for this arm it is the contamination control in
+# prose form (the flag form is ``--disallowedTools WebFetch WebSearch``):
+# swe-rebench instances are post-cutoff PRs on public GitHub, so any web or
+# git-remote access is one search away from the gold patch.
+_CLAUDE_RULES = """
+## Constraints
+
+- Work only inside this repository checkout.
+- Do not access the network: no web browsing, no fetching from remotes. The
+  fix and its judge live entirely in this checkout and the test command above.
+"""
+
+
+def _claude_task_prompt(inst: dict[str, Any], repo: Path) -> str:
+    """The claude arm's task, built from the SAME template the factory dev gets.
+
+    ``_STORY_TEMPLATE`` (statement + definition of done + the test-edits-are-
+    stripped note + the exact in-image test command) is the single source, so
+    no arm gets privileged wording. The only addition is ``_CLAUDE_RULES`` —
+    the no-network rule the bare arm's system prompt already carries.
+    """
+    return (
+        _STORY_TEMPLATE.format(
+            instance_id=inst["instance_id"],
+            statement=inst["problem_statement"],
+            test_command=instance_test_command(inst, repo=repo),
+        )
+        + _CLAUDE_RULES
+    )
+
+
+def _claude_cli_argv(prompt: str, *, model: str, max_turns: int) -> list[str]:
+    """The headless CLI invocation. Every flag is load-bearing; validated live
+    on CLI 2.1.220 (1-turn smoke tests, 2026-08-02) before being wired here.
+
+    Hermeticity — the dogfooding hazard: this harness runs on the machine
+    where Claude Code is the operator's daily driver, so the child must not
+    inherit this user's MCP servers, skills, hooks, memory or project state:
+
+    * ``--safe-mode``    — all customizations (CLAUDE.md, skills, plugins,
+      hooks, MCP, custom agents) disabled; auth and built-in tools normal.
+    * ``--strict-mcp-config`` with no ``--mcp-config`` — zero MCP servers,
+      even policy-injected ones (verified: init event reports
+      ``mcp_servers: []``).
+    * ``--setting-sources ""`` — no user/project/local settings files load at
+      all (belt and braces under --safe-mode).
+    * ``--disallowedTools WebFetch WebSearch`` — the contamination control:
+      the instances are post-cutoff public-GitHub PRs, so web access is
+      answer leakage (verified: neither tool appears in the init tool list).
+    * ``--no-session-persistence`` — nothing written to the operator's
+      session store; project state is keyed by cwd anyway and the cwd is a
+      fresh clone.
+    * ``--dangerously-skip-permissions`` — headless runs cannot answer
+      permission prompts; the blast radius is the isolated clone.
+    * ``--output-format stream-json --verbose`` — the full session transcript
+      (assistant turns, tool calls, tool results, usage, cost) on stdout;
+      persisted as the arm's trajectory equivalent and scanned by the audit's
+      oracle probe. ``--verbose`` is REQUIRED by the CLI for stream-json in
+      -p mode.
+    """
+    return [
+        "claude",
+        "-p", prompt,
+        "--model", model,
+        "--max-turns", str(max_turns),
+        "--output-format", "stream-json",
+        "--verbose",
+        "--safe-mode",
+        "--strict-mcp-config",
+        "--setting-sources", "",
+        "--disallowedTools", "WebFetch", "WebSearch",
+        "--no-session-persistence",
+        "--dangerously-skip-permissions",
+    ]
+
+
+def _claude_child_env() -> dict[str, str]:
+    """The child CLI's environment: HOME kept (its stored login IS the auth),
+    everything Claude/Anthropic-shaped dropped.
+
+    * ``CLAUDE*`` (CLAUDECODE, CLAUDE_CODE_*): this harness is routinely run
+      FROM a Claude Code session, and a child that inherits those thinks it is
+      nested inside it — the dogfooding hazard again.
+    * ``ANTHROPIC_*`` (the factory ``.env`` exports ANTHROPIC_API_KEY, and
+      ``_load_env`` puts it in os.environ): an env key would silently switch
+      the child's auth/billing away from the operator's logged-in
+      subscription, and ANTHROPIC_BASE_URL/_MODEL would redirect it entirely.
+      The smoke-tested, working path is the CLI's own stored claude.ai login.
+    """
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if not (k.startswith("CLAUDE") or k.startswith("ANTHROPIC"))
+        and k != "FACTORY_STATE_ROOT"
+    }
+
+
+def _claude_cli_version() -> str | None:
+    try:
+        proc = subprocess.run(
+            ["claude", "--version"], capture_output=True, text=True, timeout=60
+        )
+        return (proc.stdout or "").strip() or None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _parse_claude_transcript(
+    path: Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, int]]:
+    """``(init_event, result_event, fallback_token_sums)`` from a stream-json
+    transcript. Tolerant of a truncated stream (a timeout kill ends the file
+    mid-run, before the final ``result`` event).
+
+    The fallback sums come from the per-message ``usage`` on assistant events,
+    deduplicated by message id (one message can span several stream events);
+    they exist so a killed run still reports real token counts. They carry no
+    cost — the CLI prices its own usage in the ``result`` event and nowhere
+    else, and this harness does not maintain an Anthropic price table.
+    """
+    init: dict[str, Any] = {}
+    result: dict[str, Any] = {}
+    per_msg: dict[str, dict[str, int]] = {}
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(ev, dict):
+                    continue
+                if ev.get("type") == "system" and ev.get("subtype") == "init" and not init:
+                    init = ev
+                elif ev.get("type") == "assistant":
+                    msg = ev.get("message") or {}
+                    usage = msg.get("usage") or {}
+                    if isinstance(msg, dict) and isinstance(usage, dict):
+                        per_msg[str(msg.get("id"))] = {
+                            "tokens_in": int(usage.get("input_tokens") or 0)
+                            + int(usage.get("cache_creation_input_tokens") or 0)
+                            + int(usage.get("cache_read_input_tokens") or 0),
+                            "tokens_out": int(usage.get("output_tokens") or 0),
+                            "cache_read": int(usage.get("cache_read_input_tokens") or 0),
+                        }
+                elif ev.get("type") == "result":
+                    result = ev
+    except OSError:
+        pass
+    sums = {
+        "tokens_in": sum(u["tokens_in"] for u in per_msg.values()),
+        "tokens_out": sum(u["tokens_out"] for u in per_msg.values()),
+        "cache_read": sum(u["cache_read"] for u in per_msg.values()),
+    }
+    return init, result, sums
+
+
+def _claude_usage_totals(result_ev: dict[str, Any]) -> dict[str, int] | None:
+    """Token totals over EVERY model the CLI used, from the result event's
+    ``modelUsage`` — which includes side calls (e.g. the haiku auto-mode
+    classifier) that the top-level ``usage`` block omits. ``tokens_in`` is
+    TOTAL input processed (raw + cache-read + cache-creation), matching what
+    the other arms' ledgers mean by it; the cached subset is kept separately.
+    """
+    mu = result_ev.get("modelUsage")
+    if not isinstance(mu, dict) or not mu:
+        return None
+    vals = [v for v in mu.values() if isinstance(v, dict)]
+    return {
+        "tokens_in": sum(
+            int(v.get("inputTokens") or 0)
+            + int(v.get("cacheReadInputTokens") or 0)
+            + int(v.get("cacheCreationInputTokens") or 0)
+            for v in vals
+        ),
+        "tokens_out": sum(int(v.get("outputTokens") or 0) for v in vals),
+        "cache_read": sum(int(v.get("cacheReadInputTokens") or 0) for v in vals),
+    }
+
+
+def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
+    """Drive the LOCAL Claude Code CLI, headless, over one instance.
+
+    The third arm: factory (harnessed cheap models) vs bare (same weights, no
+    harness) vs claude (the frontier tool the factory's thesis is measured
+    against). Preparation is IDENTICAL to the other arms — pinned-manifest
+    clone at base_commit with ``--depth 1``, the profile's install/topology
+    replay, the pre-dispatch collect gate — so the only variable is the agent.
+
+    Hidden-oracle discipline: the CLI runs with cwd = the clone and sees only
+    the shared story template. It never sees test_patch/fail_to_pass or the
+    oracle store, has no MCP servers, no web tools, and none of the operator's
+    config (see ``_claude_cli_argv``). Its full stream-json transcript is
+    persisted as ``claude-transcript.ndjson`` and the audit scans it for
+    oracle/manifest path references exactly like the bare arm's command log.
+
+    Spend: bills the operator's Anthropic subscription/API — NOT the Azure
+    ledger, and invisible to the factory's own spend enforcer. cost/tokens are
+    the CLI's own report (``cost_source: "claude-cli-reported"``).
+    """
+    entered = time.monotonic()
+    inst = _instance(instance_id)
+    # A run the store cannot grade is a write-off — refuse before any spend.
+    _assert_oracle_store_complete([inst])
+    run_dir = _run_dir(instance_id, "claude")
+    # BEFORE any exit path: a stale prediction/transcript must never outlive
+    # the run that produced it.
+    _reset_run_artifacts(run_dir)
+    base: dict[str, Any] = {
+        "arm": "claude",
+        "instance_id": instance_id,
+        "repo": inst["repo"],
+        "base_commit": inst["base_commit"],
+        "problem_statement_sha256": inst["problem_statement_sha256"],
+        "manifest_sha256": _manifest()["manifest_sha256"],
+        "model": _CLAUDE_MODEL,
+        "claude_cli_version": _claude_cli_version(),
+    }
+
+    def _fail(error: str, **extra: Any) -> None:
+        _write_result(
+            instance_id,
+            "claude",
+            {
+                **base,
+                "ts": datetime.now(UTC).isoformat(),
+                "wall_clock_s": round(time.monotonic() - entered, 1),
+                "error": error,
+                "factory_says_green": None,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cost_usd": 0.0,
+                "cost_source": "claude-cli-reported",
+                **extra,
+            },
+        )
+        raise SystemExit(error)
+
+    if not _ensure_image(inst):
+        _fail(
+            f"image for {instance_id} is unavailable; the claude arm's test "
+            "command runs inside it (see instance_test_command)"
+        )
+    repo = run_dir / "repo"
+    _clone(inst, repo)
+    # Same topology as the other arms: replay the dataset's install/build step
+    # so the tree the CLI edits matches the tree the grade mounts.
+    prep_error = _prepare_cloned_tree(inst, repo)
+    if prep_error:
+        _fail(f"prepare: {prep_error}")
+
+    # PRE-DISPATCH COLLECT GATE — the same gate the other arms pass before a
+    # single model token is spent.
+    precheck = _precheck_collect(inst, repo)
+    collect_tail = str(precheck.pop("tail", ""))
+    if not precheck["collect_ok"]:
+        _fail(
+            f"precheck: test command does not collect: {collect_tail[-400:]}",
+            precheck={**precheck, "tail": collect_tail[-1500:]},
+        )
+
+    prompt = _claude_task_prompt(inst, repo)
+    turns = min(max_steps, _CLAUDE_TURN_CAP)
+    argv = _claude_cli_argv(prompt, model=_CLAUDE_MODEL, max_turns=turns)
+    transcript_path = run_dir / _CLAUDE_TRANSCRIPT_NAME
+    error: str | None = None
+    stderr_text = ""
+    rc: int | None = None
+    started = time.monotonic()
+    try:
+        with transcript_path.open("w", encoding="utf-8") as out_fh:
+            proc = subprocess.Popen(  # noqa: S603
+                argv,
+                cwd=str(repo),
+                env=_claude_child_env(),
+                stdin=subprocess.DEVNULL,
+                stdout=out_fh,  # streamed to disk AS produced — a kill loses nothing
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,  # own process group, so the kill reaches tool children
+            )
+            try:
+                _, stderr_text = proc.communicate(timeout=timeout_s)
+            except subprocess.TimeoutExpired:
+                _kill_tree(proc)
+                _, stderr_text = proc.communicate()
+                error = f"wall-clock cap {timeout_s}s hit; partial work is still graded"
+            rc = proc.returncode
+    except OSError as exc:  # CLI not installed / not spawnable
+        error = f"claude CLI could not run: {type(exc).__name__}: {exc}"
+    if stderr_text.strip():
+        (run_dir / "claude-stderr.log").write_text(stderr_text, encoding="utf-8")
+    if error is None and rc != 0:
+        error = f"claude CLI exited {rc}: {stderr_text.strip()[-400:]}"
+
+    init_ev, result_ev, fallback = _parse_claude_transcript(transcript_path)
+    totals = _claude_usage_totals(result_ev)
+    if totals is not None:
+        cost = float(result_ev.get("total_cost_usd") or 0.0)
+        cost_source = "claude-cli-reported"
+    else:
+        # Killed/crashed before the final result event: tokens are recovered
+        # from the assistant events; the cost is UNKNOWN (only the CLI prices
+        # its usage) and recorded as such rather than invented from a price
+        # table this harness does not maintain. ``error`` is already set on
+        # every path that gets here, so this run can never read as clean.
+        totals = fallback
+        cost = 0.0
+        cost_source = "claude-cli-reported (no result event — cost unknown)"
+        if error is None:
+            error = "claude CLI stream ended without a result event"
+    if error is None and result_ev.get("is_error"):
+        error = f"claude CLI reported is_error ({result_ev.get('subtype')})"
+
+    raw_diff = _capture_diff(repo)
+    code_diff, kept, stripped = split_diff(raw_diff)
+    assert_no_test_edits(code_diff)
+    (run_dir / "raw.diff").write_text(raw_diff, encoding="utf-8")
+    (run_dir / "prediction.diff").write_text(code_diff, encoding="utf-8")
+
+    result = {
+        **base,
+        # The CLI's OWN account of what ran — recorded from the transcript,
+        # never assumed from this file's constants.
+        "model_reported": init_ev.get("model"),
+        "models_observed": sorted((result_ev.get("modelUsage") or {}).keys()),
+        "mcp_servers": init_ev.get("mcp_servers", []),
+        "permission_mode": init_ev.get("permissionMode"),
+        "session_id": result_ev.get("session_id") or init_ev.get("session_id"),
+        "ts": datetime.now(UTC).isoformat(),
+        "wall_clock_s": round(time.monotonic() - entered, 1),
+        "agent_wall_s": round(time.monotonic() - started, 1),
+        "num_turns": int(result_ev.get("num_turns") or 0),
+        "turn_cap": turns,
+        "tokens_in": totals["tokens_in"],
+        "tokens_out": totals["tokens_out"],
+        "cached_input_tokens": totals["cache_read"],
+        "cost_usd": round(cost, 4),
+        "cost_source": cost_source,
+        "precheck": precheck,
+        "error": error,
+        # No gates ran — like the bare arm, this arm cannot claim green.
+        "factory_says_green": None,
+        "files_changed": kept,
+        "test_files_stripped": stripped,
+        "diff_bytes": len(code_diff),
+    }
+    out = _write_result(instance_id, "claude", result)
+    print(f"claude arm done: {out}")
+    if stripped:
+        print(f"  stripped {len(stripped)} test-file edit(s) before grading: {stripped}")
+
+
+# --------------------------------------------------------------------------- #
 # grade — the hidden oracle
 # --------------------------------------------------------------------------- #
 
@@ -2717,16 +3111,20 @@ def _probe_line_hits(line: str, instance_id: str, arm: str) -> list[str]:
     if "swebench/manifest.json" in line:
         hits.append("swebench/manifest.json")
     own_dir = f"bench/swebench/runs/{instance_id}"
-    other_arm = "bare" if arm == "factory" else "factory"
+    # EVERY sibling arm's dir is oracle-bearing (grade logs carry the hidden
+    # test ids), not just one hardcoded "other" — that broke at three arms.
+    foreign = frozenset(a for a in _ARM_NAMES if a != arm) | {"selftest"}
     for m in re.finditer(r"bench/swebench", line):
-        reason = _classify_bench_ref(line[m.start():], own_dir, other_arm)
+        reason = _classify_bench_ref(line[m.start():], own_dir, foreign)
         if reason:
             hits.append(reason)
             break
     return hits
 
 
-def _classify_bench_ref(rest: str, own_dir: str, other_arm: str) -> str | None:
+def _classify_bench_ref(
+    rest: str, own_dir: str, foreign_subdirs: frozenset[str]
+) -> str | None:
     """None when ``rest`` is an own-run reference; the flag reason otherwise."""
     if rest.startswith(own_dir):
         after = rest[len(own_dir):]
@@ -2735,7 +3133,7 @@ def _classify_bench_ref(rest: str, own_dir: str, other_arm: str) -> str | None:
         if after[0] == "/":
             seg = re.match(r"[^/'\"`)\]}>,;: \t\n\\]*", after[1:])
             first = seg.group(0) if seg else ""
-            if first in ("selftest", other_arm):
+            if first in foreign_subdirs:
                 return f"own run's oracle-bearing subdir runs/…/{first}"
             return None  # anywhere else under the own run dir — cwd echo
         # e.g. runs/<id>SUFFIX — an id-prefix collision is NOT the own dir.
@@ -2767,7 +3165,9 @@ def _scan_oracle_probes(
     events (the arm's actions and the environment's observations — NOT the
     harness-authored system prompt or task message, which legitimately carry
     the run's own cwd), the bare arm's UNTRUNCATED ``bare-commands.ndjson``,
-    and the result.json transcript as a fallback. References inside the
+    the claude arm's stream-json ``claude-transcript.ndjson`` (its tool calls
+    ARE its command log), and the result.json transcript as a fallback.
+    References inside the
     run's own ``runs/<instance>/<arm>/`` subtree are the arm's cwd, never a
     probe; everything else stays fail-closed. A bare run that executed
     commands but left no full command log cannot be cleared, and an
@@ -2801,6 +3201,38 @@ def _scan_oracle_probes(
                 f"oracle-probe: trajectory {traj.name} unreadable ({exc}) — "
                 "the arm's actions cannot be cleared of oracle access"
             )
+
+    # The claude arm's trail is its stream-json transcript: assistant turns,
+    # tool calls (the command-log equivalent) and tool results. Scan every
+    # line fail-closed — the task prompt is passed via argv, never echoed
+    # into the stream, so nothing here is harness-authored except the init
+    # event's own-cwd mention, which the own-run rule already excludes.
+    claude_log = run_dir / _CLAUDE_TRANSCRIPT_NAME
+    if claude_log.exists():
+        try:
+            with claude_log.open(encoding="utf-8", errors="replace") as fh:
+                for n, line in enumerate(fh, 1):
+                    hits = _probe_line_hits(line, instance_id, arm)
+                    if hits:
+                        failures.append(
+                            f"oracle-probe: {_CLAUDE_TRANSCRIPT_NAME}:{n} references "
+                            f"the harness's oracle/manifest paths {hits} — the "
+                            "arm went looking for the answer; the run is invalid"
+                        )
+        except OSError as exc:
+            failures.append(
+                f"oracle-probe: {_CLAUDE_TRANSCRIPT_NAME} unreadable ({exc}) — "
+                "the arm's actions cannot be cleared of oracle access"
+            )
+    elif arm == "claude" and (
+        int(result.get("num_turns") or 0) > 0
+        or float(result.get("cost_usd") or 0.0) > 0
+    ):
+        failures.append(
+            "oracle-probe: claude arm made model calls but left no "
+            f"{_CLAUDE_TRANSCRIPT_NAME} — the full action trail is missing, so "
+            "the run cannot be cleared of oracle access"
+        )
 
     transcript = [s for s in (result.get("transcript") or []) if isinstance(s, dict)]
     cmd_log = run_dir / "bare-commands.ndjson"
@@ -2910,6 +3342,116 @@ def _show_responses(state_root: Path, responses: list[dict[str, Any]]) -> None:
         print("~" * 40)
 
 
+def _audit_claude_run(
+    run_dir: Path, result: dict[str, Any], result_valid: bool
+) -> tuple[list[str], list[str], tuple[float, int, int]]:
+    """The claude arm's audit: certify result.json against the CLI transcript.
+
+    The transcript is this arm's ledger — the CLI's stream-json ``result``
+    event is the only priced record of what the run cost, so the checks mirror
+    the factory path's ledger<->result comparison, plus two hermeticity checks
+    the other arms don't need (the init event proves what config actually
+    loaded, and a leaked MCP server or web tool would void the contamination
+    control). A transcript that exists but disagrees with result.json is a
+    FAILURE; a MISSING transcript is a warning here and a hard oracle-probe
+    failure in ``_scan_oracle_probes`` whenever the run actually made calls —
+    fail-closed, same as the bare arm's missing command log.
+
+    Returns ``(failures, warnings, (cost, tokens_in, tokens_out))`` where the
+    totals are the TRANSCRIPT's, for audit.json's ledger_* fields.
+    """
+    failures: list[str] = []
+    warnings: list[str] = []
+    transcript_path = run_dir / _CLAUDE_TRANSCRIPT_NAME
+    if not transcript_path.exists():
+        warnings.append(
+            f"no {_CLAUDE_TRANSCRIPT_NAME} — the CLI never started or was "
+            "killed before emitting a line (the oracle-probe scan fails the "
+            "run if it made any calls)"
+        )
+        return failures, warnings, (0.0, 0, 0)
+
+    init_ev, result_ev, fallback = _parse_claude_transcript(transcript_path)
+
+    # Hermeticity — the init event records what config the CLI REALLY loaded.
+    if not init_ev:
+        warnings.append("transcript has no init event — the CLI died at startup")
+    else:
+        mcp = init_ev.get("mcp_servers") or []
+        if mcp:
+            failures.append(
+                f"hermetic-config: the CLI loaded MCP server(s) {mcp} — the "
+                "arm did not run in the isolated configuration"
+            )
+        tools = {str(t) for t in (init_ev.get("tools") or [])}
+        leaked = sorted(tools & {"WebFetch", "WebSearch"})
+        if leaked:
+            failures.append(
+                f"hermetic-config: web tool(s) {leaked} were available — the "
+                "contamination control (no web access) was not applied"
+            )
+
+    # The operator wants the models NAMED: a run that cannot say what model
+    # produced it is not comparable to anything.
+    if result_valid and not result.get("model"):
+        failures.append("result.json records no model id")
+
+    totals = _claude_usage_totals(result_ev)
+    if totals is None:
+        # Truncated stream: tokens are recoverable, the cost is not.
+        cost, tin, tout = 0.0, fallback["tokens_in"], fallback["tokens_out"]
+        if result_valid and float(result.get("cost_usd") or 0.0) > 0:
+            failures.append(
+                "result.json reports cost_usd but the transcript has no "
+                "result event to certify it against"
+            )
+        elif result_valid and not result.get("error"):
+            failures.append(
+                "transcript has no result event yet result.json records no "
+                "error — a truncated run must not read as clean"
+            )
+        else:
+            warnings.append(
+                "transcript is truncated (no result event) — cost is unknown; "
+                "token counts recovered from assistant events"
+            )
+    else:
+        cost = round(float(result_ev.get("total_cost_usd") or 0.0), 4)
+        tin, tout = totals["tokens_in"], totals["tokens_out"]
+        for model, mu in sorted((result_ev.get("modelUsage") or {}).items()):
+            if isinstance(mu, dict):
+                print(
+                    f"  {model:<28} in={int(mu.get('inputTokens') or 0):,} "
+                    f"out={int(mu.get('outputTokens') or 0):,} "
+                    f"cacheRead={int(mu.get('cacheReadInputTokens') or 0):,} "
+                    f"cost=${float(mu.get('costUSD') or 0.0):.4f}"
+                )
+        if result_valid:
+            reported = result.get("cost_usd")
+            if reported is None:
+                failures.append("result.json has no cost_usd")
+            elif abs(cost - float(reported)) > 0.005:
+                failures.append(
+                    f"cost mismatch: transcript result event sums to ${cost} but "
+                    f"result.json reports ${reported} — the reported number is "
+                    "not what the CLI said it spent"
+                )
+            for key, ledger_val in (("tokens_in", tin), ("tokens_out", tout)):
+                reported_tok = result.get(key)
+                if reported_tok is None:
+                    continue
+                try:
+                    mismatch = int(reported_tok) != ledger_val
+                except (TypeError, ValueError):
+                    mismatch = True
+                if mismatch:
+                    failures.append(
+                        f"{key} mismatch: transcript={ledger_val} "
+                        f"result.json={reported_tok}"
+                    )
+    return failures, warnings, (cost, tin, tout)
+
+
 def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     """Audit one run's artifacts end-to-end; exit non-zero on ANY failure.
 
@@ -2922,8 +3464,14 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
        unrunnable-environment signature;
     5. a failed collect precheck recorded in result.json fails the audit;
     6. the arm's action trail (OpenHands trajectories; the bare arm's full
-       command log) never references the harness's manifest/oracle paths —
-       an arm that went looking for the answer invalidates the run.
+       command log; the claude arm's CLI transcript) never references the
+       harness's manifest/oracle paths — an arm that went looking for the
+       answer invalidates the run.
+
+    The claude arm has no factory Run ledger, so checks 1-4 are replaced by
+    ``_audit_claude_run``: the CLI's stream-json result event is certified
+    against result.json, and the init event must prove the hermetic config
+    (zero MCP servers, no web tools) actually loaded.
 
     Response-side coverage (response bodies per call; a trajectory per dev
     call) is reported as WARNINGS, not failures: a size-capped trajectory or
@@ -2961,6 +3509,87 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
                 )
 
     calls: list[dict[str, Any]] = []
+    responses: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    ledger_cost = 0.0
+    ledger_in = ledger_out = 0
+    print(f"=== audit {instance_id} / {arm} ===")
+
+    if arm == "claude":
+        # The claude arm has no factory Run ledger — the CLI's own stream-json
+        # transcript is the ledger. Checks 1-4 are replaced by
+        # ``_audit_claude_run`` (usage/cost certification + hermeticity);
+        # checks 5 (precheck) and 6 (oracle probe) below are shared.
+        c_failures, c_warnings, (ledger_cost, ledger_in, ledger_out) = (
+            _audit_claude_run(run_dir, result, result_valid)
+        )
+        failures.extend(c_failures)
+        warnings.extend(c_warnings)
+    else:
+        failures, warnings, calls, responses, ledger = _audit_factory_ledger(
+            state_root, result, result_valid, failures
+        )
+        ledger_cost, ledger_in, ledger_out = ledger
+
+    # 5. a recorded failed precheck is a failed run.
+    pre = result.get("precheck") if isinstance(result.get("precheck"), dict) else None
+    if pre is not None and not pre.get("collect_ok"):
+        failures.append("result.json records a failed collect precheck")
+
+    # 6. oracle-probe scan: any reference to the harness's manifest/oracle
+    #    paths in the arm's own action trail means it went looking for the
+    #    answer — the run is invalid.
+    failures.extend(
+        _scan_oracle_probes(
+            state_root, run_dir, result, instance_id=instance_id, arm=arm
+        )
+    )
+
+    payload = {
+        "instance_id": instance_id,
+        "arm": arm,
+        "audited_at": datetime.now(UTC).isoformat(),
+        "ok": not failures,
+        "failures": failures,
+        "warnings": warnings,
+        "persona_calls": calls,
+        "ledger_cost_usd": ledger_cost,
+        "ledger_tokens_in": ledger_in,
+        "ledger_tokens_out": ledger_out,
+        "result_cost_usd": result.get("cost_usd"),
+    }
+    out = run_dir / "audit.json"
+    out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if show_responses:
+        _show_responses(state_root, responses)
+    for w in warnings:
+        print(f"AUDIT WARN: {w}")
+    if failures:
+        for f in failures:
+            print(f"AUDIT FAIL: {f}")
+        raise SystemExit(f"audit FAILED ({len(failures)} finding(s)) -> {out}")
+    print(
+        f"audit OK ({len(calls)} persona call(s), ${ledger_cost}) -> {out}"
+        if arm != "claude"
+        else f"audit OK (claude transcript certified, ${ledger_cost}) -> {out}"
+    )
+
+
+def _audit_factory_ledger(
+    state_root: Path,
+    result: dict[str, Any],
+    result_valid: bool,
+    failures: list[str],
+) -> tuple[
+    list[str], list[str], list[dict[str, Any]], list[dict[str, Any]],
+    tuple[float, int, int],
+]:
+    """Checks 1-4 for the ledger-backed arms (factory, bare) — verbatim the
+    logic that lived inline in ``audit`` before the claude arm needed a
+    transcript-backed replacement. Returns
+    ``(failures, warnings, calls, responses, (cost, tokens_in, tokens_out))``.
+    """
+    calls: list[dict[str, Any]] = []
     db = state_root / "state" / "factory.db"
     if not db.exists():
         failures.append(f"missing artifact: {db} (no Run ledger — calls unauditable)")
@@ -2981,7 +3610,6 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
         resp_counts[p] = resp_counts.get(p, 0) + 1
     traj_files = _trajectory_files(state_root)
 
-    print(f"=== audit {instance_id} / {arm} ===")
     resp_seen: dict[str, int] = {}
     traj_seen = 0
     for c in calls:
@@ -3080,44 +3708,7 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
                 "unrunnable-environment signature — the run never tested anything"
             )
 
-    # 5. a recorded failed precheck is a failed run.
-    pre = result.get("precheck") if isinstance(result.get("precheck"), dict) else None
-    if pre is not None and not pre.get("collect_ok"):
-        failures.append("result.json records a failed collect precheck")
-
-    # 6. oracle-probe scan: any reference to the harness's manifest/oracle
-    #    paths in the arm's own action trail means it went looking for the
-    #    answer — the run is invalid.
-    failures.extend(
-        _scan_oracle_probes(
-            state_root, run_dir, result, instance_id=instance_id, arm=arm
-        )
-    )
-
-    payload = {
-        "instance_id": instance_id,
-        "arm": arm,
-        "audited_at": datetime.now(UTC).isoformat(),
-        "ok": not failures,
-        "failures": failures,
-        "warnings": warnings,
-        "persona_calls": calls,
-        "ledger_cost_usd": ledger_cost,
-        "ledger_tokens_in": ledger_in,
-        "ledger_tokens_out": ledger_out,
-        "result_cost_usd": result.get("cost_usd"),
-    }
-    out = run_dir / "audit.json"
-    out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    if show_responses:
-        _show_responses(state_root, responses)
-    for w in warnings:
-        print(f"AUDIT WARN: {w}")
-    if failures:
-        for f in failures:
-            print(f"AUDIT FAIL: {f}")
-        raise SystemExit(f"audit FAILED ({len(failures)} finding(s)) -> {out}")
-    print(f"audit OK ({len(calls)} persona call(s), ${ledger_cost}) -> {out}")
+    return failures, warnings, calls, responses, (ledger_cost, ledger_in, ledger_out)
 
 
 # --------------------------------------------------------------------------- #
@@ -3530,8 +4121,12 @@ _SWEEP_LOCK = threading.Lock()
 # as $3.00 with NO credit for cache hits. Erring high on cost and LOW on
 # duration both push the projected burn rate UP, which is the fail-safe
 # direction for a guard whose job is to refuse.
-_DEFAULT_COST_USD = {"factory": 3.00, "bare": 1.00}
-_DEFAULT_HOURS = {"factory": 0.05, "bare": 0.05}  # 3 minutes — the fast end of measured
+# The claude default is the documented $3 first-run stand-in (no measured runs
+# yet); NOTE its spend is ANTHROPIC-side (the CLI's own report), so the guard
+# conservatively counts it against the same factory_settings.yaml caps even
+# though it never touches the Azure ledger.
+_DEFAULT_COST_USD = {"factory": 3.00, "bare": 1.00, "claude": 3.00}
+_DEFAULT_HOURS = {"factory": 0.05, "bare": 0.05, "claude": 0.05}  # 3 min — fast end of measured
 
 # Mirrors ``factory.settings.loader.CapsConfig``. Used when
 # ``factory_settings.yaml`` is missing or unparseable: a guard that cannot read
@@ -4443,18 +5038,27 @@ def main() -> None:
     p.add_argument(
         "--arm",
         default="factory",
-        choices=["factory", "bare"],
+        choices=list(_ARM_NAMES),
         help="'bare' is the matched minimal scaffold on the SAME Azure models "
-             "(PLAN.md 1.4). A factory number without it measures the model.",
+             "(PLAN.md 1.4). A factory number without it measures the model. "
+             "'claude' is the local Claude Code CLI, headless and hermetic — "
+             "its spend bills the operator's Anthropic subscription, not the "
+             "Azure ledger.",
     )
-    p.add_argument("--max-steps", type=int, default=16)
+    p.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="per-arm step/turn budget; defaults to 16 (factory dispatch "
+             f"steps, bare bash turns) or {_CLAUDE_TURN_CAP} claude CLI turns",
+    )
     p.add_argument("--timeout-s", type=int, default=5400)
 
     p = sub.add_parser(
         "run-all",
         help="parallel sweep: run + grade many instances across a worker pool",
     )
-    p.add_argument("--arm", default="factory", choices=["factory", "bare"])
+    p.add_argument("--arm", default="factory", choices=list(_ARM_NAMES))
     p.add_argument("--workers", type=int, default=4)
     p.add_argument(
         "--instances",
@@ -4467,7 +5071,13 @@ def main() -> None:
         help="restrict to instances whose GOLD patch resolves (selftest.json). "
              "A score over broken instances measures the harness.",
     )
-    p.add_argument("--max-steps", type=int, default=16)
+    p.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help=f"per-arm step/turn budget; defaults to 16, or {_CLAUDE_TURN_CAP} "
+             "for the claude arm",
+    )
     p.add_argument("--timeout-s", type=int, default=5400, help="per-instance run cap")
     p.add_argument("--grade-timeout-s", type=int, default=3600)
     p.add_argument(
@@ -4485,7 +5095,7 @@ def main() -> None:
 
     p = sub.add_parser("grade", help="run the hidden oracle in the official image")
     p.add_argument("--instance", required=True)
-    p.add_argument("--arm", default="factory", choices=["factory", "bare"])
+    p.add_argument("--arm", default="factory", choices=list(_ARM_NAMES))
     p.add_argument("--timeout-s", type=int, default=3600)
 
     p = sub.add_parser(
@@ -4498,7 +5108,7 @@ def main() -> None:
         "audit", help="verify one run's ledger, prompts and reported numbers"
     )
     p.add_argument("--instance", required=True)
-    p.add_argument("--arm", default="factory", choices=["factory", "bare"])
+    p.add_argument("--arm", default="factory", choices=list(_ARM_NAMES))
     p.add_argument(
         "--show-responses",
         action="store_true",
@@ -4513,6 +5123,11 @@ def main() -> None:
         help="re-derive the table purely from a results-archive dir (no live runs)",
     )
 
+    def _resolve_max_steps(arm: str, max_steps: int | None) -> int:
+        if max_steps is not None:
+            return max_steps
+        return _CLAUDE_TURN_CAP if arm == "claude" else 16
+
     args = ap.parse_args()
     if args.cmd == "fetch":
         fetch(
@@ -4523,8 +5138,12 @@ def main() -> None:
             after=args.after,
         )
     elif args.cmd == "run":
-        runner = run_bare if args.arm == "bare" else run_factory
-        runner(args.instance, max_steps=args.max_steps, timeout_s=args.timeout_s)
+        runner = {"bare": run_bare, "claude": run_claude}.get(args.arm, run_factory)
+        runner(
+            args.instance,
+            max_steps=_resolve_max_steps(args.arm, args.max_steps),
+            timeout_s=args.timeout_s,
+        )
     elif args.cmd == "run-all":
         run_all(
             arm=args.arm,
@@ -4535,7 +5154,7 @@ def main() -> None:
                 else None
             ),
             only_working=args.only_working,
-            max_steps=args.max_steps,
+            max_steps=_resolve_max_steps(args.arm, args.max_steps),
             run_timeout_s=args.timeout_s,
             grade_timeout_s=args.grade_timeout_s,
             force_over_cap=args.force_over_cap,
