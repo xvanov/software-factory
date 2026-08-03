@@ -279,23 +279,87 @@ which the gold-patch control surfaced before any model spend:
 
 - **Test edits are stripped and the strip is asserted** in code, at run time
   and again at grade time. The factory's dev owns its tests, so an unstripped
-  diff would let the arm rewrite the oracle judging it.
+  diff would let the arm rewrite the oracle judging it. The `diff --git` parser
+  handles every form git emits (C-quoted paths, paths with spaces) and
+  **hard-refuses** any header it cannot classify: an unparseable header used to
+  be appended to the PREVIOUS file's block, which merged a test edit into a
+  kept code block and survived both the strip and the assertion.
+- **Collection-config edits refuse the row.** Stripping test code is not
+  enough: `pyproject.toml` (`addopts`, `-p <plugin>`), `setup.cfg`, `tox.ini`,
+  `pytest.ini`, `setup.py`, `noxfile.py`, `sitecustomize.py`, `*.pth` and
+  `*pytest*plugin*.py` decide *which* tests run and *whether* they run. A root
+  `_fixup.py` plus `addopts = "-p _fixup"` makes pytest exit 0 with everything
+  skipped. Those paths are refused rather than stripped — stripping a config
+  edit could break an otherwise valid patch, and grading the remainder as the
+  arm's answer is `proxy != real`. Measured: 0 of the 188 retained
+  `prediction.diff` files and 0 of the 20 pinned oracle patches touch one.
+- **Grading is per-node, not per-exit-code.** `pytest` exits 0 when every
+  selected test SKIPS, so `if ! pytest -q <ids>` graded a fully-skipped run as
+  RESOLVED. Both sets now run with `-rpfEsxX` and every declared
+  `fail_to_pass`/`pass_to_pass` id must have at least one `PASSED` node and no
+  `FAILED`/`ERROR` node, exactly as the official SWE-bench harness decides it.
+  `-rA` is deliberately NOT used: it echoes a passing test's captured stdout,
+  which would let arm-authored code print a forged `PASSED <id>` line into the
+  section the parser reads. A missing per-node report refuses the row.
+  Per-node output lands in `grade-nodes.log`; `grade.log` keeps the readable
+  log.
+- **No arm's working tree lives inside the repo.** Every arm's shell runs on
+  this host, so the working tree's ANCESTRY is part of the threat model — and
+  it was not: the factory arm's dev ran with cwd
+  `runs/<id>/factory/root/state/worktrees/<name>/`, six `..` from
+  `oracle.json.z` and three from the other arms' `grade.log`. Four factory rows
+  in `results-archive/2026-08-03T02-21-23.249790Z` are `ok: false` because that
+  actually happened. Live trees now go under `$XDG_CACHE_HOME/swebench-work`
+  (override with `SWEBENCH_WORK_ROOT`) and only finished artifacts are copied
+  back into `runs/<id>/<arm>/` after the arm has stopped. The prepared trees
+  that `grade` and `selftest` mount are worse than reachable — the grade script
+  applies the test patch, and the control applies the GOLD patch, *into* them —
+  so they get an unguessable `mkdtemp` name and are deleted the moment grading
+  ends. `assert_workspace_isolated` refuses any workspace with an
+  oracle-bearing ancestor, before spend.
 - **Oracle material is never greppable.** All arms execute on this host
   filesystem, so the gold patch, test patch and hidden test ids live in
   `oracle.json.z` (zlib+base64 — defeats text-scavenging, NOT cryptography;
   a determined process that knows the format can still decode it), with only
   sha256 digests in the manifest. Every consumer verifies the digest; a
-  tampered store refuses. `audit` additionally scans the arms' action trails
+  tampered store refuses. `grade` never prints the oracle's `gold_files` to
+  stdout (the sweep captured it into `runs/<id>/<arm>/sweep-grade.log`, i.e.
+  the answer key next to the answer sheet); they stay in `result.json`.
+  `audit` additionally scans the arms' action trails
   (OpenHands trajectories; the bare arm's untruncated `bare-commands.ndjson`;
   the claude arm's `claude-transcript.ndjson`)
-  for any reference to the harness paths — a hit invalidates the run. The
+  for any reference to the harness paths, and for retrieval-shaped network
+  activity (`curl`/`wget` with a URL, `git fetch/pull/ls-remote`, `gh pr|api`,
+  `urlopen`, a github.com URL that is not the instance's own origin) — every
+  instance is a merged public PR, so fetching the answer is easier than
+  decoding it. A hit invalidates the run. The
   scan discriminates: the run's OWN `runs/<instance>/` subtree is the arm's
   cwd and echoes constantly (commands, tracebacks, listings, clipped
   observations, condensed summaries — every flagged row of the first live
   sweep was such an echo), so it is exempt — EXCEPT its `selftest/` and
-  other-arm subdirs, whose logs carry the hidden test ids. Harness-authored
+  other-arm subdirs, whose logs carry the hidden test ids, and the
+  oracle-bearing FILENAMES inside its own subtree (`grade.log`,
+  `grade-nodes.log`, `result.json`, …). Harness-authored
   trajectory events (the system prompt, the task message) are not arm
-  actions and are not scanned.
+  actions and are not scanned. An arm that reports model calls and left NO
+  scannable trail fails the audit: the scan used to return no findings when it
+  had nothing to scan, so a wiped state root audited clean.
+- **`audit.json` certifies the graded patch, not just the ledger.** It records
+  `prediction_sha256`, `base_commit`, `stripped_test_paths`, `refused_paths`,
+  `trajectories_scanned` and `trails_scanned`, so a published verdict is tied
+  to the bytes that produced it.
+- **Every instance is graded against a regression suite.** Two pinned
+  instances ship an empty `pass_to_pass`
+  (`line__line-bot-sdk-python-981_interface`, `pandas-dev__pandas-63945`) and
+  the p2p invocation was skipped entirely for them, so a patch that fixed the
+  target test by breaking everything around it scored the same as a correct
+  one. When `pass_to_pass` is empty, the instance's declared `test_targets`
+  files are used as an implicit set and `pass_to_pass_source` records which it
+  was. Pro (frozen) gets no implicit set.
+- **The control's log is committed.** `selftest` writes
+  `bench/swebench/selftest-logs/<instance>.log`, outside gitignored `runs/`.
+  It used to write into `runs/<id>/selftest/`, which is why 0 of the 19
+  published swe-rebench instances retain the log that certified them.
 - **`selftest`/`run`/`run-all` refuse BEFORE spend if the oracle store
   cannot serve every pinned instance** (digest-verified per instance).
   `grade` — the last step — used to be the first consumer to notice a

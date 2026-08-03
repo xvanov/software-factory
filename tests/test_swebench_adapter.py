@@ -63,6 +63,11 @@ def _isolate_bench_store_paths(
     a = request.getfixturevalue("A")
     monkeypatch.setattr(a, "MANIFEST_PATH", tmp_path / "isolated-manifest.json")
     monkeypatch.setattr(a, "ORACLE_PATH", tmp_path / "isolated-oracle.json.z")
+    monkeypatch.setattr(a, "SELFTEST_LOG_DIR", tmp_path / "isolated-selftest-logs")
+    # Live working trees now live OUTSIDE the repo, so without this a test that
+    # drives an arm would clone into the operator's real ~/.cache. Same
+    # test-pollution class as the clobbered oracle store above.
+    monkeypatch.setenv("SWEBENCH_WORK_ROOT", str(tmp_path / "isolated-work"))
 
 
 # --------------------------------------------------------------------------- #
@@ -824,9 +829,14 @@ def _mk_audit_run(
     write_db: bool = True,
     write_bodies: bool = True,
     responses: list[dict[str, Any]] | None = None,
-    trajectories: int = 0,
+    trajectories: int = 1,
 ) -> None:
-    """Fabricate a run directory shaped like a real one."""
+    """Fabricate a run directory shaped like a real one.
+
+    ``trajectories`` defaults to 1 because a real run HAS an action trail, and
+    an arm that reports model calls with no trail at all now fails the audit
+    (it used to be silently fine, so a wiped state root audited clean).
+    """
     import sqlite3
 
     run_dir = runs_root / "inst1" / arm
@@ -1103,16 +1113,18 @@ def test_audit_warns_but_passes_when_response_bodies_are_missing(
     trajectory) stays VALID — invalidating it would fail every historical
     run — but the gap must be loud."""
     monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
-    _mk_audit_run(tmp_path)  # prompt bodies only, no responses, no trajectories
+    # One trajectory (a real run has a trail; zero is its own failure now) but
+    # no response bodies, and only one of the two personas covered.
+    _mk_audit_run(tmp_path, trajectories=1)
     A.audit("inst1", "factory")  # must not raise
     data = _audit_json(tmp_path)
     assert data["ok"] is True
     assert any("response" in w for w in data["warnings"]), data["warnings"]
-    assert any("trajectory" in w for w in data["warnings"]), data["warnings"]
+    # The missing-trajectory case moved to its own test: with a trail present
+    # the run stays valid, with NO trail at all it fails.
     out = capsys.readouterr().out
     assert "AUDIT WARN" in out
     assert "resp=NO" in out
-    assert "traj=NO" in out
 
 
 def test_audit_is_warning_free_when_responses_and_trajectory_are_present(
@@ -1129,15 +1141,25 @@ def test_audit_is_warning_free_when_responses_and_trajectory_are_present(
     assert "traj=yes" in out
 
 
-def test_audit_warns_when_only_the_dev_trajectory_is_missing(
+def test_audit_fails_when_the_action_trail_is_missing_entirely(
     A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
 ) -> None:
+    """A run with model calls and NO trail cannot be cleared of oracle access.
+
+    This used to be a warning that still audited OK — the oracle-probe scan
+    returned no findings because it had nothing to scan, so a wiped state root
+    passed. Fail closed: no trail, no clearance. The per-persona trajectory
+    warning stays, because a PARTIAL trail is still scannable.
+    """
     monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
     _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS, trajectories=0)
-    A.audit("inst1", "factory")
-    warnings = _audit_json(tmp_path)["warnings"]
-    assert len(warnings) == 1
-    assert "trajectory" in warnings[0]
+    with pytest.raises(SystemExit, match="audit FAILED"):
+        A.audit("inst1", "factory")
+    data = _audit_json(tmp_path)
+    assert any("no action trail" in f for f in data["failures"]), data["failures"]
+    assert any("trajectory" in w for w in data["warnings"]), data["warnings"]
+    assert data["trajectories_scanned"] == 0
+    assert data["trails_scanned"] == 0
 
 
 def test_audit_show_responses_prints_the_reviewer_text_and_dev_messages(
@@ -1180,7 +1202,7 @@ def test_show_responses_picks_the_newest_trajectory_by_mtime(
     import os
 
     monkeypatch.setattr(A, "RUNS_DIR", tmp_path)
-    _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS)
+    _mk_audit_run(tmp_path, responses=_RESPONSE_ROWS, trajectories=0)
     traj_dir = tmp_path / "inst1" / "factory" / "root" / "state" / "events" / "trajectories"
     traj_dir.mkdir(parents=True)
 
@@ -2864,11 +2886,11 @@ def test_grade_script_treats_pre_patch_no_collect_as_red_not_broken(A: Any) -> N
     assert "NO_COLLECT_PRE_PATCH" in script
     assert "treated as a red baseline" in script
     assert (
-        "SWEBENCH_POST_PATCH_${SWEBENCH_NONCE}: FAIL_TO_PASS_IDS_DO_NOT_COLLECT"
+        "SWEBENCH_POST_PATCH_${_N}: FAIL_TO_PASS_IDS_DO_NOT_COLLECT"
         in script
     )
     # The hard pre-patch exit is Pro-only; the rebench script never emits it.
-    assert "SWEBENCH_BASELINE_${SWEBENCH_NONCE}: BROKEN_NO_COLLECT" not in script
+    assert "SWEBENCH_BASELINE_${_N}: BROKEN_NO_COLLECT" not in script
 
 
 def test_gold_patch_comes_from_the_row_with_no_network(
@@ -3103,13 +3125,13 @@ def test_pro_grade_script_keeps_frozen_no_collect_semantics(A: Any) -> None:  # 
     semantics are swe-rebench-only."""
     pro_inst = _pro_manifest()["instances"][0]
     pro_script = A._grade_script_for(pro_inst, "diff --git a/x b/x\n")
-    assert "SWEBENCH_BASELINE_${SWEBENCH_NONCE}: BROKEN_NO_COLLECT" in pro_script
+    assert "SWEBENCH_BASELINE_${_N}: BROKEN_NO_COLLECT" in pro_script
     assert "exit 3" in pro_script
     assert "NO_COLLECT_PRE_PATCH" not in pro_script
     assert "SWEBENCH_POST_PATCH" not in pro_script
 
     rebench_script = A._grade_script_for(_rebench_instance(A), "diff --git a/x b/x\n")
-    assert "SWEBENCH_BASELINE_${SWEBENCH_NONCE}: BROKEN_NO_COLLECT" not in rebench_script
+    assert "SWEBENCH_BASELINE_${_N}: BROKEN_NO_COLLECT" not in rebench_script
     assert "NO_COLLECT_PRE_PATCH" in rebench_script
 
 
@@ -3144,8 +3166,13 @@ def test_verdict_channel_is_not_forgeable_or_swallowable(A: Any) -> None:  # noq
     # every pytest invocation is cut off from stdin.
     script = A._grade_script_for(_rebench_instance(A), "diff --git a/x b/x\n")
     for name in ("SWEBENCH_RESULT", "SWEBENCH_APPLY", "SWEBENCH_BASELINE"):
-        assert f"{name}_${{SWEBENCH_NONCE}}:" in script, name
+        assert f"{name}_${{_N}}:" in script, name
     assert "SWEBENCH_RESULT:" not in script  # no un-nonced verdict marker
+    # The nonce arrives as an ENV var and is copied to a shell variable, then
+    # unset: pytest (and any arm-authored test code it runs) inherits no nonce,
+    # so it cannot read one and print a well-formed marker.
+    assert '_N="${SWEBENCH_NONCE}"' in script
+    assert "unset SWEBENCH_NONCE" in script
     for line in script.splitlines():
         if "python -m pytest" in line:
             assert "</dev/null" in line.replace("< /dev/null", "</dev/null"), line
@@ -3719,8 +3746,11 @@ def test_run_claude_end_to_end_with_a_mocked_cli(
     A.run_claude("inst1", max_steps=60, timeout_s=300)
 
     run_dir = tmp_path / "inst1" / "claude"
-    # The child ran IN the clone with a scrubbed env and the pinned model.
-    assert seen["cwd"] == str(run_dir / "repo")
+    # The child ran IN the clone with a scrubbed env and the pinned model —
+    # and the clone is OUTSIDE the harness dir, so the CLI's cwd has no
+    # ancestor holding the oracle store or another arm's grade log.
+    assert seen["cwd"] == str(A._work_dir("inst1", "claude") / "repo")
+    assert not Path(seen["cwd"]).is_relative_to(A.SWE_DIR)
     assert "ANTHROPIC_API_KEY" not in seen["env"]
     assert seen["argv"][seen["argv"].index("--model") + 1] == A._CLAUDE_MODEL
     # Transcript persisted verbatim.
