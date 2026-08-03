@@ -999,3 +999,173 @@ def test_the_isolation_backstop_covers_every_arm(A: Any, tmp_path: Path) -> None
         failures = A._audit_workspace_layout(run_dir, arm)
         assert len(failures) == 1, (arm, failures)
         assert "inside the harness directory" in failures[0]
+
+
+# --------------------------------------------------------------------------- #
+# defect 7 — pytest's COLOUR made the per-node parser match zero outcomes,
+#            and the parse failure was reported as the ARM failing
+# --------------------------------------------------------------------------- #
+#
+# MEASURED on a paid single-instance probe (`getmoto__moto-9841/openhands`,
+# 2026-08-03, $0.51): 153 tests passed inside the grade container and the row
+# was recorded `unresolved_no_per_node_pass`, `node_coverage_ok: false`, with
+# 149 "no PASSED node" reasons. moto's own `pyproject.toml` carries
+# `addopts = "--color=yes"`, so every line the parser reads arrived wrapped in
+# ANSI escapes:
+#
+#   \033[32mPASSED\033[0m tests/test_kms/test_kms.py::\033[1mtest_get_public_key\033[0m
+#
+# The container-side `sed` (anchored on `^=* short test summary info =*$`) and
+# the Python parser both missed, `grade-nodes.log` held zero outcomes, and the
+# row read exactly like a failed patch. Unfixed, the five-arm sweep would have
+# reported ~0% FOR EVERY ARM — a number shaped like a finding.
+#
+# The fixtures are VERBATIM bytes: the PASSED lines are copied out of that
+# probe's `grade.log` and the coloured header/tally come from `pytest -q
+# -rpfEsxX --color=yes` run inside the instance's own image.
+
+_COLOURED_SUMMARY = (
+    "\x1b[36m\x1b[1m=========================== short test summary info "
+    "============================\x1b[0m\n"
+    "\x1b[32mPASSED\x1b[0m tests/test_kms/test_kms.py::\x1b[1mtest_get_public_key\x1b[0m\n"
+    "\x1b[32mPASSED\x1b[0m tests/test_kms/test_kms.py::"
+    "\x1b[1mtest_get_public_key_with_alias\x1b[0m\n"
+    "\x1b[32mPASSED\x1b[0m tests/test_kms/test_kms.py::"
+    "\x1b[1mtest_ensure_key_can_be_verified_manually\x1b[0m\n"
+    "\x1b[31mFAILED\x1b[0m tests/test_kms/test_kms.py::\x1b[1mtest_broken\x1b[0m"
+    " - assert False\n"
+    "\x1b[31m\x1b[31m\x1b[1m1 failed\x1b[0m, \x1b[32m3 passed\x1b[0m"
+    "\x1b[31m in 6.50s\x1b[0m\x1b[0m\n"
+)
+# The probe's real tally line, byte for byte.
+_COLOURED_TALLY = "\x1b[32m\x1b[32m\x1b[1m153 passed\x1b[0m\x1b[32m in 6.50s\x1b[0m\x1b[0m"
+
+
+def test_an_ansi_coloured_summary_still_yields_node_outcomes(A: Any) -> None:  # noqa: N803
+    """THE defect. Real escape bytes, real node ids from the probe's own log."""
+    assert "\x1b[" in _COLOURED_SUMMARY  # the fixture is genuinely coloured
+    outcomes = A._parse_node_outcomes(_COLOURED_SUMMARY)
+    assert set(outcomes) == {
+        "tests/test_kms/test_kms.py::test_get_public_key",
+        "tests/test_kms/test_kms.py::test_get_public_key_with_alias",
+        "tests/test_kms/test_kms.py::test_ensure_key_can_be_verified_manually",
+        "tests/test_kms/test_kms.py::test_broken",
+    }, outcomes
+    ok, reasons = A.evaluate_node_coverage(
+        [
+            "tests/test_kms/test_kms.py::test_get_public_key",
+            "tests/test_kms/test_kms.py::test_ensure_key_can_be_verified_manually",
+        ],
+        outcomes,
+    )
+    assert ok, reasons
+    # And a coloured FAILED node is still a failure, not swallowed.
+    bad_ok, bad_reasons = A.evaluate_node_coverage(
+        ["tests/test_kms/test_kms.py::test_broken"], outcomes
+    )
+    assert not bad_ok
+    assert "FAILED" in bad_reasons[0]
+
+
+def test_a_coloured_tally_is_still_counted(A: Any) -> None:  # noqa: N803
+    assert A.reported_node_outcomes(_COLOURED_TALLY) == {"passed": 153}
+    assert A.reported_node_outcomes("1 failed, 3 passed, 2 xfailed in 0.1s") == {
+        "failed": 1,
+        "passed": 3,
+        "xfailed": 2,
+    }
+    # No tally at all is "no evidence", NOT "it reported nothing".
+    assert A.reported_node_outcomes("") is None
+
+
+def test_zero_parsed_outcomes_against_a_real_tally_is_a_parse_failure(A: Any) -> None:  # noqa: N803
+    """The probe's exact shape: pytest says 153 passed, the parser has nothing.
+
+    This must NEVER be reported as the arm failing — that is how one harness
+    defect becomes a uniform 0% across every arm.
+    """
+    why = A.node_parse_failure(_COLOURED_TALLY, {})
+    assert why is not None
+    assert "153" in why
+    assert "HARNESS" in why
+
+
+def test_a_summary_vs_node_count_mismatch_is_a_parse_failure(A: Any) -> None:  # noqa: N803
+    """Partial parse: pytest reported 4 passes, only 2 attached to a node id."""
+    outcomes = {
+        "tests/test_x.py::test_a": {"PASSED"},
+        "tests/test_x.py::test_b": {"PASSED"},
+    }
+    why = A.node_parse_failure("4 passed in 0.1s", outcomes)
+    assert why is not None
+    assert "only 2" in why
+    # A complete parse draws no complaint.
+    assert A.node_parse_failure("2 passed in 0.1s", outcomes) is None
+
+
+def test_an_all_skipped_run_is_not_a_parse_failure(A: Any) -> None:  # noqa: N803
+    """FAIL-SAFE IN THE OTHER DIRECTION. `-r` reports skips by LOCATION, not by
+    node id, so an all-skipped run legitimately parses zero node outcomes — and
+    that is defect 2's genuine UNRESOLVED, not a harness defect. If this started
+    returning a reason, `grade_parse_failed` would launder real all-skipped
+    failures out of every denominator."""
+    assert A.node_parse_failure("2 skipped in 0.09s", {}) is None
+    assert A.node_parse_failure("3 deselected in 0.09s", {}) is None
+    assert A.node_parse_failure("no tests ran in 0.01s", {}) is None
+    # A failed run is the arm's failure, not a parse failure.
+    assert (
+        A.node_parse_failure("1 failed in 0.1s", {"tests/test_x.py::test_a": {"FAILED"}})
+        is None
+    )
+
+
+def test_the_grade_script_forces_colour_off_and_reads_the_header_unanchored(
+    A: Any,  # noqa: N803
+) -> None:
+    inst = {
+        "instance_id": "getmoto__moto-9841",
+        "profile": "swe-rebench",
+        "repo": "getmoto/moto",
+        "base_commit": "0" * 40,
+        "docker_image": "img@sha256:" + "0" * 64,
+        "fail_to_pass": ["tests/test_kms/test_kms.py::test_a"],
+        "pass_to_pass": ["tests/test_kms/test_kms.py::test_b"],
+        "test_patch": "",
+        "gold_patch": "",
+        "test_targets": ["tests/test_kms/test_kms.py"],
+    }
+    script = A._grade_script_for(inst, "diff --git a/s.py b/s.py\n")
+    # Belt and braces: env for every invocation, flag on the parsed ones. A
+    # repo's `addopts` cannot re-colour what the command line turned off.
+    assert "export NO_COLOR=1" in script
+    assert "export PY_COLORS=0" in script
+    assert "-rpfEsxX --color=no" in script
+    # The anchored sed is what returned an EMPTY region on the probe.
+    assert "'/^=* short test summary info =*$/,$p'" not in script
+    assert "sed -n '/short test summary info/,$p'" in script
+    # pytest's own tally, outside the region, so a broken extraction is
+    # detectable at all.
+    assert "SWEBENCH_TALLY_" in script
+
+
+def test_the_tally_marker_survives_the_region_peeler(A: Any) -> None:  # noqa: N803
+    """The tally is emitted OUTSIDE the BEGIN/END region on purpose: when the
+    region extraction is what broke, it is the only evidence tests ran."""
+    log = (
+        "SWEBENCH_TALLY_abc123: fail_to_pass 2 passed in 0.26s\n"
+        "SWEBENCH_NODES_abc123: BEGIN fail_to_pass rc=0\n"
+        "PASSED tests/test_x.py::test_a\n"
+        "SWEBENCH_NODES_abc123: END fail_to_pass\n"
+        f"SWEBENCH_TALLY_abc123: pass_to_pass {_COLOURED_TALLY}\n"
+    )
+    human, _regions = A._split_node_regions(log, "abc123")
+    tallies = A._tally_lines(human, "abc123")
+    assert tallies["fail_to_pass"] == "2 passed in 0.26s"
+    assert A.reported_node_outcomes(tallies["pass_to_pass"]) == {"passed": 153}
+
+
+def test_a_pre_tally_grade_log_reports_no_tallies(A: Any) -> None:  # noqa: N803
+    """The 59 retained pre-change logs carry no TALLY marker. `None` evidence
+    must not become a parse failure, or re-auditing an old row would relabel a
+    published verdict."""
+    assert A._tally_lines(_PRE_CHANGE_GRADE_LOG, "673072f0171e06a2") == {}

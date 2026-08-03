@@ -45,6 +45,12 @@ unsolvable floor; ``grade`` records ``task_broken_*`` separately from
 ``wrong_patch`` so the two are never summed into one "failure" number. Run
 ``selftest`` FIRST and grade only the instances whose gold patch resolves.
 
+``grade_parse_failed`` is the same idea one level down: when THIS harness cannot
+read pytest's per-node report, the row says nothing about the arm, so it is
+excluded from every rate instead of being counted as an unresolved attempt. A
+parse failure reported as an arm failure is how one harness defect becomes a
+uniform 0% across every arm — a number that looks like a finding and is a bug.
+
 The factory arm needs a WORKING test environment
 -----------------------------------------------
 A bare clone has no dependencies, so ``pytest`` dies with
@@ -4535,18 +4541,35 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
     # PER-NODE, not exit-code. `pytest -q <ids>` exits 0 when every selected
     # test skips, so the marker alone is not proof that the named tests passed.
     # Both sets must be demonstrably PASSED, and a missing report refuses.
-    f2p_ok, f2p_reasons = evaluate_node_coverage(
-        f2p, _parse_node_outcomes(node_regions.get("fail_to_pass", ""))
-    )
-    p2p_ok, p2p_reasons = evaluate_node_coverage(
-        p2p, _parse_node_outcomes(node_regions.get("pass_to_pass", ""))
-    )
+    f2p_outcomes = _parse_node_outcomes(node_regions.get("fail_to_pass", ""))
+    p2p_outcomes = _parse_node_outcomes(node_regions.get("pass_to_pass", ""))
+    f2p_ok, f2p_reasons = evaluate_node_coverage(f2p, f2p_outcomes)
+    p2p_ok, p2p_reasons = evaluate_node_coverage(p2p, p2p_outcomes)
     nodes_ok = f2p_ok and p2p_ok
     verdict["node_coverage_ok"] = nodes_ok
     verdict["node_coverage_reasons"] = f2p_reasons + p2p_reasons
 
+    # Did the PARSER fail, or did the ARM fail? Compare what pytest says it
+    # reported against what was extracted. Without this the two are the same
+    # row label, and one broken parse reads as a uniform 0% for every arm.
+    tallies = _tally_lines(log, nonce)
+    parse_failures = [
+        f"{label}: {why}"
+        for label, outcomes in (
+            ("fail_to_pass", f2p_outcomes),
+            ("pass_to_pass", p2p_outcomes),
+        )
+        if label in tallies
+        and (why := node_parse_failure(tallies[label], outcomes)) is not None
+    ]
+    verdict["node_parse_failures"] = parse_failures
+
     marker_resolved = f"{_marker('SWEBENCH_RESULT', nonce)}: RESOLVED" in log
-    resolved = marker_resolved and nodes_ok
+    # An unparsable per-node report certifies nothing in EITHER direction: not a
+    # pass, and — the half that matters — not the arm's failure either. The
+    # `grade_parse_failed` outcome below carries that distinction and keeps the
+    # row out of every rate.
+    resolved = marker_resolved and nodes_ok and not parse_failures
     applied = f"{_marker('SWEBENCH_APPLY', nonce)}: OK" in log
     # Visible, not decisive: on a selftest-cleared instance, ids that do not
     # collect under the ARM's patch mean the arm did not deliver the API the
@@ -4565,6 +4588,13 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
         outcome = "task_broken_already_green"
     elif not applied:
         outcome = "patch_did_not_apply"
+    elif parse_failures:
+        # THE HARNESS BROKE, NOT THE ARM. Kept distinct from
+        # `unresolved_no_per_node_pass` (a real all-skipped/uncollected result)
+        # because they are indistinguishable at the verdict level and only one
+        # of them is the arm's fault. Excluded from every rate, exactly like
+        # `task_broken`, and named in the report's exclusion accounting.
+        outcome = "grade_parse_failed"
     elif resolved:
         outcome = "resolved"
     elif marker_resolved:
@@ -4749,6 +4779,24 @@ _SHORT_SUMMARY = re.compile(r"^=+ short test summary info =+\s*$")
 _NODE_LINE = re.compile(r"^(PASSED|FAILED|ERROR|XFAIL|XPASS) (\S.*)$")
 _TALLY = re.compile(r"^=*\s*(no tests ran|\d+ (passed|failed|error|skipped))")
 
+# ANSI escapes, stripped before ANY of the patterns above are matched.
+#
+# MEASURED FAILURE (getmoto__moto-9841/openhands, 2026-08-03): moto's own
+# ``pyproject.toml`` carries ``addopts = "--color=yes"``, so pytest coloured its
+# output even into a pipe — ``\x1b[32mPASSED\x1b[0m tests/…::\x1b[1mtest_x\x1b[0m``
+# and a wrapped ``short test summary info`` header. Every pattern here is
+# anchored, so all of them missed: 153 tests passed and the parser found ZERO
+# node outcomes. The grade script now forces colour off three ways, and this
+# strips escapes anyway — the per-node report is the load-bearing verdict, and
+# any repository can re-enable colour in config the arm never touches.
+_ANSI_ESCAPE = re.compile(
+    r"\x1b(?:\[[0-9;:?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])"
+)
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_ESCAPE.sub("", text)
+
 
 def _parse_node_outcomes(text: str) -> dict[str, set[str]]:
     """``{node_id: {outcomes}}`` from pytest's SHORT SUMMARY section only.
@@ -4759,7 +4807,7 @@ def _parse_node_outcomes(text: str) -> dict[str, set[str]]:
     ``-rpfEsxX`` (same reports, no captured output) and this reads only the
     section pytest itself writes, after the LAST section header.
     """
-    lines = text.splitlines()
+    lines = _strip_ansi(text).splitlines()
     starts = [i for i, ln in enumerate(lines) if _SHORT_SUMMARY.match(ln)]
     if not starts:
         return {}
@@ -4825,6 +4873,101 @@ def evaluate_node_coverage(
                 "deselected, uncollected or missing test is not a pass"
             )
     return not reasons, reasons[:20]
+
+
+# pytest's own count of the outcomes it reports BY NODE ID. ``skipped`` and
+# ``deselected`` are deliberately absent: ``-r`` reports skips by location, not
+# by node id, so an all-skipped run legitimately yields zero node outcomes (and
+# is a genuine UNRESOLVED, never a parse failure).
+_TALLY_COUNT = re.compile(r"(\d+) (passed|failed|errors?|xfailed|xpassed)\b")
+
+
+def reported_node_outcomes(tally: str) -> dict[str, int] | None:
+    """What pytest's tally line says it reported, or ``None`` if there is none.
+
+    ``None`` means "no evidence either way" — a crashed or timed-out run — and
+    must not be read as "it reported nothing".
+    """
+    clean = _strip_ansi(tally)
+    counts: dict[str, int] = {}
+    for m in _TALLY_COUNT.finditer(clean):
+        key = "error" if m.group(2).startswith("error") else m.group(2)
+        counts[key] = counts.get(key, 0) + int(m.group(1))
+    if not counts:
+        return {"passed": 0} if "no tests ran" in clean else None
+    return counts
+
+
+def node_parse_failure(tally: str, outcomes: dict[str, set[str]]) -> str | None:
+    """Did the PER-NODE PARSER fail, as opposed to the arm's patch failing?
+
+    THE DISTINCTION IS THE POINT. "the parser found no node outcomes" and "the
+    named tests did not pass" are indistinguishable at the verdict level, and
+    conflating them turns a harness defect into a uniform 0% across every arm —
+    a result that looks like a finding and is a bug. This returns a reason
+    string when pytest's own tally contradicts what the parser extracted, and
+    the caller records a distinct ``grade_parse_failed`` outcome that is
+    EXCLUDED from every rate (same posture as ``task_broken``).
+
+    Two contradictions, both conservative:
+
+    * the tally reports node-reportable outcomes and the parser found NONE;
+    * the tally reports more PASSED tests than the parser could attribute to a
+      node id. Every ``PASSED <nodeid>`` line is one distinct id, so these
+      counts match exactly on a healthy log. FAILED/ERROR counts are NOT
+      compared: pytest truncates those lines at `` - `` and one node can be
+      both FAILED and ERROR, so shrinkage there is expected — and a row with
+      failures is unresolved on the merits anyway.
+
+    An arm cannot use this to launder its own failures into an exclusion: it
+    would have to suppress pytest's short-summary section, which needs an edit
+    to a collection channel (``pytest.ini``, ``pyproject.toml``, ``conftest.py``,
+    ``setup.cfg``), and ``split_diff`` REFUSES a prediction that touches one.
+    """
+    reported = reported_node_outcomes(tally)
+    if reported is None:
+        return None
+    total = sum(reported.values())
+    if total > 0 and not outcomes:
+        return (
+            f"pytest reported {total} node outcome(s) ({_fmt_counts(reported)}) "
+            "and the per-node parser extracted ZERO — the short-summary section "
+            "was not readable. This is a HARNESS defect, not a failed patch."
+        )
+    passed = reported.get("passed", 0)
+    parsed_passed = sum(1 for o in outcomes.values() if "PASSED" in o)
+    if passed > parsed_passed:
+        return (
+            f"pytest reported {passed} passed test(s) and the per-node parser "
+            f"attributed only {parsed_passed} PASSED node id(s) — the per-node "
+            "report is incomplete, so it cannot certify anything either way."
+        )
+    return None
+
+
+def _fmt_counts(counts: dict[str, int]) -> str:
+    return ", ".join(f"{v} {k}" for k, v in sorted(counts.items()))
+
+
+def _tally_lines(log: str, nonce: str) -> dict[str, str]:
+    """``{label: pytest's own tally line}`` from the grade log's TALLY markers.
+
+    Emitted OUTSIDE the node region on purpose: when the region extraction is
+    what broke, the region is empty and the tally is the only evidence that the
+    tests ran at all.
+    """
+    prefix = f"{_marker('SWEBENCH_TALLY', nonce)}: "
+    out: dict[str, str] = {}
+    for line in log.splitlines():
+        bare = line.strip()
+        if not bare.startswith(prefix):
+            continue
+        # ``<label> <pytest's tally line>``. The label is the script's own
+        # literal; only the tally half can carry colour escapes.
+        parts = bare[len(prefix) :].split(None, 1)
+        if parts:
+            out[parts[0]] = parts[1] if len(parts) > 1 else ""
+    return out
 
 
 def _split_node_regions(log: str, nonce: str) -> tuple[str, dict[str, str]]:
@@ -5025,6 +5168,16 @@ _GRADE_SCRIPT = r"""
 set -o pipefail
 _N="${{SWEBENCH_NONCE}}"
 unset SWEBENCH_NONCE
+# COLOUR OFF, three ways. moto's own `pyproject.toml` sets
+# `addopts = "--color=yes"`, so pytest coloured its output even into a pipe and
+# every ANSI-wrapped `PASSED`/section header slipped past the anchored per-node
+# parser: 153 tests passed and 0 node outcomes were extracted. `NO_COLOR`/
+# `PY_COLORS` cover every pytest invocation in this script (including the
+# profile-specific baseline gates); `--color=no` is repeated on the parsed
+# invocations because addopts are PREPENDED, so a command-line flag wins over
+# whatever the repository configured.
+export NO_COLOR=1
+export PY_COLORS=0
 cd {workdir} 2>/dev/null || cd "$(ls -d /*/ | head -1)"
 {env_setup} true
 git config --global --add safe.directory '*' 2>/dev/null || true
@@ -5048,7 +5201,7 @@ SWEBENCH_PRED_EOF
 # as a failure marks healthy instances as broken — it scored 6 of these 10 as
 # unusable when they were fine.
 collect() {{
-  python -m pytest --collect-only -q "${{SWEBENCH_F2P[@]}}" >/tmp/collect.log 2>&1 </dev/null
+  python -m pytest --collect-only -q --color=no "${{SWEBENCH_F2P[@]}}" >/tmp/collect.log 2>&1 </dev/null
   rc=$?
   if [ "$rc" = "4" ] || grep -qi "ERROR: not found\|ERROR: file or directory not found" /tmp/collect.log; then
     return 1
@@ -5091,11 +5244,24 @@ fi
 # PASSED for every declared id and refuses if the region is missing.
 run_ids() {{
   label="$1"; shift
-  python -m pytest -q -rpfEsxX "$@" </dev/null >"/tmp/nodes-$label.log" 2>&1
+  python -m pytest -q -rpfEsxX --color=no "$@" </dev/null >"/tmp/nodes-$label.log" 2>&1
   rc=$?
   tail -40 "/tmp/nodes-$label.log"
+  # pytest's OWN tally, echoed outside the region: when the region extraction is
+  # what broke, this is the only evidence that the tests ran at all, and the
+  # Python side compares the two (`node_parse_failure`). Unanchored on purpose —
+  # a coloured tally line does not start with a digit — and the LAST match wins,
+  # because pytest's tally is the final line it writes and nothing a test prints
+  # can appear after it.
+  echo "SWEBENCH_TALLY_${{_N}}: $label $(grep -aE '[0-9]+ (passed|failed|errors?|skipped|deselected|xfailed|xpassed)|no tests ran' "/tmp/nodes-$label.log" | tail -1)"
   echo "SWEBENCH_NODES_${{_N}}: BEGIN $label rc=$rc"
-  sed -n '/^=* short test summary info =*$/,$p' "/tmp/nodes-$label.log"
+  # NOT anchored on `^=*`: a coloured header is `\033[1m===== short test summary
+  # info =====\033[0m`, which the anchored pattern missed entirely — the region
+  # came out EMPTY on a run where 153 tests passed. The Python parser still
+  # narrows to the LAST properly-formed header, so a forged phrase in a failing
+  # test's captured output only widens the region, it cannot become the section
+  # that is read.
+  sed -n '/short test summary info/,$p' "/tmp/nodes-$label.log"
   echo "SWEBENCH_NODES_${{_N}}: END $label"
   return $rc
 }}
@@ -5265,17 +5431,31 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
 
         # Per-node, same rule as `grade`: an all-skipped gold patch is not a
         # working oracle, and the CONTROL is where that has to be caught.
+        f2p_outcomes = _parse_node_outcomes(node_regions.get("fail_to_pass", ""))
+        p2p_outcomes = _parse_node_outcomes(node_regions.get("pass_to_pass", ""))
         f2p_ok, f2p_reasons = evaluate_node_coverage(
-            oracles[iid]["fail_to_pass"],
-            _parse_node_outcomes(node_regions.get("fail_to_pass", "")),
+            oracles[iid]["fail_to_pass"], f2p_outcomes
         )
         p2p_ids, p2p_source = _pass_to_pass_for(inst, oracles[iid])
-        p2p_ok, p2p_reasons = evaluate_node_coverage(
-            p2p_ids, _parse_node_outcomes(node_regions.get("pass_to_pass", ""))
-        )
+        p2p_ok, p2p_reasons = evaluate_node_coverage(p2p_ids, p2p_outcomes)
         nodes_ok = f2p_ok and p2p_ok
+        # Same distinction as `grade`, and the CONTROL is where it matters most:
+        # "the gold patch does not resolve" would otherwise be the label on a
+        # harness that simply could not read pytest's report.
+        tallies = _tally_lines(log, nonce)
+        parse_failures = [
+            f"{label}: {why}"
+            for label, outcomes in (
+                ("fail_to_pass", f2p_outcomes),
+                ("pass_to_pass", p2p_outcomes),
+            )
+            if label in tallies
+            and (why := node_parse_failure(tallies[label], outcomes)) is not None
+        ]
         resolved = (
-            f"{_marker('SWEBENCH_RESULT', nonce)}: RESOLVED" in log and nodes_ok
+            f"{_marker('SWEBENCH_RESULT', nonce)}: RESOLVED" in log
+            and nodes_ok
+            and not parse_failures
         )
         # POST_PATCH is swe-rebench's broken-instance signal (ids that do not
         # collect even WITH the gold patch can never pass); BROKEN_NO_COLLECT
@@ -5292,13 +5472,21 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
             note = "gold_patch_did_not_apply"
         elif resolved:
             note = "ok"
+        elif parse_failures:
+            note = "grade_parse_failed"
         else:
             note = "gold_patch_does_not_resolve"
+        # `None`, not `False`: a report that did not parse is "could not check",
+        # which `selftest_working_instances` already refuses to count as a
+        # working oracle. Calling it False would blame the dataset for a defect
+        # in this harness.
+        gold_resolves = None if note == "grade_parse_failed" else resolved
         results.append(
             {
                 "instance_id": iid,
-                "gold_resolves": resolved,
+                "gold_resolves": gold_resolves,
                 "note": note,
+                "node_parse_failures": parse_failures,
                 "stripped_from_gold": stripped,
                 "node_coverage_ok": nodes_ok,
                 "node_coverage_reasons": f2p_reasons + p2p_reasons,
@@ -5307,7 +5495,7 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
                 "control_log": _relpath_str(_selftest_log_path(iid)),
             }
         )
-        print(f"  gold_resolves={resolved}  ({note})")
+        print(f"  gold_resolves={gold_resolves}  ({note})")
 
     out = SWE_DIR / "selftest.json"
     out.write_text(
@@ -6756,9 +6944,14 @@ class ArmView(NamedTuple):
     """One arm's rows, already bucketed by the audit + run gate.
 
     ``valid`` is the denominator of every published rate: graded, not
-    task-broken, audit-ok, and either completed or BUDGET-EXHAUSTED. A cap hit
-    is a counted attempt for every arm (pre-registered decision rule 4) —
-    excluding one silently improved the retracted run's Claude denominator.
+    task-broken, not a harness parse failure, audit-ok, and either completed or
+    BUDGET-EXHAUSTED. A cap hit is a counted attempt for every arm
+    (pre-registered decision rule 4) — excluding one silently improved the
+    retracted run's Claude denominator.
+
+    ``ungradable`` is the not-the-arm's-fault bucket, split by outcome so the
+    gate accounting can name each kind: a broken TASK and a broken HARNESS are
+    both excluded, and neither may be presented as the arm failing.
     """
 
     arm: str
@@ -6768,6 +6961,22 @@ class ArmView(NamedTuple):
     valid: list[dict[str, Any]]
     excluded: list[dict[str, Any]]
     resolved: list[dict[str, Any]]
+    ungradable: dict[str, list[dict[str, Any]]]
+
+
+# Outcomes that are NOT a verdict on the arm, and are therefore excluded from
+# every published rate. ``grade_parse_failed`` joins ``task_broken`` here: a
+# per-node report this harness could not read says nothing about the patch, and
+# counting it as an unresolved attempt turns one harness defect into a uniform
+# 0% across every arm — a benchmark result that looks like a finding.
+_UNGRADABLE_PREFIXES = ("task_broken", "grade_parse_failed")
+
+
+def _ungradable_kind(outcome: str) -> str | None:
+    for prefix in _UNGRADABLE_PREFIXES:
+        if outcome.startswith(prefix):
+            return prefix
+    return None
 
 
 def _arm_view(rows: list[dict[str, Any]], arm: str) -> ArmView:
@@ -6775,18 +6984,23 @@ def _arm_view(rows: list[dict[str, Any]], arm: str) -> ArmView:
     graded = [
         r for r in arm_rows if (r.get("grade") or {}).get("oracle_resolved") is not None
     ]
-    gradable = [
-        r
-        for r in graded
-        if not str((r.get("grade") or {}).get("outcome", "")).startswith("task_broken")
-    ]
+    ungradable: dict[str, list[dict[str, Any]]] = {p: [] for p in _UNGRADABLE_PREFIXES}
+    gradable = []
+    for r in graded:
+        kind = _ungradable_kind(str((r.get("grade") or {}).get("outcome", "")))
+        if kind is None:
+            gradable.append(r)
+        else:
+            ungradable[kind].append(r)
     valid = [
         r for r in gradable if r["_audit_ok"] is True and not r["_run_failed"]
     ]
     valid_ids = {id(r) for r in valid}
     excluded = [r for r in gradable if id(r) not in valid_ids]
     resolved = [r for r in valid if (r.get("grade") or {}).get("oracle_resolved")]
-    return ArmView(arm, arm_rows, graded, gradable, valid, excluded, resolved)
+    return ArmView(
+        arm, arm_rows, graded, gradable, valid, excluded, resolved, ungradable
+    )
 
 
 def _exclusion_reason(r: dict[str, Any]) -> str:
@@ -6892,6 +7106,21 @@ _OUTCOME_CODES = (
     "`X` audit-invalid or run-failed · `!` budget-exhausted (counted as an "
     "attempt, not excluded) · `*` attempt > 1 · `·` no row"
 )
+# Appended ONLY when such a row exists, so an archive without one still
+# re-derives byte-for-byte under `report --check`.
+_PARSE_FAILED_CODE = (
+    " · `P` grade-parse failed — THIS HARNESS could not read pytest's per-node "
+    "report; excluded from every rate, never counted as an arm failure"
+)
+
+
+def _outcome_codes(rows: list[dict[str, Any]]) -> str:
+    if any(
+        str((r.get("grade") or {}).get("outcome") or "") == "grade_parse_failed"
+        for r in rows
+    ):
+        return _OUTCOME_CODES + _PARSE_FAILED_CODE
+    return _OUTCOME_CODES
 
 
 def _outcome_cell(r: dict[str, Any] | None) -> str:
@@ -6899,7 +7128,12 @@ def _outcome_cell(r: dict[str, Any] | None) -> str:
         return "·"
     g = r.get("grade") or {}
     outcome = str(g.get("outcome") or "")
-    if r["_audit_ok"] is not True or r["_run_failed"]:
+    if outcome == "grade_parse_failed":
+        # BEFORE the audit/run gate: "the grader could not read the report" is
+        # the fact about this cell, and `X` would file it under the arm's own
+        # invalid rows.
+        code = "P"
+    elif r["_audit_ok"] is not True or r["_run_failed"]:
         code = "X"
     elif outcome.startswith("task_broken"):
         code = "B"
@@ -6939,7 +7173,7 @@ def _table2_matrix(
     lines = [
         "## Table 2 — per-instance outcome matrix",
         "",
-        _OUTCOME_CODES,
+        _outcome_codes(rows),
         "",
         "A POSITIVE margin means the instance was created after that model's",
         "bound, i.e. it cannot have been memorised. Bound TYPE is in Table 4's",
@@ -7502,7 +7736,8 @@ def report(
 
     # Per-arm gate accounting, and the loud exclusion line.
     for v in views:
-        broken = len(v.graded) - len(v.gradable)
+        broken = len(v.ungradable["task_broken"])
+        parse_failed = v.ungradable["grade_parse_failed"]
         headline = (
             f"- resolve rate: **{_fmt_rate(len(v.resolved), len(v.valid))} "
             f"audited-valid**, 95% CI {_fmt_ci(len(v.resolved), len(v.valid))}"
@@ -7512,8 +7747,16 @@ def report(
             f"## {v.arm} — gate accounting",
             "",
             f"- harness: {_arm_label(v.arm)}",
+            # The `grade_parse_failed` clause appears only when such a row
+            # exists, so an archive without one still re-derives byte-for-byte.
             f"- graded instances: **{len(v.graded)}** "
-            f"({broken} excluded as `task_broken`, leaving {len(v.gradable)})",
+            f"({broken} excluded as `task_broken`"
+            + (
+                f", {len(parse_failed)} as `grade_parse_failed`"
+                if parse_failed
+                else ""
+            )
+            + f", leaving {len(v.gradable)})",
             f"- audit gate: **{len(v.valid)} audited-valid** of {len(v.gradable)} "
             f"gradable (audit failed: "
             f"{sum(1 for r in v.gradable if r['_audit_ok'] is False)}, "
@@ -7525,6 +7768,22 @@ def report(
             "counted, flagged attempt)",
             headline,
         ]
+        if parse_failed:
+            # LOUD, and above the ordinary exclusions: this one says THIS
+            # HARNESS could not read pytest's per-node report, so the row is a
+            # verdict on the plumbing and not on the arm.
+            lines.append(
+                f"- **{len(parse_failed)} row(s) EXCLUDED as `grade_parse_failed` "
+                "— a HARNESS defect, not an arm failure**: "
+                + "; ".join(
+                    f"{str(r.get('instance_id'))[:46]}: "
+                    + "; ".join(
+                        str(x)
+                        for x in ((r.get("grade") or {}).get("node_parse_failures") or [])
+                    )[:200]
+                    for r in parse_failed
+                )
+            )
         if v.excluded:
             lines.append(
                 f"- **{len(v.excluded)} row(s) EXCLUDED from the denominator, "
@@ -8677,7 +8936,7 @@ def _sweep_summary(
         r
         for r in records
         if r.get("oracle_resolved") is not None
-        and not str(r.get("outcome") or "").startswith("task_broken")
+        and _ungradable_kind(str(r.get("outcome") or "")) is None
     ]
     # DELIBERATE: the headline ``resolved`` counts only rows that are clean
     # end-to-end — run completed (or ran out of budget, which is a COMPLETED
@@ -8725,6 +8984,12 @@ def _sweep_summary(
         "resolved": resolved_clean,
         "resolved_but_run_failed": resolved_run_failed,
         "resolved_but_audit_failed": resolved_audit_failed,
+        # Loud in the artifact, not only in the terminal: a non-zero count here
+        # means THIS HARNESS could not read pytest's report on that many rows,
+        # and any rate computed from the sweep is over a smaller denominator.
+        "grade_parse_failed": sum(
+            1 for r in records if str(r.get("outcome") or "") == "grade_parse_failed"
+        ),
         "budget_exhausted": sum(1 for r in records if r.get("budget_exhausted")),
         "retried_rows": sum(1 for r in records if int(r.get("attempt") or 1) > 1),
         "gradable": len(gradable),
@@ -8747,6 +9012,11 @@ def _render_summary(s: dict[str, Any]) -> str:
         flagged.append(f"+{s['resolved_but_run_failed']} resolved but run FAILED")
     if s.get("resolved_but_audit_failed"):
         flagged.append(f"+{s['resolved_but_audit_failed']} resolved but audit FAILED")
+    if s.get("grade_parse_failed"):
+        flagged.append(
+            f"{s['grade_parse_failed']} GRADE-PARSE FAILED (harness defect, "
+            "excluded from the denominator — investigate before publishing)"
+        )
     lines = [
         "-" * 100,
         f"sweep done: arm={s['arm']} model={s.get('model') or '(from routes.yaml)'} "
@@ -8759,7 +9029,11 @@ def _render_summary(s: dict[str, Any]) -> str:
         f"cache_read={s.get('cache_read', 0):,} out={s['tokens_out']:,}  "
         f"cost=${s['cost_usd']:,.2f} ({s.get('cost_source', _COST_PRICE_TABLE)})",
         f"  oracle: {s['resolved']}/{s['gradable']} resolved clean"
-        + (" (task_broken excluded)" if s["gradable"] < s["instances"] else "")
+        + (
+            " (task_broken / grade_parse_failed excluded)"
+            if s["gradable"] < s["instances"]
+            else ""
+        )
         + (" — flagged, NOT counted: " + ", ".join(flagged) if flagged else ""),
         f"  audit: {s['audited_valid']} valid, {s['audit_failed']} failed, "
         f"{s['not_audited']} not audited",
