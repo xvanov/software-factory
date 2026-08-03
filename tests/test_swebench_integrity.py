@@ -786,3 +786,160 @@ def test_reset_run_artifacts_clears_the_sweep_logs(A: Any, tmp_path: Path) -> No
         (tmp_path / name).write_text("x", encoding="utf-8")
     A._reset_run_artifacts(tmp_path)
     assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+
+# --------------------------------------------------------------------------- #
+# regression against the REAL corpus — these fixes must refuse nothing that
+# already graded, and must not flip a verdict that was already published
+# --------------------------------------------------------------------------- #
+#
+# The mandatory evidence for defects 2, 3 and 4, kept as tests rather than a
+# one-off script so a later change to the parsers cannot quietly break it.
+# `runs/` is gitignored, so only `results-archive/` is available here; the
+# retained live `runs/` corpus is covered in the PR body.
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_ARCHIVE = _REPO_ROOT / "bench" / "swebench" / "results-archive"
+
+
+def _archived_predictions() -> list[Path]:
+    return sorted(_ARCHIVE.rglob("prediction.diff"))
+
+
+def test_the_committed_prediction_corpus_is_refused_nowhere(A: Any) -> None:  # noqa: N803
+    """Defects 3 + 4 refuse rows, so they had to be measured against every
+    prediction the harness has ever graded before being switched on.
+
+    Measured 2026-08-03: 119 committed + 69 retained-live = 188 files, zero
+    refusals, zero rows with a test-file block to strip. A refusal appearing
+    here means a real arm hit the new hard error, and the number it would have
+    changed has to be re-derived before anything is published.
+    """
+    files = _archived_predictions()
+    assert len(files) >= 119, f"the committed corpus shrank: {len(files)} files"
+    refused: list[tuple[str, list[str]]] = []
+    stripped: list[tuple[str, list[str]]] = []
+    for f in files:
+        text = f.read_text(encoding="utf-8", errors="replace")
+        try:
+            code, _kept, test_paths = A.split_diff(text)
+        except A.DiffRefused as exc:
+            refused.append((str(f.relative_to(_REPO_ROOT)), exc.paths))
+            continue
+        if test_paths:
+            stripped.append((str(f.relative_to(_REPO_ROOT)), test_paths))
+        # The second line of defence must agree with the first on real data.
+        A.assert_no_test_edits(code)
+    assert refused == [], f"the new refusals would have invalidated: {refused}"
+    assert stripped == [], f"unexpected test-file blocks in the corpus: {stripped}"
+
+
+def test_the_pinned_gold_patches_survive_the_arm_refusal_rules(A: Any) -> None:  # noqa: N803
+    """`refuse_collection_channels=False` exists for the gold patch, and this
+    records that it is belt-and-braces rather than load-bearing: none of the 20
+    pinned gold patches touches a collection channel today. If one starts to,
+    the selftest keeps working and only this expectation changes."""
+    fresh = _load()  # the autouse fixture repoints the store; read the real one
+    store = fresh._load_oracle_store()
+    assert len(store) >= 20, f"oracle store shrank to {len(store)} records"
+    refused = []
+    for iid, rec in store.items():
+        try:
+            fresh.split_diff(rec.get("patch") or "")
+        except fresh.DiffRefused as exc:
+            refused.append((iid, exc.paths))
+    assert refused == [], refused
+
+
+_PRE_CHANGE_GRADE_LOG = """\
+Checking patch tests/test_reasoning_parsers.py...
+Applied patch tests/test_reasoning_parsers.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_673072f0171e06a2: OK (red as expected)
+SWEBENCH_APPLY_673072f0171e06a2: OK
+============================= test session starts ==============================
+collected 2 items
+
+tests/test_reasoning_parsers.py ..                                       [100%]
+
+============================== 2 passed in 0.02s ===============================
+SWEBENCH_RESULT_673072f0171e06a2: RESOLVED
+"""
+
+
+def test_a_pre_change_grade_log_passes_through_the_region_peeler(A: Any) -> None:  # noqa: N803
+    """Verbatim from `runs/raullenchai__rapid-mlx-289/factory/grade.log`.
+
+    `_split_node_regions` runs over every grade log, including the 59 retained
+    ones from before the node-outcome markers existed. It must be a byte-exact
+    no-op on them, or re-auditing an old row would corrupt its evidence.
+    """
+    human, regions = A._split_node_regions(
+        _PRE_CHANGE_GRADE_LOG, "673072f0171e06a2"
+    )
+    assert regions == {}
+    assert human == _PRE_CHANGE_GRADE_LOG
+
+
+# --------------------------------------------------------------------------- #
+# the five-arm re-run — nothing may recognise an arm by exact model name
+# --------------------------------------------------------------------------- #
+
+
+def test_a_model_suffixed_claude_arm_is_still_a_claude_arm(A: Any) -> None:  # noqa: N803
+    """The next sweep runs the CLI twice (`--model claude-opus-5` and
+    `--model claude-opus-4-8`), so the two runs need distinct arm names.
+
+    Every claude-specific certification in `audit` was selected by
+    `arm == "claude"`. Under a model-suffixed arm name that equality is False,
+    so `_audit_claude_run` (usage/cost certification + hermeticity) and the
+    missing-transcript failure would both be SKIPPED — the fail-OPEN
+    direction, on the arm with the highest published score.
+    """
+    for arm in ("claude", "claude-opus-5", "claude-opus-4-8"):
+        assert A._is_claude_arm(arm), arm
+    for arm in ("factory", "bare", "openhands", "claudette", "clause"):
+        assert not A._is_claude_arm(arm), arm
+
+
+def test_a_claude_arm_with_no_transcript_fails_whatever_its_model_name(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path / "runs")
+    for arm in ("claude", "claude-opus-4-8"):
+        run_dir = A._run_dir("x__y-1", arm)
+        failures, _traj, _trails = A._scan_oracle_probes(
+            run_dir,
+            run_dir,
+            {"arm": arm, "num_turns": 12, "cost_usd": 0.42},
+            instance_id="x__y-1",
+            arm=arm,
+        )
+        assert any("left no claude-transcript" in f for f in failures), (arm, failures)
+
+
+def test_a_clipped_own_arm_segment_is_not_a_probe(A: Any) -> None:  # noqa: N803
+    """Regression guard on the stricter own-arm rule: OpenHands truncates an
+    observation MID-SEGMENT, and `runs/<id>/fact<response clipped` is the own
+    path, not a sibling's. Any OTHER divergence stays flagged."""
+    assert A._probe_line_hits(
+        "ls bench/swebench/runs/x__y-1/fact<response clipped>", "x__y-1", "factory"
+    ) == []
+    assert A._probe_line_hits(
+        "ls bench/swebench/runs/x__y-1/bar<response clipped>", "x__y-1", "factory"
+    )
+
+
+def test_the_condenser_ellipsis_cannot_hide_an_oracle_file(A: Any) -> None:  # noqa: N803
+    """`runs/<id>/.../worktrees/x` is the condenser abbreviating the own path,
+    so the ellipsis segment is exempt — but the exemption must not become a
+    tunnel: an oracle-bearing BASENAME behind it is still a finding."""
+    assert A._probe_line_hits(
+        "work done in bench/swebench/runs/x__y-1/.../worktrees/x", "x__y-1", "factory"
+    ) == []
+    assert A._probe_line_hits(
+        "cat bench/swebench/runs/x__y-1/.../grade.log", "x__y-1", "factory"
+    )
+    assert A._probe_line_hits(
+        "cat bench/swebench/runs/x__y-1/.../result.json", "x__y-1", "factory"
+    )

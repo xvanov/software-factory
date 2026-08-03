@@ -3396,10 +3396,10 @@ def test_probe_ignores_the_runs_own_cwd_and_the_system_prompt(
     assert A._probe_line_hits(f"ls bench/swebench/runs/{iid}22/x", iid, arm)
     assert A._probe_line_hits(
         f"cat bench/swebench/runs/{iid}/selftest/selftest.log", iid, arm
-    ) == ["own run's oracle-bearing subdir runs/…/selftest"]
+    ) == ["another run subdir runs/…/selftest (own arm is factory)"]
     assert A._probe_line_hits(
         f"cat bench/swebench/runs/{iid}/bare/grade.log", iid, arm
-    ) == ["own run's oracle-bearing subdir runs/…/bare"]
+    ) == ["another run subdir runs/…/bare (own arm is factory)"]
 
     # End-to-end through audit: a trajectory whose SYSTEM PROMPT carries the
     # cwd (line 1, exactly as OpenHands writes it) plus an ActionEvent that
@@ -3912,21 +3912,29 @@ def test_claude_audit_fails_a_truncated_stream_that_claims_success(
 
 
 def test_probe_flags_every_sibling_arm_dir_not_just_one(A: Any) -> None:  # noqa: N803
-    """Three arms now: for any arm, EVERY other arm's subdir under the own run
-    dir is oracle-bearing (their grade logs carry hidden test ids)."""
+    """For any arm, EVERY subdir under the own run dir that is not the arm's
+    OWN is oracle-bearing (their grade logs carry hidden test ids).
+
+    The rule is "own arm only", not an allowlist of the arms this file happens
+    to know about: the next sweep adds ``openhands`` and runs the Claude CLI
+    under two model-suffixed names, and an allowlist would have waved those
+    through silently.
+    """
     iid = "inst1"
-    for arm, foreign in (
-        ("claude", ("bare", "factory")),
-        ("factory", ("bare", "claude")),
-        ("bare", ("factory", "claude")),
-    ):
+    arms = ("claude", "factory", "bare", "openhands", "claude-opus-4-8")
+    for arm in arms:
         assert (
             A._probe_line_hits(f"ls bench/swebench/runs/{iid}/{arm}/repo", iid, arm) == []
         ), f"{arm}: own cwd must not be a probe"
-        for other in foreign:
-            assert A._probe_line_hits(
+        for other in (*arms, "selftest", "some-arm-nobody-listed"):
+            if other == arm:
+                continue
+            hits = A._probe_line_hits(
                 f"cat bench/swebench/runs/{iid}/{other}/grade.log", iid, arm
-            ) == [f"own run's oracle-bearing subdir runs/…/{other}"], (arm, other)
+            )
+            assert hits == [
+                f"another run subdir runs/…/{other} (own arm is {arm})"
+            ], (arm, other, hits)
 
 
 def test_reset_run_artifacts_deletes_the_claude_transcript(

@@ -5021,6 +5021,21 @@ _OWN_SUBTREE_ORACLE_FILES = frozenset(
 )
 
 
+def _is_claude_arm(arm: str) -> bool:
+    """Is this arm the Claude Code CLI, whatever model it was pointed at?
+
+    The next sweep runs the CLI TWICE (``--model claude-opus-5`` and
+    ``--model claude-opus-4-8``), so a single ``claude`` arm name stops being
+    enough: two runs of one arm name would overwrite each other's run dir. If
+    the arm names grow a model suffix (``claude-opus-5``), an ``arm ==
+    "claude"`` equality test silently stops recognising them — and every
+    claude-specific certification (the transcript scan, the missing-transcript
+    failure, the ledger path) would be SKIPPED rather than applied. Prefix
+    matching keeps those checks attached, which is the fail-closed direction.
+    """
+    return arm == "claude" or arm.startswith("claude-")
+
+
 def _network_probe_hits(line: str, own_repo: str | None) -> list[str]:
     """Retrieval-shaped network activity in one trail line.
 
@@ -5071,21 +5086,38 @@ def _probe_line_hits(
         hits.append("swebench/manifest.json")
     hits.extend(_network_probe_hits(line, own_repo))
     own_dir = f"bench/swebench/runs/{instance_id}"
-    # EVERY sibling arm's dir is oracle-bearing (grade logs carry the hidden
-    # test ids), not just one hardcoded "other" — that broke at three arms.
-    foreign = frozenset(a for a in _ARM_NAMES if a != arm) | {"selftest"}
     for m in re.finditer(r"bench/swebench", line):
-        reason = _classify_bench_ref(line[m.start():], own_dir, foreign)
+        reason = _classify_bench_ref(line[m.start():], own_dir, arm)
         if reason:
             hits.append(reason)
             break
     return hits
 
 
-def _classify_bench_ref(
-    rest: str, own_dir: str, foreign_subdirs: frozenset[str]
-) -> str | None:
-    """None when ``rest`` is an own-run reference; the flag reason otherwise."""
+def _is_clipped_prefix(text: str, want: str) -> bool:
+    """Is ``text`` ``want`` cut short by the observation clipper, and nothing else?
+
+    ``bench/swebench/runs/<id>/fact<response clipped`` is the own arm's own
+    path, truncated mid-segment by OpenHands. Any OTHER divergence stays
+    flagged — a fragment is exempt only when it is a strict prefix of the
+    expected text and the divergence point is exactly the sentinel.
+    """
+    n = 0
+    while n < len(text) and n < len(want) and text[n] == want[n]:
+        n += 1
+    return n < len(want) and text[n:].startswith(_CLIP_SENTINEL)
+
+
+def _classify_bench_ref(rest: str, own_dir: str, own_arm: str) -> str | None:
+    """None when ``rest`` is an own-run reference; the flag reason otherwise.
+
+    The first path segment under ``runs/<instance>/`` must be the arm's OWN
+    name. It used to be checked against an allowlist of the OTHER known arm
+    names (``_ARM_NAMES`` minus self, plus ``selftest``), which quietly
+    stopped covering anything the tuple did not list — and the next sweep adds
+    ``openhands`` and runs the Claude CLI under two model names. Inverting it
+    to "own arm only" is fail-closed by construction and needs no roster.
+    """
     if rest.startswith(own_dir):
         after = rest[len(own_dir):]
         if not after or (after[0] in _PATH_BOUNDARY and after[0] != "/"):
@@ -5093,8 +5125,16 @@ def _classify_bench_ref(
         if after[0] == "/":
             seg = re.match(r"[^/'\"`)\]}>,;: \t\n\\]*", after[1:])
             first = seg.group(0) if seg else ""
-            if first in foreign_subdirs:
-                return f"own run's oracle-bearing subdir runs/…/{first}"
+            # `...` / `…` is the OpenHands condenser abbreviating the middle of
+            # a path (measured), not a sibling directory. Safe to allow: the
+            # oracle-bearing BASENAME check below still runs on the tail, so
+            # `runs/<id>/.../grade.log` is flagged on the filename.
+            if (
+                first
+                and first not in {own_arm, "...", "…"}
+                and not _is_clipped_prefix(after[1:], own_arm)
+            ):
+                return f"another run subdir runs/…/{first} (own arm is {own_arm})"
             # NOT a blanket exemption any more: the own subtree also holds the
             # arm's own grade log (every hidden test id) and its own
             # result.json (the gold patch's file list).
@@ -5107,11 +5147,7 @@ def _classify_bench_ref(
         return "bench/swebench path outside the run's own subtree"
     # A truncated own path is tolerated ONLY when it diverges exactly at the
     # observation clipper's sentinel; every other divergence is foreign.
-    probe = f"{own_dir}/"
-    j = 0
-    while j < len(rest) and j < len(probe) and rest[j] == probe[j]:
-        j += 1
-    if j < len(probe) and rest[j:].startswith(_CLIP_SENTINEL):
+    if _is_clipped_prefix(rest, f"{own_dir}/"):
         return None
     return "bench/swebench path outside the run's own subtree"
 
@@ -5203,7 +5239,7 @@ def _scan_oracle_probes(
                 f"oracle-probe: {_CLAUDE_TRANSCRIPT_NAME} unreadable ({exc}) — "
                 "the arm's actions cannot be cleared of oracle access"
             )
-    elif arm == "claude" and (
+    elif _is_claude_arm(arm) and (
         int(result.get("num_turns") or 0) > 0
         or float(result.get("cost_usd") or 0.0) > 0
     ):
@@ -5497,7 +5533,7 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     ledger_in = ledger_out = 0
     print(f"=== audit {instance_id} / {arm} ===")
 
-    if arm == "claude":
+    if _is_claude_arm(arm):
         # The claude arm has no factory Run ledger — the CLI's own stream-json
         # transcript is the ledger. Checks 1-4 are replaced by
         # ``_audit_claude_run`` (usage/cost certification + hermeticity);
@@ -5583,7 +5619,7 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
         raise SystemExit(f"audit FAILED ({len(failures)} finding(s)) -> {out}")
     print(
         f"audit OK ({len(calls)} persona call(s), ${ledger_cost}) -> {out}"
-        if arm != "claude"
+        if not _is_claude_arm(arm)
         else f"audit OK (claude transcript certified, ${ledger_cost}) -> {out}"
     )
 
