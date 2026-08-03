@@ -64,19 +64,21 @@ def _isolate_the_scratch_work_root(
 # prompt parity — the invalidating defect
 # --------------------------------------------------------------------------- #
 
-# The rendered story template, hashed BEFORE ``_TEST_POLICY`` was factored out
-# of it. Pinning the hash is what proves the extraction changed the bare arm's
-# prompt and NOTHING about the factory's or claude's — a wording change to
-# either of those in the same PR would confound the re-run on two axes.
-_STORY_TEMPLATE_SHA256 = "a90433934f0cac1e9ac13998891881969ff6b1aca1e76c1cb7f4dc86ca59e918"
+# The rendered story template, hashed. Re-pinned 2026-08-03 when the operator
+# decided to give the base-suite note to EVERY arm (it was bare-only in #223, to
+# avoid confounding two axes at once). The five-arm re-run is therefore a fresh
+# baseline, not a before/after against the retracted run. The pin stays because
+# a silent later drift would again mean two arms ran under different
+# instructions.
+_STORY_TEMPLATE_SHA256 = "4ffb8e821bb56b236667d11076f3729c5dc25cd03001fa4aa2aa6c0b84b91da1"
 
 
 def test_story_template_rendering_is_unchanged(A: Any) -> None:  # noqa: N803
     got = hashlib.sha256(A._STORY_TEMPLATE.encode("utf-8")).hexdigest()
     assert got == _STORY_TEMPLATE_SHA256, (
-        "the factory/claude prompt text moved. That is allowed only in a PR "
-        "that re-runs those arms — otherwise the published factory column and "
-        "the new one were produced under different instructions."
+        "the factory/openhands/claude prompt text moved. That is allowed only "
+        "in a PR that re-runs those arms — otherwise the published columns and "
+        "the new ones were produced under different instructions."
     )
 
 
@@ -100,19 +102,30 @@ def test_bare_task_says_the_targeted_tests_already_pass(A: Any) -> None:  # noqa
     task = A._BARE_TASK.format(repo="x/y", statement="s", test_command="CMD")
     assert "ALREADY" in task and "PASS" in task
     assert "do NOT cover the task" in task
-    assert A._BARE_BASE_TESTS_NOTE in task
+    assert A._BASE_TESTS_NOTE in task
 
 
-def test_the_base_tests_note_is_flagged_for_the_other_arms(A: Any) -> None:
-    """Residual asymmetry, deliberately: bare now knows the targeted suite is
-    inert and the other arms do not. That must be a recorded TODO in the source,
-    not folklore — the note has to reach _TEST_POLICY before any run is
-    published as "matched prompt"."""
+def test_every_arm_gets_the_base_tests_note_byte_identical(A: Any) -> None:
+    """Prompt parity, actually true now.
+
+    #223 gave the base-suite warning to `bare` only and left a TODO(operator):
+    the factory/openhands/claude prompts carried the same unqualified "run this
+    command" instruction, so "matched prompt" was false. The operator's decision
+    is to apply it identically everywhere. ONE string reaches all four arms, and
+    the TODO is gone — a residual asymmetry here is the invalidating defect, not
+    a nitpick.
+    """
+    note = A._BASE_TESTS_NOTE
+    assert note in A._STORY_TEMPLATE, "factory/openhands/claude render this"
+    assert note in A._BARE_TASK
+    rendered_shared = A._STORY_TEMPLATE.format(
+        instance_id="i", statement="s", test_command="CMD"
+    )
+    assert note in rendered_shared
     src = _ADAPTER.read_text(encoding="utf-8")
-    marker = src.index("_BARE_BASE_TESTS_NOTE = ")
-    preamble = src[max(0, marker - 2500) : marker]
-    assert "TODO(operator)" in preamble
-    assert "_TEST_POLICY" in preamble
+    assert "TODO(operator)" not in src, "the parity TODO must be discharged"
+    # And exactly one definition of it, so the arms cannot drift apart again.
+    assert src.count("_BASE_TESTS_NOTE = ") == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -565,11 +578,19 @@ def test_probe_plumbing_exercises_the_pipeline_without_a_model(
     assert (run_dir / "bare-commands.ndjson").exists()
 
 
-def test_probe_plumbing_is_refused_for_the_ledger_free_arms(A: Any) -> None:  # noqa: N803
+def test_probe_plumbing_is_refused_only_for_the_factory_arm(A: Any) -> None:  # noqa: N803
+    """Every arm but `factory` has a FREE plumbing probe as of 2026-08-03 — the
+    claude arms' cheapest check used to be a one-turn CLI call, i.e. a real
+    subscription call, which is no way to verify a run-dir key change.
+
+    Selected off the arm's registry BASE, so a model-suffixed variant of a
+    probe-capable arm is probe-capable too.
+    """
     src = _ADAPTER.read_text(encoding="utf-8")
     assert "--probe-plumbing" in src
     main_src = src[src.index("def main()") :]
-    assert 'args.arm not in ("bare", "openhands")' in main_src
+    assert 'base not in ("bare", "openhands", "claude")' in main_src
+    assert "pm-sync --dry-run" in main_src, "factory's free surface must be named"
 
 
 # --------------------------------------------------------------------------- #
@@ -751,6 +772,7 @@ def test_openhands_is_registered_everywhere_an_arm_must_be(A: Any) -> None:  # n
     assert A._resolve_max_steps("openhands", 7) == 7
     assert "openhands" in A._DEFAULT_COST_USD
     assert "openhands" in A._DEFAULT_HOURS
+    assert "openhands" in A._ARM_TRAJECTORY_EXPECTATION
     import inspect
 
     main_src = inspect.getsource(A.main)
@@ -777,7 +799,9 @@ def test_openhands_runs_the_factory_dev_route_and_iteration_budget(A: Any) -> No
 
     src = inspect.getsource(A.run_openhands)
     assert 'route("dev", "standard")' in src
-    assert "_OPENHANDS_ITERATION_CAP" in inspect.getsource(A._resolve_max_steps)
+    # The budget comes from the ONE arm registry, which _resolve_max_steps reads.
+    assert A._ARMS["openhands"].max_steps == A._OPENHANDS_ITERATION_CAP
+    assert A._resolve_max_steps("openhands", None) == A._OPENHANDS_ITERATION_CAP
     # The factory dev's own per-attempt cap is sandbox_run's signature default.
     runner_src = _RUNNER.read_text(encoding="utf-8")
     tree = ast.parse(runner_src)

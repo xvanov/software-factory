@@ -5,6 +5,12 @@ own gates: the factory writes the code **and** owns the tests that say the code
 works. That measures convergence, not correctness. This harness swaps in a
 hidden oracle the factory never sees.
 
+**Before running or reading a sweep, read
+[`PRE-REGISTRATION-1.6.md`](PRE-REGISTRATION-1.6.md).** It fixes the five arms,
+the five tables and the decision rules *before* the data exists, so a run cannot
+be reported in whatever framing happens to flatter the result. `report` emits
+exactly those tables.
+
 ## Datasets are profiles — SWE-rebench is primary, Pro is FROZEN
 
 The upstream dataset is a **profile** (`PROFILES` in the adapter), selected
@@ -49,23 +55,56 @@ uv run python bench/swebench_adapter.py report
 must come back `RESOLVED`. Any instance where it does not is excluded — a score
 computed over broken instances measures the harness, not the arm.
 
-## The four arms
+## The five arms
 
-| arm | agent | models | cost ledger |
+**An arm is a (harness, model set) pair.** Neither half may be omitted when a
+number is quoted: a score is never a property of the model alone and never of
+the harness alone. Every arm is one entry in `_ARMS`, the single registry that
+`--arm` choices, step budgets, cost guards, trajectory expectations and the
+report's headline labels all read.
+
+| arm | harness | models | cost source |
 |---|---|---|---|
-| `factory` | the chain's dev+review handlers | `azure/deepseek-v4-pro` dev + `azure/gpt-5.4` reviewer (`routes.yaml`) | isolated factory DB, priced from the Azure price table |
-| `bare` | minimal bash loop | the SAME dev deployment | isolated factory DB, same price table |
-| `openhands` | ONE OpenHands agent, no chain | the SAME dev deployment, same SDK + default toolset the chain's dev runs in | isolated factory DB, same price table |
-| `claude` | local Claude Code CLI, headless | pinned `claude-opus-5` (the CLI default discovered 2026-08-02; the exact ids the CLI reports land in `result.json`) | **the CLI's own report** (`cost_source: "claude-cli-reported"`) |
+| `factory` | the chain's dev+review handlers, dev inside an OpenHands sandbox | `azure/deepseek-v4-pro` dev + `azure/gpt-5.3-codex` hard-tier escape + `azure/gpt-5.4` reviewer (`routes.yaml`) | isolated factory DB, price-table estimate |
+| `openhands` | ONE OpenHands agent, no chain | the SAME dev deployment, same SDK + default toolset the chain's dev runs in | isolated factory DB, price-table estimate |
+| `bare` | minimal bash loop, no tool-calling API | the SAME dev deployment | isolated factory DB, price-table estimate |
+| `claude-5` | local Claude Code CLI, headless | `claude-opus-5` | **the CLI's own report**, against a subscription |
+| `claude-4.8` | the SAME CLI, same flags | `claude-opus-4-8` | **the CLI's own report**, against a subscription |
 
-Each arm subtracts one thing, and only that thing:
+`claude` remains as an alias for the CLI on its default model
+(`claude-opus-5`); `--model <id>` overrides it and keys its own run directory.
+
+Each adjacent pair subtracts one thing, and only that thing:
 
 - `factory` − `openhands` = **the chain** (PM/SM decomposition, a reviewer on
-  different weights, retries, merge gates). This is the product claim.
+  different weights, retries, merge gates). This is the product claim, and the
+  only comparison here that varies the harness while holding the model fixed.
 - `openhands` − `bare` = **real tools** (file editor, search, a managed agent
   loop) at identical weights.
-- `claude` − `factory` = **frontier weights in a frontier harness**, the
-  external ceiling.
+- `claude-5` − `claude-4.8` = **contamination**: same harness, same flags, an
+  older published cutoff (2026-01-31 vs 2026-05-31). Every pinned instance
+  predates opus-5's cutoff, so a gap favouring opus-5 on the low-margin rows is
+  the memorization signal.
+- `factory` vs any `claude-*` varies harness **and** model at once. It is a
+  reference point, never a scaffold measurement, and the report labels it
+  `nothing attributable`.
+
+### Two runs of one arm cannot overwrite each other
+
+Run directories, report rows and sweep roll-ups are keyed by
+**(instance, arm, model)**, not (instance, arm). They were not, and the two
+Claude runs would have shared `runs/<instance>/claude/` — the second run's
+`_reset_run_artifacts` deleting the first's `result.json`, `prediction.diff` and
+transcript, with nothing anywhere saying a measurement had been destroyed. An
+off-default `--model` appends `@<model>` to the key; the pre-registered
+`claude-5` / `claude-4.8` ids need no flag at all.
+
+### Every per-arm budget and guard fails loud
+
+`_resolve_max_steps`, `_DEFAULT_COST_USD` and `_DEFAULT_HOURS` used to fall back
+silently on an unknown arm — for the Claude CLI that meant 16 turns instead of
+60, a quarter of the pre-registered budget, reported as if it were the budget.
+All three now raise on an arm that is not in `_ARMS`.
 
 ## Probe ONE instance before you sweep
 
@@ -84,8 +123,14 @@ uv run pytest -q tests/test_swebench_bare_openhands_arms.py
 
 # FREE, real clone + real install replay + real collect precheck, model replaced
 # by a fixed script. Writes a row whose `error` marks it as not-a-measurement.
-uv run python bench/swebench_adapter.py run --arm bare      --instance getmoto__moto-9841 --probe-plumbing
-uv run python bench/swebench_adapter.py run --arm openhands --instance getmoto__moto-9841 --probe-plumbing
+uv run python bench/swebench_adapter.py run --arm bare       --instance getmoto__moto-9841 --probe-plumbing
+uv run python bench/swebench_adapter.py run --arm openhands  --instance getmoto__moto-9841 --probe-plumbing
+uv run python bench/swebench_adapter.py run --arm claude-5   --instance getmoto__moto-9841 --probe-plumbing
+uv run python bench/swebench_adapter.py run --arm claude-4.8 --instance getmoto__moto-9841 --probe-plumbing
+
+# The factory arm has no probe (its dry-run surface is `factory pm-sync
+# --dry-run`); the free check that covers it is the sweep preview:
+uv run python bench/swebench_adapter.py run-all --arm factory --only-working --dry-run
 
 # THIS COSTS MONEY. One instance, one arm.
 uv run python bench/swebench_adapter.py run   --arm bare      --instance getmoto__moto-9841
@@ -97,14 +142,17 @@ uv run python bench/swebench_adapter.py grade --arm openhands --instance getmoto
 uv run python bench/swebench_adapter.py audit --arm openhands --instance getmoto__moto-9841
 ```
 
-`--probe-plumbing` (bare and openhands only) exercises clone → install replay →
+`--probe-plumbing` (every arm but `factory`) exercises clone → install replay →
 collect precheck → prompt assembly → command parse → tool loop → diff capture →
 `split_diff` → `assert_no_test_edits` → ledger read-back → `result.json` →
 summary, with the provider **replaced by a fixed reply script**. It spends
 nothing. For the openhands arm it still really builds the agent (SDK import, key
 resolution, Azure endpoint resolution, `routes.yaml` `llm_params`) — only
 `conversation.run()` is skipped — so a missing key or a broken endpoint surfaces
-for free instead of as a $3 zero.
+for free instead of as a $3 zero. For the claude arms it builds the hermetic
+argv and probes the CLI version, skipping only the spawn, so the run-dir key,
+the prompt and the transcript path are all exercised without a subscription
+call.
 
 The probe row is **fail-closed**: it records an `error`, so `report` buckets it
 as a failed run, `estimate_instance_cost` refuses it as a cost sample, and no
@@ -118,13 +166,25 @@ headline can absorb it. Re-running the instance for real wipes it
 | `factory` | `runs/<id>/factory/root/state/events/trajectories/*.ndjson` | the OpenHands event stream per dev call |
 | `openhands` | `runs/<id>/openhands/state/events/trajectories/nostory-1.ndjson` | the OpenHands event stream, copied out whole |
 | `bare` | `runs/<id>/bare/bare-commands.ndjson` | one row per turn: untruncated command, exit code, and the OUTPUT the model saw |
-| `claude` | `runs/<id>/claude/claude-transcript.ndjson` | the CLI's full stream-json session |
+| `claude-5` / `claude-4.8` | `runs/<id>/<arm>/claude-transcript.ndjson` | the CLI's full stream-json session |
 
 `result.json` names its own trail in `trajectory`, and records `model` (the
 nominal route), `models_used` + `model_calls` + `model_escalated_calls`
 (measured from the run's own ledger), `steps_used` / `step_cap`, `termination`
-(`done` / `done-empty-diff` / `step-cap` / `wall-clock-cap` /
-`model-call-error` / `agent-error` / …) and `diff_bytes`.
+(`done` / `done-empty-diff` / `step-cap` / `tick-cap` / `turn-cap` /
+`wall-clock-cap` / `model-call-error` / `agent-error` / …), `diff_bytes`,
+`attempt` (which try at this cell this is) and `budget_exhausted` +
+`budget_exhausted_reason`.
+
+**One budget rule, every arm:** a turn-cap or wall-cap hit is a **completed,
+counted, flagged** attempt — never an excluded run. The retracted 2026-08-03 run
+excluded a Claude row that hit its turn cap *and passed the oracle*
+(`harumiweb__exstruct-113`: `num_turns 61`, `turn_cap 60`, `error: "claude CLI
+exited 1: "`), which silently improved its own denominator from 19 to 18. One
+shared classifier, `classify_run`, now answers "did this run complete?" for both
+the sweep roll-up and the report; they used to answer it from different facts and
+published different numbers for the same sweep (`sweep-claude.json` said 17
+resolved, `results.md` said 16 of 18).
 
 The claude arm gets the SAME preparation (pinned-manifest `--depth 1` clone,
 install replay, collect precheck) and the SAME task text (the shared story
@@ -156,6 +216,23 @@ uv run python bench/swebench_adapter.py run-all --arm factory --workers 4 \
     --only-working --dry-run     # ALWAYS preview first
 uv run python bench/swebench_adapter.py run-all --arm factory --workers 4 --only-working
 ```
+
+The full five-arm sweep is five of those, one arm at a time (each writes its own
+`sweep-<arm>.json`), then ONE report over all the rows:
+
+```bash
+for arm in factory openhands bare claude-5 claude-4.8; do
+  uv run python bench/swebench_adapter.py run-all --arm "$arm" --workers 4 \
+      --only-working --dry-run                     # preview + projected spend
+done
+for arm in factory openhands bare claude-5 claude-4.8; do
+  uv run python bench/swebench_adapter.py run-all --arm "$arm" --workers 4 --only-working
+done
+uv run python bench/swebench_adapter.py report
+```
+
+Run the two Claude arms sequentially, not in one sweep: they are the same
+subscription and the same rate limit.
 
 - **`--dry-run` is a pure preview.** It prints the work list and the projected
   spend, spawns nothing, writes nothing, costs nothing. Use it every time.
@@ -315,9 +392,10 @@ which the gold-patch control surfaced before any model spend:
   `runs/<id>/factory/root/state/worktrees/<name>/`, six `..` from
   `oracle.json.z` and three from the other arms' `grade.log`. Four factory rows
   in `results-archive/2026-08-03T02-21-23.249790Z` are `ok: false` because that
-  actually happened. **All four arms'** live trees now go under
-  `$XDG_CACHE_HOME/swebench-work/<instance>__<arm>/` (override with
-  `SWEBENCH_WORK_ROOT`) — flat, not nested, so no arm is a sibling `..` away —
+  actually happened. **Every arm's** live tree now goes under
+  `$XDG_CACHE_HOME/swebench-work/<instance>__<run-key>/` (override with
+  `SWEBENCH_WORK_ROOT`) — flat, not nested, so no arm is a sibling `..` away, and
+  keyed by (instance, arm, model) so two runs of one arm never share a tree —
   and only finished artifacts are copied back into `runs/<id>/<arm>/` after the
   arm has stopped. `state/` stays under the run dir: it is where `audit` reads
   the ledger and trajectory from, and it is not an ancestor of the agent's cwd.
@@ -471,11 +549,12 @@ scaffold, so P(0 of 19 | p = 0.402) = 5.7e-5. What was wrong, and is now fixed:
    DONE at step 6 with a 0-byte diff; `nicegui-5858` the same;
    `ucfopen__canvasapi-716` wrote a correct fix, saw a pre-existing test assert
    the old behaviour, restored the original file out of the docker image and
-   declared DONE with a 0-byte diff. The bare prompt now says plainly that those
-   tests pass at base and do not cover the task. **This defect is identical for
-   the factory and claude prompts** and is fixed for bare only so far — see the
-   `TODO(operator)` on `_BARE_BASE_TESTS_NOTE`. Do not publish a run as "matched
-   prompt" until it is lifted into `_TEST_POLICY` for all arms.
+   declared DONE with a 0-byte diff. **Fixed for EVERY arm** as of 2026-08-03:
+   one `_BASE_TESTS_NOTE`, byte-identical, reaches `_STORY_TEMPLATE` (factory,
+   openhands, claude) and `_BARE_TASK` (bare), so the "matched prompt" claim is
+   actually true. #223 had fixed it for bare alone, deliberately, to avoid
+   confounding two axes at once; applying it everywhere makes the five-arm re-run
+   a **fresh baseline**, not a before/after against the retracted run.
 3. **No collect precheck.** Bare was the one arm that could be handed an
    unrunnable test command and still burn its whole budget. It now runs the same
    pre-dispatch gate, and `instance_test_command` finally honours its `repo`
@@ -562,9 +641,104 @@ Compare the first two before quoting any cross-arm delta.
 
 ## Reporting rule
 
-Never report a factory number without the matched bare-model number beside it,
-and never report either without checking `models_used` against `model` on every
-row (see "Which weights actually ran").
-The model is a config value in `routes.yaml` that gets swapped as cheaper
-models ship, so an absolute score measures the model. The number that measures
-the product is scaffold lift: factory − bare, on the same instances.
+Never report a factory number without the matched **`openhands`** number beside
+it — that is the only pair here that holds the model fixed and varies the
+harness, so it is the only one that measures the chain. Never report either
+without checking `models_used` against `model` on every row (see "Which weights
+actually ran"). The model is a config value in `routes.yaml` that gets swapped as
+cheaper models ship, so an absolute score measures the model.
+
+## The report: five tables, and what each column exists to prevent
+
+`report` emits Tables 1-5 in the shape fixed by
+`bench/swebench/PRE-REGISTRATION-1.6.md` **before** the run. Every cell comes
+from an archived artifact or prints `n/a` with a reason; no cell is filled by
+hand.
+
+| table | contents |
+|---|---|
+| 1 | headline per arm: harness + the models the LEDGER says ran, resolved/audited-valid, rate, exact Clopper-Pearson CI, invalid rows, budget-exhausted count, `fresh in`, `cache read`, out, median wall, $, cost source |
+| 2 | per-instance outcome matrix with a contamination margin column per model bound |
+| 3 | every pair with `harness varies?` / `model varies?`, the discordant cells, and exact McNemar p |
+| 4 | provenance and integrity per arm: model ids, per-tier call counts, max attempt, audit ok/invalid, action trails, stripped test files, oracle-probe hits, empty-PASS_TO_PASS rows |
+| 5 | chain-verdict precision/recall — `n/a (arm has no chain verdict)` for every arm that has no chain |
+
+Each of those columns replaces a specific way the retracted run misled:
+
+- **`fresh in` / `cache read` are separate.** Cache share was 0% (bare) / 78%
+  (factory) / 97% (claude); one blended "tokens in" column made the published
+  "34× tokens" claim wrong by 4.5×.
+- **The cost column names its source per arm** and the two are never summed: the
+  Azure arms' dollars are a price-table estimate over measured tokens, the Claude
+  arms' are the CLI's own report against a subscription.
+- **The exclusion line names passes AND failures**, each with its verdict. It
+  named only excluded passes, so an excluded failure vanished with no verdict
+  shown and a reader could not tell which way the exclusions moved the rate.
+- **`attempt` and a "Discarded runs" section.** The retracted run published 4
+  second attempts after the integrity gate invalidated the first, disclosed
+  nowhere. Under the no-re-rolls rule any `attempt > 1` is a protocol violation.
+- **`n/a (arm has no chain verdict)` for both rates.** The retracted table
+  published "claude recall 0/16 = 0%", a division artifact on a column that does
+  not exist for that arm, and it read as a finding about Claude.
+- **`pass_to_pass_count` is surfaced and empties are flagged.** Two pinned
+  instances declare NO PASS_TO_PASS, so their grade has no regression half at all
+  and nothing there can catch a patch breaking the suite.
+- **Confidence intervals and McNemar are exact and in-repo** (`math.comb`, no new
+  dependency). At n=19 a normal approximation is wrong in exactly the direction
+  that flatters a small sample.
+- **Margins name their bound TYPE.** `deepseek-v4-pro` publishes no cutoff, so
+  its bound is its release date (`release-date-proxy`) — a weaker guarantee than
+  the published cutoffs used for the gpt-5.x and claude models.
+
+### Re-derivation is verifiable, and verifying does not mutate
+
+```bash
+uv run python bench/swebench_adapter.py report                        # live: archives evidence, writes results.md
+uv run python bench/swebench_adapter.py report --from-archive <dir>   # STDOUT only, writes nothing
+uv run python bench/swebench_adapter.py report --check                # diff vs the committed results.md; exit != 0 on drift
+```
+
+`--from-archive` used to **overwrite the very `results.md` it was verifying**,
+and in doing so silently deleted a 20-line disclosure section from committed
+evidence. It now prints to stdout and writes nothing; `--check` is the executable
+form of "a second report run re-derives the committed table byte-for-byte", which
+was previously unfalsifiable because the re-derivation overwrote its own
+reference.
+
+To publish from an archive there is one explicit, opt-in flag — never a shell
+redirect, which adds a trailing newline and then fails its own `--check`:
+
+```bash
+uv run python bench/swebench_adapter.py report --from-archive <dir> --publish
+uv run python bench/swebench_adapter.py report --check      # must print CHECK OK
+```
+
+### What the archive contains
+
+`results-archive/<generated-at>/` holds, per row, `result.json` + `audit.json` +
+`prediction.diff`; plus `sweep-<arm>.json` for every arm that produced a row,
+`selftest.json` and `selftest-logs/` (the gold-patch control, which previously
+rested on a summary the next selftest overwrote), the rendered `results.md`, and
+`report-meta.json`.
+
+An archive may also carry an operator-written `DISCLAIMER.md`, emitted verbatim
+at the top of any table re-derived from it. That is how a run is marked
+**retracted**: by ADDING a file beside the evidence, never by rewriting rows,
+audits or the original meta. `results-archive/2026-08-03T05-12-08.813897Z/` has
+one — those three-way numbers (factory 58% / bare 0% / claude 89%) are the
+report code's regression corpus, not a result.
+
+`report-meta.json` also **persists the refused and foreign row lists** and each
+instance's `created_at`. Those were recomputed from `runs/` at report time, so
+from an archive they were always empty and a re-derivation silently dropped the
+disclosure. An archive written before meta version 1.6 says
+`n/a (archive predates …)` rather than printing an empty section that reads as
+"nothing was excluded".
+
+### Cost projections are pooled within ONE manifest
+
+`estimate_instance_cost` filters samples by `manifest_sha256`. Pooling across
+manifests poisons the spend guard: SWE-bench-Pro instances are far larger than
+SWE-rebench ones, and their MINIMUM wall clock became the rebench sweep's
+projected per-instance duration — the denominator of the hourly burn rate. A row
+that records no sha is unverifiable provenance and is never a sample.
