@@ -1223,3 +1223,98 @@ def test_the_paired_comparison_only_uses_instances_both_arms_ran(
     )
     # 2 paired instances; only-claude-5 = 1 (inst_old); only-claude-4.8 = 0.
     assert "| 2 | 0 / 1 |" in row
+
+
+# --------------------------------------------------------------------------- #
+# 12. a HARNESS parse failure is not an ARM failure
+# --------------------------------------------------------------------------- #
+
+
+def _parse_failed_row(runs: Path, iid: str, key: str) -> Path:
+    return _row(
+        runs,
+        iid,
+        key,
+        resolved=False,
+        outcome="grade_parse_failed",
+        extra={
+            "grade": {
+                "oracle_resolved": False,
+                "outcome": "grade_parse_failed",
+                "pass_to_pass_count": 149,
+                "pass_to_pass_source": "dataset",
+                "node_parse_failures": [
+                    "pass_to_pass: pytest reported 153 node outcome(s) (153 passed) "
+                    "and the per-node parser extracted ZERO"
+                ],
+            }
+        },
+    )
+
+
+def test_a_grade_parse_failure_is_excluded_not_counted_as_unresolved(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]  # noqa: N803
+) -> None:
+    """MEASURED on `getmoto__moto-9841/openhands`: 153 tests passed in the grade
+    container and the row was recorded as an ordinary unresolved attempt because
+    pytest's ANSI colour hid every `PASSED` line from the per-node parser.
+
+    Counted as unresolved, one harness defect reports ~0% for EVERY arm. It must
+    land in neither numerator nor denominator, and it must be named.
+    """
+    runs = _patch_dirs(A, tmp_path, monkeypatch)
+    _row(runs, "inst_old", "openhands", resolved=True)
+    _parse_failed_row(runs, "inst_new", "openhands")
+    text = A.report()
+    capsys.readouterr()
+
+    # Denominator: 1, not 2. The parse failure is not an attempt at anything.
+    assert "resolve rate: **1/1 = 100% audited-valid**" in text
+    assert "1 as `grade_parse_failed`" in text
+    assert "EXCLUDED as `grade_parse_failed`" in text
+    assert "a HARNESS defect, not an arm failure" in text
+    # The reason travels with it, so nobody has to spelunk the run dir.
+    assert "extracted ZERO" in text
+    # Its own matrix code, documented in the legend — never `F`, never `X`.
+    assert "`P` grade-parse failed" in text
+    row = next(ln for ln in text.splitlines() if ln.startswith("| inst_new |"))
+    assert "| P |" in row
+
+
+def test_the_parse_failure_legend_is_absent_when_no_row_has_one(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]  # noqa: N803
+) -> None:
+    """`report --check` asserts the committed table is byte-for-byte re-derivable
+    from its archive, so new vocabulary may only appear when a row uses it."""
+    runs = _patch_dirs(A, tmp_path, monkeypatch)
+    _row(runs, "inst_old", "openhands", resolved=True)
+    _row(runs, "inst_new", "openhands", resolved=False)
+    text = A.report()
+    capsys.readouterr()
+    assert "grade-parse failed" not in text
+    assert "grade_parse_failed" not in text
+
+
+def test_a_parse_failure_is_excluded_from_the_sweep_rollup_too(A: Any) -> None:  # noqa: N803
+    """`sweep-<arm>.json` is what a reader quotes before the report exists."""
+    records = [
+        {
+            "status": "ok",
+            "oracle_resolved": True,
+            "outcome": "resolved",
+            "audit_ok": True,
+        },
+        {
+            "status": "ok",
+            "oracle_resolved": False,
+            "outcome": "grade_parse_failed",
+            "audit_ok": True,
+        },
+    ]
+    s = A._sweep_summary(records, arm="openhands", workers=1, wall_s=1.0)
+    assert s["gradable"] == 1
+    assert s["resolved"] == 1
+    assert s["grade_parse_failed"] == 1
+    rendered = A._render_summary(s)
+    assert "1/1 resolved clean" in rendered
+    assert "GRADE-PARSE FAILED" in rendered
