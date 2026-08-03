@@ -872,6 +872,23 @@ def test_a_second_attempt_is_visible_in_the_table_and_its_own_section(
     assert "None — every published row is its cell's first attempt." in text2
 
 
+def test_a_free_plumbing_probe_does_not_burn_an_attempt(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """Otherwise using the FREE plumbing check would make every subsequent real
+    row of that cell read as `attempt 2`, which the report flags as a protocol
+    violation — a footgun that would punish the operator for checking first."""
+    monkeypatch.setattr(A, "RUNS_DIR", tmp_path / "runs")
+    d = A._run_dir("i1", "bare")
+    for _ in range(3):  # probe it as many times as you like
+        A._reset_run_artifacts(d)
+        A._write_result("i1", "bare", {"error": A._PROBE_ERROR, "probe_plumbing": True})
+        assert json.loads((d / "result.json").read_text(encoding="utf-8"))["attempt"] == 0
+    A._reset_run_artifacts(d)
+    A._write_result("i1", "bare", {"error": None})
+    assert json.loads((d / "result.json").read_text(encoding="utf-8"))["attempt"] == 1
+
+
 def test_the_attempt_counter_survives_the_artifact_reset(
     A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
 ) -> None:

@@ -1373,7 +1373,16 @@ def _write_result(
             existing = {}
     existing.update(payload)
     if not merge:
-        existing["attempt"] = _attempt_count(run_dir)
+        if existing.get("probe_plumbing"):
+            # A plumbing probe is not an attempt AT THE TASK — no model ran. Roll
+            # the counter back so a real run of this cell is still attempt 1;
+            # otherwise using the FREE plumbing check would make every
+            # subsequent row look like a re-roll, and the report flags any
+            # attempt > 1 as a protocol violation.
+            _rewind_attempt(run_dir)
+            existing["attempt"] = 0
+        else:
+            existing["attempt"] = _attempt_count(run_dir)
         # Through the SHARED classifier, not the raw reason, so the artifact
         # agrees with every consumer: a plumbing probe that happens to end on
         # its last step is a failed run, not a budget-exhausted attempt.
@@ -1407,6 +1416,14 @@ def _bump_attempt(run_dir: Path) -> int:
         json.dumps({"attempts": n}) + "\n", encoding="utf-8"
     )
     return n
+
+
+def _rewind_attempt(run_dir: Path) -> None:
+    """Un-count the attempt ``_reset_run_artifacts`` just recorded."""
+    n = max(_attempt_count(run_dir, missing=0) - 1, 0)
+    (run_dir / _ATTEMPT_NAME).write_text(
+        json.dumps({"attempts": n}) + "\n", encoding="utf-8"
+    )
 
 
 def _attempt_count(run_dir: Path, *, missing: int = 1) -> int:
