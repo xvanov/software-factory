@@ -5504,13 +5504,36 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
         ),
         encoding="utf-8",
     )
-    ok = sum(1 for r in results if r["gold_resolves"])
-    print(f"\n{ok}/{len(results)} instances have a WORKING oracle -> {out}")
-    if ok < len(results):
-        print(
+    for line in selftest_summary_lines(results, out):
+        print(line)
+
+
+def selftest_summary_lines(results: list[dict[str, Any]], out: Path) -> list[str]:
+    """The control's closing summary. Pure, so its arithmetic is testable.
+
+    ``grade_parse_failed`` is named SEPARATELY from a gold patch that does not
+    resolve, for the same reason ``grade`` gives it its own outcome: one is a
+    statement about the DATASET, the other about THIS HARNESS. ``gold_resolves``
+    is three-state, so the old ``ok < len(results)`` test counted an unreadable
+    row as a non-resolving oracle — blaming the dataset for our own defect, in
+    the one output whose entire job is to say whether the oracle works.
+    """
+    ok = sum(1 for r in results if r.get("gold_resolves"))
+    parse_failed = [r for r in results if r.get("note") == "grade_parse_failed"]
+    lines = [f"\n{ok}/{len(results)} instances have a WORKING oracle -> {out}"]
+    if parse_failed:
+        lines.append(
+            f"  of which {len(parse_failed)} could not be CHECKED at all — THIS "
+            "HARNESS could not read pytest's per-node report: "
+            + ", ".join(str(r.get("instance_id")) for r in parse_failed)
+            + ". Fix the harness; these say nothing about the dataset."
+        )
+    if ok < len(results) - len(parse_failed):
+        lines.append(
             "Instances whose gold patch does not resolve are NOT factory failures. "
             "Exclude them, or the score measures the harness."
         )
+    return lines
 
 
 def gold_touched_files(instance_id: str) -> list[str]:

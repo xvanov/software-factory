@@ -1164,6 +1164,54 @@ def test_the_tally_marker_survives_the_region_peeler(A: Any) -> None:  # noqa: N
     assert A.reported_node_outcomes(tallies["pass_to_pass"]) == {"passed": 153}
 
 
+def test_the_selftest_summary_separates_unreadable_from_broken(
+    A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    """The CONTROL is the last place allowed to conflate the two.
+
+    `gold_resolves` is three-state, so `ok < len(results)` counted a row THIS
+    HARNESS could not read as an instance whose gold patch does not resolve —
+    blaming the dataset for our own defect, in the one output whose entire job is
+    to say whether the oracle works.
+    """
+    out = tmp_path / "selftest.json"
+    text = "\n".join(
+        A.selftest_summary_lines(
+            [
+                {"instance_id": "good", "gold_resolves": True, "note": "ok"},
+                {
+                    "instance_id": "unreadable",
+                    "gold_resolves": None,
+                    "note": "grade_parse_failed",
+                },
+            ],
+            out,
+        )
+    )
+    assert "1/2 instances have a WORKING oracle" in text
+    assert "1 could not be CHECKED at all" in text
+    assert "unreadable" in text
+    # NOT blamed on the dataset: no instance here failed to resolve.
+    assert "does not resolve are NOT factory failures" not in text
+
+    # A genuinely non-resolving gold patch still gets that line.
+    broken = "\n".join(
+        A.selftest_summary_lines(
+            [
+                {"instance_id": "good", "gold_resolves": True, "note": "ok"},
+                {
+                    "instance_id": "broken",
+                    "gold_resolves": False,
+                    "note": "gold_patch_does_not_resolve",
+                },
+            ],
+            out,
+        )
+    )
+    assert "does not resolve are NOT factory failures" in broken
+    assert "could not be CHECKED" not in broken
+
+
 def test_a_pre_tally_grade_log_reports_no_tallies(A: Any) -> None:  # noqa: N803
     """The 59 retained pre-change logs carry no TALLY marker. `None` evidence
     must not become a parse failure, or re-auditing an old row would relabel a
