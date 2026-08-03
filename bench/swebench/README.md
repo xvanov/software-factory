@@ -302,7 +302,13 @@ which the gold-patch control surfaced before any model spend:
   which would let arm-authored code print a forged `PASSED <id>` line into the
   section the parser reads. A missing per-node report refuses the row.
   Per-node output lands in `grade-nodes.log`; `grade.log` keeps the readable
-  log.
+  log. Measured against the 59 retained `grade.log` files: of the 28 that
+  graded RESOLVED, 27 show every selected node explicitly passing and are
+  unaffected. The 28th — `pandas-dev__pandas-63945` / claude — reported
+  **274 skipped and 1 collection error** inside the graded selection and still
+  scored RESOLVED on the exit code. That row is not reproducible either way
+  from its log, because the old script never asked for a per-node report; it is
+  the defect firing in published data, and the re-run decides it on evidence.
 - **No arm's working tree lives inside the repo.** Every arm's shell runs on
   this host, so the working tree's ANCESTRY is part of the threat model — and
   it was not: the factory arm's dev ran with cwd
