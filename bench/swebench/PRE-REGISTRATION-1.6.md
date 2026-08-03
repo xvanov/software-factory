@@ -14,29 +14,62 @@ archived artifact or printed as `n/a` with a reason. No cell is filled by hand.
 - Five arms, one sweep, **no re-rolls**. A row the integrity gate rejects is
   published as invalid.
 
-## Arms
+## Arms — harness × model, stated in full
 
-| id | what it is | model(s) | what it measures |
-|---|---|---|---|
-| `factory` | the full chain, dev+review, gates | dev `azure/deepseek-v4-pro`, hard-tier escape `azure/gpt-5.3-codex`, reviewer `azure/gpt-5.4` | the product |
-| `openhands` | OpenHands single agent, no chain, identical prompt | `azure/deepseek-v4-pro` | **the chain's contribution** — same weights, same prompt, same tools, minus the chain |
-| `bare` | minimal shell loop, 40 steps | `azure/deepseek-v4-pro` | the floor at matched weights |
-| `claude-5` | Claude Code CLI, subscription | `claude-opus-5` | frontier reference |
-| `claude-4.8` | Claude Code CLI, subscription | `claude-opus-4-8` | **contamination probe** (cutoff Jan 2026 vs May 2026) |
+**Every arm is a (harness, model set) pair. Neither half may be omitted when a
+number from this run is quoted.** An arm's score is a property of the pair, never
+of the model alone and never of the harness alone.
 
-`openhands` is the arm the previous run lacked and the reason its "+58 pp
-scaffold lift" was unattributable: `bare` lacks both the chain *and* real editor
-tools, so it could not separate the two.
+| id | harness (the thing under test) | model(s), by role | tool interface | budget | what it measures |
+|---|---|---|---|---|---|
+| `factory` | **software-factory chain** — story seeded at `SM_DONE`, dev + reviewer personas, merge gates, run-until-green; the dev runs inside an **OpenHands sandbox** | dev standard `azure/deepseek-v4-pro` · dev hard-tier escape `azure/gpt-5.3-codex` · reviewer `azure/gpt-5.4` | native tool calls + real file editor (via OpenHands) | 16 orchestrator ticks; OpenHands `max_iterations` 600 per dev session; 5400 s wall | **the product** |
+| `openhands` | **OpenHands 1.22.1, single agent, no chain** — no PM/SM, no reviewer, no gates, identical prompt | `azure/deepseek-v4-pro` only | native tool calls + real file editor | step cap matched to the factory's effective budget; 5400 s wall | **the chain's contribution** — weights, prompt and tools held constant, chain removed |
+| `bare` | **hand-rolled ~100-line text loop** — one flat string per turn, `BASH:` markers scraped from prose, one shell command per turn, observations truncated at 4,000 chars, edits by `sed`/heredoc | `azure/deepseek-v4-pro` only | **none** — no tool-calling API, no editor tool | 40 steps; 300 s per command; 5400 s wall | the floor of *our own minimal protocol* |
+| `claude-5` | **Claude Code CLI 2.1.220** — the CLI *is* the harness (its own tool set, its own agent loop); subscription-billed, `--safe-mode`, MCP disabled, WebFetch/WebSearch removed | `claude-opus-5` | Claude Code's own tools | 60 CLI turns; 5400 s wall | frontier reference |
+| `claude-4.8` | **Claude Code CLI 2.1.220**, identical invocation | `claude-opus-4-8` | Claude Code's own tools | 60 CLI turns; 5400 s wall | **contamination probe** — same harness, older cutoff (Jan 2026 vs May 2026) |
+
+Three things this table is designed to stop being misread:
+
+1. **`bare`'s weakness is our harness, not the model.** `deepseek-v4-pro`
+   supports tool calling — proven by the fact that the `factory` arm's dev
+   already drives that same deployment through OpenHands. The bare arm simply
+   does not *use* tool calling: it parses markers out of prose, which is why 34
+   of 182 replies were unparseable and 13 were native ```bash fences the parser
+   discarded. Treat `bare` as a floor on the protocol, never as a statement
+   about the weights.
+2. **The three DeepSeek arms are a ladder on identical weights** — no tools
+   (`bare`) → real tools (`openhands`) → real tools + the chain (`factory`).
+   Only adjacent rungs are attributable: `factory − openhands` is the chain,
+   `openhands − bare` is the tooling. `factory − bare` is both at once, which is
+   why the retracted "+58 pp scaffold lift" could not be assigned to either.
+3. **For the Claude arms, Claude Code IS the harness.** It is not a model call
+   and not an Azure or API route — it is the `claude` CLI binary on this machine
+   on a subscription, with its own agent loop and tool set. `--model` is a flag
+   on that binary, so `claude-5` and `claude-4.8` are the *same harness* twice.
+   Consequently `factory vs claude-*` varies harness **and** model
+   simultaneously and is not attributable to either; it is a reference point,
+   not a scaffold measurement.
+
+`openhands` is the arm the previous run lacked, and the reason its headline was
+unattributable.
 
 ## Table 1 — headline, one row per arm
 
-| arm | resolved / audited-valid | rate | 95% CI (Clopper-Pearson) | invalid rows | fresh in | cache read | out | wall s (median) | $ | cost source |
-|---|---|---|---|---|---|---|---|---|---|---|
-| factory | / | % | [ , ] | | | | | | | price-table estimate |
-| openhands | / | % | [ , ] | | | | | | | price-table estimate |
-| bare | / | % | [ , ] | | | | | | | price-table estimate |
-| claude-5 | / | % | [ , ] | | | | | | | CLI-reported, subscription |
-| claude-4.8 | / | % | [ , ] | | | | | | | CLI-reported, subscription |
+Harness and models are repeated here, not cross-referenced — a headline row torn
+out of this file must still say what produced it.
+
+| arm | harness | model(s) actually used (from `result.json`, not from config) | resolved / audited-valid | rate | 95% CI (Clopper-Pearson) | invalid rows | fresh in | cache read | out | wall s (median) | $ | cost source |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| factory | software-factory chain on OpenHands | dev `azure/deepseek-v4-pro` (n calls) + hard `azure/gpt-5.3-codex` (n) + reviewer `azure/gpt-5.4` (n) | / | % | [ , ] | | | | | | | price-table estimate |
+| openhands | OpenHands 1.22.1 single agent | `azure/deepseek-v4-pro` (n) | / | % | [ , ] | | | | | | | price-table estimate |
+| bare | hand-rolled text loop, no tool calls | `azure/deepseek-v4-pro` (n) | / | % | [ , ] | | | | | | | price-table estimate |
+| claude-5 | Claude Code CLI 2.1.220 | `claude-opus-5` (+ the CLI's own `claude-haiku-4-5` side-classifier) | / | % | [ , ] | | | | | | | CLI-reported, subscription |
+| claude-4.8 | Claude Code CLI 2.1.220 | `claude-opus-4-8` (+ side-classifier) | / | % | [ , ] | | | | | | | CLI-reported, subscription |
+
+The model column is filled **from the per-row artifacts, not from
+`routes.yaml`** — the retracted run's config said one thing while the ledger
+showed 7 escalations to the hard tier, 4 of them behind resolved rows. Config is
+intent; the ledger is what happened.
 
 `fresh in` and `cache read` are separate columns on purpose. Last run's single
 "tokens in" column mixed them, and cache share differed 0% / 78% / 97% across
@@ -75,13 +108,17 @@ positive margin against `claude-opus-5` — that is why `claude-4.8` exists.
 
 ## Table 3 — the comparisons, and which ones are allowed to mean anything
 
-| comparison | contingency (only-A / only-B) | McNemar exact p | what it measures | may we act on it? |
-|---|---|---|---|---|
-| factory vs **openhands** | / | | **the chain, at matched weights, matched prompt, matched tools** | this is the product number |
-| factory vs bare | / | | the floor | only if bare is now plausible vs the 40.2% public anchor |
-| factory vs claude-5 | / | | model **+** scaffold — not attributable to either | report as a gap, never as a scaffold deficit |
-| claude-5 vs claude-4.8 | / | | contamination | a large gap favouring opus-5 on low-margin rows is the memorization signal |
-| high-margin stratum (n=4) vs rest (n=15), per arm | | | contamination, within arm | n=4 is descriptive only |
+Each row names what is held constant and what varies. A comparison that varies
+both halves of the (harness, model) pair is a reference point, not a measurement.
+
+| comparison | harness varies? | model varies? | contingency (only-A / only-B) | McNemar exact p | what it isolates | may we act on it? |
+|---|---|---|---|---|---|---|
+| factory vs **openhands** | yes (chain vs none) | **no** — both `deepseek-v4-pro` | / | | **the chain** | **this is the product number** |
+| openhands vs bare | yes (tool calls + editor vs text markers) | **no** — both `deepseek-v4-pro` | / | | the tooling | secondary; tells us how much of any lift is just having usable tools |
+| factory vs bare | yes (both chain and tooling) | no | / | | chain **+** tooling, entangled | floor only, and only once bare is plausible vs the 40.2% public anchor |
+| factory vs claude-5 | yes | **yes** | / | | nothing attributable | reference point, never a scaffold deficit |
+| claude-5 vs claude-4.8 | **no** — same CLI, same flags | yes (May-2026 vs Jan-2026 cutoff) | / | | **contamination** | a gap favouring opus-5 on low-margin rows is the memorization signal |
+| high-margin stratum (n=4) vs rest (n=15), within each arm | no | no | | | contamination, within arm | n=4 — descriptive only |
 
 ## Table 4 — provenance and integrity, per arm
 
