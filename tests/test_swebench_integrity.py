@@ -943,3 +943,24 @@ def test_the_condenser_ellipsis_cannot_hide_an_oracle_file(A: Any) -> None:  # n
     assert A._probe_line_hits(
         "cat bench/swebench/runs/x__y-1/.../result.json", "x__y-1", "factory"
     )
+
+
+def test_a_working_tree_left_inside_the_run_dir_fails_the_audit(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """Backstop for defect 1a that does not depend on a run function calling
+    `assert_workspace_isolated`.
+
+    Measured on this branch: `run_factory` and `run_claude` clone into
+    `_work_dir` (outside the repo) and assert isolation, but `run_bare` still
+    does `repo = run_dir / "repo"; _clone(inst, repo)` — its shell's cwd is
+    three `..` from `bench/swebench/oracle.json.z`. `audit` is the one step
+    every arm goes through, so the invariant is re-checked from the artifacts.
+    """
+    run_dir = tmp_path / "runs" / "x__y-1" / "bare"
+    run_dir.mkdir(parents=True)
+    assert A._audit_workspace_layout(run_dir, "bare") == []
+    (run_dir / "repo").mkdir()
+    failures = A._audit_workspace_layout(run_dir, "bare")
+    assert len(failures) == 1
+    assert "inside the harness directory" in failures[0]
+    (run_dir / "grade-repo").mkdir()
+    assert len(A._audit_workspace_layout(run_dir, "bare")) == 2

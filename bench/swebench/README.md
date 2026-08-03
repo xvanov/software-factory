@@ -322,7 +322,10 @@ which the gold-patch control surfaced before any model spend:
   applies the test patch, and the control applies the GOLD patch, *into* them —
   so they get an unguessable `mkdtemp` name and are deleted the moment grading
   ends. `assert_workspace_isolated` refuses any workspace with an
-  oracle-bearing ancestor, before spend.
+  oracle-bearing ancestor, before spend. Because that check only runs in the
+  arms that call it, `audit` re-derives the invariant from the artifacts: a
+  live working tree left at `runs/<id>/<arm>/repo` or `.../grade-repo` is an
+  audit FAILURE, so a new arm cannot quietly opt out.
 - **Oracle material is never greppable.** All arms execute on this host
   filesystem, so the gold patch, test patch and hidden test ids live in
   `oracle.json.z` (zlib+base64 — defeats text-scavenging, NOT cryptography;

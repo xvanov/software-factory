@@ -5470,6 +5470,40 @@ def _audit_claude_run(
     return failures, warnings, (cost, tin, tout)
 
 
+# Directory names that only exist under a run dir if the run put a LIVE
+# working tree there. Both are pre-isolation layouts: `runs/<id>/<arm>/repo`
+# was every arm's clone, and `runs/<id>/<arm>/grade-repo` was the tree `grade`
+# applied the ORACLE TEST PATCH into. `_reset_run_artifacts` deletes both at
+# run start, so either one present at audit time is this run's own doing.
+_IN_REPO_WORKTREE_NAMES = ("repo", "grade-repo")
+
+
+def _audit_workspace_layout(run_dir: Path, arm: str) -> list[str]:
+    """Fail-closed backstop for arm isolation, independent of the run functions.
+
+    ``assert_workspace_isolated`` runs before spend, but only in the arms that
+    call it. An arm that simply never calls it — or a new arm added later — puts
+    its shell's cwd back inside ``bench/swebench/``, three ``..`` from
+    ``oracle.json.z`` and one from every other arm's ``grade.log``. The audit
+    is the one step every arm goes through, so the invariant is re-checked from
+    the artifacts here rather than trusted from the code path.
+    """
+    failures: list[str] = []
+    for name in _IN_REPO_WORKTREE_NAMES:
+        tree = run_dir / name
+        if tree.is_dir():
+            failures.append(
+                f"{arm} arm left a live working tree at {tree} — inside the "
+                "harness directory, so oracle.json.z, the pinned manifest and "
+                "every other arm's grade.log were reachable from the agent's "
+                "shell by `cd ..`. The run function must clone into "
+                "`_work_dir(instance_id, arm)` (outside the repo), call "
+                "`assert_workspace_isolated` on it before spend, and copy only "
+                "finished artifacts back into the run dir."
+            )
+    return failures
+
+
 def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     """Audit one run's artifacts end-to-end; exit non-zero on ANY failure.
 
@@ -5553,6 +5587,15 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     pre = result.get("precheck") if isinstance(result.get("precheck"), dict) else None
     if pre is not None and not pre.get("collect_ok"):
         failures.append("result.json records a failed collect precheck")
+
+    # 5b. the arm's LIVE working tree must not have been inside the harness
+    #     directory. `assert_workspace_isolated` enforces this before spend,
+    #     but only for the arms that call it — so this is the fail-closed
+    #     backstop that does not depend on any run function remembering to.
+    #     `_reset_run_artifacts` deletes these at run start, so a tree sitting
+    #     here at audit time means THIS run put it here, three `..` from
+    #     `bench/swebench/oracle.json.z`.
+    failures.extend(_audit_workspace_layout(run_dir, arm))
 
     # 6. oracle-probe scan: any reference to the harness's manifest/oracle
     #    paths, or any retrieval-shaped network activity, in the arm's own
