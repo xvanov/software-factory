@@ -49,13 +49,82 @@ uv run python bench/swebench_adapter.py report
 must come back `RESOLVED`. Any instance where it does not is excluded — a score
 computed over broken instances measures the harness, not the arm.
 
-## The three arms
+## The four arms
 
 | arm | agent | models | cost ledger |
 |---|---|---|---|
 | `factory` | the chain's dev+review handlers | `azure/deepseek-v4-pro` dev + `azure/gpt-5.4` reviewer (`routes.yaml`) | isolated factory DB, priced from the Azure price table |
 | `bare` | minimal bash loop | the SAME dev deployment | isolated factory DB, same price table |
+| `openhands` | ONE OpenHands agent, no chain | the SAME dev deployment, same SDK + default toolset the chain's dev runs in | isolated factory DB, same price table |
 | `claude` | local Claude Code CLI, headless | pinned `claude-opus-5` (the CLI default discovered 2026-08-02; the exact ids the CLI reports land in `result.json`) | **the CLI's own report** (`cost_source: "claude-cli-reported"`) |
+
+Each arm subtracts one thing, and only that thing:
+
+- `factory` − `openhands` = **the chain** (PM/SM decomposition, a reviewer on
+  different weights, retries, merge gates). This is the product claim.
+- `openhands` − `bare` = **real tools** (file editor, search, a managed agent
+  loop) at identical weights.
+- `claude` − `factory` = **frontier weights in a frontier harness**, the
+  external ceiling.
+
+## Probe ONE instance before you sweep
+
+A four-arm sweep over 19 instances is the expensive commitment; a single run is
+the cheap one. Every arm runs standalone, no sweep required, and prints a
+one-screen summary (model, steps used / cap, why the loop stopped, diff bytes
+and files touched, and a loud warning when the graded diff is EMPTY).
+
+```bash
+# what is pinned right now
+uv run python -c "import json,pathlib; \
+print('\n'.join(i['instance_id'] for i in json.loads(pathlib.Path('bench/swebench/manifest.json').read_text())['instances']))"
+
+# FREE, no model, no docker, no network — the whole pipeline on fixtures
+uv run pytest -q tests/test_swebench_bare_openhands_arms.py
+
+# FREE, real clone + real install replay + real collect precheck, model replaced
+# by a fixed script. Writes a row whose `error` marks it as not-a-measurement.
+uv run python bench/swebench_adapter.py run --arm bare      --instance getmoto__moto-9841 --probe-plumbing
+uv run python bench/swebench_adapter.py run --arm openhands --instance getmoto__moto-9841 --probe-plumbing
+
+# THIS COSTS MONEY. One instance, one arm.
+uv run python bench/swebench_adapter.py run   --arm bare      --instance getmoto__moto-9841
+uv run python bench/swebench_adapter.py grade --arm bare      --instance getmoto__moto-9841
+uv run python bench/swebench_adapter.py audit --arm bare      --instance getmoto__moto-9841
+
+uv run python bench/swebench_adapter.py run   --arm openhands --instance getmoto__moto-9841
+uv run python bench/swebench_adapter.py grade --arm openhands --instance getmoto__moto-9841
+uv run python bench/swebench_adapter.py audit --arm openhands --instance getmoto__moto-9841
+```
+
+`--probe-plumbing` (bare and openhands only) exercises clone → install replay →
+collect precheck → prompt assembly → command parse → tool loop → diff capture →
+`split_diff` → `assert_no_test_edits` → ledger read-back → `result.json` →
+summary, with the provider **replaced by a fixed reply script**. It spends
+nothing. For the openhands arm it still really builds the agent (SDK import, key
+resolution, Azure endpoint resolution, `routes.yaml` `llm_params`) — only
+`conversation.run()` is skipped — so a missing key or a broken endpoint surfaces
+for free instead of as a $3 zero.
+
+The probe row is **fail-closed**: it records an `error`, so `report` buckets it
+as a failed run, `estimate_instance_cost` refuses it as a cost sample, and no
+headline can absorb it. Re-running the instance for real wipes it
+(`_reset_run_artifacts`).
+
+### What a single run leaves on disk
+
+| arm | trajectory | contents |
+|---|---|---|
+| `factory` | `runs/<id>/factory/root/state/events/trajectories/*.ndjson` | the OpenHands event stream per dev call |
+| `openhands` | `runs/<id>/openhands/state/events/trajectories/nostory-1.ndjson` | the OpenHands event stream, copied out whole |
+| `bare` | `runs/<id>/bare/bare-commands.ndjson` | one row per turn: untruncated command, exit code, and the OUTPUT the model saw |
+| `claude` | `runs/<id>/claude/claude-transcript.ndjson` | the CLI's full stream-json session |
+
+`result.json` names its own trail in `trajectory`, and records `model` (the
+nominal route), `models_used` + `model_calls` + `model_escalated_calls`
+(measured from the run's own ledger), `steps_used` / `step_cap`, `termination`
+(`done` / `done-empty-diff` / `step-cap` / `wall-clock-cap` /
+`model-call-error` / `agent-error` / …) and `diff_bytes`.
 
 The claude arm gets the SAME preparation (pinned-manifest `--depth 1` clone,
 install replay, collect precheck) and the SAME task text (the shared story
@@ -300,15 +369,125 @@ one shell command per turn, truncated output, a 40-step budget, and the same
 docker test one-liner the factory's dev gets, so it can check its fix before
 declaring DONE. It deliberately lacks everything else the factory adds —
 review by a second model, retries, structured tools, planning — because it is
-the floor the factory must beat, not a second agent framework. Before
-2026-08-03 the arm had no way to run tests at all, executed model-hallucinated
-"observations" as real shell, and ran on 16 of its 40 intended steps; bare
-rows produced before that fix (Pro 1/6, rebench 0/19) measured that broken
-scaffold and are **not comparable** with post-fix bare rows.
+the floor the factory must beat, not a second agent framework.
+
+**"Minimal" means few affordances, not a broken substrate.** Every bare row
+produced before 2026-08-03 measured this loop's bugs, not the model, and the
+published `bare 0/19` column (and with it the "+58pp scaffold lift at matched
+weights" headline) is **retracted**. The external anchor makes that
+unambiguous: Nebius publishes the same deployment at 40.2% under its own minimal
+scaffold, so P(0 of 19 | p = 0.402) = 5.7e-5. What was wrong, and is now fixed:
+
+1. **Prompt asymmetry (invalidating).** The bare system prompt said *"Do NOT
+   create, edit or delete test files. Test edits are stripped before grading, so
+   they are wasted effort"* while the shared story template told the factory and
+   claude arms to *"write tests that express the required behaviour, then make
+   them pass … they are your feedback loop, not the grade."* Identical stripping
+   mechanic, opposite instruction, on the arm the headline rests on. All arms now
+   share one `_TEST_POLICY` block, byte-identical.
+2. **The gated test command cannot fail (invalidating).** It targets the
+   `fail_to_pass` FILES at `base_commit` — before the withheld gold test patch
+   adds the tests. Over the 19 pinned instances: 3 target a file that does not
+   exist, 11 more contain ZERO `fail_to_pass` functions, and the other 5 contain
+   them asserting the OLD behaviour. So "N passed" is the default state of the
+   tree. `conan-19735` ran a `sed` that matched nothing, saw "28 passed" and said
+   DONE at step 6 with a 0-byte diff; `nicegui-5858` the same;
+   `ucfopen__canvasapi-716` wrote a correct fix, saw a pre-existing test assert
+   the old behaviour, restored the original file out of the docker image and
+   declared DONE with a 0-byte diff. The bare prompt now says plainly that those
+   tests pass at base and do not cover the task. **This defect is identical for
+   the factory and claude prompts** and is fixed for bare only so far — see the
+   `TODO(operator)` on `_BARE_BASE_TESTS_NOTE`. Do not publish a run as "matched
+   prompt" until it is lifted into `_TEST_POLICY` for all arms.
+3. **No collect precheck.** Bare was the one arm that could be handed an
+   unrunnable test command and still burn its whole budget. It now runs the same
+   pre-dispatch gate, and `instance_test_command` finally honours its `repo`
+   argument, so a target that does not exist at base falls back to its nearest
+   existing ancestor directory — for every arm.
+4. **DONE was unconditional.** 6 of 19 rows (32%) shipped 0 bytes. A DONE with
+   no production-code change in the tree now gets one observation saying so, at
+   most twice (below this repo's hard loop cap of 3), and the outcome is recorded
+   as `termination: "done-empty-diff"`.
+5. **Roleless flat-string prompting.** The loop sent `"\n\n".join(history[-24:])`
+   as ONE user string and echoed the model's RAW reply into it, so the model
+   could not tell its own text from the environment's: 76 of 231 measured replies
+   contained a fabricated `Exit N` / `Exit code:` / `Output:` / `Result:` line,
+   and `_BARE_STOP` caught only two of those four shapes. `conan-19750` produced
+   an 11,890-character reply with 8 fenced blocks, executed ZERO commands, and
+   said "The tests now pass. DONE". It is now a real role-tagged message list,
+   and only the PARSED COMMAND is ever echoed back — a fabricated observation is
+   unrepresentable in the context, not merely discouraged.
+6. **The context window evicted the task.** `history[-24:]` over a list that
+   started at 2 and grew by 2 per step dropped the system prompt and the task
+   after step 11 — and invalid-format replies clustered at exactly steps 12-24,
+   in the four longest runs, all four of which ended wrong or empty. The
+   system+task prefix is now pinned; only the tail slides.
+7. **Protocol tax.** 34 of 231 replies had no `BASH` marker; 12 were plain
+   ```` ```bash ```` fences thrown away as "Invalid reply". deepseek's native
+   output is fenced markdown, so a tagged shell fence is now accepted as
+   equivalent.
+8. **An uncaught command timeout** propagated out of `run_bare` and killed the
+   run with no `result.json` at all. A timeout is now an observation.
+9. **No observation trail.** `bare-commands.ndjson` held commands only, so
+   reconstructing what the arm SAW meant hand-joining `prompt_bodies.ndjson`.
+   Exit code and output now land there too — which also means the audit's
+   oracle-probe scan finally sees command OUTPUT, not just commands.
+
+## The openhands arm
+
+The bare arm isolates "cheap weights with almost no scaffold"; the claude arm
+isolates "frontier weights in a frontier harness". Neither isolates the thing
+being sold, which is **the chain**. This arm does: ONE OpenHands agent, the
+factory's own `route("dev","standard")` deployment, the same SDK and default
+toolset (`get_default_agent(cli_mode=True)` — real file editor, real bash, real
+search) that the chain's dev runs inside, the same `_STORY_TEMPLATE` task text,
+the same prepared clone, the same collect precheck, the same 5400 s wall clock,
+the same prediction path. No PM, no SM, no reviewer, no gates, no retries.
+
+Its iteration cap (600) is exactly the factory dev's own per-attempt cap
+(`sandbox_run`'s signature default), so the arms cannot differ on inner budget —
+a test pins the two together. The factory arm may open up to three such
+conversations across its 16 ticks; in practice the shared wall clock binds first
+for both.
+
+**Deliberately excluded:** the dev persona prompt and the context prelude.
+They are part of the harness under test, so this arm carries the story file
+alone — the factory arm's advantage therefore includes its persona engineering,
+which is the honest attribution.
+
+Accounting: one `Run` row is written into the run's own isolated ledger from the
+conversation's own usage totals, and `result.json` reports the numbers read BACK
+from that ledger — so `audit` certifies this arm through the same code path as
+the factory and bare arms, with no per-arm special case. OpenHands' persisted
+event stream is copied out whole (via the chain's own `_capture_trajectory`) as
+this arm's trajectory, and the audit's oracle-probe scan reads it.
+
+The wall-clock cap ABANDONS the conversation rather than killing it — an
+in-process agent loop cannot be killed, the same trade-off `sandbox_run` makes —
+and grades the tree as it stands. That is why the trajectory is persisted
+incrementally rather than at the end.
+
+## Which weights actually ran
+
+`result.json` used to carry no `model` at all on the factory arm. That hid a
+finding: across the 19 pinned instances the factory arm escalated 7 dev calls to
+`azure/gpt-5.3-codex` (the HARD tier) on 5 instances, and 4 of its 11 resolves
+used that tier — so "matched weights vs the bare arm" was false, and nothing in
+the artifact said so. Every arm now records:
+
+- `model` — the NOMINAL route, i.e. what "matched weights" claims;
+- `models_used` — every model id that actually produced a call, measured from
+  the run's own `state/events/runs.ndjson`;
+- `model_calls` — calls and spend per (persona, model, tier);
+- `model_escalated_calls` — how many calls ran on something other than `model`.
+
+Compare the first two before quoting any cross-arm delta.
 
 ## Reporting rule
 
-Never report a factory number without the matched bare-model number beside it.
+Never report a factory number without the matched bare-model number beside it,
+and never report either without checking `models_used` against `model` on every
+row (see "Which weights actually ran").
 The model is a config value in `routes.yaml` that gets swapped as cheaper
 models ship, so an absolute score measures the model. The number that measures
 the product is scaffold lift: factory − bare, on the same instances.

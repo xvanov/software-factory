@@ -395,7 +395,7 @@ def test_wall_clock_starts_before_clone_and_setup(A: Any) -> None:  # noqa: N803
     import ast
 
     tree = ast.parse(_ADAPTER.read_text(encoding="utf-8"))
-    for fname in ("run_factory", "run_bare", "run_claude"):
+    for fname in ("run_factory", "run_bare", "run_claude", "run_openhands"):
         fn = next(
             n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == fname
         )
@@ -457,8 +457,9 @@ def test_run_functions_reset_artifacts_before_any_exit_path(A: Any) -> None:  # 
     tree = ast.parse(_ADAPTER.read_text(encoding="utf-8"))
     for fname, must_precede in (
         ("run_factory", ("_ensure_image", "_clone")),
-        ("run_bare", ("_clone",)),
+        ("run_bare", ("_ensure_image", "_clone")),
         ("run_claude", ("_ensure_image", "_clone")),
+        ("run_openhands", ("_ensure_image", "_clone")),
     ):
         fn = next(
             n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == fname
@@ -4015,14 +4016,14 @@ def test_bare_task_carries_the_factory_story_test_command_verbatim(A: Any) -> No
 
 
 def test_both_arms_derive_the_test_command_from_the_same_call(A: Any) -> None:  # noqa: N803
-    """Pin the call shape: identical arguments, so neither arm can drift to a
+    """Pin the call shape: identical arguments, so no arm can drift to a
     privileged variant (extra targets, collect-only, leaked node ids)."""
     import inspect
 
-    assert "instance_test_command(inst, repo=repo)" in inspect.getsource(A.run_bare)
-    assert "instance_test_command(inst, repo=repo)" in inspect.getsource(
-        A.run_factory
-    )
+    for fn in (A.run_bare, A.run_factory, A.run_openhands, A._claude_task_prompt):
+        assert "instance_test_command(inst, repo=repo)" in inspect.getsource(fn), (
+            f"{fn.__name__} derives its test command differently"
+        )
 
 
 def test_step_budget_defaults_are_per_arm(A: Any) -> None:  # noqa: N803
@@ -4033,10 +4034,14 @@ def test_step_budget_defaults_are_per_arm(A: Any) -> None:  # noqa: N803
     assert A._resolve_max_steps("bare", None) == 40
     assert A._resolve_max_steps("factory", None) == 16
     assert A._resolve_max_steps("claude", None) == A._CLAUDE_TURN_CAP == 60
+    assert (
+        A._resolve_max_steps("openhands", None) == A._OPENHANDS_ITERATION_CAP == 600
+    )
     # An explicit --max-steps still overrides, for any arm.
     assert A._resolve_max_steps("bare", 5) == 5
     assert A._resolve_max_steps("factory", 33) == 33
     assert A._resolve_max_steps("claude", 2) == 2
+    assert A._resolve_max_steps("openhands", 11) == 11
 
 
 def test_cli_resolves_the_step_budget_per_arm(A: Any) -> None:  # noqa: N803
