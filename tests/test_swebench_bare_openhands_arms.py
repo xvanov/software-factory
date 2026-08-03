@@ -236,8 +236,13 @@ def bare_run(A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:  #
     )
     monkeypatch.setattr(A, "_clone", lambda _inst, dest: _seed_repo(dest))
 
-    def _drive(replies: list[str], **kw: Any) -> tuple[Any, dict[str, Any], Path]:
-        model = _ScriptedModel(replies)
+    def _drive(
+        replies: list[str], *, model: Any = None, **kw: Any
+    ) -> tuple[Any, dict[str, Any], Path]:
+        # ``model`` lets a test supply its OWN stand-in (e.g. one that also
+        # writes the ledger row a real ``text_run`` writes) instead of the plain
+        # scripted one.
+        model = model if model is not None else _ScriptedModel(replies)
         monkeypatch.setattr(runner_mod, "text_run", model)
         A.run_bare(_INST["instance_id"], max_steps=kw.pop("max_steps", 10),
                    timeout_s=kw.pop("timeout_s", 600), **kw)
@@ -283,6 +288,63 @@ def test_a_fabricated_result_line_can_never_become_an_observation(
     assert blob.count("Result: all green") == 0
     assert blob.count("Exit code: 0") == 0
     assert result["diff_bytes"] > 0
+
+
+def test_a_fabricated_tail_after_a_REAL_command_is_neither_run_nor_echoed(
+    bare_run: Any, A: Any  # noqa: N803
+) -> None:
+    """The other half of the fix, and the half a fabrication-only reply cannot
+    reach: a reply that carries a GENUINE command AND then invents its result.
+
+    That is the measured shape — ``conan-19750`` emitted 8 fenced blocks in one
+    11,890-character reply. Two things must hold, and only one of them is about
+    the parser: the fabricated tail must not be EXECUTED (the old greedy regex
+    ran it as shell), and the ASSISTANT turn written into history must be the
+    parsed command alone. Echoing ``reply`` here would put the invented result
+    back in the context wearing the model's own role, which is exactly how the
+    arm came to trust it.
+    """
+    reply = (
+        "```bash\n"
+        "printf 'def widget():\\n    return 2\\n' > widget.py\n"
+        "```\n"
+        "Exit 0. Output:\n"
+        "1 passed\n"
+        "```bash\n"
+        "touch SHOULD_NEVER_BE_EXECUTED\n"
+        "```\n"
+    )
+    model, result, run_dir = bare_run([reply, "DONE"])
+    assert not (run_dir / "repo" / "SHOULD_NEVER_BE_EXECUTED").exists(), (
+        "the fabricated tail was executed as real shell"
+    )
+    assistant_turns = [
+        m["content"]
+        for conv in model.seen
+        for m in conv
+        if m["role"] == "assistant"
+    ]
+    assert assistant_turns, "the executed command was never echoed into history"
+    for turn in assistant_turns:
+        assert "Exit 0. Output:" not in turn, (
+            "the RAW reply reached history under the assistant role — only the "
+            "parsed command may be echoed"
+        )
+        assert "SHOULD_NEVER_BE_EXECUTED" not in turn
+    # And the real command did land: one production change, one observation.
+    assert result["diff_bytes"] > 0
+    assert result["files_changed"] == ["widget.py"]
+    logged = [
+        json.loads(line)
+        for line in (run_dir / "bare-commands.ndjson")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    ran = [r for r in logged if "command" in r]
+    assert len(ran) == 1, f"expected exactly one executed command, got {ran}"
+    assert "widget.py" in ran[0]["command"]
+    assert "output" in ran[0], "the command log must record what the model saw"
 
 
 def test_done_with_an_empty_diff_does_not_terminate_the_loop(
@@ -612,6 +674,51 @@ def test_the_bare_row_reports_a_real_model_id(bare_run: Any) -> None:
     assert result["model"].startswith(("azure/", "azure_ai/", "deepseek/"))
     assert result["models_used"] == []  # no ledger rows: the stub writes none
     assert result["model_escalated_calls"] == 0
+
+
+def test_the_bare_row_reports_the_weights_its_own_ledger_recorded(
+    bare_run: Any, A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    """The mix must come from THIS run's ledger — nothing above proves that.
+
+    ``models_used == []`` passes just as happily when ``run_bare`` hands
+    ``_model_mix`` the wrong directory, which is the ``proxy != real`` shape
+    that hid the factory's hard-tier escalation in the first place. So have the
+    scripted model write the ledger row a real ``text_run`` would write, on a
+    DIFFERENT model than the nominal route, and require the row to notice.
+    """
+    events = tmp_path / "runs" / str(_INST["instance_id"]) / "bare" / "state" / "events"
+
+    class _LedgerWritingModel(_ScriptedModel):
+        def __call__(self, **kwargs: Any) -> str:
+            events.mkdir(parents=True, exist_ok=True)
+            model = "azure/deepseek-v4-pro" if self.calls == 0 else "azure/gpt-5.3-codex"
+            with (events / "runs.ndjson").open("a", encoding="utf-8") as fh:
+                fh.write(
+                    json.dumps(
+                        {
+                            "event": "run",
+                            "persona": "dev",
+                            "model": model,
+                            "model_tier": "standard" if self.calls == 0 else "hard",
+                            "cost_usd": 0.02,
+                        }
+                    )
+                    + "\n"
+                )
+            return super().__call__(**kwargs)
+
+    _m, result, _rd = bare_run(
+        [], model=_LedgerWritingModel([_WRITE_FIX_FENCED, "DONE"])
+    )
+
+    assert result["models_used"] == ["azure/deepseek-v4-pro", "azure/gpt-5.3-codex"]
+    assert result["model_escalated_calls"] == 1, (
+        "a call on weights other than the nominal route must be counted"
+    )
+    tiers = {c["model_tier"] for c in result["model_calls"]}
+    assert tiers == {"standard", "hard"}, "the mix must be per-tier, not per-arm"
+    assert all(c["persona"] == "dev" for c in result["model_calls"])
 
 
 # --------------------------------------------------------------------------- #
