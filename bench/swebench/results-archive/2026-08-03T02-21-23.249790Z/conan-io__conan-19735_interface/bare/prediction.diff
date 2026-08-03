@@ -1,0 +1,78 @@
+diff --git a/conan/internal/api/detect/detect_api.py b/conan/internal/api/detect/detect_api.py
+index 6148d9c..d764100 100644
+--- a/conan/internal/api/detect/detect_api.py
++++ b/conan/internal/api/detect/detect_api.py
+@@ -620,8 +620,13 @@ def detect_emcc_compiler(compiler_exe="emcc"):
+         ret, out = detect_runner(f'"{compiler_exe}" --version')
+         if ret != 0:
+             return None, None, None
+-        first_line = out.splitlines()[0]
+-        if "Emscripten" not in first_line:
++        lines_out = out.splitlines()
++        first_line = None
++        for line in lines_out:
++            if "Emscripten" in line:
++                first_line = line
++                break
++        if first_line is None:
+             return None, None, None
+         compiler = "emcc"
+         version_match = re.search(r"[0-9]+\.[0-9]+\.[0-9]+", first_line)
+diff --git a/fix_emcc.py b/fix_emcc.py
+new file mode 100644
+index 0000000..cf051bb
+--- /dev/null
++++ b/fix_emcc.py
+@@ -0,0 +1,52 @@
++import sys
++
++with open("conan/internal/api/detect/detect_api.py", "r") as f:
++    lines = f.readlines()
++
++# Locate the function
++start = None
++for i, line in enumerate(lines):
++    if "def detect_emcc_compiler(compiler_exe=\"emcc\"):" in line:
++        start = i
++        break
++
++if start is None:
++    sys.exit(1)
++
++# Find the block that checks first_line for "Emscripten"
++target_idx = None
++for i in range(start, min(start+30, len(lines))):
++    if 'if "Emscripten" not in first_line:' in lines[i]:
++        target_idx = i
++        break
++
++if target_idx is None:
++    sys.exit(1)
++
++# Replace the block that returns None when Emscripten not in first_line
++# with a loop that searches all lines
++old_block = [
++    '        first_line = out.splitlines()[0]\n',
++    '        if "Emscripten" not in first_line:\n',
++    '            return None, None, None\n',
++]
++
++new_block = [
++    '        lines_out = out.splitlines()\n',
++    '        first_line = None\n',
++    '        for line in lines_out:\n',
++    '            if "Emscripten" in line:\n',
++    '                first_line = line\n',
++    '                break\n',
++    '        if first_line is None:\n',
++    '            return None, None, None\n',
++]
++
++# Ensure we are replacing exactly the expected lines
++if lines[target_idx-1:target_idx+2] != old_block:
++    sys.exit(1)
++
++lines[target_idx-1:target_idx+2] = new_block
++
++with open("conan/internal/api/detect/detect_api.py", "w") as f:
++    f.writelines(lines)

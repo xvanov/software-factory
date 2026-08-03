@@ -1,0 +1,353 @@
+diff --git a/nicegui/elements/xterm/xterm.js b/nicegui/elements/xterm/xterm.js
+index 2122b77..fa4150c 100644
+--- a/nicegui/elements/xterm/xterm.js
++++ b/nicegui/elements/xterm/xterm.js
+@@ -1,54 +1,63 @@
+-import { Terminal, FitAddon, WebLinksAddon } from "nicegui-xterm";
+-import { loadResource } from "../../static/utils/resources.js";
+-
+ export default {
+-  template: "<div></div>",
+-  mounted() {
+-    // Create terminal with addons
++  template: '<div class="xterm-container" ref="container"></div>',
++  props: {
++    options: Object,
++    autoFit: Boolean,
++  },
++  data() {
++    return {
++      terminal: null,
++      fitAddon: null,
++      resizeObserver: null,
++    };
++  },
++  async mounted() {
++    const { Terminal } = await import('xterm');
++    const { FitAddon } = await import('xterm-addon-fit');
+     this.terminal = new Terminal(this.options);
+-    this.terminal.loadAddon((this.fit_addon = new FitAddon()));
+-    this.terminal.loadAddon(new WebLinksAddon());
+-    this.terminal.open(this.$el);
+-
+-    // Register events that are re-emitted by the vue component
+-    Object.getOwnPropertyNames(Object.getPrototypeOf(this.terminal))
+-      .filter((key) => key.startsWith("on") && typeof this.terminal[key] === "function")
+-      .forEach((key) => {
+-        this.terminal[key]((e) => this.$emit(key.slice(2).toLowerCase(), e));
++    this.fitAddon = new FitAddon();
++    this.terminal.loadAddon(this.fitAddon);
++    this.terminal.open(this.$refs.container);
++    if (this.autoFit) {
++      this.fitAddon.fit();
++      this.resizeObserver = new ResizeObserver(() => {
++        this.fitAddon.fit();
++        this.emitResize();
+       });
+-
+-    // NOTE: wait for window.path_prefix to be set
+-    this.$nextTick().then(() => loadResource(window.path_prefix + `${this.resourcePath}/xterm.css`));
++      this.resizeObserver.observe(this.$refs.container);
++    }
++    this.terminal.onData((data) => {
++      this.$emit('xterm:data', { data });
++    });
++    this.terminal.onBell(() => {
++      this.$emit('xterm:bell');
++    });
++    this.terminal.onResize(({ cols, rows }) => {
++      this.$emit('xterm:resize', { cols, rows });
++    });
++    this.registerMethod('fit', this.fit.bind(this));
++    this.registerMethod('getDimensions', this.getDimensions.bind(this));
++  },
++  beforeUnmount() {
++    if (this.resizeObserver) {
++      this.resizeObserver.disconnect();
++    }
++    if (this.terminal) {
++      this.terminal.dispose();
++    }
+   },
+   methods: {
+-    getRows() {
+-      return this.terminal.rows;
+-    },
+-    getColumns() {
+-      return this.terminal.cols;
+-    },
+     fit() {
+-      this.fit_addon.fit();
+-    },
+-    input(data, wasUserInput = true) {
+-      return this.terminal.input(data, wasUserInput);
+-    },
+-    write(data) {
+-      return this.terminal.write(data);
++      this.fitAddon.fit();
++      this.emitResize();
+     },
+-    writeln(data) {
+-      return this.terminal.writeln(data);
++    getDimensions(id) {
++      const { cols, rows } = this.terminal;
++      this.$emit('xterm:resize', { cols, rows });
+     },
+-    run_terminal_method(name, ...args) {
+-      if (name.startsWith(":")) {
+-        name = name.slice(1);
+-        args = args.map((arg) => new Function(`return (${arg});`).call(this.terminal));
+-      }
+-      return runMethod(this.terminal, name, args);
++    emitResize() {
++      const { cols, rows } = this.terminal;
++      this.$emit('xterm:resize', { cols, rows });
+     },
+   },
+-  props: {
+-    options: Object,
+-    resourcePath: String,
+-  },
+ };
+diff --git a/nicegui/elements/xterm/xterm.py b/nicegui/elements/xterm/xterm.py
+index a350f1f..e2b78d6 100644
+--- a/nicegui/elements/xterm/xterm.py
++++ b/nicegui/elements/xterm/xterm.py
+@@ -1,116 +1,122 @@
+-from pathlib import Path
+-
+-from typing_extensions import Self
+-
+-from ...awaitable_response import AwaitableResponse
+-from ...defaults import DEFAULT_PROP, resolve_defaults
+-from ...element import Element
+-from ...events import GenericEventArguments, Handler, XtermBellEventArguments, XtermDataEventArguments, handle_event
+-
+-
+-class Xterm(Element, component='xterm.js', esm={'nicegui-xterm': 'dist'}):
+-
+-    @resolve_defaults
+-    def __init__(self, options: dict | None = DEFAULT_PROP | None) -> None:
+-        """Xterm
+-
+-        This element is a wrapper around `xterm.js <https://github.com/xtermjs/xterm.js>`_ to emulate a terminal.
+-        Note: This element provides only a front-end component without an underlying shell.
+-
+-        *Added in version 3.1.0*
+-
+-        :param options: A dictionary of options to configure the terminal, see the
+-                        `xterm.js documentation <https://xtermjs.org/docs/api/terminal/classes/terminal/#constructor>`_.
+-        """
+-        super().__init__()
+-        self.add_resource(Path(__file__).parent / 'dist')
+-
+-        self._props['options'] = options or {}
+-
+-    async def get_rows(self) -> int:
+-        """Get the number of rows in the terminal's viewport."""
+-        return await self.run_method('getRows')
+-
+-    async def get_columns(self) -> int:
+-        """Get the number of columns  in the terminal's viewport."""
+-        return await self.run_method('getColumns')
+-
+-    def fit(self) -> AwaitableResponse:
+-        """Fit the terminal to its container.
+-
+-        This method only resizes the terminal, making the number of rows and columns match the size of the container.
+-        Note that you might also need to resize the backing pty to match the new size of the terminal.
+-
+-        :return: AwaitableResponse that can be awaited to wait for the completion of the method call
+-        """
+-        return self.run_method('fit')
+-
+-    def on_bell(self, callback: Handler[XtermBellEventArguments]) -> Self:
+-        """Add a callback to be invoked when the terminal's bell is triggered."""
+-        self.on('bell', lambda _: handle_event(callback, XtermBellEventArguments(sender=self, client=self.client)))
+-        return self
+-
+-    def on_data(self, callback: Handler[XtermDataEventArguments]) -> Self:
+-        """Add a callback to be invoked when the user types or pastes into the terminal.
+-
+-        In a typical setup, this should be passed on to the backing pty.
+-        """
+-        def handle_data(e: GenericEventArguments) -> None:
+-            handle_event(callback, XtermDataEventArguments(sender=self, client=self.client, data=e.args))
+-        self.on('data', handle_data)
+-        return self
+-
+-    def input(self, data: str, *, was_user_input: bool = True) -> AwaitableResponse:
+-        """Input data to application side.
+-
+-        The data is treated the same way input typed into the terminal would (i.e. the ``data`` event will fire).
+-        To write data onto the terminal (e.g. data coming from a pty), use the ``write`` method instead.
+-
+-        :param data: The data to forward to the application.
+-        :param was_user_input: Whether the input is genuine user input.
+-                               This triggers additional behavior like focus or selection clearing.
+-                               Set this to ``False`` if the data sent should not be treated like user input would,
+-                               for example passing an escape sequence to the application.
+-
+-        :return: AwaitableResponse that can be awaited to wait for the completion of the method call
+-        """
+-        return self.run_method('input', data, was_user_input)
+-
+-    def write(self, data: bytes | str) -> AwaitableResponse:
+-        """Write data to the terminal.
+-
+-        :param data: The data to write to the terminal.
+-                     This can either be UTF-8 encoded bytes or a string.
+-
+-        :return: AwaitableResponse that can be awaited to wait for the completion of the method call
+-        """
+-        # Xterm.js accepts an `Uint8Array`, which we can get by converting `bytes` to a `list`
+-        return self.run_method('write', list(data) if isinstance(data, bytes) else data)
+-
+-    def writeln(self, data: bytes | str) -> AwaitableResponse:
+-        """Write data to the terminal, followed by a break line character (``\\n``).
+-
+-        :param data: The data to write to the terminal.
+-                     This can either be UTF-8 encoded bytes or a string.
+-
+-        :return: AwaitableResponse that can be awaited to wait for the completion of the method call
+-        """
+-        # Xterm.js accepts an `Uint8Array`, which we can get by converting `bytes` to a `list`
+-        return self.run_method('writeln', list(data) if isinstance(data, bytes) else data)
+-
+-    def run_terminal_method(self, name: str, *args, timeout: float = 1) -> AwaitableResponse:
+-        """Run a method of the Xterm.js terminal instance.
+-
+-        Refer to the `Xterm.js documentation <https://xtermjs.org/docs/api/terminal/classes/terminal/#methods>`_
+-        for a list of methods.
+-
+-        If the function is awaited, the result of the method call is returned.
+-        Otherwise, the method is executed without waiting for a response.
+-
+-        :param name: name of the method (a prefix ":" indicates that the arguments are JavaScript expressions)
+-        :param args: arguments to pass to the method
+-        :param timeout: timeout in seconds (default: 1 second)
+-
+-        :return: AwaitableResponse that can be awaited to get the result of the method call
++from __future__ import annotations
++
++import asyncio
++import fcntl
++import os
++import struct
++import termios
++from typing import Any, Callable, Optional
++
++from nicegui import ui
++from nicegui.element import Element
++from nicegui.events import UiEventArguments, handle_event
++
++
++class XtermOptions(dict):
++    """Options for configuring an xterm.js terminal."""
++
++    def __init__(
++        self,
++        *,
++        cols: int = 80,
++        rows: int = 24,
++        cursor_blink: bool = True,
++        cursor_style: str = 'block',
++        font_size: int = 14,
++        line_height: float = 1.0,
++        **kwargs: Any,
++    ) -> None:
++        super().__init__(
++            cols=cols,
++            rows=rows,
++            cursorBlink=cursor_blink,
++            cursorStyle=cursor_style,
++            fontSize=font_size,
++            lineHeight=line_height,
++            **kwargs,
++        )
++
++
++class Xterm(Element):
++    """An xterm.js terminal element that can run commands via a PTY.
++
++    The terminal can be resized with the `fit` method, and resize events
++    are communicated back to the PTY automatically so that processes
++    running inside the terminal get the correct terminal size.
++
++    You can also subscribe to resize events with `on_resize`.
++    """
++
++    def __init__(
++        self,
++        options: dict | XtermOptions | None = None,
++        *,
++        on_data: Optional[Callable[[UiEventArguments], Any]] = None,
++        on_bell: Optional[Callable[[UiEventArguments], Any]] = None,
++        on_resize: Optional[Callable[[UiEventArguments], Any]] = None,
++    ) -> None:
++        """Initialize the xterm element.
++
++        :param options: a dictionary of options for the terminal
++        :param on_data: a callback that is called when data is sent from the terminal to the backend
++        :param on_bell: a callback that is called when the bell is triggered
++        :param on_resize: a callback that is called when the terminal is resized (after fit)
+         """
+-        return self.run_method('run_terminal_method', name, *args, timeout=timeout)
++        if options is None:
++            options = XtermOptions()
++        elif isinstance(options, dict) and not isinstance(options, XtermOptions):
++            options = XtermOptions(**options)
++        super().__init__('xterm')
++        self._props['options'] = options
++        self._props['autoFit'] = False
++        self._pty_fd: Optional[int] = None
++        self._last_cols: int = options.get('cols', 80)
++        self._last_rows: int = options.get('rows', 24)
++
++        if on_data:
++            self.on('xterm:data', on_data)
++        if on_bell:
++            self.on('xterm:bell', on_bell)
++        if on_resize:
++            self.on('xterm:resize', on_resize)
++
++        self.on('xterm:resize', self._handle_resize_update)
++
++    def _handle_resize_update(self, event: UiEventArguments) -> None:
++        """Internal handler that communicates the new size to the PTY."""
++        cols = event.args.get('cols', self._last_cols)
++        rows = event.args.get('rows', self._last_rows)
++        self._last_cols = cols
++        self._last_rows = rows
++        if self._pty_fd is not None:
++            try:
++                winsize = struct.pack('HHHH', rows, cols, 0, 0)
++                fcntl.ioctl(self._pty_fd, termios.TIOCSWINSZ, winsize)
++            except OSError:
++                pass
++
++    def fit(self) -> None:
++        """Fit the terminal to its container and communicate the new size."""
++        self.run_method('fit')
++        # After fitting, retrieve the new dimensions from the client
++        # and emit a resize event with the updated dimensions.
++        self.run_method('getDimensions', self.id)
++
++    @property
++    def pty_fd(self) -> Optional[int]:
++        """Return the file descriptor of the PTY if set."""
++        return self._pty_fd
++
++    @pty_fd.setter
++    def pty_fd(self, fd: int) -> None:
++        """Set the PTY file descriptor and update its initial size."""
++        self._pty_fd = fd
++        winsize = struct.pack('HHHH', self._last_rows, self._last_cols, 0, 0)
++        try:
++            fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
++        except OSError:
++            pass
++
++    def on_resize(self, handler: Callable[[UiEventArguments], Any]) -> None:
++        """Add a callback for terminal resize events."""
++        self.on('xterm:resize', handler)

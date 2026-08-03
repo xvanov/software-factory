@@ -1,0 +1,68 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-03T02:00:08.781109+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory 1-2.ndjson:128 (ObservationEvent) references the harness's oracle/manifest paths [\"own run's oracle-bearing subdir runs/\u2026/bare\"] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T01:48:43.650631+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2163669,
+      "tokens_out": 23405,
+      "cached_input_tokens": 1837568,
+      "cost_usd": 1.014864528,
+      "duration_s": 277.681,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:48:51.634957+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 10373,
+      "tokens_out": 785,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.031947500000000004,
+      "duration_s": 6.799,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:59:53.536733+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 3233034,
+      "tokens_out": 24737,
+      "cached_input_tokens": 2158080,
+      "cost_usd": 2.5168548100000008,
+      "duration_s": 661.182,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:59:56.465108+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 13243,
+      "tokens_out": 87,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.028652500000000004,
+      "duration_s": 1.827,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 3.5923,
+  "ledger_tokens_in": 5420319,
+  "ledger_tokens_out": 49014,
+  "result_cost_usd": 3.5923
+}

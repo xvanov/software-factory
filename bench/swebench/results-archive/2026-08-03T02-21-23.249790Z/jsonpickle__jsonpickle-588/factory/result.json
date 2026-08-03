@@ -1,0 +1,59 @@
+{
+  "arm": "factory",
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "repo": "jsonpickle/jsonpickle",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "problem_statement_sha256": "e7d6a3edc32ba6f4ef4ebc10a28b9b9118eda5058b8cc3450bb5e4940970d124",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T01:47:47.066215+00:00",
+  "wall_clock_s": 2078.4,
+  "final_state": "reviewer_done",
+  "dev_retries": 1,
+  "reviewer_cycles": 0,
+  "tokens_in": 7114363,
+  "tokens_out": 87747,
+  "cached_input_tokens": 5452288,
+  "cost_usd": 4.5515,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.2,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/object_test.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> dev_retry",
+    "dev: dev_retry -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "jsonpickle/pickler.py"
+  ],
+  "test_files_stripped": [
+    "tests/object_test.py"
+  ],
+  "diff_bytes": 3074,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "jsonpickle__jsonpickle-588",
+    "image": "swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588@sha256:0eae843824198c5cfb0b6bb25b5c9b50c1b415ea7295867a314a3a8ce65c7fb4",
+    "graded_at": "2026-08-03T01:47:47.633242+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 82,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 9.5,
+    "log_tail": "Checking patch tests/object_test.py...\nApplied patch tests/object_test.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_6dcbcb1fcad41758: OK (red as expected)\nChecking patch jsonpickle/pickler.py...\nApplied patch jsonpickle/pickler.py cleanly.\nSWEBENCH_APPLY_6dcbcb1fcad41758: OK\n.                                                                        [100%]\n1 passed in 0.04s\n........................................................................ [ 87%]\n..........                                                               [100%]\n82 passed in 0.11s\nSWEBENCH_RESULT_6dcbcb1fcad41758: RESOLVED\n"
+  }
+}

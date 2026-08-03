@@ -1,0 +1,27 @@
+{
+  "instance_id": "harumiweb__exstruct-113",
+  "arm": "factory",
+  "audited_at": "2026-08-03T00:50:56.848208+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T00:50:54.787418+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2781766,
+      "tokens_out": 26497,
+      "cached_input_tokens": 1582336,
+      "cost_usd": 2.671139506,
+      "duration_s": 1097.16,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.6711,
+  "ledger_tokens_in": 2781766,
+  "ledger_tokens_out": 26497,
+  "result_cost_usd": 2.6711
+}

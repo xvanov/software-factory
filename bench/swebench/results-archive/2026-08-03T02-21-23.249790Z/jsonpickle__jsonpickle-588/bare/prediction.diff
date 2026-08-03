@@ -1,0 +1,13 @@
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..a511d12 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -708,7 +708,7 @@ class Pickler:
+                 data = str(obj)  # type: ignore[assignment]
+             return data
+ 
+-        if util._is_dictionary_subclass(obj):
++        if type(obj) is dict:
+             self._flatten_dict_obj(obj, data, exclude=exclude)
+             return data
+ 

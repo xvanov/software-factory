@@ -1,0 +1,40 @@
+{
+  "instance_id": "ucfopen__canvasapi-716",
+  "arm": "factory",
+  "audited_at": "2026-08-03T00:48:35.134781+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T00:48:26.355771+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 992339,
+      "tokens_out": 8944,
+      "cached_input_tokens": 701696,
+      "cost_usd": 0.708169566,
+      "duration_s": 266.36,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T00:48:28.969841+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 4201,
+      "tokens_out": 87,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.0060475,
+      "duration_s": 1.556,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.7142,
+  "ledger_tokens_in": 996540,
+  "ledger_tokens_out": 9031,
+  "result_cost_usd": 0.7142
+}

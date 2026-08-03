@@ -1,0 +1,65 @@
+{
+  "arm": "bare",
+  "instance_id": "alibaba__opensandbox-816",
+  "repo": "alibaba/OpenSandbox",
+  "base_commit": "fb78091f947f62ae2c71a372af42425a764aacee",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-02T23:33:50.213165+00:00",
+  "wall_clock_s": 16.8,
+  "steps_used": 3,
+  "step_cap": 16,
+  "tokens_in": 2835,
+  "tokens_out": 953,
+  "cost_usd": 0.0087,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 3,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "sandboxd/utils/security.py"
+  ],
+  "test_files_stripped": [],
+  "diff_bytes": 2244,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "cat > sandboxd/utils/security.py <<'EOF'\nimport os\nfrom sandboxd.exceptions import SecurityValidationError\n\ndef ensure_valid_host_path(allowed_host_paths, host_path):\n    \"\"\"Validate a host path for bind mounts against the allowed path whitelist.\n\n    Checks:\n      - The resolved real path (all syml",
+      "exit": 1
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "mkdir -p sandboxd/utils && cat > sandboxd/utils/security.py <<'EOF'\nimport os\nfrom sandboxd.exceptions import SecurityValidationError\n\ndef ensure_valid_host_path(allowed_host_paths, host_path):\n    \"\"\"Validate a host path for bind mounts against the allowed path whitelist.\n\n    Checks:\n      - The r",
+      "exit": 0
+    },
+    {
+      "step": 2,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "alibaba__opensandbox-816",
+    "image": "swerebench/sweb.eval.x86_64.alibaba_1776_opensandbox-816@sha256:eb2223e2f7957ad3f8bf3a69946fed4ca7b9abc309ec9c14f388786785d02ea0",
+    "graded_at": "2026-08-02T23:33:50.577761+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 108,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "server/opensandbox_server/services/docker.py"
+    ],
+    "touched_files": [
+      "sandboxd/utils/security.py"
+    ],
+    "gold_files_overlap": [],
+    "oracle_resolved": false,
+    "outcome": "wrong_place",
+    "exit_code": 0,
+    "grade_wall_s": 15.6,
+    "log_tail": "dSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class PaginationInfo(BaseModel):\n\nserver/opensandbox_server/api/schema.py:580\n  /testbed/server/opensandbox_server/api/schema.py:580: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class RenewSandboxExpirationRequest(BaseModel):\n\nserver/opensandbox_server/api/schema.py:594\n  /testbed/server/opensandbox_server/api/schema.py:594: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class RenewSandboxExpirationResponse(BaseModel):\n\nserver/opensandbox_server/api/schema.py:612\n  /testbed/server/opensandbox_server/api/schema.py:612: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class Endpoint(BaseModel):\n\nserver/opensandbox_server/api/schema.py:652\n  /testbed/server/opensandbox_server/api/schema.py:652: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class PoolCapacitySpec(BaseModel):\n\nserver/opensandbox_server/api/schema.py:685\n  /testbed/server/opensandbox_server/api/schema.py:685: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class CreatePoolRequest(BaseModel):\n\nserver/opensandbox_server/api/schema.py:715\n  /testbed/server/opensandbox_server/api/schema.py:715: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class UpdatePoolRequest(BaseModel):\n\nserver/opensandbox_server/api/schema.py:742\n  /testbed/server/opensandbox_server/api/schema.py:742: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class PoolResponse(BaseModel):\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n108 passed, 21 warnings in 0.20s\nSWEBENCH_RESULT_6d986adc41d08a6a: UNRESOLVED\n"
+  }
+}

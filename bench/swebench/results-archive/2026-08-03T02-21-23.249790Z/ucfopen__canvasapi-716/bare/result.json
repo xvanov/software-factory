@@ -1,0 +1,46 @@
+{
+  "arm": "bare",
+  "instance_id": "ucfopen__canvasapi-716",
+  "repo": "ucfopen/canvasapi",
+  "base_commit": "77ff5b248603db987e57f11a104767d4b790265a",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-02T23:34:28.641968+00:00",
+  "wall_clock_s": 6.7,
+  "steps_used": 2,
+  "step_cap": 16,
+  "tokens_in": 1221,
+  "tokens_out": 376,
+  "cost_usd": 0.0038,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 2,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [],
+  "test_files_stripped": [],
+  "diff_bytes": 0,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "python - <<'EOF'\nimport re\n\nwith open('canvasapi/util.py', 'r') as f:\n    content = f.read()\n\n# Fix obj_or_str to handle string input like obj_or_id handles int input\nold_pattern = r'def obj_or_str\\(obj, attr_name, lookup_attr_name=\"name\"\\):\\s*\"\"\"\\s*Get the string value from an object or return the ",
+      "exit": 0
+    },
+    {
+      "step": 1,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "ucfopen__canvasapi-716",
+    "image": "swerebench/sweb.eval.x86_64.ucfopen_1776_canvasapi-716@sha256:6eb2cb4155cf4e7a75b451a3c3f7edcc0966d34a945ed99e7d66ef588c9c7e85",
+    "graded_at": "2026-08-02T23:34:29.092025+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 60,
+    "empty_patch": true,
+    "oracle_resolved": false,
+    "outcome": "empty_patch",
+    "log_tail": ""
+  }
+}

@@ -1,0 +1,64 @@
+diff --git a/fix_function.py b/fix_function.py
+new file mode 100644
+index 0000000..fa8b8ad
+--- /dev/null
++++ b/fix_function.py
+@@ -0,0 +1,58 @@
++import os
++import re
++
++with open('keras/src/ops/function.py', 'r') as f:
++    content = f.read()
++
++# We need to replace the operations property to filter operations
++# that are only ancestors of the outputs. Currently it returns self._operations[:]
++# but self._operations may include ops from input construction.
++# Instead, we should compute operations reachable from outputs on the fly,
++# or recompute during init using a proper subgraph traversal.
++
++# Let's look at how self._operations is populated.
++# Based on the new file (second version), it uses map_graph.
++
++# Let's find the operations property definition:
++old_property = """    @property
++    def operations(self):
++        return self._operations[:]"""
++
++# We'll replace it with a version that filters operations to only those reachable from outputs.
++new_property = """    @property
++    def operations(self):
++        # Return only operations that are ancestors of the outputs,
++        # excluding operations that are only used to compute the inputs.
++        if not hasattr(self, '_cached_output_operations'):
++            # Compute reachable operations from outputs
++            reachable_ids = set()
++
++            def collect_reachable(x):
++                op = getattr(x, 'operation', None)
++                if op is not None:
++                    if id(op) not in reachable_ids:
++                        reachable_ids.add(id(op))
++                        # Recurse into inputs of the operation
++                        for inp in tree.flatten(getattr(op, 'input', [])):
++                            if hasattr(inp, 'operation'):
++                                collect_reachable(inp)
++
++            for output in self._outputs:
++                collect_reachable(output)
++
++            self._cached_output_operations = [
++                op for op in self._operations if id(op) in reachable_ids
++            ]
++        return self._cached_output_operations[:]"""
++
++# But wait, the operations property should return Operation instances that are
++# used in the function's computation from inputs to outputs. The fix in the PR
++# is to ensure that operations used to compute the inputs are not included.
++# The simplest fix: recompute operations using map_graph with the actual inputs.
++
++# Actually, looking at the new code (which uses map_graph), the operations
++# already include only those between inputs and outputs. The problem described
++# in the issue is for the OLD code (which used traverse_from_root).
++# The new code uses map_graph. Let's check if the fix is already in place.
++
++# Let's check the current file content to see if map_graph is used.

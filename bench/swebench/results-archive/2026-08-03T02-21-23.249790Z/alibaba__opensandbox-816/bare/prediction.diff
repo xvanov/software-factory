@@ -1,0 +1,57 @@
+diff --git a/sandboxd/utils/security.py b/sandboxd/utils/security.py
+new file mode 100644
+index 0000000..aae49be
+--- /dev/null
++++ b/sandboxd/utils/security.py
+@@ -0,0 +1,51 @@
++import os
++from sandboxd.exceptions import SecurityValidationError
++
++def ensure_valid_host_path(allowed_host_paths, host_path):
++    """Validate a host path for bind mounts against the allowed path whitelist.
++
++    Checks:
++      - The resolved real path (all symlinks followed) starts with an allowed prefix.
++      - No intermediate component of the given path is a symbolic link.
++      - The path must be absolute.
++
++    Raises SecurityValidationError if any check fails.
++    """
++    if not allowed_host_paths:
++        raise SecurityValidationError("No allowed host paths configured")
++
++    if not os.path.isabs(host_path):
++        raise SecurityValidationError(f"Host path must be absolute: {host_path}")
++
++    # Reject if any intermediate path component is a symlink (even if it
++    # ultimately sits inside an allowed prefix).  We need to check the path as
++    # supplied by the user, component by component.
++    check_path = host_path
++    while True:
++        if os.path.islink(check_path):
++            raise SecurityValidationError(
++                f"Symlinks are not permitted in host paths: {host_path} "
++                f"(symlink at {check_path})"
++            )
++        parent = os.path.dirname(check_path)
++        if parent == check_path:
++            break
++        check_path = parent
++
++    # Resolve all symlinks and normalize the *real* path for prefix matching.
++    try:
++        real_path = os.path.realpath(host_path, strict=True)
++    except OSError as e:
++        raise SecurityValidationError(
++            f"Cannot resolve real path for {host_path}: {e}"
++        ) from e
++
++    # The final resolved path must be under one of the allowed prefixes.
++    normalized = os.path.normpath(real_path)
++    for allowed in allowed_host_paths:
++        allowed_norm = os.path.normpath(allowed)
++        if normalized == allowed_norm or normalized.startswith(allowed_norm + os.sep):
++            return
++    raise SecurityValidationError(
++        f"Host path {host_path} (resolved to {real_path}) is not in allowed paths"
++    )

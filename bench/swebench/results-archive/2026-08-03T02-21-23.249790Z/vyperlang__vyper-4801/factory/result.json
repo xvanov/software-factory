@@ -1,0 +1,58 @@
+{
+  "arm": "factory",
+  "instance_id": "vyperlang__vyper-4801",
+  "repo": "vyperlang/vyper",
+  "base_commit": "7d53bab7f8cce2a5fb037052663d85596d7eb2d1",
+  "problem_statement_sha256": "84f2becd4c3b96c244bb5420904e22abeb95c92c7b0836d3c4761a016e7130f7",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T01:48:17.691603+00:00",
+  "wall_clock_s": 1246.8,
+  "final_state": "reviewer_done",
+  "dev_retries": 1,
+  "reviewer_cycles": 0,
+  "tokens_in": 4735865,
+  "tokens_out": 39474,
+  "cached_input_tokens": 4236800,
+  "cost_usd": 2.0561,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 3.6,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/unit/compiler/venom"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "vyper/venom/memory_allocator.py"
+  ],
+  "test_files_stripped": [
+    "tests/unit/compiler/venom/test_memory_allocator.py"
+  ],
+  "diff_bytes": 867,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "vyperlang__vyper-4801",
+    "image": "swerebench/sweb.eval.x86_64.vyperlang_1776_vyper-4801@sha256:dc4b97c064a4bb67707e45875ccc0556aba2facc7d024a0172b9e53e3a3361ff",
+    "graded_at": "2026-08-03T01:48:18.237740+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 1,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 36.6,
+    "log_tail": "Checking patch tests/functional/codegen/features/test_immutable_allocator_overlap.py...\nChecking patch tests/unit/compiler/venom/test_memory_allocator.py...\nApplied patch tests/functional/codegen/features/test_immutable_allocator_overlap.py cleanly.\nApplied patch tests/unit/compiler/venom/test_memory_allocator.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_017e2106de8d6e6c: OK (red as expected)\nChecking patch vyper/venom/memory_allocator.py...\nApplied patch vyper/venom/memory_allocator.py cleanly.\nSWEBENCH_APPLY_017e2106de8d6e6c: OK\nbringing up nodes...\nbringing up nodes...\n\n.                                                                        [100%]\n1 passed in 7.48s\nbringing up nodes...\nbringing up nodes...\n\n.                                                                        [100%]\n1 passed in 7.64s\nSWEBENCH_RESULT_017e2106de8d6e6c: RESOLVED\n"
+  }
+}

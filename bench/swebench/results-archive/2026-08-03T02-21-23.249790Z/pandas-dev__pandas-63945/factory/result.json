@@ -1,0 +1,82 @@
+{
+  "arm": "factory",
+  "instance_id": "pandas-dev__pandas-63945",
+  "repo": "pandas-dev/pandas",
+  "base_commit": "a4523484f6267501ae0bc240c5baf2108c622373",
+  "problem_statement_sha256": "ab43725b946a02996523ecbb67ecb10857ce2234281d236fe2150fdc9cbad4a6",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T01:16:08.955642+00:00",
+  "wall_clock_s": 1537.2,
+  "final_state": "blocked_tests_need_clarification",
+  "dev_retries": 3,
+  "reviewer_cycles": 0,
+  "tokens_in": 2652887,
+  "tokens_out": 32551,
+  "cached_input_tokens": 2067968,
+  "cost_usd": 1.8112,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 3.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "pandas/tests/groupby/test_categorical.py",
+      "pandas/tests/test_col.py",
+      "pandas/tests/copy_view/test_constructors.py",
+      "pandas/tests/indexing/test_iloc.py",
+      "pandas/tests/tseries/offsets/test_custom_business_day.py",
+      "pandas/tests/strings/test_extract.py",
+      "pandas/tests/strings/test_find_replace.py",
+      "pandas/tests/strings/test_split_partition.py",
+      "pandas/tests/strings/test_strings.py",
+      "pandas/tests/io/json/test_pandas.py",
+      "pandas/tests/indexes/datetimes/test_setops.py",
+      "pandas/tests/series/test_arithmetic.py",
+      "pandas/tests/arrays/test_array.py",
+      "pandas/tests/arrays/test_datetimelike.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> dev_retry",
+    "dev: dev_retry -> blocked_tests_need_clarification"
+  ],
+  "error": null,
+  "factory_says_green": false,
+  "files_changed": [
+    "pandas/core/col.py"
+  ],
+  "test_files_stripped": [
+    "pandas/tests/test_col.py"
+  ],
+  "diff_bytes": 1076,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "pandas-dev__pandas-63945",
+    "image": "swerebench/sweb.eval.x86_64.pandas-dev_1776_pandas-63945@sha256:d61cfb479844bb4dfdc495dffb55c7806502df21e3a452b7969796490436f93a",
+    "graded_at": "2026-08-03T01:16:09.522998+00:00",
+    "fail_to_pass_count": 16215,
+    "pass_to_pass_count": 0,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "doc/source/whatsnew/v3.0.1.rst",
+      "pandas/core/col.py"
+    ],
+    "touched_files": [
+      "pandas/core/col.py"
+    ],
+    "gold_files_overlap": [
+      "pandas/core/col.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 121.0,
+    "log_tail": "ndas_array[m8[ns]]\n0.05s call     pandas/tests/tseries/offsets/test_custom_business_day.py::TestCustomBusinessDay::test_calendar\n0.03s call     pandas/tests/groupby/test_categorical.py::test_more_basic\n0.03s call     pandas/tests/groupby/test_categorical.py::test_datetime\n0.03s call     pandas/tests/groupby/test_categorical.py::test_category_order_reducer[True-False-False-corrwith-False-multi]\n0.03s call     pandas/tests/groupby/test_categorical.py::test_category_order_reducer[True-False-False-corrwith-True-multi]\n0.03s call     pandas/tests/groupby/test_categorical.py::test_category_order_reducer[True-True-False-corrwith-True-multi]\n0.03s call     pandas/tests/groupby/test_categorical.py::test_category_order_reducer[True-True-False-corrwith-False-multi]\n0.02s call     pandas/tests/groupby/test_categorical.py::test_describe_categorical_columns\n0.01s setup    pandas/tests/tseries/offsets/test_custom_business_day.py::TestCustomBusinessDay::test_roundtrip_pickle\n0.01s call     pandas/tests/indexes/datetimes/test_setops.py::TestDatetimeIndexSetOps::test_union[None-Asia/Tokyo]\n0.01s call     pandas/tests/strings/test_strings.py::test_encode_errors_kwarg[string=object]\n0.01s call     pandas/tests/arrays/test_datetimelike.py::TestDatetimeArray::test_take_fill_valid['UTC'-D]\n0.01s call     pandas/tests/groupby/test_categorical.py::test_dataframe_groupby_on_2_categoricals_when_observed_is_false[corrwith-False]\n0.01s call     pandas/tests/groupby/test_categorical.py::test_dataframe_groupby_on_2_categoricals_when_observed_is_false[corrwith-None]\n0.01s call     pandas/tests/groupby/test_categorical.py::test_basic_monotonic\n0.01s call     pandas/tests/groupby/test_categorical.py::test_observed_perf\n0.01s call     pandas/tests/groupby/test_categorical.py::test_apply_use_categorical_name\n0.01s call     pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_convert_dates\n0.01s call     pandas/tests/groupby/test_categorical.py::test_as_index\n0.01s call     pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_v12_compat\n0.01s call     pandas/tests/groupby/test_categorical.py::test_category_order_reducer[True-False-True-corrwith-False-multi]\n0.01s call     pandas/tests/strings/test_strings.py::test_empty_str_methods[string=string[python]]\n0.01s call     pandas/tests/groupby/test_categorical.py::test_category_order_reducer[True-False-True-corrwith-True-multi]\n0.01s call     pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_path\n0.01s call     pandas/tests/groupby/test_categorical.py::test_category_order_reducer[True-True-True-corrwith-True-multi]\n0.01s call     pandas/tests/groupby/test_categorical.py::test_category_order_reducer[True-True-True-corrwith-False-multi]\n=========================== short test summary info ============================\nFAILED pandas/tests/test_col.py::test_col_simple[expr26-expected_values26--(col('a') + 1)]\n1 failed, 16692 passed, 274 skipped, 2 xfailed in 22.96s\nSWEBENCH_RESULT_98c33fc6346bfa10: UNRESOLVED\n"
+  }
+}

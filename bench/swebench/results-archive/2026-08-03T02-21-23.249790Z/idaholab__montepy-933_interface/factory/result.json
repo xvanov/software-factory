@@ -1,0 +1,65 @@
+{
+  "arm": "factory",
+  "instance_id": "idaholab__montepy-933_interface",
+  "repo": "idaholab/MontePy",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "problem_statement_sha256": "18f56a6b2c0dd104befdcf7caf0f58fd82cc82d7dc0c96b05a307b064e3b81f1",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T01:14:34.760236+00:00",
+  "wall_clock_s": 1417.7,
+  "final_state": "reviewer_done",
+  "dev_retries": 1,
+  "reviewer_cycles": 1,
+  "tokens_in": 4193280,
+  "tokens_out": 45129,
+  "cached_input_tokens": 3487616,
+  "cost_usd": 2.4537,
+  "persona_calls": 5,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 3.0,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_universe.py",
+      "tests/test_universe_integration.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "montepy/__init__.py",
+    "montepy/cell.py",
+    "montepy/data_inputs/fill.py",
+    "montepy/data_inputs/universe_input.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_universe.py",
+    "tests/test_universe_integration.py"
+  ],
+  "diff_bytes": 5806,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "idaholab__montepy-933_interface",
+    "image": "swerebench/sweb.eval.x86_64.idaholab_1776_montepy-933_interface@sha256:d79f83f33b0f25749596dd0038adecb80e9b443300200890dca0f6d23488567c",
+    "graded_at": "2026-08-03T01:14:35.423050+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 40,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 8.0,
+    "log_tail": "Checking patch tests/test_universe.py...\nChecking patch tests/test_universe_integration.py...\nApplied patch tests/test_universe.py cleanly.\nApplied patch tests/test_universe_integration.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_ecae21fda4e11fa0: OK (red as expected)\nChecking patch montepy/__init__.py...\nChecking patch montepy/cell.py...\nChecking patch montepy/data_inputs/fill.py...\nChecking patch montepy/data_inputs/universe_input.py...\nApplied patch montepy/__init__.py cleanly.\nApplied patch montepy/cell.py cleanly.\nApplied patch montepy/data_inputs/fill.py cleanly.\nApplied patch montepy/data_inputs/universe_input.py cleanly.\nSWEBENCH_APPLY_ecae21fda4e11fa0: OK\n......                                                                   [100%]\n6 passed in 0.22s\n............................................                             [100%]\n44 passed in 0.92s\nSWEBENCH_RESULT_ecae21fda4e11fa0: RESOLVED\n"
+  }
+}
