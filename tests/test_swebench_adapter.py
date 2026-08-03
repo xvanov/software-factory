@@ -3936,3 +3936,116 @@ def test_cli_claude_arm_defaults_to_the_turn_cap(
     )
     A.main()
     assert seen["factory_steps"] == 16
+
+
+# --------------------------------------------------------------------------- #
+# the bare arm — an honest baseline: parser, prompt parity, step budget
+# --------------------------------------------------------------------------- #
+
+# The real hallucination shape, measured on the first rebench sweep: the model
+# writes its actual patch command, then fabricates the rest of the session —
+# exit statuses, output, further commands. One run executed 4 fabricated
+# commands (exit 2) while its real patch script was written but never run.
+_HALLUCINATED_REPLY = """\
+BASH
+python - <<'EOF'
+with open('pkg/mod.py') as f:
+    src = f.read()
+open('pkg/mod.py', 'w').write(src.replace('a', 'b'))
+EOF
+Exit 0. Output:
+import collections
+collections.OrderedDict()
+BASH
+python -m pytest tests/
+Exit 2. Output:
+2 failed, 1 passed
+DONE
+"""
+
+
+def test_parser_drops_the_hallucinated_tail(A: Any) -> None:  # noqa: N803
+    """Only the real first command executes; the fabricated transcript
+    (Exit lines, fake output, follow-on BASH blocks) must never reach bash."""
+    cmd = A._parse_bash(_HALLUCINATED_REPLY)
+    assert cmd is not None
+    assert cmd.startswith("python - <<'EOF'")
+    assert cmd.endswith("EOF")
+    assert "Exit 0" not in cmd
+    assert "Output:" not in cmd
+    assert "collections" not in cmd
+    assert "pytest" not in cmd, "the fabricated second command must not execute"
+
+
+def test_parser_takes_only_the_first_bash_block(A: Any) -> None:  # noqa: N803
+    assert A._parse_bash("BASH\nls -la\n\nBASH\necho second\n") == "ls -la"
+
+
+def test_parser_preserves_a_multiline_heredoc(A: Any) -> None:  # noqa: N803
+    reply = "BASH\ncat > f.py <<'EOF'\ndef f():\n    return 1\nEOF"
+    assert A._parse_bash(reply) == "cat > f.py <<'EOF'\ndef f():\n    return 1\nEOF"
+
+
+def test_parser_unwraps_code_fences(A: Any) -> None:  # noqa: N803
+    assert A._parse_bash("```bash\nBASH\nls\n```") == "ls"
+    assert A._parse_bash("BASH\n```bash\nls\n```") == "ls"
+
+
+def test_parser_rejects_replies_without_a_bash_marker(A: Any) -> None:  # noqa: N803
+    assert A._parse_bash("I will now fix the bug.") is None
+    assert A._parse_bash("DONE") is None
+    assert A._parse_bash("BASH\n") is None  # marker with no command
+
+
+def test_bare_task_carries_the_factory_story_test_command_verbatim(A: Any) -> None:  # noqa: N803
+    """Parity: the bare prompt embeds the SAME docker one-liner string the
+    factory story template gets — same source, no privileged wording. A bare
+    arm with no way to run tests measures verification-blindness, not
+    scaffold lift (0 of 19 first-sweep bare runs ever invoked pytest)."""
+    cmd = A.instance_test_command(_INST)
+    bare = A._BARE_TASK.format(repo="x/y", statement="s", test_command=cmd)
+    story = A._STORY_TEMPLATE.format(
+        instance_id="i", statement="s", test_command=cmd
+    )
+    assert cmd in bare
+    assert cmd in story
+    # And the prompt closes the loop: verify BEFORE declaring done.
+    assert "DONE" in bare
+    assert "docker" in bare
+
+
+def test_both_arms_derive_the_test_command_from_the_same_call(A: Any) -> None:  # noqa: N803
+    """Pin the call shape: identical arguments, so neither arm can drift to a
+    privileged variant (extra targets, collect-only, leaked node ids)."""
+    import inspect
+
+    assert "instance_test_command(inst, repo=repo)" in inspect.getsource(A.run_bare)
+    assert "instance_test_command(inst, repo=repo)" in inspect.getsource(
+        A.run_factory
+    )
+
+
+def test_step_budget_defaults_are_per_arm(A: Any) -> None:  # noqa: N803
+    """All 19 first-sweep bare runs inherited the factory's 16-step default
+    while _BARE_STEP_CAP sat unused — under half the intended budget. ONE
+    resolver covers every arm; a second mechanism would drift."""
+    assert A._BARE_STEP_CAP == 40
+    assert A._resolve_max_steps("bare", None) == 40
+    assert A._resolve_max_steps("factory", None) == 16
+    assert A._resolve_max_steps("claude", None) == A._CLAUDE_TURN_CAP == 60
+    # An explicit --max-steps still overrides, for any arm.
+    assert A._resolve_max_steps("bare", 5) == 5
+    assert A._resolve_max_steps("factory", 33) == 33
+    assert A._resolve_max_steps("claude", 2) == 2
+
+
+def test_cli_resolves_the_step_budget_per_arm(A: Any) -> None:  # noqa: N803
+    """run AND run-all must route through the per-arm resolver; a hard-coded
+    argparse default silently starves whichever arm it wasn't tuned for."""
+    import inspect
+
+    src = inspect.getsource(A.main)
+    assert src.count("_resolve_max_steps(args.arm, args.max_steps)") >= 2
+    assert 'p.add_argument("--max-steps", type=int, default=16)' not in src
+    # ONE mechanism: main must not shadow the module-level resolver.
+    assert "def _resolve_max_steps" not in src

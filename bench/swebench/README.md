@@ -293,6 +293,19 @@ hermetic config actually loaded (the `init` event must show zero MCP servers
 and no WebFetch/WebSearch). A transcript missing when the run made calls is
 an oracle-probe failure, same as the bare arm's missing command log.
 
+## The bare arm
+
+The bare arm is a deliberately minimal bash loop on the same model deployment:
+one shell command per turn, truncated output, a 40-step budget, and the same
+docker test one-liner the factory's dev gets, so it can check its fix before
+declaring DONE. It deliberately lacks everything else the factory adds —
+review by a second model, retries, structured tools, planning — because it is
+the floor the factory must beat, not a second agent framework. Before
+2026-08-03 the arm had no way to run tests at all, executed model-hallucinated
+"observations" as real shell, and ran on 16 of its 40 intended steps; bare
+rows produced before that fix (Pro 1/6, rebench 0/19) measured that broken
+scaffold and are **not comparable** with post-fix bare rows.
+
 ## Reporting rule
 
 Never report a factory number without the matched bare-model number beside it.
