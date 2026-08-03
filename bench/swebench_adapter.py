@@ -151,12 +151,179 @@ MANIFEST_PATH = SWE_DIR / "manifest.json"
 # ``report --from-archive <dir>`` must re-derive the published table from it
 # with no live runs dir at all.
 RESULTS_ARCHIVE_DIR = SWE_DIR / "results-archive"
+# The gold-patch control's own logs. ``runs/`` is gitignored and
+# ``_reset_run_artifacts`` legitimately wipes it, so 0 of the 19 published
+# swe-rebench instances kept the log that certified their oracle. The control
+# is the whole argument for trusting a number; its evidence has to survive.
+SELFTEST_LOG_DIR = SWE_DIR / "selftest-logs"
 
 _ROWS_URL = "https://datasets-server.huggingface.co/rows"
 
 # Fake issue numbers far from production so a bench story can never collide
 # with a real worktree branch (which is named from the real issue number).
 SWE_ISSUE_BASE = 95000
+
+
+# --------------------------------------------------------------------------- #
+# arm isolation — nothing the arm can WALK TO may carry the answer
+# --------------------------------------------------------------------------- #
+#
+# Every arm executes on this host filesystem, so the working tree's ANCESTRY is
+# part of the threat model. It was not: the factory arm's dev agent ran with
+# cwd ``bench/swebench/runs/<id>/factory/root/state/worktrees/<name>/`` — six
+# ``..`` from ``oracle.json.z`` and ``manifest.json``, three from the OTHER
+# arms' ``grade.log`` (which lists every hidden test id) and their
+# ``result.json`` (which lists the gold patch's files). This FIRED: four
+# factory rows in ``results-archive/2026-08-03T02-21-23.249790Z`` are
+# ``ok: false`` on "own run's oracle-bearing subdir runs/…/bare".
+#
+# Two prepared trees were worse than reachable, they were pre-decoded: ``grade``
+# applied the ORACLE TEST PATCH into ``runs/<id>/<arm>/grade-repo/`` and
+# ``selftest`` applied the GOLD PATCH into ``runs/<id>/selftest/repo/``, both
+# on the host, both left behind for the next arm to read in plaintext.
+#
+# So every live working tree now lives under a scratch root OUTSIDE the repo,
+# and only finished artifacts (result.json, prediction.diff, grade.log, the
+# audit trail) are copied back into ``bench/swebench/runs/<id>/<arm>/`` after
+# the arm has stopped running. ``assert_workspace_isolated`` is the invariant,
+# checked at run time: no ancestor of the workspace may contain oracle
+# material. It fails CLOSED — a workspace it cannot clear refuses the run.
+
+# Basenames that carry answer material. An ancestor directory holding any of
+# these is disqualifying. ``manifest.json`` is deliberately absent: target
+# repos legitimately ship one (web-app manifests) and the pinned manifest is
+# already covered by the ``SWE_DIR`` ancestry check below.
+_ORACLE_BEARING_NAMES = frozenset(
+    {
+        "oracle.json.z",
+        "selftest.json",
+        "grade.log",
+        "grade-nodes.log",
+        "selftest.log",
+        "sweep-grade.log",
+    }
+)
+
+
+def _work_root() -> Path:
+    """Scratch root for every live working tree, outside the repo.
+
+    ``SWEBENCH_WORK_ROOT`` overrides it (tests, and an operator who wants the
+    trees on a different disk). Default: ``$XDG_CACHE_HOME/swebench-work``.
+    """
+    override = os.environ.get("SWEBENCH_WORK_ROOT")
+    if override:
+        return Path(override).expanduser()
+    cache = os.environ.get("XDG_CACHE_HOME")
+    base = Path(cache).expanduser() if cache else Path.home() / ".cache"
+    return base / "swebench-work"
+
+
+def _work_dir(instance_id: str, arm: str, *, fresh: bool = False) -> Path:
+    """The scratch working directory for one (instance, arm).
+
+    Flat ``<instance>__<arm>`` rather than nested ``<instance>/<arm>`` on
+    purpose: a nested layout makes every OTHER arm of the same instance a
+    sibling one ``..`` away, which is the shape that leaked in the first place.
+    """
+    d = _work_root() / f"{instance_id}__{arm}"
+    if fresh:
+        shutil.rmtree(d, ignore_errors=True)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _prepared_tree_dir(prefix: str) -> Path:
+    """A fresh, UNGUESSABLE directory for a tree that will hold oracle material.
+
+    ``grade`` applies the oracle test patch into the tree it mounts and
+    ``selftest`` applies the gold patch into its own, so both are the answer in
+    plaintext on the host filesystem. They used to sit at
+    ``runs/<id>/<arm>/grade-repo`` and ``runs/<id>/selftest/repo`` — stable,
+    guessable paths inside the tree every other arm walks past. Now: a
+    ``mkdtemp`` suffix under the scratch root (so an arm cannot guess a sibling
+    even if it goes looking), deleted by the caller the moment grading ends.
+    """
+    base = _work_root() / "_prepared"
+    base.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=str(base)))
+
+
+def _grade_mount_dir(instance_id: str, arm: str) -> Path:
+    """Where ``grade`` prepares the clone it mounts into the image."""
+    return _prepared_tree_dir(f"grade-{instance_id[:40]}-{arm}-") / "repo"
+
+
+def _selftest_mount_dir(instance_id: str) -> Path:
+    """Where ``selftest`` prepares the clone it mounts. Holds the GOLD patch."""
+    return _prepared_tree_dir(f"selftest-{instance_id[:40]}-") / "repo"
+
+
+def assert_workspace_isolated(path: Path) -> None:
+    """Refuse unless the workspace's ANCESTOR CHAIN is clear of oracle material.
+
+    Fail CLOSED, and deliberately structural rather than a denylist of known
+    leaks: the check is "walk up from the agent's cwd and see what is there",
+    which is exactly what an arm looking for the answer would do.
+
+    Scope, stated honestly: this bounds the walk at the scratch root. Nothing
+    can make the oracle store unreachable from an arbitrary absolute path on a
+    shared host — every arm's shell runs on this filesystem, so ``ls ~`` finds
+    the repo no matter where the workspace is. What IS achievable, and what was
+    missing, is that the answer must not be somewhere a plain ``cd ..; ls``
+    lands on. Above the scratch root is the operator's own filesystem, not
+    harness data, so a stray ``grade.log`` in ``~/.cache`` is not a finding —
+    flagging it would make a detector that blocks every run, which is not the
+    same thing as failing safe. Exploration BEYOND the chain is the
+    oracle-probe scan's job (``_scan_oracle_probes``).
+    """
+    resolved = Path(path).resolve()
+    swe = SWE_DIR.resolve()
+    stop = _work_root().resolve()
+    if resolved == swe or swe in resolved.parents:
+        raise SystemExit(
+            f"workspace {path} is inside the harness directory {SWE_DIR} — the "
+            "oracle store, the pinned manifest and every other arm's grade log "
+            "are reachable from the agent's shell. Refusing to run; set "
+            "SWEBENCH_WORK_ROOT to a path outside the repo."
+        )
+    for anc in (resolved, *resolved.parents):
+        if anc.is_dir():
+            try:
+                names = {p.name for p in anc.iterdir()}
+            except OSError:
+                names = set()
+            leaks = sorted(names & _ORACLE_BEARING_NAMES)
+            if leaks:
+                raise SystemExit(
+                    f"workspace {path} has an ancestor {anc} holding oracle "
+                    f"material {leaks} — it is reachable from the agent's "
+                    "shell. Refusing to run."
+                )
+        if anc == stop:
+            return
+
+
+def _copy_audit_trail(src_state: Path, dest_state: Path) -> None:
+    """Copy a finished run's audit trail back into its committed run dir.
+
+    ``worktrees/`` is excluded: it is a full clone per story (hundreds of MB)
+    and nothing in ``audit`` reads it. Everything ``audit`` DOES read —
+    ``state/factory.db``, ``state/events/**`` (prompt bodies, response bodies,
+    trajectories), ``state/logs/**`` — comes across, so the on-disk layout
+    ``audit`` sees is byte-for-byte what it saw before the working tree moved.
+    """
+    if not src_state.is_dir():
+        return
+    dest_state.parent.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(dest_state, ignore_errors=True)
+    shutil.copytree(
+        src_state,
+        dest_state,
+        ignore=shutil.ignore_patterns("worktrees", "*.sock"),
+        symlinks=True,
+        dirs_exist_ok=True,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -836,7 +1003,7 @@ def _instance(instance_id: str) -> dict[str, Any]:
 # diff handling — the oracle must stay hidden
 # --------------------------------------------------------------------------- #
 
-_DIFF_HEADER = re.compile(r"^diff --git a/(?P<a>\S+) b/(?P<b>\S+)\s*$")
+_DIFF_GIT = "diff --git "
 
 _TEST_PATH = re.compile(
     r"(^|/)tests?(/|$)"           # a tests/ or test/ directory anywhere
@@ -847,45 +1014,261 @@ _TEST_PATH = re.compile(
     r"|(^|/)testing(/|$)"
 )
 
+# Files that decide WHICH tests run and WHETHER they run, without being test
+# files themselves. ``_TEST_PATH`` strips test code; these are the collection
+# and auto-import channels that reach the same outcome sideways:
+#
+#   * ``pyproject.toml`` / ``setup.cfg`` / ``tox.ini`` / ``pytest.ini`` —
+#     ``[tool.pytest.ini_options] addopts``, ``-p <plugin>``, markers,
+#     ``collect_ignore``;
+#   * ``setup.py`` / ``noxfile.py`` — run at build/test time;
+#   * ``sitecustomize.py`` / ``usercustomize.py`` / ``*.pth`` — imported by
+#     the interpreter itself, before pytest starts;
+#   * ``*pytest*plugin*.py`` — an entry-point plugin.
+#
+# Measured against real pytest: a root ``_fixup.py`` with
+# ``pytest_collection_modifyitems`` marking every item skipped plus
+# ``addopts = "-p _fixup"`` makes ``python -m pytest <ids>`` exit 0 with
+# "2 skipped". Under exit-code grading (see ``_GRADE_SCRIPT``) that was
+# RESOLVED. The plugin file itself is ordinary production-looking code, so the
+# CONFIG edit is the chokepoint worth refusing on.
+_COLLECTION_CHANNEL = re.compile(
+    r"(^|/)(pyproject\.toml|setup\.cfg|tox\.ini|pytest\.ini|setup\.py"
+    r"|noxfile\.py|sitecustomize\.py|usercustomize\.py|conftest\.py)$"
+    r"|\.pth$"
+    r"|(^|/)[^/]*pytest[^/]*plugin[^/]*\.py$"
+    r"|(^|/)[^/]*plugin[^/]*pytest[^/]*\.py$"
+)
+
+
+class DiffRefused(RuntimeError):
+    """A prediction the harness refuses to grade at all.
+
+    Refusing beats stripping and beats guessing:
+
+    * an unparseable ``diff --git`` line means the parser does not know which
+      file the following hunks belong to. The old code appended the line to the
+      PREVIOUS block, so a test edit git had to quote merged into a kept code
+      block and survived both the strip and ``assert_no_test_edits``;
+    * a collection-config edit cannot be stripped honestly — stripping it could
+      break an otherwise valid patch, and grading the remainder as if it were
+      the arm's answer is the ``proxy != real`` class.
+    """
+
+    def __init__(self, reason: str, paths: list[str]) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.paths = paths
+
 
 def is_test_path(path: str) -> bool:
     return bool(_TEST_PATH.search(path))
 
 
-def split_diff(diff_text: str) -> tuple[str, list[str], list[str]]:
+def is_collection_channel_path(path: str) -> bool:
+    """True for a file that can change which tests run, or whether they run."""
+    return bool(_COLLECTION_CHANNEL.search(path))
+
+
+def _c_unquote(token: str) -> str | None:
+    """Decode git's ``quote_c_style`` form, e.g. ``"a/test_\\303\\247.py"``.
+
+    git quotes a path (independently per side of the header) when it contains a
+    control character, a quote, a backslash, or — with ``core.quotePath``, the
+    default — any non-ASCII byte. Octal escapes are BYTES, so they are
+    assembled and decoded as UTF-8 at the end.
+    """
+    if len(token) < 2 or not token.startswith('"') or not token.endswith('"'):
+        return None
+    body = token[1:-1]
+    simple = {
+        "a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13,
+        '"': 34, "\\": 92,
+    }
+    out = bytearray()
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch != "\\":
+            out.extend(ch.encode("utf-8"))
+            i += 1
+            continue
+        i += 1
+        if i >= len(body):
+            return None
+        esc = body[i]
+        if esc in simple:
+            out.append(simple[esc])
+            i += 1
+        elif esc.isdigit():
+            octal = body[i : i + 3]
+            if len(octal) != 3 or any(c not in "01234567" for c in octal):
+                return None
+            out.append(int(octal, 8))
+            i += 3
+        else:
+            return None
+    try:
+        return out.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _take_quoted(s: str) -> tuple[str, str] | None:
+    """Split a leading C-quoted token off ``s``; None if there is not one."""
+    if not s.startswith('"'):
+        return None
+    i = 1
+    while i < len(s):
+        if s[i] == "\\":
+            i += 2
+            continue
+        if s[i] == '"':
+            decoded = _c_unquote(s[: i + 1])
+            return None if decoded is None else (decoded, s[i + 1 :])
+        i += 1
+    return None  # unterminated quote
+
+
+def _strip_ab(a_raw: str, b_raw: str) -> tuple[str, str] | None:
+    if not a_raw.startswith("a/") or not b_raw.startswith("b/"):
+        return None
+    return a_raw[2:], b_raw[2:]
+
+
+def _split_unquoted_pair(rest: str) -> tuple[str, str] | None:
+    """Split ``a/<path> b/<path>`` where either path may contain spaces.
+
+    ``\\S+`` could not do this at all, which is the whole of defect 4. There is
+    no unambiguous split in general, so: prefer the (unique) split where both
+    sides name the SAME path — every non-rename header, which is nearly all of
+    them — then fall back to a unique split for a rename. Anything still
+    ambiguous returns None and the caller refuses the row.
+    """
+    candidates: list[tuple[str, str]] = []
+    for m in re.finditer(r" b/", rest):
+        pair = _strip_ab(rest[: m.start()], rest[m.start() + 1 :])
+        if pair is not None:
+            candidates.append(pair)
+    same = [c for c in candidates if c[0] == c[1]]
+    if len(same) == 1:
+        return same[0]
+    if same:
+        return None
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def parse_diff_header(line: str) -> tuple[str, str] | None:
+    """``(a_path, b_path)`` for a ``diff --git`` line, or None if unparseable.
+
+    Handles all three shapes git emits: both sides plain, either side C-quoted,
+    and plain paths containing spaces. None is a REFUSAL signal, never a
+    "treat it as content" signal.
+    """
+    if not line.startswith(_DIFF_GIT):
+        return None
+    rest = line[len(_DIFF_GIT) :].rstrip()
+    if not rest:
+        return None
+    left = _take_quoted(rest)
+    if left is not None:
+        a_raw, remainder = left
+        remainder = remainder.lstrip()
+        right = _take_quoted(remainder)
+        if right is not None:
+            b_raw, tail = right
+            if tail.strip():
+                return None
+        else:
+            b_raw = remainder
+        return _strip_ab(a_raw, b_raw) if b_raw else None
+    quoted_right = rest.find(' "')
+    if quoted_right != -1:
+        right = _take_quoted(rest[quoted_right + 1 :])
+        if right is None or right[1].strip():
+            return None
+        return _strip_ab(rest[:quoted_right], right[0])
+    return _split_unquoted_pair(rest)
+
+
+def split_diff(
+    diff_text: str, *, refuse_collection_channels: bool = True
+) -> tuple[str, list[str], list[str]]:
     """Return ``(code_only_diff, kept_paths, stripped_test_paths)``.
 
     Splits a unified diff on ``diff --git`` boundaries and drops any file whose
     path looks like a test. Operating per-file (not per-hunk) is deliberate: a
     file is either part of the oracle or it is not.
+
+    Raises ``DiffRefused`` on a header it cannot parse, or on an edit to a
+    pytest-collection channel. ``refuse_collection_channels=False`` is for the
+    GOLD patch only: the maintainers' own fix legitimately edits ``setup.py``,
+    and it is not an arm under test. (Measured: 0 of the 20 pinned oracle
+    records touch a collection channel, and 0 of the 188 retained
+    ``prediction.diff`` files do either — this refuses nothing that exists
+    today.)
     """
     if not diff_text.strip():
         return "", [], []
 
     blocks: list[tuple[str, list[str]]] = []
+    unparseable: list[str] = []
     current_path: str | None = None
     current: list[str] = []
     for line in diff_text.splitlines(keepends=True):
-        m = _DIFF_HEADER.match(line.rstrip("\n"))
-        if m:
+        bare = line.rstrip("\n")
+        if bare.startswith(_DIFF_GIT) or bare.rstrip() == _DIFF_GIT.rstrip():
+            parsed = parse_diff_header(bare)
+            if parsed is None:
+                # FAIL CLOSED. Never append it to the previous block.
+                unparseable.append(bare[:200])
+                current_path = None
+                current = []
+                continue
             if current_path is not None:
                 blocks.append((current_path, current))
-            current_path = m.group("b")
+            current_path = parsed[1]
             current = [line]
         elif current_path is not None:
             current.append(line)
     if current_path is not None:
         blocks.append((current_path, current))
 
+    if unparseable:
+        raise DiffRefused(
+            f"{len(unparseable)} 'diff --git' header(s) cannot be parsed, so the "
+            "files their hunks belong to are unknown: "
+            f"{unparseable}. Refusing to grade — an unclassified block used to "
+            "be merged into the previous file's diff, which is how a test edit "
+            "survives the strip.",
+            unparseable,
+        )
+
     kept: list[str] = []
     stripped: list[str] = []
+    refused: list[str] = []
     out: list[str] = []
     for path, lines in blocks:
+        # Order matters: conftest.py is BOTH a test path and a collection
+        # channel, and the long-standing behaviour (strip it) must win, or
+        # every conftest edit would start refusing rows that graded fine.
         if is_test_path(path):
             stripped.append(path)
+        elif refuse_collection_channels and is_collection_channel_path(path):
+            refused.append(path)
         else:
             kept.append(path)
             out.extend(lines)
+    if refused:
+        raise DiffRefused(
+            f"prediction edits pytest collection/auto-import channel(s) "
+            f"{refused}. Those files decide which tests run and whether they "
+            "run at all (addopts, -p plugins, collect_ignore, sitecustomize), "
+            "so an edit there can neuter the hidden suite without touching a "
+            "test file. Refusing the row: stripping the edit could break an "
+            "otherwise valid patch.",
+            refused,
+        )
     return "".join(out), kept, stripped
 
 
@@ -893,14 +1276,28 @@ def assert_no_test_edits(diff_text: str) -> None:
     """Hard guarantee, checked in code rather than eyeballed.
 
     A graded diff containing a test edit would let the factory rewrite the
-    oracle that is supposed to be judging it.
+    oracle that is supposed to be judging it. Re-run at grade time as a second
+    line of defence, so it must use the same parser as ``split_diff`` — the old
+    shared regex was fail-open in both places at once.
     """
-    offenders = [
-        m.group("b")
-        for line in diff_text.splitlines()
-        if (m := _DIFF_HEADER.match(line.strip()))
-        and is_test_path(m.group("b"))
-    ]
+    offenders: list[str] = []
+    unparseable: list[str] = []
+    for line in diff_text.splitlines():
+        bare = line.rstrip("\n")
+        if not bare.startswith(_DIFF_GIT):
+            continue
+        parsed = parse_diff_header(bare)
+        if parsed is None:
+            unparseable.append(bare[:200])
+        elif is_test_path(parsed[1]):
+            offenders.append(parsed[1])
+    if unparseable:
+        raise DiffRefused(
+            f"graded diff has {len(unparseable)} 'diff --git' header(s) that "
+            f"cannot be parsed: {unparseable}. An unclassifiable header could "
+            "be hiding a test edit; refusing.",
+            unparseable,
+        )
     if offenders:
         raise AssertionError(
             f"graded diff still touches test files: {offenders}. "
@@ -981,6 +1378,7 @@ def _reset_run_artifacts(run_dir: Path) -> None:
         "prediction.diff",
         "raw.diff",
         "grade.log",
+        "grade-nodes.log",
         "result.json",
         "audit.json",
         "bare-commands.ndjson",  # APPENDED per step; must not span runs
@@ -988,10 +1386,17 @@ def _reset_run_artifacts(run_dir: Path) -> None:
         "claude-stderr.log",
     ):
         (run_dir / name).unlink(missing_ok=True)
+    # `run-all` captures each child's stdout here, so `sweep-grade.log` held the
+    # previous grade's verdict — including, before this change, the oracle's
+    # gold_files. A stale one is both wrong and a leak.
+    for stale in run_dir.glob("sweep-*.log"):
+        stale.unlink(missing_ok=True)
     shutil.rmtree(run_dir / "state", ignore_errors=True)
-    # The previous grade's prepared clone (swe-rebench grades mount a fresh
-    # prepared tree) — a new run means a new grade, so it is stale too.
+    shutil.rmtree(run_dir / "root", ignore_errors=True)
+    # Pre-isolation layouts kept the prepared clone and the factory root here;
+    # a leftover one is stale AND reachable from the next arm's shell.
     shutil.rmtree(run_dir / "grade-repo", ignore_errors=True)
+    shutil.rmtree(run_dir / "repo", ignore_errors=True)
 
 
 def _clone_url(inst: dict[str, Any]) -> str:
@@ -1574,9 +1979,13 @@ def _model_mix(events_dir: Path, *, nominal: str | None) -> dict[str, Any]:
     }
 
 
-def _build_bench_root(inst: dict[str, Any], repo: Path) -> Path:
-    """A minimal factory root: own state db, own settings, app -> the clone."""
-    root = _run_dir(inst["instance_id"], "factory") / "root"
+def _build_bench_root(inst: dict[str, Any], repo: Path, root: Path) -> Path:
+    """A minimal factory root: own state db, own settings, app -> the clone.
+
+    ``root`` is passed in because it lives in the scratch work tree now, not
+    under ``runs/``: the dev agent's cwd is ``root/state/worktrees/<name>``, and
+    under ``runs/`` that was six ``..`` from the oracle store.
+    """
     if root.exists():
         shutil.rmtree(root)
     (root / "state").mkdir(parents=True)
@@ -1625,12 +2034,16 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     # BEFORE any exit path (image pull, clone, precheck): a stale
     # prediction.diff must never outlive the run that produced it.
     _reset_run_artifacts(run_dir)
+    # The LIVE tree lives outside the repo (see `assert_workspace_isolated`);
+    # only finished artifacts come back to `run_dir` afterwards.
+    work = _work_dir(instance_id, "factory", fresh=True)
     if not _ensure_image(inst):
         raise SystemExit(
             f"image for {instance_id} is unavailable; the factory arm needs it for "
             "a working test environment (see instance_test_command)"
         )
-    repo = run_dir / "repo"
+    repo = work / "repo"
+    assert_workspace_isolated(repo)
     _clone(inst, repo)
     # Same topology as the control: replay the dataset's install/build step
     # against the fresh clone and commit what it generates, so dev's derived
@@ -1661,7 +2074,10 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
             },
         )
         raise SystemExit(error)
-    root = _build_bench_root(inst, repo)
+    root = _build_bench_root(inst, repo, work / "root")
+    # The dev agent's cwd will be `root/state/worktrees/<name>`. Prove NOW that
+    # nothing above it carries the answer, before a token is spent.
+    assert_workspace_isolated(root / "state" / "worktrees")
 
     # PRE-DISPATCH COLLECT GATE. Fail the run NOW, loudly, if the test command
     # cannot even collect — before a single model token is spent.
@@ -1792,10 +2208,44 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     ]
     graded_wt = matches[0] if matches else repo
     raw_diff = _capture_diff(graded_wt)
-    code_diff, kept, stripped = split_diff(raw_diff)
-    assert_no_test_edits(code_diff)
+
+    # The arm has stopped; its audit trail can come home. This happens BEFORE
+    # the diff is refused below, because `audit` treats a missing trail as a
+    # finding and a refused prediction still needs to be auditable.
+    _copy_audit_trail(root / "state", run_dir / "root" / "state")
 
     (run_dir / "raw.diff").write_text(raw_diff, encoding="utf-8")
+    refused: list[str] = []
+    try:
+        code_diff, kept, stripped = split_diff(raw_diff)
+    except DiffRefused as exc:
+        # No prediction.diff is written, so `grade` refuses and `audit` fails:
+        # a refused row can never be counted as a resolve. The reason is
+        # recorded where the report can see it.
+        refused = exc.paths
+        _write_result(
+            instance_id,
+            "factory",
+            {
+                "arm": "factory",
+                "instance_id": instance_id,
+                "repo": inst["repo"],
+                "base_commit": inst["base_commit"],
+                "problem_statement_sha256": inst["problem_statement_sha256"],
+                "manifest_sha256": _manifest()["manifest_sha256"],
+                "ts": datetime.now(UTC).isoformat(),
+                "wall_clock_s": round(time.monotonic() - entered, 1),
+                "final_state": final.state,
+                **_ledger_totals(runs, story_id),
+                "cost_source": "derived-from-price-table",
+                "error": f"diff refused: {exc.reason}",
+                "refused_paths": refused,
+                "factory_says_green": False,
+            },
+        )
+        raise SystemExit(f"diff refused: {exc.reason}") from exc
+    assert_no_test_edits(code_diff)
+
     (run_dir / "prediction.diff").write_text(code_diff, encoding="utf-8")
 
     # Tokens are the primitive; dollars are derived (see bench/README.md).
@@ -1842,6 +2292,7 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "factory_says_green": final.state == StoryState.REVIEWER_DONE.value,
         "files_changed": kept,
         "test_files_stripped": stripped,
+        "refused_paths": refused,
         "diff_bytes": len(code_diff),
     }
     out = _write_result(instance_id, "factory", result)
@@ -2106,8 +2557,14 @@ def run_bare(
             f"image for {instance_id} is unavailable; the bare arm's test "
             "command runs inside it (see instance_test_command)"
         )
-    repo = run_dir / "repo"
+    # OUTSIDE the repo. The arm's shell runs with cwd inside this clone, and at
+    # `runs/<id>/bare/repo` that was three `..` from `bench/swebench/
+    # oracle.json.z` and one from every other arm's `grade.log`. `state/` stays
+    # under `run_dir` — it is where `audit` reads the ledger from and is no
+    # longer an ancestor of the agent's cwd.
+    repo = _work_dir(instance_id, "bare", fresh=True) / "repo"
     _clone(inst, repo)
+    assert_workspace_isolated(repo)
     # Same topology as the factory arm and the selftest control: replay the
     # dataset's install/build step so the test command handed to the model
     # below actually collects from this clone (rebench-only; Pro is a no-op).
@@ -2867,7 +3324,11 @@ def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
             f"image for {instance_id} is unavailable; the claude arm's test "
             "command runs inside it (see instance_test_command)"
         )
-    repo = run_dir / "repo"
+    # OUTSIDE the repo: the CLI's cwd is this tree, and as
+    # `runs/<id>/claude/repo` it was three `..` from the oracle store and from
+    # every other arm's grade log.
+    repo = _work_dir(instance_id, "claude", fresh=True) / "repo"
+    assert_workspace_isolated(repo)
     _clone(inst, repo)
     # Same topology as the other arms: replay the dataset's install/build step
     # so the tree the CLI edits matches the tree the grade mounts.
@@ -2939,9 +3400,16 @@ def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         error = f"claude CLI reported is_error ({result_ev.get('subtype')})"
 
     raw_diff = _capture_diff(repo)
-    code_diff, kept, stripped = split_diff(raw_diff)
-    assert_no_test_edits(code_diff)
     (run_dir / "raw.diff").write_text(raw_diff, encoding="utf-8")
+    refused: list[str] = []
+    try:
+        code_diff, kept, stripped = split_diff(raw_diff)
+    except DiffRefused as exc:
+        # No prediction.diff: `grade` refuses, `audit` fails, so a refused row
+        # can never be counted as a resolve. The transcript is already on disk.
+        _fail(f"diff refused: {exc.reason}", refused_paths=exc.paths)
+        raise  # unreachable: _fail always raises SystemExit
+    assert_no_test_edits(code_diff)
     (run_dir / "prediction.diff").write_text(code_diff, encoding="utf-8")
 
     result = {
@@ -2990,6 +3458,7 @@ def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "factory_says_green": None,
         "files_changed": kept,
         "test_files_stripped": stripped,
+        "refused_paths": refused,
         "diff_bytes": len(code_diff),
     }
     out = _write_result(instance_id, "claude", result)
@@ -3165,8 +3634,14 @@ def run_openhands(
             f"image for {instance_id} is unavailable; the openhands arm's test "
             "command runs inside it (see instance_test_command)"
         )
-    repo = run_dir / "repo"
+    # OUTSIDE the repo, same reason as every other arm: the OpenHands agent's
+    # working directory IS this clone, and at `runs/<id>/openhands/repo` the
+    # oracle store was three `..` up. `state/` stays under `run_dir` (the
+    # trajectory the audit scans lives there) and is not an ancestor of the
+    # agent's cwd.
+    repo = _work_dir(instance_id, "openhands", fresh=True) / "repo"
     _clone(inst, repo)
+    assert_workspace_isolated(repo)
     prep_error = _prepare_cloned_tree(inst, repo)
     if prep_error:
         _fail(f"prepare: {prep_error}")
@@ -3451,7 +3926,8 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
 
     image = _image_for(inst)
     oracle = _oracle_for(inst)
-    f2p, p2p = oracle["fail_to_pass"], oracle["pass_to_pass"]
+    f2p = oracle["fail_to_pass"]
+    p2p, p2p_source = _pass_to_pass_for(inst, oracle)
 
     started = time.monotonic()
     verdict: dict[str, Any] = {
@@ -3460,7 +3936,11 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
         "image": image,
         "graded_at": datetime.now(UTC).isoformat(),
         "fail_to_pass_count": len(f2p),
+        # Recorded so the report can flag a row graded with no regression suite
+        # at all, and so an implicit set never passes for a dataset-declared one.
         "pass_to_pass_count": len(p2p),
+        "pass_to_pass_declared_count": len(oracle["pass_to_pass"]),
+        "pass_to_pass_source": p2p_source,
         "empty_patch": not diff_text.strip(),
     }
 
@@ -3502,7 +3982,10 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
     profile = _profile_of(inst)
     mount: Path | None = None
     if profile.name == "swe-rebench":
-        grade_repo = run_dir / "grade-repo"
+        # OUTSIDE the repo: the ORACLE TEST PATCH is applied inside this tree
+        # by the grade script, so as `runs/<id>/<arm>/grade-repo/` it sat three
+        # `..` from the next arm's cwd with the hidden tests in plaintext.
+        grade_repo = _grade_mount_dir(instance_id, arm)
         _clone(inst, grade_repo)
         prep_error = _prepare_cloned_tree(inst, grade_repo, timeout_s=timeout_s)
         if prep_error:
@@ -3528,9 +4011,29 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
         workdir=profile.container_workdir,
     )
     log = (proc.stdout or "") + (proc.stderr or "")
-    (run_dir / "grade.log").write_text(log, encoding="utf-8")
+    human_log, node_regions = _split_node_regions(log, nonce)
+    (run_dir / "grade.log").write_text(human_log, encoding="utf-8")
+    if node_regions:
+        (run_dir / "grade-nodes.log").write_text(
+            "".join(f"=== {k} ===\n{v}" for k, v in node_regions.items()),
+            encoding="utf-8",
+        )
 
-    resolved = f"{_marker('SWEBENCH_RESULT', nonce)}: RESOLVED" in log
+    # PER-NODE, not exit-code. `pytest -q <ids>` exits 0 when every selected
+    # test skips, so the marker alone is not proof that the named tests passed.
+    # Both sets must be demonstrably PASSED, and a missing report refuses.
+    f2p_ok, f2p_reasons = evaluate_node_coverage(
+        f2p, _parse_node_outcomes(node_regions.get("fail_to_pass", ""))
+    )
+    p2p_ok, p2p_reasons = evaluate_node_coverage(
+        p2p, _parse_node_outcomes(node_regions.get("pass_to_pass", ""))
+    )
+    nodes_ok = f2p_ok and p2p_ok
+    verdict["node_coverage_ok"] = nodes_ok
+    verdict["node_coverage_reasons"] = f2p_reasons + p2p_reasons
+
+    marker_resolved = f"{_marker('SWEBENCH_RESULT', nonce)}: RESOLVED" in log
+    resolved = marker_resolved and nodes_ok
     applied = f"{_marker('SWEBENCH_APPLY', nonce)}: OK" in log
     # Visible, not decisive: on a selftest-cleared instance, ids that do not
     # collect under the ARM's patch mean the arm did not deliver the API the
@@ -3551,6 +4054,12 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
         outcome = "patch_did_not_apply"
     elif resolved:
         outcome = "resolved"
+    elif marker_resolved:
+        # Every selected test "did not fail" and yet some declared id has no
+        # PASSED node: skipped, deselected, uncollected, or the per-node report
+        # never arrived. Its own outcome, so it can never be read as a pass and
+        # never be confused with a wrong patch.
+        outcome = "unresolved_no_per_node_pass"
     else:
         # Did the arm at least edit the files the real fix edited? A patch that
         # found the right function and got a convention wrong is a different
@@ -3570,9 +4079,10 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
             lookup_ok = False
         verdict["gold_files_lookup_ok"] = lookup_ok
         touched = {
-            m.group("b")
+            parsed[1]
             for line in diff_text.splitlines()
-            if (m := _DIFF_HEADER.match(line.strip()))
+            if line.startswith(_DIFF_GIT)
+            and (parsed := parse_diff_header(line.rstrip("\n"))) is not None
         }
         overlap = sorted(gold_files & touched)
         verdict["gold_files"] = sorted(gold_files)
@@ -3586,11 +4096,35 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
             "outcome": outcome,
             "exit_code": proc.returncode,
             "grade_wall_s": round(time.monotonic() - started, 1),
-            "log_tail": log[-3000:],
+            "log_tail": human_log[-3000:],
         }
     )
     _write_result(instance_id, arm, {"grade": verdict}, merge=True)
-    print(json.dumps({k: v for k, v in verdict.items() if k != "log_tail"}, indent=2))
+    # The prepared mount has the oracle test patch applied INSIDE it. Grading
+    # is over, so it is pure liability now.
+    if mount is not None:
+        shutil.rmtree(mount.parent, ignore_errors=True)
+    # NEVER print the oracle's gold_files. `run-all` captures each grade's
+    # stdout into `runs/<id>/<arm>/sweep-grade.log`, which is a file inside the
+    # run tree the NEXT arm walks past — the answer key, published next to the
+    # answer sheet. They stay in result.json, which the report needs.
+    print(
+        json.dumps(
+            {
+                k: v
+                for k, v in verdict.items()
+                if k not in _GRADE_STDOUT_SUPPRESSED
+            },
+            indent=2,
+        )
+    )
+
+
+# Verdict keys that must never reach a captured stdout stream: they name the
+# maintainers' real fix (or the hidden ids that decide it).
+_GRADE_STDOUT_SUPPRESSED = frozenset(
+    {"log_tail", "gold_files", "gold_files_overlap", "node_coverage_reasons"}
+)
 
 
 def _docker_bash(
@@ -3666,12 +4200,187 @@ def _heredoc(text: str) -> str:
 # via ``docker run -e SWEBENCH_NONCE=…`` — deliberately NOT embedded in the
 # script text, so even a verbatim replay of the script cannot reproduce a
 # checked marker string.
-_NONCE_VAR = "${SWEBENCH_NONCE}"
+#
+# ``_N`` is a SHELL variable, not an exported one: the script's first act is to
+# copy ``SWEBENCH_NONCE`` into it and ``unset`` the environment entry, so
+# ``python -m pytest`` and everything the graded code runs inherit no nonce at
+# all. Before that, arm-authored test code could read ``os.environ`` and print
+# a perfectly-formed verdict marker.
+_NONCE_VAR = "${_N}"
 
 
 def _marker(name: str, nonce: str) -> str:
     """The exact log string a genuine script emission expands to."""
     return f"{name}_{nonce}"
+
+
+# --------------------------------------------------------------------------- #
+# per-node grading — an exit code cannot tell PASSED from SKIPPED
+# --------------------------------------------------------------------------- #
+#
+# ``if ! python -m pytest -q "${SWEBENCH_F2P[@]}"; then fail=1; fi`` graded on
+# the exit code, and pytest exits 0 when every selected test SKIPS. So a
+# prediction that made the hidden suite skip — via a collection-config channel
+# (defect 3), a plugin hook, or a conditional skip in production code the tests
+# import — graded RESOLVED with no work done. Verified against real pytest:
+# ``2 skipped`` exits 0.
+#
+# The official SWE-bench harness parses per-test outcomes and requires an
+# explicit PASSED for every fail_to_pass and pass_to_pass id. So does this now.
+
+# pytest's short-summary lines. ``-r`` reports skips by LOCATION
+# (``SKIPPED [1] tests/x.py:23: reason``), not by node id, which is fine: the
+# rule below needs PASSED node ids and FAILED/ERROR node ids, and "no PASSED
+# for this id" is exactly what an all-skipped run looks like.
+_SHORT_SUMMARY = re.compile(r"^=+ short test summary info =+\s*$")
+_NODE_LINE = re.compile(r"^(PASSED|FAILED|ERROR|XFAIL|XPASS) (\S.*)$")
+_TALLY = re.compile(r"^=*\s*(no tests ran|\d+ (passed|failed|error|skipped))")
+
+
+def _parse_node_outcomes(text: str) -> dict[str, set[str]]:
+    """``{node_id: {outcomes}}`` from pytest's SHORT SUMMARY section only.
+
+    Deliberately not the whole log. ``-rA`` echoes a passing test's captured
+    stdout in a ``PASSES`` section, so arm-authored code could print
+    ``PASSED <some other id>`` and have it appear verbatim; the script asks for
+    ``-rpfEsxX`` (same reports, no captured output) and this reads only the
+    section pytest itself writes, after the LAST section header.
+    """
+    lines = text.splitlines()
+    starts = [i for i, ln in enumerate(lines) if _SHORT_SUMMARY.match(ln)]
+    if not starts:
+        return {}
+    outcomes: dict[str, set[str]] = {}
+    for ln in lines[starts[-1] + 1 :]:
+        if ln.startswith("=") or _TALLY.match(ln):
+            break
+        m = _NODE_LINE.match(ln)
+        if not m:
+            continue
+        verdict, rest = m.group(1), m.group(2).strip()
+        if verdict != "PASSED":
+            # pytest appends " - <reason>" for failures/errors. A node id that
+            # itself contains " - " truncates here, which is harmless: the
+            # truncated id is still a prefix of the real one, so it still
+            # attaches to the same declared id.
+            rest = rest.split(" - ", 1)[0].strip()
+        if rest:
+            outcomes.setdefault(rest, set()).add(verdict)
+    return outcomes
+
+
+def _node_matches(node_id: str, declared: str) -> bool:
+    """Does a collected node satisfy a DECLARED id?
+
+    One declared id legitimately selects several nodes: ``_repair_truncated_
+    param_ids`` widens a truncated parametrised id to the whole test function
+    (measured: conan-19735 declares 1 fail_to_pass id and 4 nodes pass), and
+    the implicit pass_to_pass set (defect 6) is FILE paths. So a literal
+    ``count(PASSED) == len(ids)`` rule would flip valid rows; the rule is
+    "every declared id has at least one PASSED node and no FAILED/ERROR node".
+    """
+    return (
+        node_id == declared
+        or node_id.startswith(declared + "[")
+        or node_id.startswith(declared + "::")
+    )
+
+
+def evaluate_node_coverage(
+    declared_ids: list[str], outcomes: dict[str, set[str]]
+) -> tuple[bool, list[str]]:
+    """``(ok, reasons)`` — is every declared id demonstrably PASSED?
+
+    FAIL CLOSED: no per-node evidence at all means not resolved, because the
+    thing being certified is "these named tests passed", and an absent report
+    certifies nothing. XFAIL/XPASS count as neither a pass nor a failure
+    (pytest exits 0 for both, and a file-level id legitimately contains
+    xfails — pandas-63945's run reports 2).
+    """
+    if not declared_ids:
+        return True, []
+    reasons: list[str] = []
+    for declared in declared_ids:
+        norm = declared.strip().removeprefix("./")
+        matched = {n: o for n, o in outcomes.items() if _node_matches(n, norm)}
+        broken = sorted(n for n, o in matched.items() if o & {"FAILED", "ERROR"})
+        if broken:
+            reasons.append(f"{declared}: node(s) FAILED/ERROR: {broken[:5]}")
+        elif not any("PASSED" in o for o in matched.values()):
+            reasons.append(
+                f"{declared}: no PASSED node in pytest's report — a skipped, "
+                "deselected, uncollected or missing test is not a pass"
+            )
+    return not reasons, reasons[:20]
+
+
+def _split_node_regions(log: str, nonce: str) -> tuple[str, dict[str, str]]:
+    """Peel the machine-readable node-outcome regions out of a grade log.
+
+    Returns ``(human_log, {label: region_text})``. The regions can run to
+    thousands of lines (pandas-63945 declares 16215 fail_to_pass ids), which
+    would bury the verdict and make ``log_tail`` useless; they go to
+    ``grade-nodes.log`` instead and the human log keeps a one-line placeholder.
+
+    An UNTERMINATED region is discarded: a killed or timed-out run must never
+    have a partial report read as a complete one.
+    """
+    begin = f"{_marker('SWEBENCH_NODES', nonce)}: BEGIN "
+    end = f"{_marker('SWEBENCH_NODES', nonce)}: END "
+    human: list[str] = []
+    regions: dict[str, str] = {}
+    label: str | None = None
+    buf: list[str] = []
+    for line in log.splitlines(keepends=True):
+        bare = line.strip()
+        if label is None and bare.startswith(begin):
+            label = bare[len(begin) :].split()[0] if bare[len(begin) :].split() else ""
+            buf = []
+            continue
+        if label is not None and bare.startswith(end):
+            regions[label] = "".join(buf)
+            human.append(
+                f"[{len(buf)} node outcomes for {label} -> grade-nodes.log]\n"
+            )
+            label = None
+            buf = []
+            continue
+        (buf if label is not None else human).append(line)
+    if label is not None:
+        human.append(f"[node-outcome region for {label} was TRUNCATED]\n")
+    return "".join(human), regions
+
+
+def _pass_to_pass_for(
+    inst: dict[str, Any], oracle: dict[str, Any]
+) -> tuple[list[str], str]:
+    """The regression set to grade against, and where it came from.
+
+    Two pinned swe-rebench instances ship an EMPTY ``pass_to_pass``
+    (``line__line-bot-sdk-python-981_interface`` and
+    ``pandas-dev__pandas-63945``), and the grade script skipped the p2p
+    invocation entirely — so those two rows were graded with no regression
+    suite at all: a prediction that fixed the target test by breaking
+    everything around it scored the same as a correct one.
+
+    Fallback: the instance's own declared ``test_targets`` FILES, reduced to
+    paths. They are already in the manifest and already the arm's test command,
+    so this leaks nothing new, and requiring those files to pass in full is a
+    real regression signal.
+
+    Pro is FROZEN — no implicit set there, or old archives' outcome labels stop
+    being reproducible (and Pro's ``selected_test_files_to_run`` IS the
+    fail_to_pass id list, so it would be a tautology anyway).
+    """
+    declared = oracle["pass_to_pass"]
+    if declared:
+        return declared, "dataset"
+    if _profile_of(inst).name != "swe-rebench":
+        return [], "dataset"
+    implicit = _test_file_paths(_declared_test_entries(inst))
+    if not implicit:
+        return [], "dataset"
+    return implicit, "declared_test_targets"
 
 
 def _grade_script_for(inst: dict[str, Any], prediction: str) -> str:
@@ -3781,7 +4490,7 @@ def _grade_script_for(inst: dict[str, Any], prediction: str) -> str:
         baseline_gate=baseline_gate,
         post_patch_check=post_patch_check,
         f2p=" ".join(_shq(t) for t in oracle["fail_to_pass"]),
-        p2p=" ".join(_shq(t) for t in oracle["pass_to_pass"]),
+        p2p=" ".join(_shq(t) for t in _pass_to_pass_for(inst, oracle)[0]),
     )
 
 
@@ -3789,15 +4498,20 @@ def _grade_script_for(inst: dict[str, Any], prediction: str) -> str:
 # (the ORACLE) is applied first and the prediction second, so a prediction that
 # tries to undo the oracle fails loudly instead of silently winning.
 #
-# Verdict markers carry a ``_${SWEBENCH_NONCE}`` suffix (env-injected, never
-# in the script text) and every pytest invocation gets ``</dev/null``, so
-# arm-authored test code can neither forge a marker into the log nor consume
-# anything from stdin (which is already ``/dev/null`` — see ``_docker_bash``).
+# Verdict markers carry a ``_${_N}`` suffix and every pytest invocation gets
+# ``</dev/null``, so arm-authored test code can neither forge a marker into the
+# log nor consume anything from stdin (which is already ``/dev/null`` — see
+# ``_docker_bash``). The nonce arrives as the ENVIRONMENT variable
+# ``SWEBENCH_NONCE``, is copied into the shell variable ``_N`` and then
+# unset: pytest and everything the graded code runs therefore inherit no nonce
+# at all, where before they could have read it and printed a valid marker.
 # The hidden test ids live in bash ARRAYS: element quoting survives ids with
 # spaces (``test_sign_happy[some message]``) that unquoted expansion would
 # word-split and glob-expand.
 _GRADE_SCRIPT = r"""
 set -o pipefail
+_N="${{SWEBENCH_NONCE}}"
+unset SWEBENCH_NONCE
 cd {workdir} 2>/dev/null || cd "$(ls -d /*/ | head -1)"
 {env_setup} true
 git config --global --add safe.directory '*' 2>/dev/null || true
@@ -3846,23 +4560,42 @@ git clean -fd >/dev/null 2>&1 || true
 {baseline_gate}
 
 if git apply -v /tmp/prediction.diff 2>&1 || git apply -v --3way /tmp/prediction.diff 2>&1; then
-  echo "SWEBENCH_APPLY_${{SWEBENCH_NONCE}}: OK"
+  echo "SWEBENCH_APPLY_${{_N}}: OK"
 else
-  echo "SWEBENCH_APPLY_${{SWEBENCH_NONCE}}: FAILED"
+  echo "SWEBENCH_APPLY_${{_N}}: FAILED"
   exit 2
 fi
 
 {post_patch_check}
 
+# PER-NODE OUTCOMES, not an exit code. pytest exits 0 when every selected test
+# SKIPS, so `if ! pytest -q <ids>` graded an all-skipped run as RESOLVED.
+# `-rpfEsxX` is `-rA` minus `P`: the same per-node report WITHOUT echoing a
+# passing test's captured stdout, which would let arm-authored code print a
+# forged `PASSED <id>` line into the very section the parser reads.
+# The report goes between nonce-suffixed BEGIN/END markers; the Python side
+# (`_parse_node_outcomes` + `evaluate_node_coverage`) requires an explicit
+# PASSED for every declared id and refuses if the region is missing.
+run_ids() {{
+  label="$1"; shift
+  python -m pytest -q -rpfEsxX "$@" </dev/null >"/tmp/nodes-$label.log" 2>&1
+  rc=$?
+  tail -40 "/tmp/nodes-$label.log"
+  echo "SWEBENCH_NODES_${{_N}}: BEGIN $label rc=$rc"
+  sed -n '/^=* short test summary info =*$/,$p' "/tmp/nodes-$label.log"
+  echo "SWEBENCH_NODES_${{_N}}: END $label"
+  return $rc
+}}
+
 fail=0
-if ! python -m pytest -q "${{SWEBENCH_F2P[@]}}" </dev/null 2>&1 | tail -40; then fail=1; fi
+if ! run_ids fail_to_pass "${{SWEBENCH_F2P[@]}}"; then fail=1; fi
 if [ "${{#SWEBENCH_P2P[@]}}" -gt 0 ]; then
-  if ! python -m pytest -q "${{SWEBENCH_P2P[@]}}" </dev/null 2>&1 | tail -40; then fail=1; fi
+  if ! run_ids pass_to_pass "${{SWEBENCH_P2P[@]}}"; then fail=1; fi
 fi
 if [ "$fail" = "0" ]; then
-  echo "SWEBENCH_RESULT_${{SWEBENCH_NONCE}}: RESOLVED"
+  echo "SWEBENCH_RESULT_${{_N}}: RESOLVED"
 else
-  echo "SWEBENCH_RESULT_${{SWEBENCH_NONCE}}: UNRESOLVED"
+  echo "SWEBENCH_RESULT_${{_N}}: UNRESOLVED"
 fi
 """
 
@@ -3870,6 +4603,37 @@ fi
 # --------------------------------------------------------------------------- #
 # selftest — validate the ORACLE before trusting any measurement
 # --------------------------------------------------------------------------- #
+
+
+def _relpath_str(p: Path) -> str:
+    """Repo-relative when it can be, absolute otherwise (tests repoint dirs)."""
+    try:
+        return str(p.relative_to(FACTORY_ROOT))
+    except ValueError:
+        return str(p)
+
+
+def _selftest_log_path(instance_id: str) -> Path:
+    """Where a gold-patch control log lives. COMMITTED, outside ``runs/``.
+
+    The control is the entire argument for believing a published number ("the
+    gold patch resolves through this exact plumbing"), and its evidence was
+    being written into gitignored scratch that the next sweep wipes: 0 of the
+    19 published swe-rebench instances retained one. The instance id is used
+    verbatim as the filename — every pinned id is already a safe basename
+    (``owner__repo-1234``), and anything with a separator in it would be a
+    manifest defect worth failing on.
+    """
+    if "/" in instance_id or instance_id in {"", ".", ".."}:
+        raise SystemExit(f"instance id {instance_id!r} is not a usable filename")
+    return SELFTEST_LOG_DIR / f"{instance_id}.log"
+
+
+def _write_selftest_log(instance_id: str, log: str) -> Path:
+    p = _selftest_log_path(instance_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(log, encoding="utf-8")
+    return p
 
 
 def selftest(instance_id: str | None, *, timeout_s: int) -> None:
@@ -3945,7 +4709,10 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
         profile = _profile_of(inst)
         mount: Path | None = None
         if profile.name == "swe-rebench":
-            repo = _run_dir(iid, "selftest") / "repo"
+            # OUTSIDE the repo. The grade script applies the test patch AND the
+            # GOLD patch into this tree, so `runs/<id>/selftest/repo/` was the
+            # answer, decoded, on the host, next to every arm's run dir.
+            repo = _selftest_mount_dir(iid)
             _clone(inst, repo)
             prep_error = _prepare_cloned_tree(inst, repo, timeout_s=timeout_s)
             if prep_error:
@@ -3963,8 +4730,10 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
 
         # The gold patch is code-only by construction, but strip anyway: if the
         # dataset's `patch` ever included a test edit, grading it would validate
-        # the oracle against a modified oracle.
-        code_only, _, stripped = split_diff(patch)
+        # the oracle against a modified oracle. The collection-channel REFUSAL
+        # is off here: the maintainers' own fix legitimately edits setup.py, and
+        # the gold patch is not an arm gaming its grader.
+        code_only, _, stripped = split_diff(patch, refuse_collection_channels=False)
         nonce = secrets.token_hex(8)
         script = _grade_script_for(inst, code_only)
         proc = _docker_bash(
@@ -3972,10 +4741,29 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
             workdir=profile.container_workdir,
         )
         log = (proc.stdout or "") + (proc.stderr or "")
-        d = _run_dir(iid, "selftest")
-        (d / "selftest.log").write_text(log, encoding="utf-8")
+        human_log, node_regions = _split_node_regions(log, nonce)
+        # COMMITTED, and outside `runs/` — `runs/` is gitignored scratch that
+        # `_reset_run_artifacts` wipes, which is why 0 of the 19 published
+        # swe-rebench instances retained the control log that cleared them.
+        _write_selftest_log(iid, human_log)
+        if mount is not None:
+            # It holds the gold patch. Nothing needs it once graded.
+            shutil.rmtree(mount.parent, ignore_errors=True)
 
-        resolved = f"{_marker('SWEBENCH_RESULT', nonce)}: RESOLVED" in log
+        # Per-node, same rule as `grade`: an all-skipped gold patch is not a
+        # working oracle, and the CONTROL is where that has to be caught.
+        f2p_ok, f2p_reasons = evaluate_node_coverage(
+            oracles[iid]["fail_to_pass"],
+            _parse_node_outcomes(node_regions.get("fail_to_pass", "")),
+        )
+        p2p_ids, p2p_source = _pass_to_pass_for(inst, oracles[iid])
+        p2p_ok, p2p_reasons = evaluate_node_coverage(
+            p2p_ids, _parse_node_outcomes(node_regions.get("pass_to_pass", ""))
+        )
+        nodes_ok = f2p_ok and p2p_ok
+        resolved = (
+            f"{_marker('SWEBENCH_RESULT', nonce)}: RESOLVED" in log and nodes_ok
+        )
         # POST_PATCH is swe-rebench's broken-instance signal (ids that do not
         # collect even WITH the gold patch can never pass); BROKEN_NO_COLLECT
         # is Pro's frozen pre-patch equivalent.
@@ -3999,6 +4787,11 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
                 "gold_resolves": resolved,
                 "note": note,
                 "stripped_from_gold": stripped,
+                "node_coverage_ok": nodes_ok,
+                "node_coverage_reasons": f2p_reasons + p2p_reasons,
+                "pass_to_pass_count": len(p2p_ids),
+                "pass_to_pass_source": p2p_source,
+                "control_log": _relpath_str(_selftest_log_path(iid)),
             }
         )
         print(f"  gold_resolves={resolved}  ({note})")
@@ -4199,8 +4992,84 @@ _HARNESS_AUTHORED_KINDS = ("SystemPromptEvent",)
 # this sentinel; any other truncated form stays flagged.
 _CLIP_SENTINEL = "<response clipped"
 
+# The OTHER way to the answer: don't decode the local store, fetch the public
+# fix. Every instance is a real merged PR, so the gold patch is one HTTP
+# request away — and shell-level network is not technically blocked in any arm
+# (only forbidden by the prompt), which the README already lists as the
+# residual risk. Detection is therefore the control, so it belongs here.
+#
+# Each pattern requires an actual RETRIEVAL shape, not a mention: `curl` and
+# `wget` need a URL, `urlopen` needs one too. A bare "curl" in prose or in an
+# echoed README is not a probe, and a detector that flags those flags
+# everything (13/19 rows were false-flagged once already by an over-strict
+# own-cwd rule).
+_NETWORK_PROBE_PATTERNS = (
+    ("curl", re.compile(r"\bcurl\b[^\n]{0,200}?(?:https?://|ftp://)")),
+    ("wget", re.compile(r"\bwget\b[^\n]{0,200}?(?:https?://|ftp://)")),
+    ("git fetch/pull/ls-remote", re.compile(r"\bgit\s+(?:fetch|pull|ls-remote)\b")),
+    ("git remote add", re.compile(r"\bgit\s+remote\s+add\b")),
+    ("gh cli", re.compile(r"\bgh\s+(?:pr|api|issue|repo|release|search|browse)\b")),
+    ("urlopen", re.compile(r"\burlopen\b[^\n]{0,200}?https?://")),
+    ("github api/raw", re.compile(r"https?://(?:api|raw)\.githubusercontent\.com|https?://api\.github\.com")),
+)
 
-def _probe_line_hits(line: str, instance_id: str, arm: str) -> list[str]:
+# A github.com URL, so the own-origin exemption below can look at its path.
+_GITHUB_URL = re.compile(r"https?://(?:www\.)?github\.com/([^\s'\"`,;)\]}>]*)")
+
+# Basenames under the run's OWN subtree that still carry answer material. The
+# blanket "anything under runs/<own-id>/ is just the cwd echoing" rule was too
+# generous: `grade.log` lists every hidden test id and `result.json` lists the
+# gold patch's files, so reading either one of the arm's OWN previous attempt is
+# reading the answer key.
+_OWN_SUBTREE_ORACLE_FILES = frozenset(
+    {
+        "grade.log",
+        "grade-nodes.log",
+        "selftest.log",
+        "sweep-grade.log",
+        "result.json",
+        "oracle.json.z",
+    }
+)
+
+
+def _is_claude_arm(arm: str) -> bool:
+    """Is this arm the Claude Code CLI, whatever model it was pointed at?
+
+    The next sweep runs the CLI TWICE (``--model claude-opus-5`` and
+    ``--model claude-opus-4-8``), so a single ``claude`` arm name stops being
+    enough: two runs of one arm name would overwrite each other's run dir. If
+    the arm names grow a model suffix (``claude-opus-5``), an ``arm ==
+    "claude"`` equality test silently stops recognising them — and every
+    claude-specific certification (the transcript scan, the missing-transcript
+    failure, the ledger path) would be SKIPPED rather than applied. Prefix
+    matching keeps those checks attached, which is the fail-closed direction.
+    """
+    return arm == "claude" or arm.startswith("claude-")
+
+
+def _network_probe_hits(line: str, own_repo: str | None) -> list[str]:
+    """Retrieval-shaped network activity in one trail line.
+
+    ``own_repo`` exempts the instance's OWN origin URL: ``git remote -v``,
+    ``.git/config`` and clone echoes legitimately print
+    ``https://github.com/<repo>.git``, and flagging those would invalidate
+    every run. ``https://github.com/<repo>/pull/981`` is NOT exempt — that is
+    the fix.
+    """
+    hits = [name for name, pat in _NETWORK_PROBE_PATTERNS if pat.search(line)]
+    for m in _GITHUB_URL.finditer(line):
+        path = m.group(1).rstrip("/").removesuffix(".git")
+        if own_repo and path.lower() == own_repo.strip("/").lower():
+            continue  # the run's own origin
+        hits.append("github.com retrieval")
+        break
+    return hits
+
+
+def _probe_line_hits(
+    line: str, instance_id: str, arm: str, own_repo: str | None = None
+) -> list[str]:
     """Oracle-probe markers in one trail line, own-run references excluded.
 
     Flags, fail-closed:
@@ -4209,37 +5078,58 @@ def _probe_line_hits(line: str, instance_id: str, arm: str) -> list[str]:
     * ``swebench/manifest.json`` — the pinned manifest, in any path form (a
       target repo's OWN manifest.json — web-app manifests are common — does
       not match);
+    * retrieval-shaped network activity (``_NETWORK_PROBE_PATTERNS``): every
+      instance is a merged public PR, so fetching the answer is easier than
+      decoding it locally;
     * any other ``bench/swebench`` path that does NOT stay inside the run's
       own ``runs/<instance>/`` subtree. The arm's cwd IS under that subtree,
       so its own paths echo constantly in commands, tracebacks, directory
       listings and condensed summaries (measured: every flagged row of the
-      first live sweep was such an echo). Two subdirs of the OWN run dir are
-      still flagged — ``selftest/`` and the OTHER arm's dir — because their
-      grade/selftest logs carry the hidden test ids. So are other
-      instances' run dirs, the manifest, the store, and the harness dir
-      itself.
+      first live sweep was such an echo). Inside the own subtree, two subdirs
+      (``selftest/`` and every OTHER arm's) and the oracle-bearing FILENAMES
+      in ``_OWN_SUBTREE_ORACLE_FILES`` are still flagged — the arm's own
+      ``grade.log`` is the hidden test ids and its own ``result.json`` is the
+      gold patch's file list.
     """
     hits: list[str] = []
     if "oracle.json" in line:
         hits.append("oracle.json")
     if "swebench/manifest.json" in line:
         hits.append("swebench/manifest.json")
+    hits.extend(_network_probe_hits(line, own_repo))
     own_dir = f"bench/swebench/runs/{instance_id}"
-    # EVERY sibling arm's dir is oracle-bearing (grade logs carry the hidden
-    # test ids), not just one hardcoded "other" — that broke at three arms.
-    foreign = frozenset(a for a in _ARM_NAMES if a != arm) | {"selftest"}
     for m in re.finditer(r"bench/swebench", line):
-        reason = _classify_bench_ref(line[m.start():], own_dir, foreign)
+        reason = _classify_bench_ref(line[m.start():], own_dir, arm)
         if reason:
             hits.append(reason)
             break
     return hits
 
 
-def _classify_bench_ref(
-    rest: str, own_dir: str, foreign_subdirs: frozenset[str]
-) -> str | None:
-    """None when ``rest`` is an own-run reference; the flag reason otherwise."""
+def _is_clipped_prefix(text: str, want: str) -> bool:
+    """Is ``text`` ``want`` cut short by the observation clipper, and nothing else?
+
+    ``bench/swebench/runs/<id>/fact<response clipped`` is the own arm's own
+    path, truncated mid-segment by OpenHands. Any OTHER divergence stays
+    flagged — a fragment is exempt only when it is a strict prefix of the
+    expected text and the divergence point is exactly the sentinel.
+    """
+    n = 0
+    while n < len(text) and n < len(want) and text[n] == want[n]:
+        n += 1
+    return n < len(want) and text[n:].startswith(_CLIP_SENTINEL)
+
+
+def _classify_bench_ref(rest: str, own_dir: str, own_arm: str) -> str | None:
+    """None when ``rest`` is an own-run reference; the flag reason otherwise.
+
+    The first path segment under ``runs/<instance>/`` must be the arm's OWN
+    name. It used to be checked against an allowlist of the OTHER known arm
+    names (``_ARM_NAMES`` minus self, plus ``selftest``), which quietly
+    stopped covering anything the tuple did not list — and the next sweep adds
+    ``openhands`` and runs the Claude CLI under two model names. Inverting it
+    to "own arm only" is fail-closed by construction and needs no roster.
+    """
     if rest.startswith(own_dir):
         after = rest[len(own_dir):]
         if not after or (after[0] in _PATH_BOUNDARY and after[0] != "/"):
@@ -4247,18 +5137,29 @@ def _classify_bench_ref(
         if after[0] == "/":
             seg = re.match(r"[^/'\"`)\]}>,;: \t\n\\]*", after[1:])
             first = seg.group(0) if seg else ""
-            if first in foreign_subdirs:
-                return f"own run's oracle-bearing subdir runs/…/{first}"
+            # `...` / `…` is the OpenHands condenser abbreviating the middle of
+            # a path (measured), not a sibling directory. Safe to allow: the
+            # oracle-bearing BASENAME check below still runs on the tail, so
+            # `runs/<id>/.../grade.log` is flagged on the filename.
+            if (
+                first
+                and first not in {own_arm, "...", "…"}
+                and not _is_clipped_prefix(after[1:], own_arm)
+            ):
+                return f"another run subdir runs/…/{first} (own arm is {own_arm})"
+            # NOT a blanket exemption any more: the own subtree also holds the
+            # arm's own grade log (every hidden test id) and its own
+            # result.json (the gold patch's file list).
+            tail = re.match(r"[^'\"`)\]}>,;: \t\n\\]*", after[1:])
+            for part in (tail.group(0) if tail else "").split("/"):
+                if part in _OWN_SUBTREE_ORACLE_FILES:
+                    return f"own run's oracle-bearing file runs/…/{part}"
             return None  # anywhere else under the own run dir — cwd echo
         # e.g. runs/<id>SUFFIX — an id-prefix collision is NOT the own dir.
         return "bench/swebench path outside the run's own subtree"
     # A truncated own path is tolerated ONLY when it diverges exactly at the
     # observation clipper's sentinel; every other divergence is foreign.
-    probe = f"{own_dir}/"
-    j = 0
-    while j < len(rest) and j < len(probe) and rest[j] == probe[j]:
-        j += 1
-    if j < len(probe) and rest[j:].startswith(_CLIP_SENTINEL):
+    if _is_clipped_prefix(rest, f"{own_dir}/"):
         return None
     return "bench/swebench path outside the run's own subtree"
 
@@ -4270,29 +5171,40 @@ def _scan_oracle_probes(
     *,
     instance_id: str,
     arm: str,
-) -> list[str]:
-    """Failures for any arm action that referenced the oracle/manifest paths.
+) -> tuple[list[str], int, int]:
+    """``(failures, trajectories_scanned, trails_scanned)``.
 
     Detection layer for the answer-leak threat: the compressed store defeats
-    grep, but a process that knows the format can still decode it — so the
-    arms' OWN action trails are scanned. Sources: OpenHands trajectory
-    events (the arm's actions and the environment's observations — NOT the
-    harness-authored system prompt or task message, which legitimately carry
-    the run's own cwd), the bare arm's UNTRUNCATED ``bare-commands.ndjson``,
-    the claude arm's stream-json ``claude-transcript.ndjson`` (its tool calls
-    ARE its command log), and the result.json transcript as a fallback.
-    References inside the
-    run's own ``runs/<instance>/<arm>/`` subtree are the arm's cwd, never a
-    probe; everything else stays fail-closed. A bare run that executed
-    commands but left no full command log cannot be cleared, and an
-    unreadable trail is a finding, not a pass.
+    grep, but a process that knows the format can still decode it — and the
+    fix is a public PR one HTTP request away — so the arms' OWN action trails
+    are scanned. Sources: OpenHands trajectory events (the arm's actions and
+    the environment's observations — NOT the harness-authored system prompt or
+    task message, which legitimately carry the run's own cwd), the bare arm's
+    UNTRUNCATED ``bare-commands.ndjson``, the claude arm's stream-json
+    ``claude-transcript.ndjson`` (its tool calls ARE its command log), and the
+    result.json transcript as a fallback. References inside the run's own
+    ``runs/<instance>/<arm>/`` subtree are the arm's cwd, never a probe;
+    everything else stays fail-closed. A bare run that executed commands but
+    left no full command log cannot be cleared, and an unreadable trail is a
+    finding, not a pass.
+
+    The COUNTS are returned because the absence of a trail used to be silent:
+    with zero trajectory files this function returned no findings at all, so a
+    run whose state root had been wiped audited clean — which is exactly the
+    state the four re-rolled 2026-08-03 factory rows are in. ``audit`` turns a
+    zero count on an arm that made model calls into a failure.
     """
     failures: list[str] = []
+    trajectories = 0
+    trails = 0
+    own_repo = result.get("repo") if isinstance(result.get("repo"), str) else None
     for traj in _trajectory_files(state_root):
+        trajectories += 1
+        trails += 1
         try:
             with traj.open(encoding="utf-8", errors="replace") as fh:
                 for n, line in enumerate(fh, 1):
-                    hits = _probe_line_hits(line, instance_id, arm)
+                    hits = _probe_line_hits(line, instance_id, arm, own_repo)
                     if not hits:
                         continue
                     try:
@@ -4323,10 +5235,11 @@ def _scan_oracle_probes(
     # event's own-cwd mention, which the own-run rule already excludes.
     claude_log = run_dir / _CLAUDE_TRANSCRIPT_NAME
     if claude_log.exists():
+        trails += 1
         try:
             with claude_log.open(encoding="utf-8", errors="replace") as fh:
                 for n, line in enumerate(fh, 1):
-                    hits = _probe_line_hits(line, instance_id, arm)
+                    hits = _probe_line_hits(line, instance_id, arm, own_repo)
                     if hits:
                         failures.append(
                             f"oracle-probe: {_CLAUDE_TRANSCRIPT_NAME}:{n} references "
@@ -4338,7 +5251,7 @@ def _scan_oracle_probes(
                 f"oracle-probe: {_CLAUDE_TRANSCRIPT_NAME} unreadable ({exc}) — "
                 "the arm's actions cannot be cleared of oracle access"
             )
-    elif arm == "claude" and (
+    elif _is_claude_arm(arm) and (
         int(result.get("num_turns") or 0) > 0
         or float(result.get("cost_usd") or 0.0) > 0
     ):
@@ -4351,10 +5264,11 @@ def _scan_oracle_probes(
     transcript = [s for s in (result.get("transcript") or []) if isinstance(s, dict)]
     cmd_log = run_dir / "bare-commands.ndjson"
     if cmd_log.exists():
+        trails += 1
         try:
             with cmd_log.open(encoding="utf-8", errors="replace") as fh:
                 for n, line in enumerate(fh, 1):
-                    hits = _probe_line_hits(line, instance_id, arm)
+                    hits = _probe_line_hits(line, instance_id, arm, own_repo)
                     if hits:
                         failures.append(
                             f"oracle-probe: bare-commands.ndjson:{n} references "
@@ -4372,15 +5286,17 @@ def _scan_oracle_probes(
             "bare-commands.ndjson — the full command trail is missing, so the "
             "run cannot be cleared of oracle access"
         )
+    if transcript:
+        trails += 1
     for step in transcript:
-        hits = _probe_line_hits(json.dumps(step), instance_id, arm)
+        hits = _probe_line_hits(json.dumps(step), instance_id, arm, own_repo)
         if hits:
             failures.append(
                 f"oracle-probe: bare-arm transcript step {step.get('step')} "
                 f"references the harness's oracle/manifest paths {hits} — the "
                 "arm went looking for the answer; the run is invalid"
             )
-    return failures
+    return failures, trajectories, trails
 
 
 _SHOW_TRAJ_LAST_N = 5
@@ -4566,6 +5482,40 @@ def _audit_claude_run(
     return failures, warnings, (cost, tin, tout)
 
 
+# Directory names that only exist under a run dir if the run put a LIVE
+# working tree there. Both are pre-isolation layouts: `runs/<id>/<arm>/repo`
+# was every arm's clone, and `runs/<id>/<arm>/grade-repo` was the tree `grade`
+# applied the ORACLE TEST PATCH into. `_reset_run_artifacts` deletes both at
+# run start, so either one present at audit time is this run's own doing.
+_IN_REPO_WORKTREE_NAMES = ("repo", "grade-repo")
+
+
+def _audit_workspace_layout(run_dir: Path, arm: str) -> list[str]:
+    """Fail-closed backstop for arm isolation, independent of the run functions.
+
+    ``assert_workspace_isolated`` runs before spend, but only in the arms that
+    call it. An arm that simply never calls it — or a new arm added later — puts
+    its shell's cwd back inside ``bench/swebench/``, three ``..`` from
+    ``oracle.json.z`` and one from every other arm's ``grade.log``. The audit
+    is the one step every arm goes through, so the invariant is re-checked from
+    the artifacts here rather than trusted from the code path.
+    """
+    failures: list[str] = []
+    for name in _IN_REPO_WORKTREE_NAMES:
+        tree = run_dir / name
+        if tree.is_dir():
+            failures.append(
+                f"{arm} arm left a live working tree at {tree} — inside the "
+                "harness directory, so oracle.json.z, the pinned manifest and "
+                "every other arm's grade.log were reachable from the agent's "
+                "shell by `cd ..`. The run function must clone into "
+                "`_work_dir(instance_id, arm)` (outside the repo), call "
+                "`assert_workspace_isolated` on it before spend, and copy only "
+                "finished artifacts back into the run dir."
+            )
+    return failures
+
+
 def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     """Audit one run's artifacts end-to-end; exit non-zero on ANY failure.
 
@@ -4629,7 +5579,7 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     ledger_in = ledger_out = 0
     print(f"=== audit {instance_id} / {arm} ===")
 
-    if arm == "claude":
+    if _is_claude_arm(arm):
         # The claude arm has no factory Run ledger — the CLI's own stream-json
         # transcript is the ledger. Checks 1-4 are replaced by
         # ``_audit_claude_run`` (usage/cost certification + hermeticity);
@@ -4641,7 +5591,7 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
         warnings.extend(c_warnings)
     else:
         failures, warnings, calls, responses, ledger = _audit_factory_ledger(
-            state_root, result, result_valid, failures
+            state_root, result, result_valid, failures, arm
         )
         ledger_cost, ledger_in, ledger_out = ledger
 
@@ -4650,14 +5600,46 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     if pre is not None and not pre.get("collect_ok"):
         failures.append("result.json records a failed collect precheck")
 
+    # 5b. the arm's LIVE working tree must not have been inside the harness
+    #     directory. `assert_workspace_isolated` enforces this before spend,
+    #     but only for the arms that call it — so this is the fail-closed
+    #     backstop that does not depend on any run function remembering to.
+    #     `_reset_run_artifacts` deletes these at run start, so a tree sitting
+    #     here at audit time means THIS run put it here, three `..` from
+    #     `bench/swebench/oracle.json.z`.
+    failures.extend(_audit_workspace_layout(run_dir, arm))
+
     # 6. oracle-probe scan: any reference to the harness's manifest/oracle
-    #    paths in the arm's own action trail means it went looking for the
-    #    answer — the run is invalid.
-    failures.extend(
-        _scan_oracle_probes(
-            state_root, run_dir, result, instance_id=instance_id, arm=arm
-        )
+    #    paths, or any retrieval-shaped network activity, in the arm's own
+    #    action trail means it went looking for the answer — the run is invalid.
+    probe_failures, trajectories_scanned, trails_scanned = _scan_oracle_probes(
+        state_root, run_dir, result, instance_id=instance_id, arm=arm
     )
+    failures.extend(probe_failures)
+
+    # 7. an arm that made model calls MUST have left a scannable trail.
+    #    Without this the scan was fail-OPEN on an empty trajectory dir: zero
+    #    trails produced zero findings, so a wiped state root audited clean.
+    made_calls = (
+        len(calls) > 0
+        or int(result.get("persona_calls") or 0) > 0
+        or int(result.get("num_turns") or 0) > 0
+        or float(result.get("cost_usd") or 0.0) > 0
+    )
+    if made_calls and trails_scanned == 0:
+        failures.append(
+            f"{arm} arm reports model calls but left no action trail to scan "
+            "(no trajectories, no command log, no transcript) — an unscannable "
+            "run cannot be cleared of oracle access"
+        )
+
+    # 8. the graded patch itself. The audit certified the LEDGER and the TRAIL
+    #    and never once looked at prediction.diff, so nothing tied a published
+    #    verdict to the bytes that produced it.
+    pred_path = run_dir / "prediction.diff"
+    prediction_sha256: str | None = None
+    if pred_path.exists():
+        prediction_sha256 = hashlib.sha256(pred_path.read_bytes()).hexdigest()
 
     payload = {
         "instance_id": instance_id,
@@ -4671,6 +5653,14 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
         "ledger_tokens_in": ledger_in,
         "ledger_tokens_out": ledger_out,
         "result_cost_usd": result.get("cost_usd"),
+        # What was actually graded, and what the harness removed or refused
+        # before grading it.
+        "prediction_sha256": prediction_sha256,
+        "base_commit": result.get("base_commit"),
+        "stripped_test_paths": result.get("test_files_stripped") or [],
+        "refused_paths": result.get("refused_paths") or [],
+        "trajectories_scanned": trajectories_scanned,
+        "trails_scanned": trails_scanned,
     }
     out = run_dir / "audit.json"
     out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -4684,9 +5674,80 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
         raise SystemExit(f"audit FAILED ({len(failures)} finding(s)) -> {out}")
     print(
         f"audit OK ({len(calls)} persona call(s), ${ledger_cost}) -> {out}"
-        if arm != "claude"
+        if not _is_claude_arm(arm)
         else f"audit OK (claude transcript certified, ${ledger_cost}) -> {out}"
     )
+
+
+# How many OpenHands trajectory files a HEALTHY run of each arm leaves behind.
+# Keyed by ARM, not by "is some other artifact present" — an arm's identity is
+# what decides whether a trajectory should exist, and inferring it from a file
+# on disk is the `proxy != real` class: a FACTORY run that lost its trajectories
+# would have been waved through by a stray `bare-commands.ndjson` in its state
+# root.
+#
+#   factory   — every dev call is a whole OpenHands conversation, so ONE
+#               trajectory PER dev call. Fewer means the reasoning trail is
+#               incomplete.
+#   openhands — ONE conversation for the entire run, copied out whole as
+#               `nostory-1.ndjson`, against exactly one dev Run row. The rule is
+#               "at least one", never one-per-call.
+#   bare      — single litellm completions, no OpenHands conversation at any
+#               point, so there is no trajectory to capture and never was. Its
+#               full action+observation trail is `bare-commands.ndjson`, which
+#               the oracle-probe scan reads and whose absence beside executed
+#               commands is already a hard FAILURE there. Warning "0 trajectory
+#               files" on every bare row trained the reader to ignore the one
+#               warning that matters.
+#   claude    — never reaches this function (transcript-backed, see
+#               `_audit_claude_run`).
+_TRAJECTORIES_PER_DEV_CALL = "per-call"
+_TRAJECTORIES_AT_LEAST_ONE = "at-least-one"
+_TRAJECTORIES_NONE_EXPECTED = "none"
+_ARM_TRAJECTORY_EXPECTATION = {
+    "factory": _TRAJECTORIES_PER_DEV_CALL,
+    "openhands": _TRAJECTORIES_AT_LEAST_ONE,
+    "bare": _TRAJECTORIES_NONE_EXPECTED,
+}
+
+
+def _trajectory_coverage_warnings(
+    state_root: Path, arm: str, call_counts: dict[str, int]
+) -> list[str]:
+    """Trajectory-coverage warnings for one arm, scoped by what it can produce.
+
+    An UNKNOWN arm gets the strictest rule (one trajectory per dev call), so a
+    newly added arm is noisy rather than silently unchecked.
+
+    Warnings only, never failures, in both directions: a size-capped or
+    scope-disabled capture must not invalidate an otherwise-sound run. The
+    fail-CLOSED rule lives in ``audit`` — an arm reporting model calls with
+    ``trails_scanned == 0`` FAILS — and it is untouched by this: for bare, the
+    command log is the trail that satisfies it, and for factory and openhands
+    it is the trajectory itself.
+    """
+    dev_calls = call_counts.get("dev", 0)
+    if not dev_calls:
+        return []
+    rule = _ARM_TRAJECTORY_EXPECTATION.get(arm, _TRAJECTORIES_PER_DEV_CALL)
+    n = len(_trajectory_files(state_root))
+    if rule == _TRAJECTORIES_NONE_EXPECTED:
+        # Not "and never was" in the abstract: its trail must actually be there.
+        if not (state_root / "bare-commands.ndjson").exists():
+            return [
+                f"{arm}: {dev_calls} dev call(s) and no bare-commands.ndjson — "
+                "this arm's only action trail is missing (a hard FAILURE in the "
+                "oracle-probe scan if it executed anything)"
+            ]
+        return []
+    expected = dev_calls if rule == _TRAJECTORIES_PER_DEV_CALL else 1
+    if n < expected:
+        return [
+            f"dev: {dev_calls} call(s) but only {n} trajectory file(s) under "
+            f"state/events/trajectories (expected at least {expected} for the "
+            f"{arm} arm) — the agent's reasoning trail is incomplete"
+        ]
+    return []
 
 
 def _audit_factory_ledger(
@@ -4694,6 +5755,7 @@ def _audit_factory_ledger(
     result: dict[str, Any],
     result_valid: bool,
     failures: list[str],
+    arm: str,
 ) -> tuple[
     list[str], list[str], list[dict[str, Any]], list[dict[str, Any]],
     tuple[float, int, int],
@@ -4753,20 +5815,7 @@ def _audit_factory_ledger(
                 "body(ies) captured — response_bodies.ndjson is incomplete "
                 "(rotated away, capture disabled, or a failed call)"
             )
-    # The bare arm's dev "calls" are single litellm completions, not OpenHands
-    # conversations, so there is no trajectory to capture and never was: its
-    # full action+observation trail is ``bare-commands.ndjson`` (which the
-    # oracle-probe scan above reads, and whose absence beside executed commands
-    # is a hard FAILURE, not a warning). Warning "0 trajectory files" on every
-    # bare row trained the reader to ignore the one warning that matters.
-    dev_calls_n = call_counts.get("dev", 0)
-    has_command_log = (state_root / "bare-commands.ndjson").exists()
-    if dev_calls_n and len(traj_files) < dev_calls_n and not has_command_log:
-        warnings.append(
-            f"dev: {dev_calls_n} call(s) but only {len(traj_files)} trajectory "
-            "file(s) under state/events/trajectories — the agent's reasoning "
-            "trail is incomplete"
-        )
+    warnings.extend(_trajectory_coverage_warnings(state_root, arm, call_counts))
 
     # 2. ledger vs result.json — the number every A/B is measured against.
     ledger_cost = round(sum(float(c["cost_usd"] or 0.0) for c in calls), 4)

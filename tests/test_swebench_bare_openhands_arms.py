@@ -46,6 +46,20 @@ def A() -> Any:  # noqa: N802
     return _load()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_the_scratch_work_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The arms' live working trees live OUTSIDE the repo now, under
+    ``$SWEBENCH_WORK_ROOT`` (default ``$XDG_CACHE_HOME/swebench-work``).
+
+    Without this every test that drives ``run_bare``/``run_openhands`` would
+    clone into the operator's real cache. Test pollution of production state has
+    already faked a whole class of failure in this repo once.
+    """
+    monkeypatch.setenv("SWEBENCH_WORK_ROOT", str(tmp_path / "work"))
+
+
 # --------------------------------------------------------------------------- #
 # prompt parity — the invalidating defect
 # --------------------------------------------------------------------------- #
@@ -315,9 +329,14 @@ def test_a_fabricated_tail_after_a_REAL_command_is_neither_run_nor_echoed(
         "```\n"
     )
     model, result, run_dir = bare_run([reply, "DONE"])
-    assert not (run_dir / "repo" / "SHOULD_NEVER_BE_EXECUTED").exists(), (
+    # The live tree is OUTSIDE the repo now (`_work_dir`), so asserting against
+    # `run_dir / "repo"` would pass vacuously and stop testing the parser.
+    work_repo = A._work_dir(str(_INST["instance_id"]), "bare") / "repo"
+    assert work_repo.is_dir(), "the arm's clone is not where _work_dir puts it"
+    assert not (work_repo / "SHOULD_NEVER_BE_EXECUTED").exists(), (
         "the fabricated tail was executed as real shell"
     )
+    assert (work_repo / "widget.py").exists(), "the REAL command did not run"
     assistant_turns = [
         m["content"]
         for conv in model.seen
@@ -943,15 +962,51 @@ def test_openhands_probe_reuses_the_shared_prediction_helpers(A: Any) -> None:  
 # --------------------------------------------------------------------------- #
 
 
-def test_bare_command_log_satisfies_the_trajectory_coverage_check(
+def test_trajectory_coverage_is_scoped_by_arm_not_by_a_stray_file(
     A: Any, tmp_path: Path  # noqa: N803
 ) -> None:
     """A warning printed on every single bare row trains the reader to ignore
     warnings. The bare arm's dev calls are single completions — there is no
     OpenHands trajectory to capture, and its full trail is the command log
-    (whose ABSENCE beside executed commands is already a hard failure)."""
-    import inspect
+    (whose ABSENCE beside executed commands is already a hard failure).
 
-    src = inspect.getsource(A._audit_factory_ledger)
-    assert 'state_root / "bare-commands.ndjson"' in src
-    assert "not has_command_log" in src
+    But the exemption must be keyed on the ARM, not on "is a command log
+    present": inferring an arm's identity from a file on disk is `proxy != real`
+    — a FACTORY run that lost its trajectories would be waved through by a
+    stray `bare-commands.ndjson` in its state root.
+    """
+    calls = {"dev": 3}
+    root = tmp_path / "state-root"
+    (root / "state" / "events" / "trajectories").mkdir(parents=True)
+
+    # bare: no trajectory is expected, and its own trail IS present -> silent.
+    (root / "bare-commands.ndjson").write_text("{}\n", encoding="utf-8")
+    assert A._trajectory_coverage_warnings(root, "bare", calls) == []
+    # …and if the bare arm's one trail is missing, say so.
+    (root / "bare-commands.ndjson").unlink()
+    bare_warn = A._trajectory_coverage_warnings(root, "bare", calls)
+    assert len(bare_warn) == 1
+    assert "bare-commands.ndjson" in bare_warn[0]
+
+    # factory: one trajectory per dev call. A stray command log must NOT excuse
+    # missing trajectories — this is the hole in the file-presence version.
+    (root / "bare-commands.ndjson").write_text("{}\n", encoding="utf-8")
+    assert len(A._trajectory_coverage_warnings(root, "factory", calls)) == 1
+    for i in range(3):
+        (root / "state" / "events" / "trajectories" / f"1-{i}.ndjson").touch()
+    assert A._trajectory_coverage_warnings(root, "factory", calls) == []
+
+    # openhands: ONE conversation for the whole run, so one trajectory is
+    # enough however many ledger rows there are.
+    single = tmp_path / "oh-root"
+    (single / "state" / "events" / "trajectories").mkdir(parents=True)
+    assert len(A._trajectory_coverage_warnings(single, "openhands", {"dev": 1})) == 1
+    (single / "state" / "events" / "trajectories" / "nostory-1.ndjson").touch()
+    assert A._trajectory_coverage_warnings(single, "openhands", {"dev": 1}) == []
+    assert A._trajectory_coverage_warnings(single, "openhands", {"dev": 9}) == []
+
+    # an UNKNOWN arm gets the strictest rule, never a free pass.
+    assert len(A._trajectory_coverage_warnings(single, "brand-new-arm", {"dev": 4})) == 1
+
+    # a run that made no dev calls has nothing to be missing.
+    assert A._trajectory_coverage_warnings(root, "factory", {}) == []
