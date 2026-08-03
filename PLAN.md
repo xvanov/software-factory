@@ -743,6 +743,25 @@ subscription). Ordered by what blocks what.
 - [ ] **Filter on `created_at`, never on split label.** SWE-rebench's `2026_03`
       split (110 rows) is exactly `created_at > 2026-03-01` — it aggregates
       March, April *and* May PRs.
+- [ ] **The suite of record is SWE-rebench, and it is healthy.**
+      `nebius/SWE-rebench-leaderboard`, last modified 2026-07-28: 860
+      execution-validated Python instances, docker image and oracle shipped
+      in-row, monthly splits through 2026-05-12. Every instance the factory has
+      ever been graded on comes from it. SWE-bench-Live was only ever a *bonus*
+      freshness control layered on top; losing it costs the add-on, not the
+      benchmark. Alternatives considered and rejected: **SWE-bench Verified** (the
+      comparability standard, but 2023 instances and the most contaminated corpus
+      in the field — use only if a public-leaderboard-comparable number is the
+      goal), **SWE-bench Pro** (frozen after OpenAI's ~30%-broken audit),
+      **SWE-rebench V2** (nothing after 2026-01), **MultiLang** (no Python).
+- [ ] **The reference arm is the Claude Code CLI, on a subscription — never an
+      API or Azure route.** Verified: `claude -p <prompt> --model <id>
+      --max-turns 60 --output-format stream-json`, `apiKeySource: "none"`, cwd =
+      the instance clone. `--model` is a flag on that same binary, so "a second
+      claude arm" means running Claude Code twice with different `--model`
+      values. `claude --model claude-opus-4-8` was confirmed working on this
+      machine 2026-08-03. Do not read the cutoff table below as a provider
+      choice; it is only about which Claude model the CLI is pinned to.
 - [ ] **No positive-margin manifest exists for `claude-opus-5`.** Its cutoff is
       May 2026 (Opus 5 system card §1.1) and the freshest public instance in the
       whole family is 2026-05-12, so **19/19** of the current manifest and
