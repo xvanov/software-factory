@@ -18,8 +18,8 @@ All systemd units are deliberately **stopped**. Run `factory on` to start.
 | GitHub loop | 1 open issue, 0 open PRs, 0 blocked stories |
 | Spend control | $200/day cap, hourly cap, per-story budget |
 | Test suite | 2,368 tests, ~5 min |
-| SWE-bench harness | Three-arm, execution-validated suite (SWE-rebench, 19 instances, selftest 19/20), every row audit-valid, evidence archived. **Factory 11/19 = 58% vs bare 0/19 vs Claude Code 16/18 = 89%** (2026-08-03) |
-| Scaffold lift | **+58 pp at matched weights** — factory (dev=azure/deepseek-v4-pro + reviewer=azure/gpt-5.4) vs the same deepseek bare with a docker test loop and 40 steps |
+| SWE-bench measurement pipeline | Oracle is sha256-pinned upstream `FAIL_TO_PASS`/`PASS_TO_PASS`; test-edit stripping is asserted in code at all three arms and fired on 36/57 rows; grading is a fresh `--rm` container with `--network none`; manifest frozen and committed *before* the first run; gold-patch control 19/20 and red-baseline verified 18/19. Adversarially audited 2026-08-03 — see "Audited and retracted" below |
+| Claude-arm provenance | Really executed locally: `claude` CLI 2.1.220, `--model claude-opus-5` pinned, `--depth 1` clone (1 commit, no future refs), WebFetch/WebSearch removed and proved absent from the CLI's own init event, **0 of 321 recorded shell commands attempted any network retrieval** |
 
 Do not "fix" anything in this table without a measurement that shows it broke.
 
@@ -33,7 +33,9 @@ Do not "fix" anything in this table without a measurement that shows it broke.
 | L3 re-diagnoses known faults | 165 proposals span 37 distinct classes | `PLAN.md` 3.3 |
 | The old (`bench.py`) benchmark is retracted | Tasks t1–t6 are shipped, so the pool is contaminated; the 20 reported rows still have no raw artifacts. SWE-bench Pro (below) replaces it for external grading | `PLAN.md` Phase 2 |
 | Merge-gate precision is unknown | The SWE-bench harness runs dev+review only, so 1.3 measured **chain-verdict** precision (1/5), not the merge gate | `PLAN.md` Phase 2 |
-| Bare-model arm not yet run | A factory number alone measures the model, not the harness | `PLAN.md` 1.4 — next |
+| The bare arm measures its own bugs, not the model | Bare is *forbidden* to write tests while factory/claude are *instructed* to; its DONE gate targets tests that pass at base commit; no empty-diff guard; roleless prompt echoes fabricated tool output back as real. External anchor for the same deployment is 40.2% — P(0/19 \| p=.402) = 5.7e-5 | `PLAN.md` 1.6 |
+| No arm isolates "no chain" from "no tools" | The bare loop lacks both, so an unknown share of the measured lift is OpenHands' tooling rather than the chain | `PLAN.md` 1.6 — OpenHands single-agent arm |
+| The agent's shell can reach the oracle store | `oracle.json.z` sits six `..` above the dev's cwd; arms can read each other's run dirs. **This fired: 4 factory runs were audit-invalidated for oracle-probing and silently re-rolled** | `PLAN.md` 1.6 |
 | State has no backup | The twin guards source only | `PLAN.md` 3.4 |
 
 ## The benchmark, as of 2026-08-03 (Phase 1 complete)
@@ -43,18 +45,76 @@ python instances, 19 with a working oracle under the same mounted-clone
 topology the arms run in (selftest is the control; SWE-bench Pro is frozen
 after OpenAI's ~30%-broken audit; Pro archives remain readable).
 
-| Arm | Models | Resolved | Notes |
-|---|---|---|---|
-| factory | dev `azure/deepseek-v4-pro`, reviewer `azure/gpt-5.4` | **11/19 = 58%** | precision 11/16, recall 11/11; ~$34/sweep |
-| bare | `azure/deepseek-v4-pro`, minimal loop + docker test loop, 40 steps | **0/19** | honest baseline (post-#217); pre-fix bare rows not comparable |
-| claude | Claude Code CLI, `claude-opus-5`, hermetic (no MCP/web), 60 turns | **16/18 = 89%** | 1 oracle-pass excluded (run failed); $34.85 Anthropic-side |
+| Arm | Models | Resolved | 95% CP CI | Status |
+|---|---|---|---|---|
+| factory | dev `azure/deepseek-v4-pro` **+ 7 escalations to `azure/gpt-5.3-codex`**, reviewer `azure/gpt-5.4` | 11/19 = 58% | [33.5, 79.7] | **provisional** — 4 of 19 rows are second attempts (below) |
+| bare | `azure/deepseek-v4-pro`, minimal loop, 40 steps | 0/19 | [0.0, 17.6] | **VOID** — arm defective, see below |
+| openhands | `azure/deepseek-v4-pro`, single agent, no chain | not yet run | — | the arm that actually isolates the chain |
+| claude | Claude Code CLI, `claude-opus-5`, hermetic (no MCP/web), 60 turns | 17/19 = 89% | [66.9, 98.7] | provenance verified; **model+scaffold swap, not a scaffold measurement** |
 
-Read: the harness turns a 0%-bare model into 58% (+58 pp scaffold lift, the
-product thesis's first direct evidence); the frontier-agent reference sits at
-89%, so the remaining gap to frontier is 31 pp on this sample. n=19, single
-seed — k-sampling and the 120-task Phase-2 manifest are what make these
-defensible. Every number is re-derivable: `report --from-archive` over the
-committed `results-archive/` snapshots.
+### Audited and retracted 2026-08-03
+
+Four independent adversarial audits attacked this result. The **measurement
+pipeline held**; the **headline did not**. Retracted, do not cite:
+
+- **"+58 pp scaffold lift at matched weights."** Two independent defects. (a) The
+  bare arm is broken in eight ways — most decisively, its system prompt forbids
+  writing tests while the factory's and Claude's *instruct* it, so the arm
+  anchoring the lift is prompt-blocked from building the run-until-green loop the
+  factory's whole thesis rests on; and its DONE gate targets FAIL_TO_PASS *files
+  at base commit*, where in 16 of 19 instances zero such tests exist (one row
+  printed "28 passed" against an empty diff and stopped at step 6; another
+  reverted its own correct fix because the pre-existing tests asserted the old
+  behaviour). 6 of 19 rows shipped a 0-byte diff with no empty-diff guard, and no
+  run came near its 40-step cap (mean 9.2). (b) Weights were not matched: the
+  factory escalated 7 dev calls to `azure/gpt-5.3-codex` and **4 of its 11
+  resolves used that tier**, which bare can never reach — matched-weights factory
+  ceiling is 7/19 = 37%.
+- **"The remaining gap to frontier is 31 pp."** McNemar exact on the 18 paired
+  instances: **p = 0.0625** — not significant. And the arm swaps model *and*
+  scaffold, so the gap is not attributable to the harness at all; `results.md`'s
+  own rule ("a number without the matched-weights number measures the MODEL")
+  was applied to bare and not to Claude. Also every instance (`created_at`
+  2026-01-03 → 05-07) predates `claude-opus-5`'s knowledge cutoff, so that arm
+  additionally carries a contamination confound the other two may not.
+- **"Every row audit-valid."** True of the published rows and materially
+  incomplete: the superseded `results-archive/2026-08-03T02-21-23Z` snapshot
+  records the first factory sweep at `audit failed: 4`, all four the harness's
+  most serious verdict (*"the arm went looking for the answer; the run is
+  invalid"* — oracle-probe). Those four were re-run 30 min later under
+  byte-identical code, passed, and the second attempt is what is published; 2 of
+  them are among the 11 passes. Outcomes were identical in all 4 pairs, so 11/19
+  holds — but selecting on the integrity gate is not disclosed anywhere, and the
+  root cause (each arm can read its siblings' oracle-bearing files) is unfixed.
+- **"Every number is re-derivable."** False for the `audit` column: the archive
+  copies `result.json`/`audit.json`/`prediction.diff` but no trajectories, so the
+  audit verdict is *attested*, not re-derivable. And `report --from-archive`
+  **overwrites the file it is verifying** and silently drops the excluded-rows
+  disclosure — that bug produced an undetected 20-line deletion of committed
+  evidence.
+- **`~$34/sweep`** — the archive of record sums to **$29.19**; $33.58 belongs to
+  the superseded archive; actual factory burn across both sweeps was **$38.66**.
+
+What the evidence does support, stated honestly: **the factory solved nothing
+Claude Code missed — its 11 passes are a strict subset of Claude's 16.** That
+needs no significance test and is the more useful framing than any pp gap.
+
+Newly quantified variance: the archives already contain 10 same-condition
+factory replications nobody reported. 0/10 oracle flips (95% upper bound on
+per-instance flip probability 25.9% ⇒ ±3 instances at n=19), 1/10 chain-verdict
+flips, and cost varying up to 2.6× on the same instance. k≥3 is required before
+any delta means anything.
+
+Also unexploited but live, all fail-open: grading is exit-code based so a
+module-level `SkipTest` in production code would score RESOLVED; the test-strip
+path logic keeps `pyproject.toml`/`pytest.ini`/`sitecustomize.py`/plugin
+channels; `_DIFF_HEADER` is fail-open on git-quoted paths, merging an
+unparseable test hunk into a kept block past both the stripper and the assert;
+`audit.json` never hashes the graded patch; 2 instances have an empty
+`PASS_TO_PASS`. Verified not exploited in this run (all 28 PASS rows have real
+passed counts; 0 of 57 graded diffs touch a config path; 0 unparsed headers).
+
+Fixes are in flight as operator PRs; `PLAN.md` 1.6 is the gate on any re-publish.
 
 ## Fixed 2026-08-02 (Phase 1.1–1.3 + the three bugs that invalidated 2026-08-01)
 

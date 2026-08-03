@@ -588,13 +588,26 @@ chain-verdict precision 1/5, recall 1/1. **Start at 1.4.**
 
 ---
 
-### Phase 1 outcome (2026-08-03) — read before starting Phase 2
+### Phase 1 outcome (2026-08-03) — **partially retracted the same day by adversarial audit**
 
 Three-arm result on the SWE-rebench pinned manifest (19 working-oracle
-instances, all rows audit-valid, evidence archived): **factory 11/19 = 58%
+instances, evidence archived): **factory 11/19 = 58%
 (dev=deepseek-v4-pro + reviewer=gpt-5.4) · bare deepseek 0/19 · Claude Code
-(claude-opus-5) 16/18 = 89%**. First measured scaffold lift: +58 pp at
-matched weights. Phase 2 adjustments this implies:
+(claude-opus-5) 16/18 = 89%**.
+
+**⚠ Four adversarial audits retracted the two headline claims. The measurement
+pipeline held; arm parity did not.** Read `STATUS.md` → "Audited and retracted
+2026-08-03" before citing any of it, and do **1.6** before re-publishing. In one
+line: **+58 pp is void** (the bare arm is defective *and* the weights were not
+matched — 4 of the factory's 11 resolves used the `gpt-5.3-codex` hard tier, so
+the matched-weights ceiling is 7/19); **the 31 pp Claude gap is
+non-significant** (McNemar exact p=0.0625, n=18) and confounds model with
+scaffold; **4 of 19 factory rows are undisclosed second attempts** after the
+integrity gate invalidated the first for oracle-probing. The durable,
+test-free finding: **the factory's 11 passes are a strict subset of Claude's
+16 — it solved nothing Claude missed.**
+
+Phase 2 adjustments this implies:
 
 - Build the 120-task manifest from SWE-rebench monthly splits (+ the 30
   SWE-bench-Live control), NOT SWE-bench Pro — Pro is frozen (see STATUS).
@@ -607,6 +620,72 @@ matched weights. Phase 2 adjustments this implies:
   profiles (poisoned projections → needless --force-over-cap); a claude-arm
   row whose CLI never starts counts as a gradable empty_patch instead of
   run_failed; systemd-unit sweeps need PATH set explicitly (uv, claude).
+
+### 1.6 — Arm parity and integrity repair, then one clean n=19 re-run  **[OPERATOR-PR-ONLY]**
+
+**Gate: nothing from Phase 1 may be re-published, and Phase 2 may not start,
+until every box here is checked.** Effort ~2 days, cost ~$50 Azure (+ Claude
+subscription). Ordered by what blocks what.
+
+- [ ] **A — integrity hardening.** Relocate the live run workspace so no
+      ancestor of the agent's cwd holds oracle/manifest/selftest data or another
+      arm's outputs (this is what let 4 factory runs be audit-invalidated for
+      oracle-probing); stop printing the oracle's `gold_files` to a log that
+      lands beside the worktree; per-node `PASSED` grading instead of exit code
+      (`-rA`, require every f2p and p2p id to pass — today an all-skipped run
+      exits 0 and grades RESOLVED); refuse a prediction that touches a
+      pytest-collection or auto-import channel (`pyproject.toml`, `pytest.ini`,
+      `tox.ini`, `setup.cfg`, `noxfile.py`, `sitecustomize.py`, `*.pth`,
+      `*_pytest_plugin.py`); make `_DIFF_HEADER` fail-CLOSED on any header it
+      cannot classify (git-quoted paths currently merge an unparseable test hunk
+      into a kept block past both the stripper and the assert); add
+      `prediction_sha256` / `base_commit` / `stripped_test_paths` /
+      `trajectories_scanned` to `audit.json` and fail when an arm reports LLM
+      calls with zero trajectories; keep selftest logs where
+      `_reset_run_artifacts` cannot clobber them.
+- [ ] **B — arm parity.** Give bare the same test-writing instruction the
+      factory and Claude arms get; tell every arm plainly that the FAIL_TO_PASS
+      files pass at base commit and do not cover the task; share
+      `_precheck_collect`'s salvaged target with bare; guard DONE against an
+      empty diff (capped); pass a real message list instead of a flat string and
+      echo the *parsed command* into history so a fabricated `Result:` /
+      `Exit code:` line can never become an observation; pin the system prompt
+      and task in the history window; accept a bare ```bash fence; catch
+      `TimeoutExpired`; persist observations. **Add the `openhands` arm**
+      (OpenHands single agent, `route("dev","standard")`, the identical
+      `_STORY_TEMPLATE` prompt, no chain) — it is the only arm that separates
+      "no chain" from "no tools", which is what the product claim asserts.
+      **Record the per-row model mix** (`result.json["model"]` is `None` today,
+      which is how the hard-tier escalations stayed invisible).
+- [ ] **C — reporting honesty.** `--from-archive` must print and NOT overwrite
+      `results.md` (add `--check` that diffs and exits non-zero); persist
+      `foreign`/`refused` into `report-meta.json` so the excluded-rows
+      disclosure survives re-derivation; ONE `run_failed` classifier shared by
+      the sweep and the report (they disagree today: `sweep-claude.json` says 17
+      resolved, `results.md` says 16/18) and one documented rule for
+      budget-exhaustion applied to **every** arm — recommendation: a turn/wall
+      cap hit is a completed, counted, flagged attempt, not an excluded run;
+      publish `fresh_in` and `cache_read` as separate columns (cache share is
+      0% bare / 78% factory / 97% claude, so the published "34× tokens" framing
+      is off by 4.5×) and label the cost source per arm (factory/bare are
+      price-table estimates, claude is CLI-reported against a subscription); add
+      an `attempt` column plus a "Discarded runs" section; print
+      `n/a (arm has no chain verdict)` instead of the meaningless
+      "claude recall 0/16 = 0%"; flag `pass_to_pass_count == 0`; filter
+      `estimate_instance_cost` by `manifest_sha256`; archive
+      `sweep-<arm>.json` and `selftest.json` alongside the rows.
+- [ ] **D — one clean re-run, n=19, k=1, four arms** (factory / bare /
+      openhands / claude) on the same pinned manifest, single sweep, no
+      re-rolls. If a row is audit-invalidated, publish it as invalid — do not
+      re-roll it.
+- [ ] **E — re-publish with the caveats structural, not prose:** per-arm CIs, the
+      paired McNemar, the MDE (~±38 pp at n=19 against a 58% baseline), the
+      model mix per row, and the subset relation between arms.
+- [ ] **F — record the contamination margin per arm.** Every instance in the
+      current manifest predates `claude-opus-5`'s cutoff; the Azure/DeepSeek
+      cutoffs are not recorded anywhere in the repo, so no arm's margin is
+      currently known. Phase 2's manifest must be built with a positive margin
+      for the newest model in any arm, or the absolute rates mean nothing either.
 
 ## Phase 2 — the trustworthy benchmark
 
