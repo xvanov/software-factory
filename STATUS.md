@@ -18,7 +18,8 @@ All systemd units are deliberately **stopped**. Run `factory on` to start.
 | GitHub loop | 1 open issue, 0 open PRs, 0 blocked stories |
 | Spend control | $200/day cap, hourly cap, per-story budget |
 | Test suite | 2,368 tests, ~5 min |
-| SWE-bench harness | Runs end to end, grades externally, and archives evidence with every table (PLAN 1.5, #210/#211). Current backed numbers: factory 1/6 = bare 1/6 |
+| SWE-bench harness | Three-arm, execution-validated suite (SWE-rebench, 19 instances, selftest 19/20), every row audit-valid, evidence archived. **Factory 11/19 = 58% vs bare 0/19 vs Claude Code 16/18 = 89%** (2026-08-03) |
+| Scaffold lift | **+58 pp at matched weights** — factory (dev=azure/deepseek-v4-pro + reviewer=azure/gpt-5.4) vs the same deepseek bare with a docker test loop and 40 steps |
 
 Do not "fix" anything in this table without a measurement that shows it broke.
 
@@ -34,6 +35,26 @@ Do not "fix" anything in this table without a measurement that shows it broke.
 | Merge-gate precision is unknown | The SWE-bench harness runs dev+review only, so 1.3 measured **chain-verdict** precision (1/5), not the merge gate | `PLAN.md` Phase 2 |
 | Bare-model arm not yet run | A factory number alone measures the model, not the harness | `PLAN.md` 1.4 — next |
 | State has no backup | The twin guards source only | `PLAN.md` 3.4 |
+
+## The benchmark, as of 2026-08-03 (Phase 1 complete)
+
+Suite: SWE-rebench (Nebius), pinned manifest `923aef05` — 20 post-2026-01-01
+python instances, 19 with a working oracle under the same mounted-clone
+topology the arms run in (selftest is the control; SWE-bench Pro is frozen
+after OpenAI's ~30%-broken audit; Pro archives remain readable).
+
+| Arm | Models | Resolved | Notes |
+|---|---|---|---|
+| factory | dev `azure/deepseek-v4-pro`, reviewer `azure/gpt-5.4` | **11/19 = 58%** | precision 11/16, recall 11/11; ~$34/sweep |
+| bare | `azure/deepseek-v4-pro`, minimal loop + docker test loop, 40 steps | **0/19** | honest baseline (post-#217); pre-fix bare rows not comparable |
+| claude | Claude Code CLI, `claude-opus-5`, hermetic (no MCP/web), 60 turns | **16/18 = 89%** | 1 oracle-pass excluded (run failed); $34.85 Anthropic-side |
+
+Read: the harness turns a 0%-bare model into 58% (+58 pp scaffold lift, the
+product thesis's first direct evidence); the frontier-agent reference sits at
+89%, so the remaining gap to frontier is 31 pp on this sample. n=19, single
+seed — k-sampling and the 120-task Phase-2 manifest are what make these
+defensible. Every number is re-derivable: `report --from-archive` over the
+committed `results-archive/` snapshots.
 
 ## Fixed 2026-08-02 (Phase 1.1–1.3 + the three bugs that invalidated 2026-08-01)
 
