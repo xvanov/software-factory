@@ -1,0 +1,13 @@
+{
+  "instance_id": "ucfopen__canvasapi-716",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:20:46.121690+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.648,
+  "ledger_tokens_in": 479693,
+  "ledger_tokens_out": 7496,
+  "result_cost_usd": 0.648
+}

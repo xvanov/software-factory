@@ -1,0 +1,91 @@
+{
+  "arm": "bare",
+  "instance_id": "keras-team__keras-22316",
+  "repo": "keras-team/keras",
+  "base_commit": "34e55d4561ba2a61bbc72562e88b3704e0a43081",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-03T03:38:45.424616+00:00",
+  "wall_clock_s": 393.8,
+  "steps_used": 7,
+  "step_cap": 40,
+  "tokens_in": 51997,
+  "tokens_out": 22269,
+  "cost_usd": 0.173,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 7,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "patch.py",
+    "restore.py"
+  ],
+  "test_files_stripped": [],
+  "diff_bytes": 7614,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "grep -rn \"operations\" keras/src/ops/function.py | head -20",
+      "exit": 0
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "grep -rn \"def map_graph\" keras/src/ops/function.py",
+      "exit": 0
+    },
+    {
+      "step": 2,
+      "action": "bash",
+      "command": "cat -n keras/src/ops/function.py | head -120",
+      "exit": 0
+    },
+    {
+      "step": 3,
+      "action": "bash",
+      "command": "cat > patch.py << 'EOF'\nimport sys\n\nwith open('keras/src/ops/function.py', 'r') as f:\n    content = f.read()\n\nold_map_graph = '''def map_graph(inputs, outputs):\n    \"\"\"Validates a graph's topology and gather its operations and nodes.\n\n    Args:\n        inputs: List of input tensors.\n        outputs:",
+      "exit": 1
+    },
+    {
+      "step": 4,
+      "action": "bash",
+      "command": "cat > restore.py << 'EOF'\n# Restore the original map_graph function\ncontent = open('keras/src/ops/function.py').read()\n\n# Find the current map_graph and replace with original\n# The original is the one from the repository\nimport re\n\n# Read the original from the git history\nimport subprocess\nresult = ",
+      "exit": 0
+    },
+    {
+      "step": 5,
+      "action": "bash",
+      "command": "docker run --rm -v \"$PWD\":/testbed -w /testbed --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.keras-team_1776_keras-22316@sha256:2a85415e1bcc6b0e03d08d36e0d922d9428d4b4fc0b6299dadf4c36d9f6a6520 -lc 'source /opt/conda/bin/activate te",
+      "exit": 1
+    },
+    {
+      "step": 6,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "keras-team__keras-22316",
+    "image": "swerebench/sweb.eval.x86_64.keras-team_1776_keras-22316@sha256:2a85415e1bcc6b0e03d08d36e0d922d9428d4b4fc0b6299dadf4c36d9f6a6520",
+    "graded_at": "2026-08-03T03:38:45.793147+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 8,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "keras/src/ops/function.py"
+    ],
+    "touched_files": [
+      "patch.py",
+      "restore.py"
+    ],
+    "gold_files_overlap": [],
+    "oracle_resolved": false,
+    "outcome": "wrong_place",
+    "exit_code": 0,
+    "grade_wall_s": 32.3,
+    "log_tail": "ation_indices[x])\n            operations.extend(operations_for_depth)\n    \n        # Get sorted list of node depths.\n        depth_keys = list(nodes_by_depth.keys())\n        depth_keys.sort(reverse=True)\n    \n        # Check that all tensors required are computable.\n        # computable_tensors: all tensors in the graph\n        # that can be computed from the inputs provided.\n        computable_tensors = set()\n        for x in inputs:\n            computable_tensors.add(x)\n    \n        operations_with_complete_input = []  # To provide a better error msg.\n        for depth in depth_keys:\n            for node in nodes_by_depth[depth]:\n                for x in tree.flatten(node.input_tensors):\n                    if x not in computable_tensors:\n                        operation = node.operation\n>                       raise ValueError(\n                            \"Graph disconnected: cannot find parent for \"\n                            f\"tensor {x} at operation '{operation}'. \"\n                            \"The following previous operations were accessed \"\n                            f\"without issue: {operations_with_complete_input}\"\n                        )\nE                       ValueError: Graph disconnected: cannot find parent for tensor <KerasTensor shape=(None, 3), dtype=float32, sparse=False, ragged=False, name=x> at operation '<Operation name=multiply>'. The following previous operations were accessed without issue: []\n\nkeras/src/ops/function.py:358: ValueError\n=========================== short test summary info ============================\nFAILED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input\nFAILED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain\n============================== 2 failed in 0.12s ===============================\n============================= test session starts ==============================\nplatform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- /opt/conda/envs/testbed/bin/python\ncachedir: .pytest_cache\nrootdir: /testbed\nconfigfile: pyproject.toml\nplugins: jaxtyping-0.3.9, cov-7.1.0\ncollecting ... collected 8 items\n\nkeras/src/ops/function_test.py::FunctionTest::test_define_and_call PASSED [ 12%]\nkeras/src/ops/function_test.py::FunctionTest::test_dict_io PASSED        [ 25%]\nkeras/src/ops/function_test.py::FunctionTest::test_dynamic_shape_inference PASSED [ 37%]\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_empty_inputs PASSED [ 50%]\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_empty_outputs PASSED [ 62%]\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs PASSED [ 75%]\nkeras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error PASSED [ 87%]\nkeras/src/ops/function_test.py::FunctionTest::test_serialization PASSED  [100%]\n\n============================== 8 passed in 0.22s ===============================\nSWEBENCH_RESULT_a741981a9922567d: UNRESOLVED\n"
+  }
+}

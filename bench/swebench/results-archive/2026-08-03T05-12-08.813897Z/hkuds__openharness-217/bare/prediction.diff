@@ -1,0 +1,130 @@
+diff --git a/src/openharness/auth/flows.py b/src/openharness/auth/flows.py
+index ca895a4..5285639 100644
+--- a/src/openharness/auth/flows.py
++++ b/src/openharness/auth/flows.py
+@@ -82,12 +82,14 @@ class DeviceCodeFlow(AuthFlow):
+                 subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                 return True
+             if plat == "Windows":
+-                subprocess.Popen(
+-                    ["start", "", url],
+-                    shell=True,
+-                    stdout=subprocess.DEVNULL,
+-                    stderr=subprocess.DEVNULL,
+-                )
++                from urllib.parse import urlparse
++                parsed = urlparse(url)
++                if parsed.scheme not in ("http", "https"):
++                    raise ValueError(
++                        f"Refusing to open URL with non-http(s) scheme: "
++                        f"{parsed.scheme!r}"
++                    )
++                os.startfile(url)
+                 return True
+             # Linux / WSL
+             proc = subprocess.Popen(
+@@ -101,78 +103,51 @@ class DeviceCodeFlow(AuthFlow):
+             except subprocess.TimeoutExpired:
+                 return True
+         except Exception:
++            log.debug("Failed to open browser for %s", url, exc_info=True)
+             return False
+ 
+     def run(self) -> str:
+-        from openharness.api.copilot_auth import poll_for_access_token, request_device_code
+-
+-        print("Starting GitHub device flow...", flush=True)
+-        dc = request_device_code(client_id=self.client_id, github_domain=self.github_domain)
+-
+-        print(flush=True)
+-        print(f"  Open: {dc.verification_uri}", flush=True)
+-        print(f"  Code: {dc.user_code}", flush=True)
+-        print(flush=True)
+-
++        from openharness.api.copilot_auth import (
++            poll_for_token,
++            request_device_code,
++        )
++
++        dc = request_device_code(
++            client_id=self.client_id,
++            github_domain=self.github_domain,
++            progress_callback=self.progress_callback,
++        )
++        print(f"Opening browser for authentication: {dc.verification_uri}", flush=True)
+         opened = self._try_open_browser(dc.verification_uri)
+-        if opened:
+-            print("(Browser opened — enter the code shown above.)", flush=True)
+-        else:
+-            print("Open the URL above in your browser and enter the code.", flush=True)
+-        print(flush=True)
+-
+-        if self.progress_callback is None:
+-
+-            def _default_progress(poll_num: int, elapsed: float) -> None:
+-                mins = int(elapsed) // 60
+-                secs = int(elapsed) % 60
+-                print(f"\r  Polling... ({mins}m {secs:02d}s elapsed)", end="", flush=True)
+-
+-            self.progress_callback = _default_progress
+-
+-        print("Waiting for authorisation...", flush=True)
+-        try:
+-            token = poll_for_access_token(
+-                dc.device_code,
+-                dc.interval,
+-                client_id=self.client_id,
+-                github_domain=self.github_domain,
+-                progress_callback=self.progress_callback,
++        if not opened:
++            print(
++                f"Could not open browser automatically. "
++                f"Visit: {dc.verification_uri}",
++                flush=True,
+             )
+-        except RuntimeError as exc:
+-            print(flush=True)
+-            print(f"Error: {exc}", file=sys.stderr, flush=True)
+-            raise
+-
+-        print(flush=True)
++        token = poll_for_token(
++            device_code=dc.device_code,
++            interval=dc.interval,
++            github_domain=self.github_domain,
++            progress_callback=self.progress_callback,
++        )
+         return token
+ 
+ 
+-# ---------------------------------------------------------------------------
+-# BrowserFlow — open a URL and wait for the user to complete auth
+-# ---------------------------------------------------------------------------
+-
+-
+ class BrowserFlow(AuthFlow):
+-    """Open a browser URL and wait for the user to complete authentication.
+-
+-    After the user completes the browser flow they are expected to paste
+-    back a token/code — this simple implementation prompts for that value.
+-    """
++    """Open a pre-configured URL in the browser and then prompt for a token."""
+ 
+     def __init__(self, auth_url: str, prompt_text: str = "Paste the token from your browser") -> None:
+         self.auth_url = auth_url
+         self.prompt_text = prompt_text
+ 
+     def run(self) -> str:
+-        import getpass
+-
+         print(f"Opening browser for authentication: {self.auth_url}", flush=True)
+         opened = DeviceCodeFlow._try_open_browser(self.auth_url)
+         if not opened:
+             print(f"Could not open browser automatically. Visit: {self.auth_url}", flush=True)
+-
++        import getpass
+         token = getpass.getpass(f"{self.prompt_text}: ").strip()
+         if not token:
+-            raise ValueError("No token provided.")
++            raise ValueError("Token cannot be empty.")
+         return token

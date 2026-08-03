@@ -1,0 +1,40 @@
+{
+  "instance_id": "getmoto__moto-9841",
+  "arm": "factory",
+  "audited_at": "2026-08-03T01:43:56.802489+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T01:43:36.903441+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1471937,
+      "tokens_out": 14734,
+      "cached_input_tokens": 1187840,
+      "cost_usd": 0.7959806699999998,
+      "duration_s": 250.268,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:43:39.219312+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 6742,
+      "tokens_out": 89,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.01243,
+      "duration_s": 1.525,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.8084,
+  "ledger_tokens_in": 1478679,
+  "ledger_tokens_out": 14823,
+  "result_cost_usd": 0.8084
+}

@@ -1,0 +1,320 @@
+diff --git a/src/hiero_sdk_python/account/account_info.py b/src/hiero_sdk_python/account/account_info.py
+index e6844a9..e60dd50 100644
+--- a/src/hiero_sdk_python/account/account_info.py
++++ b/src/hiero_sdk_python/account/account_info.py
+@@ -3,19 +3,25 @@
+ AccountInfo class.
+ """
+ 
++import warnings
++
+ from dataclasses import dataclass, field
+ from typing import Optional
+ 
+ from hiero_sdk_python.account.account_id import AccountId
+ from hiero_sdk_python.crypto.public_key import PublicKey
+ from hiero_sdk_python.Duration import Duration
+-from hiero_sdk_python.hapi.services.basic_types_pb2 import StakingInfo
++from hiero_sdk_python.hapi.services.basic_types_pb2 import StakingInfo as StakingInfoProto
+ from hiero_sdk_python.hapi.services.crypto_get_info_pb2 import CryptoGetInfoResponse
+ from hiero_sdk_python.hbar import Hbar
++from hiero_sdk_python.staking_info import StakingInfo
+ from hiero_sdk_python.timestamp import Timestamp
+ from hiero_sdk_python.tokens.token_relationship import TokenRelationship
+ 
+ 
++_MISSING = object()
++
++
+ @dataclass
+ class AccountInfo:
+     """
+@@ -38,9 +44,7 @@ class AccountInfo:
+             associated with this account.
+         account_memo (Optional[str]): The memo associated with this account.
+         owned_nfts (Optional[int]): The number of NFTs owned by this account.
+-        staked_account_id (Optional[AccountId]): The account to which this account is staked.
+-        staked_node_id (Optional[int]): The node to which this account is staked.
+-        decline_staking_reward (bool): Whether this account declines receiving staking rewards. 
++        staking_info (Optional[StakingInfo]): The staking information for this account.
+     """
+ 
+     account_id: Optional[AccountId] = None
+@@ -56,9 +60,191 @@ class AccountInfo:
+     account_memo: Optional[str] = None
+     owned_nfts: Optional[int] = None
+     max_automatic_token_associations: Optional[int] = None
+-    staked_account_id: Optional[AccountId] = None
+-    staked_node_id: Optional[int] = None
+-    decline_staking_reward: Optional[bool] = None
++    staking_info: Optional[StakingInfo] = None
++
++    # ------------------------------------------------------------------
++    # Deprecated staking properties — delegate to staking_info
++    # ------------------------------------------------------------------
++
++    @property
++    def staked_account_id(self) -> Optional[AccountId]:
++        """Deprecated — use staking_info.staked_account_id instead."""
++        if self.staking_info is not None:
++            return self.staking_info.staked_account_id
++        return None
++
++    @staked_account_id.setter
++    def staked_account_id(self, value: Optional[AccountId]) -> None:
++        warnings.warn(
++            "staked_account_id is deprecated; use staking_info instead.",
++            DeprecationWarning,
++            stacklevel=2,
++        )
++        overrides = {"staked_account_id": value}
++        if value is not None:
++            overrides["staked_node_id"] = None
++        self._update_staking_info(**overrides)
++
++    @property
++    def staked_node_id(self) -> Optional[int]:
++        """Deprecated — use staking_info.staked_node_id instead."""
++        if self.staking_info is not None:
++            return self.staking_info.staked_node_id
++        return None
++
++    @staked_node_id.setter
++    def staked_node_id(self, value: Optional[int]) -> None:
++        warnings.warn(
++            "staked_node_id is deprecated; use staking_info instead.",
++            DeprecationWarning,
++            stacklevel=2,
++        )
++        overrides = {"staked_node_id": value}
++        if value is not None:
++            overrides["staked_account_id"] = None
++        self._update_staking_info(**overrides)
++
++    @property
++    def decline_staking_reward(self) -> Optional[bool]:
++        """Deprecated — use staking_info.decline_reward instead."""
++        if self.staking_info is not None:
++            return self.staking_info.decline_reward
++        return None
++
++    @decline_staking_reward.setter
++    def decline_staking_reward(self, value: Optional[bool]) -> None:
++        warnings.warn(
++            "decline_staking_reward is deprecated; use staking_info instead.",
++            DeprecationWarning,
++            stacklevel=2,
++        )
++        self._update_staking_info(decline_reward=value)
++
++    # ------------------------------------------------------------------
++    # Custom __init__ to support deprecated kwargs and staking_info
++    # ------------------------------------------------------------------
++
++    def __init__(
++        self,
++        *,
++        account_id: Optional[AccountId] = None,
++        contract_account_id: Optional[str] = None,
++        is_deleted: Optional[bool] = None,
++        proxy_received: Optional[Hbar] = None,
++        key: Optional[PublicKey] = None,
++        balance: Optional[Hbar] = None,
++        receiver_signature_required: Optional[bool] = None,
++        expiration_time: Optional[Timestamp] = None,
++        auto_renew_period: Optional[Duration] = None,
++        token_relationships: Optional[list[TokenRelationship]] = None,
++        account_memo: Optional[str] = None,
++        owned_nfts: Optional[int] = None,
++        max_automatic_token_associations: Optional[int] = None,
++        staking_info: Optional[StakingInfo] = None,
++        # deprecated kwargs — _MISSING sentinel detects explicit None
++        staked_account_id: Optional[AccountId] = _MISSING,
++        staked_node_id: Optional[int] = _MISSING,
++        decline_staking_reward: Optional[bool] = _MISSING,
++    ) -> None:
++        # Apply deprecated constructor kwargs
++        deprecated_seen = False
++        if staked_account_id is not _MISSING:
++            warnings.warn(
++                "staked_account_id is deprecated; use staking_info instead.",
++                DeprecationWarning,
++                stacklevel=2,
++            )
++            deprecated_seen = True
++
++        if staked_node_id is not _MISSING:
++            warnings.warn(
++                "staked_node_id is deprecated; use staking_info instead.",
++                DeprecationWarning,
++                stacklevel=2,
++            )
++            deprecated_seen = True
++
++        if decline_staking_reward is not _MISSING:
++            warnings.warn(
++                "decline_staking_reward is deprecated; use staking_info instead.",
++                DeprecationWarning,
++                stacklevel=2,
++            )
++            deprecated_seen = True
++
++        # Build initial staking_info from deprecated kwargs if any were given
++        if deprecated_seen:
++            base = staking_info
++            _decline = (
++                decline_staking_reward if decline_staking_reward is not _MISSING
++                else (base.decline_reward if base is not None else None)
++            )
++            _sid = None
++            _nid = None
++            if staked_account_id is not _MISSING:
++                _sid = staked_account_id
++                _nid = None  # oneof: explicit staked_account_id clears node
++            elif base is not None:
++                _sid = base.staked_account_id
++                _nid = base.staked_node_id
++            if staked_node_id is not _MISSING:
++                _nid = staked_node_id
++                _sid = None  # oneof: explicit staked_node_id clears account
++
++            staking_info = StakingInfo(
++                decline_reward=_decline,
++                stake_period_start=base.stake_period_start if base is not None else None,
++                pending_reward=base.pending_reward if base is not None else None,
++                staked_to_me=base.staked_to_me if base is not None else None,
++                staked_account_id=_sid,
++                staked_node_id=_nid,
++            )
++
++        self.__dict__["account_id"] = account_id
++        self.__dict__["contract_account_id"] = contract_account_id
++        self.__dict__["is_deleted"] = is_deleted
++        self.__dict__["proxy_received"] = proxy_received
++        self.__dict__["key"] = key
++        self.__dict__["balance"] = balance
++        self.__dict__["receiver_signature_required"] = receiver_signature_required
++        self.__dict__["expiration_time"] = expiration_time
++        self.__dict__["auto_renew_period"] = auto_renew_period
++        self.__dict__["token_relationships"] = (
++            token_relationships if token_relationships is not None else []
++        )
++        self.__dict__["account_memo"] = account_memo
++        self.__dict__["owned_nfts"] = owned_nfts
++        self.__dict__["max_automatic_token_associations"] = max_automatic_token_associations
++        self.__dict__["staking_info"] = staking_info
++
++    # ------------------------------------------------------------------
++    # Internal helper for deprecated property setters
++    # ------------------------------------------------------------------
++
++    def _update_staking_info(self, **overrides) -> None:
++        """Create or update ``staking_info``, preserving unrelated fields."""
++        cur = self.staking_info
++        merged = StakingInfo(
++            decline_reward=(
++                overrides.get("decline_reward")
++                if "decline_reward" in overrides
++                else (cur.decline_reward if cur is not None else None)
++            ),
++            stake_period_start=cur.stake_period_start if cur is not None else None,
++            pending_reward=cur.pending_reward if cur is not None else None,
++            staked_to_me=cur.staked_to_me if cur is not None else None,
++            staked_account_id=(
++                overrides.get("staked_account_id")
++                if "staked_account_id" in overrides
++                else (cur.staked_account_id if cur is not None else None)
++            ),
++            staked_node_id=(
++                overrides.get("staked_node_id")
++                if "staked_node_id" in overrides
++                else (cur.staked_node_id if cur is not None else None)
++            ),
++        )
++        object.__setattr__(self, "staking_info", merged)
+ 
+     @classmethod
+     def _from_proto(cls, proto: CryptoGetInfoResponse.AccountInfo) -> "AccountInfo":
+@@ -79,6 +265,10 @@ class AccountInfo:
+         if proto is None:
+             raise ValueError("Account info proto is None")
+ 
++        staking_info = None
++        if proto.HasField("staking_info"):
++            staking_info = StakingInfo._from_proto(proto.staking_info)
++
+         account_info: "AccountInfo" = cls(
+             account_id=AccountId._from_proto(proto.accountID) if proto.accountID else None,
+             contract_account_id=proto.contractAccountID,
+@@ -100,21 +290,9 @@ class AccountInfo:
+             account_memo=proto.memo,
+             owned_nfts=proto.ownedNfts,
+             max_automatic_token_associations=proto.max_automatic_token_associations,
++            staking_info=staking_info,
+         )
+ 
+-        staking_info = proto.staking_info if proto.HasField('staking_info') else None
+-
+-        if staking_info:
+-            account_info.staked_account_id = (
+-                AccountId._from_proto(staking_info.staked_account_id) 
+-                if staking_info.HasField('staked_account_id') else None
+-            )
+-            account_info.staked_node_id = (
+-                staking_info.staked_node_id 
+-                if staking_info.HasField('staked_node_id') else None
+-            )
+-            account_info.decline_staking_reward = staking_info.decline_reward
+-
+         return account_info
+ 
+     def _to_proto(self) -> CryptoGetInfoResponse.AccountInfo:
+@@ -147,11 +325,7 @@ class AccountInfo:
+             memo=self.account_memo,
+             ownedNfts=self.owned_nfts,
+             max_automatic_token_associations=self.max_automatic_token_associations,
+-            staking_info=StakingInfo(
+-                staked_account_id=self.staked_account_id._to_proto() if self.staked_account_id else None,
+-                staked_node_id=self.staked_node_id if self.staked_node_id else None,
+-                decline_reward=self.decline_staking_reward
+-            ),
++            staking_info=self.staking_info._to_proto() if self.staking_info else None,
+         )
+ 
+     def __str__(self) -> str:
+@@ -166,8 +340,6 @@ class AccountInfo:
+             (self.account_memo, "Memo"),
+             (self.owned_nfts, "Owned NFTs"),
+             (self.max_automatic_token_associations, "Max Automatic Token Associations"),
+-            (self.staked_account_id, "Staked Account ID"),
+-            (self.staked_node_id, "Staked Node ID"),
+             (self.proxy_received, "Proxy Received"),
+             (self.expiration_time, "Expiration Time"),
+             (self.auto_renew_period, "Auto Renew Period"),
+@@ -182,13 +354,13 @@ class AccountInfo:
+ 
+         if self.receiver_signature_required is not None:
+             lines.append(f"Receiver Signature Required: {self.receiver_signature_required}")
+-            
+-        if self.decline_staking_reward is not None:
+-            lines.append(f"Decline Staking Reward: {self.decline_staking_reward}")
+ 
+         if self.token_relationships:
+             lines.append(f"Token Relationships: {len(self.token_relationships)}")
+ 
++        if self.staking_info is not None:
++            lines.append(f"Staking Info: {self.staking_info}")
++
+         return "\n".join(lines)
+ 
+     def __repr__(self) -> str:
+@@ -202,7 +374,6 @@ class AccountInfo:
+             f"receiver_signature_required={self.receiver_signature_required!r}, "
+             f"owned_nfts={self.owned_nfts!r}, "
+             f"account_memo={self.account_memo!r}, "
+-            f"staked_node_id={self.staked_node_id!r}, "
+-            f"staked_account_id={self.staked_account_id!r}"
++            f"staking_info={self.staking_info!r}"
+             f")"
+         )
+\ No newline at end of file

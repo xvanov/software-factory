@@ -1,0 +1,59 @@
+{
+  "arm": "factory",
+  "instance_id": "zauberzeug__nicegui-5858",
+  "repo": "zauberzeug/nicegui",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "problem_statement_sha256": "7037ab70402ac64e588642695f9bf3a52c1ed002b4de2bb884d4b96cc69263d7",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T01:38:04.616798+00:00",
+  "wall_clock_s": 260.2,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "tokens_in": 954719,
+  "tokens_out": 10367,
+  "cached_input_tokens": 841472,
+  "cost_usd": 0.3967,
+  "persona_calls": 2,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 2.1,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_xterm.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "nicegui/elements/xterm/xterm.py",
+    "nicegui/events.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_xterm.py"
+  ],
+  "diff_bytes": 2046,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "zauberzeug__nicegui-5858",
+    "image": "swerebench/sweb.eval.x86_64.zauberzeug_1776_nicegui-5858@sha256:0774c1c1d9caf26fc590c840482c262c82a76ccc5150c9dd58501114371bc2d2",
+    "graded_at": "2026-08-03T01:38:05.397595+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 3,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 67.4,
+    "log_tail": "Checking patch tests/test_xterm.py...\nApplied patch tests/test_xterm.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_7ded3cb680503617: OK (red as expected)\nChecking patch nicegui/elements/xterm/xterm.py...\nChecking patch nicegui/events.py...\nApplied patch nicegui/elements/xterm/xterm.py cleanly.\nApplied patch nicegui/events.py cleanly.\nSWEBENCH_APPLY_7ded3cb680503617: OK\n..                                                                       [100%]\n2 passed in 12.30s\n...                                                                      [100%]\n3 passed in 8.34s\nSWEBENCH_RESULT_7ded3cb680503617: RESOLVED\n"
+  }
+}

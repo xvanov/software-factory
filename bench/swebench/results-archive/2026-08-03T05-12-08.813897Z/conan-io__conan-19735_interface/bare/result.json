@@ -1,0 +1,70 @@
+{
+  "arm": "bare",
+  "instance_id": "conan-io__conan-19735_interface",
+  "repo": "conan-io/conan",
+  "base_commit": "4a65d65f53d2ab37f4ce0e52dc3f25cd832b2934",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-03T03:55:12.478548+00:00",
+  "wall_clock_s": 15.6,
+  "steps_used": 6,
+  "step_cap": 40,
+  "tokens_in": 4118,
+  "tokens_out": 369,
+  "cost_usd": 0.0062,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 6,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [],
+  "test_files_stripped": [],
+  "diff_bytes": 0,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "sed -i 's/version_line = first_line/version_line = next((line for line in output.splitlines() if re.search(r\"[\\d]+\\.[\\d]+\", line)), first_line)/' conan/tools/build/compiler_detection.py",
+      "exit": 2
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "sed -i 's/version_line = first_line/version_line = next((line for line in output.splitlines() if re.search(r\"[\\d]+\\.[\\d]+\", line)), first_line)/' conans/client/tools/compiler_detection.py",
+      "exit": 2
+    },
+    {
+      "step": 2,
+      "action": "bash",
+      "command": "grep -r \"detect_api\" --include=\"*.py\" -l | grep -v test | head -10",
+      "exit": 0
+    },
+    {
+      "step": 3,
+      "action": "bash",
+      "command": "sed -i 's/version_line = first_line/version_line = next((line for line in output.splitlines() if re.search(r\"[\\d]+\\.[\\d]+\", line)), first_line)/' conan/internal/api/detect/detect_api.py",
+      "exit": 0
+    },
+    {
+      "step": 4,
+      "action": "bash",
+      "command": "docker run --rm -v \"$PWD\":/testbed -w /testbed --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.conan-io_1776_conan-19735_interface@sha256:564734fbebe544567e2e47bac7362ae68a749ffdaa7401dd273903d3552277fa -lc 'source /opt/conda/bin/act",
+      "exit": 0
+    },
+    {
+      "step": 5,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "conan-io__conan-19735_interface",
+    "image": "swerebench/sweb.eval.x86_64.conan-io_1776_conan-19735_interface@sha256:564734fbebe544567e2e47bac7362ae68a749ffdaa7401dd273903d3552277fa",
+    "graded_at": "2026-08-03T03:55:12.841716+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 14,
+    "empty_patch": true,
+    "oracle_resolved": false,
+    "outcome": "empty_patch",
+    "log_tail": ""
+  }
+}

@@ -1,0 +1,16 @@
+diff --git a/src/pyinfra/operations/server.py b/src/pyinfra/operations/server.py
+index e72dce2..1005096 100644
+--- a/src/pyinfra/operations/server.py
++++ b/src/pyinfra/operations/server.py
+@@ -91,7 +91,10 @@ def reboot(delay=10, interval=1, reboot_timeout=300):
+         sleep(delay)
+         max_retries = round(reboot_timeout / interval)
+ 
+-        host.disconnect()  # make sure we are properly disconnected
++        try:
++        host.disconnect()
++    except Exception:
++        pass
+         retries = 0
+ 
+         while True:

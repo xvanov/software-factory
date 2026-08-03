@@ -1,0 +1,58 @@
+{
+  "arm": "factory",
+  "instance_id": "hkuds__openharness-217",
+  "repo": "HKUDS/OpenHarness",
+  "base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+  "problem_statement_sha256": "5a1163602919f92cffa9aa885f04b1db190c3071b17eff2cf2fc439225841f5a",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T00:30:10.871433+00:00",
+  "wall_clock_s": 159.4,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "tokens_in": 568686,
+  "tokens_out": 7250,
+  "cached_input_tokens": 284416,
+  "cost_usd": 0.6265,
+  "persona_calls": 2,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.9,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/test_auth"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "src/openharness/auth/flows.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_auth/test_flows.py"
+  ],
+  "diff_bytes": 1525,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "hkuds__openharness-217",
+    "image": "swerebench/sweb.eval.x86_64.hkuds_1776_openharness-217@sha256:ad0997cf2e90f0a31f3e6f8fd5cba18ced7f364ae3a62bd59f4c9e1d88b7678d",
+    "graded_at": "2026-08-03T00:30:11.468256+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 2,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 5.6,
+    "log_tail": "Checking patch tests/test_auth/test_flows.py...\nApplied patch tests/test_auth/test_flows.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_51e9860150214e29: OK (red as expected)\nChecking patch src/openharness/auth/flows.py...\nApplied patch src/openharness/auth/flows.py cleanly.\nSWEBENCH_APPLY_51e9860150214e29: OK\n......                                                                   [100%]\n6 passed in 0.01s\n..                                                                       [100%]\n2 passed in 0.01s\nSWEBENCH_RESULT_51e9860150214e29: RESOLVED\n"
+  }
+}

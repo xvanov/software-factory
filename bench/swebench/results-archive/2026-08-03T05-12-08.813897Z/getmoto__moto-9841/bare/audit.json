@@ -1,0 +1,68 @@
+{
+  "instance_id": "getmoto__moto-9841",
+  "arm": "bare",
+  "audited_at": "2026-08-03T03:54:56.839294+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 4 call(s) but only 0 trajectory file(s) under state/events/trajectories \u2014 the agent's reasoning trail is incomplete"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T03:54:24.563717+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 903,
+      "tokens_out": 555,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.00386844,
+      "duration_s": 6.234,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:54:28.463367+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1483,
+      "tokens_out": 402,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0044018500000000006,
+      "duration_s": 3.888,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:54:30.233092+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1905,
+      "tokens_out": 154,
+      "cached_input_tokens": 768,
+      "cost_usd": 0.0029078780000000005,
+      "duration_s": 1.736,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:54:38.963610+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 3646,
+      "tokens_out": 3,
+      "cached_input_tokens": 1792,
+      "cost_usd": 0.003878222,
+      "duration_s": 0.603,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.0151,
+  "ledger_tokens_in": 7937,
+  "ledger_tokens_out": 1114,
+  "result_cost_usd": 0.0151
+}

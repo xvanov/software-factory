@@ -1,0 +1,53 @@
+{
+  "instance_id": "pandas-dev__pandas-63945",
+  "arm": "factory",
+  "audited_at": "2026-08-03T02:47:45.330319+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T02:40:15.903222+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 478338,
+      "tokens_out": 6746,
+      "cached_input_tokens": 278272,
+      "cost_usd": 0.45676635200000004,
+      "duration_s": 280.722,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-03T02:43:54.037070+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 832973,
+      "tokens_out": 12564,
+      "cached_input_tokens": 787712,
+      "cost_usd": 0.39295235000000006,
+      "duration_s": 217.728,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-03T02:46:01.651784+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 401033,
+      "tokens_out": 5361,
+      "cached_input_tokens": 368896,
+      "cost_usd": 0.19585054999999998,
+      "duration_s": 127.283,
+      "success": 0,
+      "error": "tests not green after run"
+    }
+  ],
+  "ledger_cost_usd": 1.0456,
+  "ledger_tokens_in": 1712344,
+  "ledger_tokens_out": 24671,
+  "result_cost_usd": 1.0456
+}

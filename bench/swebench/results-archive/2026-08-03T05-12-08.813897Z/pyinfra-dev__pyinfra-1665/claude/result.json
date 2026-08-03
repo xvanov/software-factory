@@ -1,0 +1,62 @@
+{
+  "arm": "claude",
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "repo": "pyinfra-dev/pyinfra",
+  "base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+  "problem_statement_sha256": "6db63b001b70674a6cd551c902d802495967cec273296be8357a6e5cf1499493",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "c0730e52-3d54-44de-9c02-3019c38003b0",
+  "ts": "2026-08-03T04:12:35.782928+00:00",
+  "wall_clock_s": 133.8,
+  "agent_wall_s": 128.3,
+  "num_turns": 20,
+  "turn_cap": 60,
+  "tokens_in": 618995,
+  "tokens_out": 7584,
+  "cached_input_tokens": 571977,
+  "cost_usd": 0.9196,
+  "cost_source": "claude-cli-reported",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.0,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_connectors/test_util.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "src/pyinfra/connectors/util.py",
+    "src/pyinfra/operations/server.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_connectors/test_util.py"
+  ],
+  "diff_bytes": 3533,
+  "grade": {
+    "arm": "claude",
+    "instance_id": "pyinfra-dev__pyinfra-1665",
+    "image": "swerebench/sweb.eval.x86_64.pyinfra-dev_1776_pyinfra-1665@sha256:138a496547f392c77a1d472fd259e3c3fff6dd20bf5cba084335888857f395a3",
+    "graded_at": "2026-08-03T04:12:35.879887+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 33,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 6.8,
+    "log_tail": "Checking patch tests/test_connectors/test_util.py...\nApplied patch tests/test_connectors/test_util.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_bfe10e04602e0630: OK (red as expected)\nChecking patch src/pyinfra/connectors/util.py...\nChecking patch src/pyinfra/operations/server.py...\nApplied patch src/pyinfra/connectors/util.py cleanly.\nApplied patch src/pyinfra/operations/server.py cleanly.\nSWEBENCH_APPLY_bfe10e04602e0630: OK\n.                                                                        [100%]\n1 passed in 0.14s\n.................................                                        [100%]\n33 passed in 0.16s\nSWEBENCH_RESULT_bfe10e04602e0630: RESOLVED\n"
+  }
+}

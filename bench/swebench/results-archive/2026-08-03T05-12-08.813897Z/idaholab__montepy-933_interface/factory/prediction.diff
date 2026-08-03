@@ -1,0 +1,166 @@
+diff --git a/montepy/__init__.py b/montepy/__init__.py
+index 5302b37..2d3260f 100644
+--- a/montepy/__init__.py
++++ b/montepy/__init__.py
+@@ -60,9 +60,14 @@ try:
+ except ImportError:
+     try:
+         from setuptools_scm import get_version
+-
+-        __version__ = get_version()
+-    except (ImportError, LookupError):
++        import warnings
++
++        with warnings.catch_warnings():
++            warnings.filterwarnings(
++                "ignore", message="git archive did not support describe output"
++            )
++            __version__ = get_version()
++    except (ImportError, LookupError, Warning):
+         __version__ = "Undefined"
+ 
+ 
+diff --git a/montepy/cell.py b/montepy/cell.py
+index 18b4f9f..f9e6e27 100644
+--- a/montepy/cell.py
++++ b/montepy/cell.py
+@@ -255,10 +255,19 @@ class Cell(Numbered_MCNP_Object):
+ 
+     @universe.setter
+     def universe(self, value):
+-        if not isinstance(value, Universe):
++        if not isinstance(value, (Universe, type(None))):
+             raise TypeError("universe must be set to a Universe")
++        if value is None and self._problem is not None:
++            value = Universe(0)
++            value.link_to_problem(self._problem)
++            if 0 not in self._problem.universes.numbers:
++                self._problem.universes.append(value)
+         self._universe.universe = value
+ 
++    @universe.deleter
++    def universe(self):
++        self.universe = None
++
+     @property
+     def fill(self):
+         """the Fill object representing how this cell is filled.
+@@ -304,7 +313,7 @@ class Cell(Numbered_MCNP_Object):
+             True if this cell has been marked as not being truncated by
+             the parent filled cell.
+         """
+-        if self.universe.number == 0:
++        if self.universe is not None and self.universe.number == 0:
+             return False
+         return self._universe.not_truncated
+ 
+@@ -312,7 +321,7 @@ class Cell(Numbered_MCNP_Object):
+     def not_truncated(self, value):
+         if not isinstance(value, bool):
+             raise TypeError("not_truncated_by_parent must be a bool")
+-        if self.universe.number == 0 and value:
++        if self.universe is not None and self.universe.number == 0 and value:
+             raise ValueError("can't specify if cell is truncated for universe 0")
+         self._universe._not_truncated = value
+ 
+diff --git a/montepy/data_inputs/fill.py b/montepy/data_inputs/fill.py
+index 712d968..74b2fc7 100644
+--- a/montepy/data_inputs/fill.py
++++ b/montepy/data_inputs/fill.py
+@@ -15,11 +15,20 @@ from montepy.utilities import *
+ 
+ 
+ def _verify_3d_index(self, indices):
++    normalized = []
+     for index in indices:
+-        if not isinstance(index, Integral):
+-            raise TypeError(f"Index values for fill must be an int. {index} given.")
+-    if len(indices) != 3:
++        if isinstance(index, Integral):
++            normalized.append(int(index))
++            continue
++        if isinstance(index, Real) and index.is_integer():
++            normalized.append(int(index))
++            continue
++        raise TypeError(f"Index values for fill must be an int. {index} given.")
++    if len(normalized) != 3:
+         raise ValueError(f"3 values must be given for fill. {indices} given")
++    if isinstance(indices, np.ndarray):
++        return np.array(normalized, dtype=object)
++    return normalized
+ 
+ 
+ class Fill(CellModifierInput):
+@@ -417,12 +426,7 @@ class Fill(CellModifierInput):
+         self._universes = None
+         self.multiple_universes = False
+ 
+-    @make_prop_pointer(
+-        "_min_index",
+-        (list, np.ndarray),
+-        validator=_verify_3d_index,
+-        deletable=True,
+-    )
++    @property
+     def min_index(self):
+         """The minimum indices of the matrix in each dimension.
+ 
+@@ -433,14 +437,19 @@ class Fill(CellModifierInput):
+         :class:`numpy.ndarray`
+             the minimum indices of the matrix for complex fills
+         """
+-        pass
++        return self._min_index
++
++    @min_index.setter
++    def min_index(self, value):
++        if not isinstance(value, (list, np.ndarray)):
++            raise TypeError("min_index must be of type: (<class 'list'>, <class 'numpy.ndarray'>)")
++        self._min_index = _verify_3d_index(self, value)
++
++    @min_index.deleter
++    def min_index(self):
++        self._min_index = None
+ 
+-    @make_prop_pointer(
+-        "_max_index",
+-        (list, np.ndarray),
+-        validator=_verify_3d_index,
+-        deletable=True,
+-    )
++    @property
+     def max_index(self):
+         """The maximum indices of the matrix in each dimension.
+ 
+@@ -451,7 +460,17 @@ class Fill(CellModifierInput):
+         :class:`numpy.ndarray`
+             the maximum indices of the matrix for complex fills
+         """
+-        pass
++        return self._max_index
++
++    @max_index.setter
++    def max_index(self, value):
++        if not isinstance(value, (list, np.ndarray)):
++            raise TypeError("max_index must be of type: (<class 'list'>, <class 'numpy.ndarray'>)")
++        self._max_index = _verify_3d_index(self, value)
++
++    @max_index.deleter
++    def max_index(self):
++        self._max_index = None
+ 
+     @property
+     def multiple_universes(self):
+diff --git a/montepy/data_inputs/universe_input.py b/montepy/data_inputs/universe_input.py
+index 4146039..8aa690a 100644
+--- a/montepy/data_inputs/universe_input.py
++++ b/montepy/data_inputs/universe_input.py
+@@ -103,7 +103,7 @@ class UniverseInput(CellModifierInput):
+         if self.in_cell_block:
+             return self.universe is not None and self.universe.number != 0
+ 
+-    @make_prop_pointer("_universe", Universe)
++    @make_prop_pointer("_universe", (Universe, type(None)), deletable=True)
+     def universe(self):
+         if self.in_cell_block:
+             return self._universe

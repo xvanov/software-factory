@@ -1,0 +1,55 @@
+diff --git a/pandas/core/col.py b/pandas/core/col.py
+index 7d21ce0..c5da59e 100644
+--- a/pandas/core/col.py
++++ b/pandas/core/col.py
+@@ -114,11 +114,22 @@ class Expression:
+                 needs_parenthese=needs_parentheses,
+             )
+ 
+-    def _maybe_wrap_parentheses(self, other: Any) -> tuple[str, str]:
++    def _with_unary_op(
++        self, op: str, repr_str: str, needs_parentheses: bool = True
++    ) -> Expression:
++        return Expression(
++            lambda df: getattr(self._eval_expression(df), op)(),
++            repr_str,
++            needs_parenthese=needs_parentheses,
++        )
++
++    def _maybe_wrap_self(self) -> str:
+         if self._needs_parentheses:
+-            self_repr = f"({self!r})"
+-        else:
+-            self_repr = f"{self!r}"
++            return f"({self!r})"
++        return f"{self!r}"
++
++    def _maybe_wrap_parentheses(self, other: Any) -> tuple[str, str]:
++        self_repr = self._maybe_wrap_self()
+         if isinstance(other, Expression) and other._needs_parentheses:
+             other_repr = f"({other!r})"
+         else:
+@@ -223,12 +234,18 @@ class Expression:
+         self_repr, other_repr = self._maybe_wrap_parentheses(other)
+         return self._with_op("__rxor__", other, f"{other_repr} ^ {self_repr}")
+ 
++    # Unary ops
+     def __invert__(self) -> Expression:
+-        return Expression(
+-            lambda df: ~self._eval_expression(df),
+-            f"~{self._repr_str}",
+-            needs_parenthese=True,
+-        )
++        return self._with_unary_op("__invert__", f"~{self._maybe_wrap_self()}")
++
++    def __neg__(self) -> Expression:
++        return self._with_unary_op("__neg__", f"-{self._maybe_wrap_self()}")
++
++    def __pos__(self) -> Expression:
++        return self._with_unary_op("__pos__", f"+{self._maybe_wrap_self()}")
++
++    def __abs__(self) -> Expression:
++        return self._with_unary_op("__abs__", f"abs({self!r})", needs_parentheses=False)
+ 
+     def __array_ufunc__(
+         self, ufunc: Callable[..., Any], method: str, *inputs: Any, **kwargs: Any

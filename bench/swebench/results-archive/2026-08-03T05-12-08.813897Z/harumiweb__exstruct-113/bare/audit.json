@@ -1,0 +1,94 @@
+{
+  "instance_id": "harumiweb__exstruct-113",
+  "arm": "bare",
+  "audited_at": "2026-08-03T03:32:38.577552+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 6 call(s) but only 0 trajectory file(s) under state/events/trajectories \u2014 the agent's reasoning trail is incomplete"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T03:31:43.295796+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 915,
+      "tokens_out": 312,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0029609099999999998,
+      "duration_s": 5.493,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:31:46.855813+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1234,
+      "tokens_out": 278,
+      "cached_input_tokens": 768,
+      "cost_usd": 0.0020877680000000003,
+      "duration_s": 3.549,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:31:48.674275+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1518,
+      "tokens_out": 161,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.00354637,
+      "duration_s": 1.805,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:31:51.351063+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 2452,
+      "tokens_out": 49,
+      "cached_input_tokens": 1024,
+      "cost_usd": 0.0031085740000000002,
+      "duration_s": 1.802,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:32:26.120954+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 2996,
+      "tokens_out": 3204,
+      "cached_input_tokens": 1280,
+      "cost_usd": 0.01578928,
+      "duration_s": 34.757,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:32:32.395492+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 6273,
+      "tokens_out": 7,
+      "cached_input_tokens": 2304,
+      "cost_usd": 0.008057924000000001,
+      "duration_s": 6.264,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.0356,
+  "ledger_tokens_in": 15388,
+  "ledger_tokens_out": 4011,
+  "result_cost_usd": 0.0356
+}

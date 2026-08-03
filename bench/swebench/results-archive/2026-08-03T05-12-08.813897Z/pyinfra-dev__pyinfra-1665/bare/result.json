@@ -1,0 +1,127 @@
+{
+  "arm": "bare",
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "repo": "pyinfra-dev/pyinfra",
+  "base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-03T03:31:26.610532+00:00",
+  "wall_clock_s": 133.1,
+  "steps_used": 13,
+  "step_cap": 40,
+  "tokens_in": 33699,
+  "tokens_out": 9202,
+  "cost_usd": 0.0609,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 13,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "src/pyinfra/operations/server.py"
+  ],
+  "test_files_stripped": [],
+  "diff_bytes": 533,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "sed -i 's/remove_any_sudo_askpass_file(self)/# remove_any_sudo_askpass_file(self)/' pyinfra/operations/server.py",
+      "exit": 2
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "sed -i 's/host\\.disconnect()  # make sure we are properly disconnected/if host.connector: host.connector.disconnect()/' pyinfra/operations/server.py",
+      "exit": 2
+    },
+    {
+      "step": 2,
+      "action": "bash",
+      "command": "find . -name \"server.py\" -path \"*/operations/*\"",
+      "exit": 0
+    },
+    {
+      "step": 3,
+      "action": "bash",
+      "command": "sed -i 's/host\\.disconnect()  # make sure we are properly disconnected/if host.connector: host.connector.disconnect()/' ./src/pyinfra/operations/server.py",
+      "exit": 0
+    },
+    {
+      "step": 4,
+      "action": "bash",
+      "command": "sed -i 's/remove_any_sudo_askpass_file(self)/# remove_any_sudo_askpass_file(self)/' ./src/pyinfra/operations/server.py",
+      "exit": 0
+    },
+    {
+      "step": 5,
+      "action": "bash",
+      "command": "sed -i 's/def wait_and_reconnect/def wait_and_reconnect/' ./src/pyinfra/operations/server.py && sed -n '/def wait_and_reconnect/,/^def /p' ./src/pyinfra/operations/server.py",
+      "exit": 0
+    },
+    {
+      "step": 6,
+      "action": "invalid",
+      "reply": "```bash\nsed -i '/def wait_and_reconnect/,/^def / s/host\\.disconnect()  # make sure we are properly disconnected/# host.disconnect()  # make sure we are properly disconnected/' ./src/pyinfra/operations"
+    },
+    {
+      "step": 7,
+      "action": "bash",
+      "command": "grep -n \"host.disconnect\" ./src/pyinfra/operations/server.py",
+      "exit": 1
+    },
+    {
+      "step": 8,
+      "action": "bash",
+      "command": "grep -rn \"def wait_and_reconnect\" ./src/pyinfra/",
+      "exit": 0
+    },
+    {
+      "step": 9,
+      "action": "bash",
+      "command": "sed -n '86,110p' ./src/pyinfra/operations/server.py",
+      "exit": 0
+    },
+    {
+      "step": 10,
+      "action": "bash",
+      "command": "sed -i 's/if host.connector: host.connector.disconnect()/try:\\n        host.disconnect()\\n    except Exception:\\n        pass/' ./src/pyinfra/operations/server.py",
+      "exit": 0
+    },
+    {
+      "step": 11,
+      "action": "bash",
+      "command": "docker run --rm -v \"$PWD\":/testbed -w /testbed --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.pyinfra-dev_1776_pyinfra-1665@sha256:138a496547f392c77a1d472fd259e3c3fff6dd20bf5cba084335888857f395a3 -lc 'source /opt/conda/bin/activate ",
+      "exit": 0
+    },
+    {
+      "step": 12,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "pyinfra-dev__pyinfra-1665",
+    "image": "swerebench/sweb.eval.x86_64.pyinfra-dev_1776_pyinfra-1665@sha256:138a496547f392c77a1d472fd259e3c3fff6dd20bf5cba084335888857f395a3",
+    "graded_at": "2026-08-03T03:31:27.021606+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 33,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "src/pyinfra/connectors/util.py",
+      "src/pyinfra/operations/server.py"
+    ],
+    "touched_files": [
+      "src/pyinfra/operations/server.py"
+    ],
+    "gold_files_overlap": [
+      "src/pyinfra/operations/server.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 5.9,
+    "log_tail": "Checking patch tests/test_connectors/test_util.py...\nApplied patch tests/test_connectors/test_util.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_0852b061f9bcddd5: OK (red as expected)\nChecking patch src/pyinfra/operations/server.py...\nApplied patch src/pyinfra/operations/server.py cleanly.\nSWEBENCH_APPLY_0852b061f9bcddd5: OK\n\nself = <tests.test_connectors.test_util.TestRemoveAnySudoAskpassFile testMethod=test_swallows_errors_and_clears_state>\n\n    def test_swallows_errors_and_clears_state(self):\n        \"\"\"\n        Regression test for #1645: `host.disconnect()` \u2192 `remove_any_sudo_askpass_file`\n        is called after ``server.reboot`` when the SSH session is already dead.\n        The remote ``rm`` must fail gracefully and the stored path must still\n        be cleared so a reconnect will regenerate a fresh askpass file.\n        \"\"\"\n        host = MagicMock()\n        host.connector_data = {\n            \"sudo_askpass_path\": \"/tmp/sudo-askpass\",\n            \"su_askpass_path\": \"/tmp/su-askpass\",\n        }\n    \n        def failing_run(cmd):\n            raise Exception(\"SSH session not active\")\n    \n        host.run_shell_command = failing_run\n    \n        # Must not raise \u2014 this is a best-effort cleanup.\n>       remove_any_sudo_askpass_file(host)\n\ntests/test_connectors/test_util.py:267: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \nsrc/pyinfra/connectors/util.py:238: in remove_any_sudo_askpass_file\n    host.run_shell_command(StringCommand(\"rm\", \"-f\", QuoteString(sudo_askpass_path)))\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\ncmd = StringCommand(rm -f /tmp/sudo-askpass)\n\n    def failing_run(cmd):\n>       raise Exception(\"SSH session not active\")\nE       Exception: SSH session not active\n\ntests/test_connectors/test_util.py:262: Exception\n=========================== short test summary info ============================\nFAILED tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_swallows_errors_and_clears_state\n1 failed in 0.15s\n.................................                                        [100%]\n33 passed in 0.16s\nSWEBENCH_RESULT_0852b061f9bcddd5: UNRESOLVED\n"
+  }
+}

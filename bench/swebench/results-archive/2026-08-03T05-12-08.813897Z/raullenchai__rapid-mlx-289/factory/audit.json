@@ -1,0 +1,53 @@
+{
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "arm": "factory",
+  "audited_at": "2026-08-03T01:13:08.569201+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T01:03:05.501484+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 3481180,
+      "tokens_out": 38601,
+      "cached_input_tokens": 2580480,
+      "cost_usd": 2.3016501099999997,
+      "duration_s": 864.118,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-03T01:12:59.095082+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 898071,
+      "tokens_out": 10064,
+      "cached_input_tokens": 851200,
+      "cost_usd": 0.37188024999999997,
+      "duration_s": 593.191,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:13:02.315502+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 10060,
+      "tokens_out": 115,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.021115000000000005,
+      "duration_s": 2.481,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.6946,
+  "ledger_tokens_in": 4389311,
+  "ledger_tokens_out": 48780,
+  "result_cost_usd": 2.6946
+}

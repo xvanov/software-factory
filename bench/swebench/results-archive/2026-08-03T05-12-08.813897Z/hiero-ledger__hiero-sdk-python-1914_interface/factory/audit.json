@@ -1,0 +1,66 @@
+{
+  "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-03T02:10:28.806650+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T02:06:36.570211+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 3996128,
+      "tokens_out": 39442,
+      "cached_input_tokens": 3129344,
+      "cost_usd": 2.3277803640000005,
+      "duration_s": 1050.08,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T02:06:50.061276+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 12561,
+      "tokens_out": 1716,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.0513825,
+      "duration_s": 12.778,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T02:10:09.280796+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 558824,
+      "tokens_out": 7540,
+      "cached_input_tokens": 464640,
+      "cost_usd": 0.28546036,
+      "duration_s": 198.7,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T02:10:14.178645+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 13562,
+      "tokens_out": 318,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.032915,
+      "duration_s": 4.204,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.6975,
+  "ledger_tokens_in": 4581075,
+  "ledger_tokens_out": 49016,
+  "result_cost_usd": 2.6975
+}

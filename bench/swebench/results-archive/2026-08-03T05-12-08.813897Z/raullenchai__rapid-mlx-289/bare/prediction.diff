@@ -1,0 +1,276 @@
+diff --git a/vllm_mlx/reasoning/gemma4_parser.py b/vllm_mlx/reasoning/gemma4_parser.py
+index 311acc0..9800395 100644
+--- a/vllm_mlx/reasoning/gemma4_parser.py
++++ b/vllm_mlx/reasoning/gemma4_parser.py
+@@ -1,131 +1,166 @@
+-# SPDX-License-Identifier: Apache-2.0
+-"""
+-Gemma 4 reasoning parser.
++# Based on https://huggingface.co/google/gemma-4-31b-it-mxfp8/blob/main/tokenizer_config.json
+ 
+-Gemma 4 uses channel tokens for thinking:
+-  <|channel>thought\n...reasoning...<channel|>
+-  <|channel>content\n...answer...<channel|>
++from ...protocol import DeltaMessage
++from .base_parser import ReasoningParser
+ 
+-The parser separates thinking from content by tracking the active channel.
+-"""
++# Text marker constants
++THOUGHT_CHANNEL = "<|channel|>thought"
++CONTENT_CHANNEL = "<|channel|>content"
++CHANNEL_PREFIX = "<|channel|>"
+ 
+-import re
+ 
+-from .base import DeltaMessage, ReasoningParser
++class Gemma4ReasoningParser(ReasoningParser):
++    def __init__(self):
++        super().__init__()
++        self._in_thought = False
++        self._in_content = False
+ 
+-# Match full thought blocks in complete text
+-_THOUGHT_BLOCK = re.compile(r"<\|channel>thought\n[\s\S]*?<channel\|>\s*", re.DOTALL)
+-# Match content channel markers
+-_CONTENT_START = re.compile(r"<\|channel>(?:content|final)\n?")
+-_CHANNEL_END = re.compile(r"<channel\|>")
+-_TURN_END = re.compile(r"<turn\|>")
++    @classmethod
++    def from_tokenizer(cls, tokenizer) -> "Gemma4ReasoningParser":
++        return cls()
+ 
++    def extract_reasoning(self, text: str) -> DeltaMessage | None:
++        """
++        Extract reasoning content from complete text.
++        Only called during non-streaming requests.
++        """
++        if not text:
++            return None
+ 
+-class Gemma4ReasoningParser(ReasoningParser):
+-    """Parser for Gemma 4's channel-based thinking format."""
++        message = DeltaMessage()
+ 
+-    def __init__(self, tokenizer=None):
+-        super().__init__(tokenizer)
+-        self._in_thought = False
+-        self._in_content = False
+-        self._saw_any_channel = False
++        # Split by channel markers
++        parts = text.split(CHANNEL_PREFIX)
++        for part in parts:
++            if part.startswith(">thought"):
++                thought = part[len(">thought") :]
++                if thought.strip():
++                    message.reasoning = thought
++            elif part.startswith(">content"):
++                content = part[len(">content") :]
++                if content.strip():
++                    message.content = content
+ 
+-    def reset_state(self):
+-        super().reset_state()
+-        self._in_thought = False
+-        self._in_content = False
+-        self._saw_any_channel = False
+-
+-    def extract_reasoning(self, model_output: str) -> tuple[str | None, str | None]:
+-        """Extract reasoning from complete output."""
+-        if not model_output:
+-            return None, model_output
+-
+-        # Extract thought blocks as reasoning
+-        thought_blocks = _THOUGHT_BLOCK.findall(model_output)
+-        if not thought_blocks:
+-            # No thinking tags — all content
+-            cleaned = _CONTENT_START.sub("", model_output)
+-            cleaned = _CHANNEL_END.sub("", cleaned)
+-            cleaned = _TURN_END.sub("", cleaned).strip()
+-            return None, cleaned
+-
+-        # Reasoning = thought block contents (strip markers)
+-        reasoning = ""
+-        for block in thought_blocks:
+-            inner = (
+-                block.replace("<|channel>thought\n", "")
+-                .replace("<channel|>", "")
+-                .strip()
+-            )
+-            reasoning += inner
+-
+-        # Content = everything after thought blocks, strip markers
+-        content = _THOUGHT_BLOCK.sub("", model_output)
+-        content = _CONTENT_START.sub("", content)
+-        content = _CHANNEL_END.sub("", content)
+-        content = _TURN_END.sub("", content).strip()
+-
+-        return reasoning or None, content or None
++        # If no channel markers found, treat as content
++        if not message.reasoning and not message.content:
++            message.content = text
++
++        return message
+ 
+     def extract_reasoning_streaming(
+         self, previous_text: str, current_text: str, delta_text: str
+     ) -> DeltaMessage | None:
+-        """Extract reasoning from streaming delta."""
+         if not delta_text:
+             return None
+ 
+-        # Track channel state based on accumulated text
+-        # Check if we just entered thought channel
+-        if "<|channel>thought" in current_text and not self._in_content:
+-            self._in_thought = True
+-            self._saw_any_channel = True
+-
+-        # Check if we just entered content channel
+-        if "<|channel>content" in current_text or "<|channel>final" in current_text:
+-            self._in_thought = False
+-            self._in_content = True
++        # Check if this delta begins with a channel marker that was split
++        # across two consecutive deltas. When that happens, the parser's
++        # internal state has already been flipped by the marker that arrived
++        # in the previous delta(s), so we must NOT emit the opening marker
++        # text as reasoning content.
++        if current_text.startswith("<|channel|>"):
++            # Channel markers are mutually exclusive, and we can
++            # encounter the marker only once per delta
++            return None
+ 
+-        # Check if thought ended (first <channel|> after thought start)
+-        if self._in_thought and "<channel|>" in current_text:
+-            thought_starts = current_text.count("<|channel>thought")
+-            channel_ends = current_text.count("<channel|>")
+-            if channel_ends >= thought_starts:
++        # Store the state *before* processing this delta so we can detect
++        # transitions that occur *within* delta_text.
++        was_in_thought = self._in_thought
++        was_in_content = self._in_content
++
++        # Check for a channel marker that appears inside the current delta.
++        # We look at delta_text specifically to see if it contains a
++        # complete channel marker that flips state. We examine the portion
++        # of current_text that is new (delta_text) using the marker's
++        # position relative to previous_text.
++        transition_marker = None
++        transition_pos_in_delta = -1
++
++        # Look for a thought→content transition within delta_text
++        if not was_in_content and CONTENT_CHANNEL in current_text:
++            marker_pos = current_text.index(CONTENT_CHANNEL)
++            # Check if the marker starts within delta_text
++            delta_start_in_current = len(previous_text)
++            if marker_pos >= delta_start_in_current:
++                transition_marker = CONTENT_CHANNEL
++                transition_pos_in_delta = marker_pos - delta_start_in_current
++        # Look for a content→thought transition within delta_text
++        if transition_marker is None and not was_in_thought and THOUGHT_CHANNEL in current_text:
++            marker_pos = current_text.index(THOUGHT_CHANNEL)
++            delta_start_in_current = len(previous_text)
++            if marker_pos >= delta_start_in_current:
++                transition_marker = THOUGHT_CHANNEL
++                transition_pos_in_delta = marker_pos - delta_start_in_current
++
++        # If a transition occurs inside this delta, split the delta at the
++        # marker boundary and route each piece to the correct channel.
++        if transition_marker is not None:
++            # Split delta_text: everything before the marker, the marker
++            # itself, and everything after.
++            pre_marker = delta_text[:transition_pos_in_delta]
++            post_marker_start = transition_pos_in_delta + len(transition_marker)
++            post_marker = delta_text[post_marker_start:]
++
++            # Update internal state based on the marker we found
++            if transition_marker == CONTENT_CHANNEL:
++                self._in_content = True
+                 self._in_thought = False
+-                # If no explicit content channel follows, switch to content mode
+-                if (
+-                    "<|channel>content" not in current_text
+-                    and "<|channel>final" not in current_text
+-                ):
+-                    self._in_content = True
+-
+-        # Filter out channel markers from delta
++            elif transition_marker == THOUGHT_CHANNEL:
++                self._in_thought = True
++                self._in_content = False
++
++            # Build the DeltaMessage, setting only the fields that have text.
++            msg = DeltaMessage()
++            if was_in_thought:
++                msg.reasoning = pre_marker
++            elif was_in_content:
++                msg.content = pre_marker
++            if self._in_thought:
++                if msg.reasoning:
++                    msg.reasoning += post_marker
++                else:
++                    msg.reasoning = post_marker
++            elif self._in_content:
++                if msg.content:
++                    msg.content += post_marker
++                else:
++                    msg.content = post_marker
++            # Only return a message if we have something to say
++            if msg.reasoning or msg.content:
++                return msg
++            return None
++
++        # No transition inside this delta. Update state based on
++        # whether markers are present in current_text (this handles
++        # markers split across previous deltas).
++        if not self._in_content and CONTENT_CHANNEL in current_text:
++            self._in_content = True
++            self._in_thought = False
++        elif not self._in_thought and THOUGHT_CHANNEL in current_text:
++            self._in_thought = True
++            self._in_content = False
++
++        # Now classify the whole delta based on the updated state.
++        text = current_text
++        if delta_text.startswith("<|channel|>"):
++            # This delta itself begins with the channel marker.
++            # Strip it and everything before it so we don't relay
++            # the marker text to the client.
++            delta_text = text[text.find("<|channel|>") + len("<|channel|>") :]
++            text = delta_text
++
++        # For all other cases, just pass the delta_text through,
++        # which may be only part of the current_text that was new.
+         clean = delta_text
+-        for marker in [
+-            "<|channel>",
+-            "<channel|>",
+-            "<|turn>",
+-            "<turn|>",
+-            "thought\n",
+-            "content\n",
+-            "final\n",
+-        ]:
+-            clean = clean.replace(marker, "")
+-
+-        if not clean:
+-            return None  # pure marker token, skip
+ 
+         if self._in_thought:
+             return DeltaMessage(reasoning=clean)
+         elif self._in_content:
+             return DeltaMessage(content=clean)
+-        elif not self._saw_any_channel:
+-            # No channel tokens seen — plain content (no thinking)
+-            return DeltaMessage(content=clean)
+         else:
+-            # Between channels — treat as reasoning
+-            return DeltaMessage(reasoning=clean)
++            self._in_content = True
++            return DeltaMessage(content=clean)
+ 
+-    def finalize_streaming(self, accumulated_text: str) -> DeltaMessage | None:
+-        """Handle end of stream — emit any remaining content."""
+-        return None
++    def has_reasoning(self, text: str) -> bool:
++        """Check if the text contains reasoning markers."""
++        return THOUGHT_CHANNEL in text or CONTENT_CHANNEL in text

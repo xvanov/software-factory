@@ -1,0 +1,68 @@
+{
+  "instance_id": "zauberzeug__nicegui-5858",
+  "arm": "bare",
+  "audited_at": "2026-08-03T03:54:35.496493+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 4 call(s) but only 0 trajectory file(s) under state/events/trajectories \u2014 the agent's reasoning trail is incomplete"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T03:54:19.797183+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1023,
+      "tokens_out": 539,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.004038760000000001,
+      "duration_s": 5.295,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:54:20.418624+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1568,
+      "tokens_out": 12,
+      "cached_input_tokens": 768,
+      "cost_usd": 0.0017136080000000004,
+      "duration_s": 0.602,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:54:25.152441+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1586,
+      "tokens_out": 156,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.00365846,
+      "duration_s": 4.711,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:54:34.970997+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1943,
+      "tokens_out": 3,
+      "cached_input_tokens": 1536,
+      "cost_usd": 0.0010442960000000001,
+      "duration_s": 1.995,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.0105,
+  "ledger_tokens_in": 6120,
+  "ledger_tokens_out": 710,
+  "result_cost_usd": 0.0105
+}

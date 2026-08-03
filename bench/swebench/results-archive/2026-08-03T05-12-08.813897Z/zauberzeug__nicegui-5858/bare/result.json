@@ -1,0 +1,58 @@
+{
+  "arm": "bare",
+  "instance_id": "zauberzeug__nicegui-5858",
+  "repo": "zauberzeug/nicegui",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-03T03:54:35.001951+00:00",
+  "wall_clock_s": 37.0,
+  "steps_used": 4,
+  "step_cap": 40,
+  "tokens_in": 6120,
+  "tokens_out": 710,
+  "cost_usd": 0.0105,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 4,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [],
+  "test_files_stripped": [],
+  "diff_bytes": 0,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "cat > /tmp/patch_xterm.py << 'EOF'\nimport sys\n\nwith open('nicegui/elements/xterm/xterm.py', 'r') as f:\n    content = f.read()\n\n# 1. Add RESIZE handler in on_event\nold_on_event = '''\\\n        if handler is not None:\n            self.on(\\\"bell\\\")'''\nnew_on_event = '''\\\n        if handler is not None:\n",
+      "exit": 0
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "python /tmp/patch_xterm.py",
+      "exit": 0
+    },
+    {
+      "step": 2,
+      "action": "bash",
+      "command": "docker run --rm -v \"$PWD\":/testbed -w /testbed --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.zauberzeug_1776_nicegui-5858@sha256:0774c1c1d9caf26fc590c840482c262c82a76ccc5150c9dd58501114371bc2d2 -lc 'source /opt/conda/bin/activate t",
+      "exit": 0
+    },
+    {
+      "step": 3,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "zauberzeug__nicegui-5858",
+    "image": "swerebench/sweb.eval.x86_64.zauberzeug_1776_nicegui-5858@sha256:0774c1c1d9caf26fc590c840482c262c82a76ccc5150c9dd58501114371bc2d2",
+    "graded_at": "2026-08-03T03:54:35.410826+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 3,
+    "empty_patch": true,
+    "oracle_resolved": false,
+    "outcome": "empty_patch",
+    "log_tail": ""
+  }
+}

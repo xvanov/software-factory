@@ -1,0 +1,56 @@
+diff --git a/server/opensandbox_server/services/validators.py b/server/opensandbox_server/services/validators.py
+index 4b37b57..b588223 100644
+--- a/server/opensandbox_server/services/validators.py
++++ b/server/opensandbox_server/services/validators.py
+@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
+ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+ 
+ from fastapi import HTTPException, status
++import os
+ import re
+ 
+ from opensandbox_server.services.constants import RESERVED_LABEL_PREFIX, SandboxErrorCodes
+@@ -450,6 +451,43 @@ def ensure_valid_host_path(
+             },
+         )
+ 
++    # ── Symlink detection ──
++    # Check each intermediate path component for symbolic links to
++    # prevent symlink-based bypass of the allowlist (e.g., a symlink
++    # under an allowed prefix that points to /).  Aligned with
++    # _validate_pvc_volume which also uses os.path.realpath(strict=True)
++    # for symlink-aware checks on PVC subPath resolution.
++    #
++    # Walk from root toward the full path, checking each component.
++    # Stop at the first non-existent component: symlinks cannot exist
++    # beyond that point.
++    head, tail = os.path.split(path)
++    components: list[str] = []
++    while tail:
++        components.append(tail)
++        head, tail = os.path.split(head)
++    # head is now the root (e.g., '/' on Unix or 'C:\\' on Windows)
++
++    check_path = head
++    for component in reversed(components):
++        check_path = os.path.join(check_path, component)
++        try:
++            if os.path.islink(check_path):
++                raise HTTPException(
++                    status_code=status.HTTP_400_BAD_REQUEST,
++                    detail={
++                        "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                        "message": (
++                            f"Host path '{path}' contains a symbolic link "
++                            f"at '{check_path}'."
++                        ),
++                    },
++                )
++        except OSError:
++            # Component does not exist (or cannot be accessed).
++            # Remaining components cannot be symlinks.
++            break
++
+     # Check against allowed prefixes if provided
+     if allowed_prefixes is not None:
+         # Normalize separators for cross-platform prefix checks so Windows-style

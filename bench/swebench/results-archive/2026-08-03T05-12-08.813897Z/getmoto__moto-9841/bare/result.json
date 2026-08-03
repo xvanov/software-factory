@@ -1,0 +1,74 @@
+{
+  "arm": "bare",
+  "instance_id": "getmoto__moto-9841",
+  "repo": "getmoto/moto",
+  "base_commit": "830a798c567bcdded2447efb7e98ca6d89b6a8c5",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-03T03:54:38.986720+00:00",
+  "wall_clock_s": 30.2,
+  "steps_used": 4,
+  "step_cap": 40,
+  "tokens_in": 7937,
+  "tokens_out": 1114,
+  "cost_usd": 0.0151,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 4,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "moto/kms/models.py"
+  ],
+  "test_files_stripped": [],
+  "diff_bytes": 1502,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "cd /testbed && python - <<'EOF'\nimport re\n\n# Read models.py\nwith open('moto/kms/models.py', 'r') as f:\n    content = f.read()\n\n# Fix update_alias method to handle ARNs (extract key ID from ARN if full ARN provided)\nold = \"\"\"    def update_alias(self, target_key_id: str, alias_name: str) -> Alias:\n  ",
+      "exit": 1
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "python - <<'EOF'\nimport re\n\nwith open('moto/kms/models.py', 'r') as f:\n    content = f.read()\n\nold = \"\"\"    def update_alias(self, target_key_id: str, alias_name: str) -> Alias:\n        for key in self.keys.values():\n            if alias_name in key.aliases and target_key_id != key.id:\n             ",
+      "exit": 0
+    },
+    {
+      "step": 2,
+      "action": "bash",
+      "command": "docker run --rm -v \"$PWD\":/testbed -w /testbed --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.getmoto_1776_moto-9841@sha256:25cb9ea1e18acfadbf1a8b4a5746153746cd994e138c01f295d83813ab63a171 -lc 'source /opt/conda/bin/activate testbed",
+      "exit": 0
+    },
+    {
+      "step": 3,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "getmoto__moto-9841",
+    "image": "swerebench/sweb.eval.x86_64.getmoto_1776_moto-9841@sha256:25cb9ea1e18acfadbf1a8b4a5746153746cd994e138c01f295d83813ab63a171",
+    "graded_at": "2026-08-03T03:54:39.356297+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 149,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "moto/kms/models.py",
+      "moto/kms/responses.py"
+    ],
+    "touched_files": [
+      "moto/kms/models.py"
+    ],
+    "gold_files_overlap": [
+      "moto/kms/models.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 17.4,
+    "log_tail": "0m) -> Alias:\u001b[90m\u001b[39;49;00m\n        actual_key_id = \u001b[96mself\u001b[39;49;00m._get_key_id_from_target(target_key_id)\u001b[90m\u001b[39;49;00m\n        \u001b[94mfor\u001b[39;49;00m key \u001b[95min\u001b[39;49;00m \u001b[96mself\u001b[39;49;00m.keys.values():\u001b[90m\u001b[39;49;00m\n            \u001b[94mif\u001b[39;49;00m alias_name \u001b[95min\u001b[39;49;00m key.aliases \u001b[95mand\u001b[39;49;00m actual_key_id != key.id:\u001b[90m\u001b[39;49;00m\n                alias = key.aliases.pop(alias_name)\u001b[90m\u001b[39;49;00m\n                \u001b[96mself\u001b[39;49;00m.keys[actual_key_id].aliases[alias_name] = alias\u001b[90m\u001b[39;49;00m\n                \u001b[94mreturn\u001b[39;49;00m alias\u001b[90m\u001b[39;49;00m\n>       \u001b[94mreturn\u001b[39;49;00m \u001b[96mself\u001b[39;49;00m.keys[actual_key_id].aliases[alias_name]\u001b[90m\u001b[39;49;00m\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\u001b[90m\u001b[39;49;00m\n\u001b[1m\u001b[31mE       KeyError: 'alias/my-alias'\u001b[0m\n\n\u001b[1m\u001b[31mmoto/kms/models.py\u001b[0m:530: KeyError\n\u001b[36m\u001b[1m=========================== short test summary info ============================\u001b[0m\n\u001b[31mFAILED\u001b[0m tests/test_kms/test_kms.py::\u001b[1mtest_update_alias_using_arn_as_target_key_id\u001b[0m - KeyError: 'alias/my-alias'\n\u001b[31mFAILED\u001b[0m tests/test_kms/test_kms.py::\u001b[1mtest_update_alias_same_target_key\u001b[0m - KeyError: 'alias/my-alias'\n\u001b[31m\u001b[31m\u001b[1m2 failed\u001b[0m\u001b[31m in 0.45s\u001b[0m\u001b[0m\n\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m [ 47%]\n\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m [ 94%]\n\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m.\u001b[0m\u001b[32m                                                                [100%]\u001b[0m\n\u001b[32m\u001b[32m\u001b[1m153 passed\u001b[0m\u001b[32m in 6.83s\u001b[0m\u001b[0m\nSWEBENCH_RESULT_12298734c3b4490e: UNRESOLVED\n"
+  }
+}
