@@ -119,6 +119,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import hashlib
 import json
 import os
@@ -129,6 +130,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -1201,17 +1203,17 @@ def _prepare_cloned_tree(
     return None
 
 
-_STORY_TEMPLATE = """# {instance_id}
-
-## Problem
-
-{statement}
-
-## Definition of done
-
-Change the production code in this repository so the described behaviour is
-correct.
-
+# The test policy EVERY arm must receive BYTE-IDENTICALLY. Extracted from
+# ``_STORY_TEMPLATE`` (whose rendered text is unchanged — pinned by
+# ``test_story_template_rendering_is_unchanged``) because the bare arm's system
+# prompt used to say the OPPOSITE: "Do NOT create, edit or delete test files.
+# Test edits are stripped before grading, so they are wasted effort." Same
+# stripping mechanic, opposite instruction — so the arm that anchors the
+# scaffold-lift headline was prompt-FORBIDDEN from building the very
+# red-green feedback loop the factory's thesis rests on, while factory and
+# claude were told to build it. A prompt asymmetry on the control arm
+# invalidates the comparison, not just the arm.
+_TEST_POLICY = """\
 Work exactly as you normally do: write tests that express the required
 behaviour, then make them pass. A separate held-out test suite, written by the
 project's maintainers and which you will never see, is the final judge.
@@ -1225,7 +1227,23 @@ Your test edits are removed from the diff before the held-out suite runs, so
 they cannot affect the verdict either way — they are your feedback loop, not
 the grade. Only your production-code changes are judged. This means a test
 that merely asserts whatever your implementation happens to do buys nothing:
-make the tests encode what the TASK requires.
+make the tests encode what the TASK requires."""
+
+_STORY_TEMPLATE = (
+    """# {instance_id}
+
+## Problem
+
+{statement}
+
+## Definition of done
+
+Change the production code in this repository so the described behaviour is
+correct.
+
+"""
+    + _TEST_POLICY
+    + """
 
 ## Running the tests
 
@@ -1238,6 +1256,7 @@ tests YOUR edits:
 {test_command}
 ```
 """
+)
 
 
 def _test_file_paths(entries: list[str]) -> list[str]:
@@ -1332,9 +1351,23 @@ def instance_test_command(
     repo at ``/app``, swe-rebench at ``/testbed``) and the env-activation
     prefix (swe-rebench images ship a conda env that a non-root login shell
     does not inherit) all come from the instance's pinned profile.
+
+    ``repo``, when given, makes the command RUNNABLE in that tree: a declared
+    target that does not exist at ``base_commit`` falls back to its nearest
+    existing ancestor directory (``_existing_targets``). This argument was
+    accepted and then ignored, so the command handed to every arm embedded a
+    path that cannot be collected on 3 of the 19 pinned rebench instances
+    (``hkuds__openharness-217``, ``vyperlang__vyper-4801``,
+    ``line__line-bot-sdk-python-981_interface``) — pytest exits 4 with "file or
+    directory not found" and the arm's only verification channel is dead
+    before it starts. ``_precheck_collect`` already salvaged exactly this way
+    for its own collect probe; the salvage now reaches the command the arms
+    actually run, for every arm identically.
     """
     entries = test_files if test_files is not None else _declared_test_entries(inst)
     files = _test_file_paths(entries)
+    if repo is not None and any(not (repo / f).exists() for f in files):
+        files = _existing_targets(files, repo)
     target = " ".join(_shq(t) for t in files) if files else ""
     mode = "--collect-only -q " if collect_only else ""
     profile = _profile_of(inst)
@@ -1463,6 +1496,84 @@ def _ledger_totals(runs: list[Any], story_id: int | None) -> dict[str, Any]:
     }
 
 
+# The three result.json keys that answer "which weights produced this row".
+_MODEL_MIX_KEYS = ("models_used", "model_calls", "model_escalated_calls")
+
+
+def _no_model_mix() -> dict[str, Any]:
+    """The mix payload for a run that never reached the model (precheck/prepare
+    failure). Explicit empties, so "nothing ran" never reads like "not
+    recorded"."""
+    return {"models_used": [], "model_calls": [], "model_escalated_calls": 0}
+
+
+def _model_mix(events_dir: Path, *, nominal: str | None) -> dict[str, Any]:
+    """Which models ACTUALLY ran, per persona and per tier, from the ledger.
+
+    ``result.json["model"]`` was absent on every factory row, and that hid a
+    finding that goes to the heart of the published claim: across the 19 pinned
+    rebench instances the factory arm escalated 7 dev calls to
+    ``azure/gpt-5.3-codex`` (the HARD tier) on 5 instances, and 4 of its 11
+    resolves used that tier. "Matched weights vs the bare arm" was therefore
+    false, and nothing in the artifact said so. Verified in this repo's own run
+    dirs: ``idaholab__montepy-933_interface`` (2 hard dev calls),
+    ``pandas-dev__pandas-63945`` (2), ``jsonpickle__jsonpickle-588`` (1),
+    ``raullenchai__rapid-mlx-289`` (1), ``vyperlang__vyper-4801`` (1).
+
+    Read from ``state/events/runs.ndjson`` — the per-run event ledger, which
+    already records ``persona``, ``model`` and ``model_tier`` per call — so
+    this is a MEASUREMENT of the calls that happened, not a restatement of the
+    route that was resolved. ``nominal`` is the arm's claimed model; calls on
+    any other model are counted separately so an escalation is visible at a
+    glance rather than requiring an ndjson dig.
+
+    Best-effort by contract: a missing or partly-corrupt ledger yields the
+    empty mix rather than raising — the arms' cost/token accounting already
+    fails the audit when the ledger is unreadable.
+    """
+    counts: dict[tuple[str, str, str | None], dict[str, Any]] = {}
+    path = events_dir / "runs.ndjson"
+    if path.exists():
+        try:
+            with path.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    try:
+                        ev = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(ev, dict) or ev.get("event") != "run":
+                        continue
+                    key = (
+                        str(ev.get("persona") or "?"),
+                        str(ev.get("model") or "?"),
+                        ev.get("model_tier"),
+                    )
+                    row = counts.setdefault(
+                        key,
+                        {
+                            "persona": key[0],
+                            "model": key[1],
+                            "model_tier": key[2],
+                            "calls": 0,
+                            "cost_usd": 0.0,
+                        },
+                    )
+                    row["calls"] = int(row["calls"]) + 1
+                    row["cost_usd"] = round(
+                        float(row["cost_usd"]) + float(ev.get("cost_usd") or 0.0), 4
+                    )
+        except OSError:
+            pass
+    calls = sorted(counts.values(), key=lambda r: (r["persona"], r["model"]))
+    return {
+        "models_used": sorted({str(r["model"]) for r in calls}),
+        "model_calls": calls,
+        "model_escalated_calls": sum(
+            int(r["calls"]) for r in calls if nominal and r["model"] != nominal
+        ),
+    }
+
+
 def _build_bench_root(inst: dict[str, Any], repo: Path) -> Path:
     """A minimal factory root: own state db, own settings, app -> the clone."""
     root = _run_dir(inst["instance_id"], "factory") / "root"
@@ -1546,6 +1657,7 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
                 "tokens_out": 0,
                 "cost_usd": 0.0,
                 "persona_calls": 0,
+                **_no_model_mix(),
             },
         )
         raise SystemExit(error)
@@ -1579,6 +1691,7 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
                 "tokens_out": 0,
                 "cost_usd": 0.0,
                 "persona_calls": 0,
+                **_no_model_mix(),
             },
         )
         raise SystemExit(error)
@@ -1593,7 +1706,12 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     from factory.app_config import load_app_config
     from factory.chain import orchestrator as O  # noqa: N812
     from factory.chain.state_machine import StoryRecord, StoryState
+    from factory.model_router import route
     from factory.runner import Run, _engine
+
+    # The weights this arm CLAIMS — resolved, not assumed, and recorded in
+    # result.json so "matched weights" is checkable against ``models_used``.
+    nominal_model = route("dev", "standard")
 
     story_rel = f"stories/{SWE_ISSUE_BASE}-{instance_id[:40]}.md"
     (root / "apps" / "swebench" / story_rel).parent.mkdir(parents=True, exist_ok=True)
@@ -1688,11 +1806,32 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "base_commit": inst["base_commit"],
         "problem_statement_sha256": inst["problem_statement_sha256"],
         "manifest_sha256": _manifest()["manifest_sha256"],
+        # The NOMINAL weights this arm claims — the dev/standard route, i.e.
+        # what "matched weights vs bare" means. ``models_used`` below is what
+        # actually ran, and the two DIVERGE: the chain's convergence loop
+        # escalates a stuck dev to the hard tier, which no factory row recorded
+        # (``model`` was absent from every one of them). See ``_model_mix``.
+        "model": nominal_model,
+        **_model_mix(root / "state" / "events", nominal=nominal_model),
         "ts": datetime.now(UTC).isoformat(),
         "wall_clock_s": round(time.monotonic() - entered, 1),
         "final_state": final.state,
         "dev_retries": final.dev_retries,
         "reviewer_cycles": final.reviewer_cycles,
+        "steps_used": len(transitions),
+        "step_cap": max_steps,
+        "termination": (
+            "wall-clock-cap"
+            if error and "wall-clock cap" in error
+            else (
+                "error"
+                if error
+                else ("terminal-state" if final.state in terminal else "tick-cap")
+            )
+        ),
+        # The chain writes one trajectory per dev call under the run's own
+        # state root; named here so a single run says where to look.
+        "trajectory": "root/state/events/trajectories/",
         **_ledger_totals(runs, story_id),
         "cost_source": "derived-from-price-table",
         "precheck": precheck,
@@ -1706,9 +1845,8 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "diff_bytes": len(code_diff),
     }
     out = _write_result(instance_id, "factory", result)
-    print(f"factory arm done: {out}")
-    if stripped:
-        print(f"  stripped {len(stripped)} test-file edit(s) before grading: {stripped}")
+    _print_run_summary(result, out)
+    print(f"  factory says green : {result['factory_says_green']}")
 
 
 def _capture_diff(wt: Path, base: str = "swebench-base") -> str:
@@ -1736,7 +1874,8 @@ def _capture_diff(wt: Path, base: str = "swebench-base") -> str:
 # bare arm — the SAME weights with a minimal scaffold
 # --------------------------------------------------------------------------- #
 
-_BARE_SYSTEM = """\
+_BARE_SYSTEM = (
+    """\
 You are fixing a bug in a software repository. You are in a shell at the repo root.
 
 Reply with EXACTLY ONE of these, and nothing else:
@@ -1749,13 +1888,73 @@ Reply with EXACTLY ONE of these, and nothing else:
 Rules:
 - One command per reply. No commentary outside the block.
 - Edit files with standard tools (cat > file <<'EOF', sed, python - <<'EOF').
-- Do NOT create, edit or delete test files. Test edits are stripped before
-  grading, so they are wasted effort.
-- Reply DONE when the production code change is complete.
+- Never write an "Exit N", "Exit code:", "Output:" or "Result:" line yourself.
+  Only the environment reports what a command did; anything you write on those
+  lines is fiction and will be discarded.
+- Reply DONE when the production code change is complete AND you have seen a
+  test you wrote for this task go from failing to passing.
 - You cannot access the network.
+
+## Definition of done
+
+"""
+    + _TEST_POLICY
+    + "\n"
+)
+
+# The base-suite warning. It exists because the test command every arm gates
+# DONE on CANNOT FAIL for this task: it targets the fail_to_pass FILES at
+# base_commit, i.e. before the withheld gold test patch adds the tests that
+# encode the required behaviour. Measured over the 19 pinned rebench
+# instances: 3 target a file that does not exist at base, 11 more contain ZERO
+# of the fail_to_pass test functions, and the remaining 5 contain them
+# asserting the OLD behaviour. So "N passed" is the default state of the tree
+# and says nothing. Three confirmed consequences: conan-19735 ran a `sed` that
+# matched nothing, saw "28 passed", and replied DONE at step 6 with a 0-byte
+# diff; nicegui-5858 the same; ucfopen__canvasapi-716 wrote a CORRECT fix, saw
+# the pre-existing test assert the old behaviour and fail, restored the
+# original file out of the docker image ("the tests are designed for the
+# original implementation") and declared DONE with a 0-byte diff.
+#
+# TODO(operator): this defect is IDENTICAL for the factory and claude prompts
+# (both render ``_STORY_TEMPLATE``, which carries the same unqualified "run
+# this command" instruction). It is fixed for bare ONLY in this PR so the
+# factory/claude prompt text stays byte-stable and the re-run is not
+# confounded on two axes at once. Lift this paragraph into ``_TEST_POLICY`` —
+# i.e. give it to all three arms — before any run is published as
+# "matched prompt".
+_BARE_BASE_TESTS_NOTE = """\
+Read this before you trust a green run: the tests that command selects ALREADY
+PASS in this checkout, unchanged, and they do NOT cover the task above. A
+"passed" line from them is the state of the tree you were handed, not evidence
+of anything you did. They are a regression check only. The behaviour the hidden
+suite judges is not asserted anywhere in this tree yet — the test that proves
+it is a test YOU write.
 """
 
-_BARE_TASK = """\
+_BARE_STEP_CAP = 40
+_BARE_OUTPUT_CAP = 4000
+_FACTORY_STEP_DEFAULT = 16
+
+# One command's own wall clock. A ``docker run … pytest`` on a big suite is the
+# expensive case; past it the observation is a timeout notice, not a crash.
+_BARE_CMD_TIMEOUT_S = 300
+
+# How many turns of history the model sees, EXCLUDING the pinned system+task
+# prefix. The old window (``history[-24:]`` over a flat list that started with
+# system+task and grew by 2 per step) EVICTED the system prompt and the task
+# once a run passed step 11 — and invalid-format replies clustered at exactly
+# steps 12-24, in the four longest runs, all four of which ended wrong or
+# empty. The prefix is now pinned and only the tail slides.
+_BARE_HISTORY_TURNS = 22
+
+# Extra continuations granted when the model says DONE with nothing to grade.
+# Below the repo's hard cap of 3 (CLAUDE.md: nothing loops more than 3 times);
+# on the (N+1)-th DONE the loop accepts it and records the empty diff.
+_BARE_DONE_NUDGES = 2
+
+_BARE_TASK = (
+    """\
 Repository: {repo}
 Task:
 
@@ -1768,11 +1967,10 @@ tests inside a docker image that has them, with your working tree mounted. Run
 it to check your fix before replying DONE:
 
 {test_command}
-"""
 
-_BARE_STEP_CAP = 40
-_BARE_OUTPUT_CAP = 4000
-_FACTORY_STEP_DEFAULT = 16
+"""
+    + _BARE_BASE_TESTS_NOTE
+)
 
 
 def _resolve_max_steps(arm: str, requested: int | None) -> int:
@@ -1792,10 +1990,65 @@ def _resolve_max_steps(arm: str, requested: int | None) -> int:
         return _BARE_STEP_CAP
     if arm == "claude":
         return _CLAUDE_TURN_CAP
+    if arm == "openhands":
+        # One OpenHands agent iteration — the same unit, and the same number,
+        # as the factory dev's own per-attempt cap.
+        return _OPENHANDS_ITERATION_CAP
     return _FACTORY_STEP_DEFAULT
 
 
-def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
+# The file a plumbing probe writes so the run has a real, non-test production
+# change to capture, split and grade-shape. Named so nobody mistakes it for
+# task output.
+_PROBE_FILE = "swebench_plumbing_probe.py"
+
+# Recorded as the run's ``error`` so a probe row is fail-closed everywhere: the
+# report buckets it as a failed run, ``estimate_instance_cost`` refuses it as a
+# cost sample, and no headline can absorb it.
+_PROBE_ERROR = (
+    "PLUMBING PROBE — not a measurement: no model was called. Re-run without "
+    "--probe-plumbing for a real row."
+)
+
+# A fixed reply script for ``--probe-plumbing``: no model, no spend, and every
+# parser branch this PR touches exercised in order —
+#   1. the BASH-marker form;
+#   2. DONE with an EMPTY tree, which must be REJECTED and nudged;
+#   3. the plain ```bash fence form deepseek actually emits (34 of 231 measured
+#      replies carried no marker; 12 were exactly this shape and were thrown
+#      away), writing a real production-code file;
+#   4. DONE with fabricated ``Exit code:``/``Result:`` lines, which must be
+#      accepted as DONE (the tree now has changes) with those lines never
+#      becoming an observation.
+_BARE_PROBE_REPLIES = (
+    "BASH\ngit status --porcelain",
+    "I have finished the change.\nDONE",
+    "Now the fix:\n\n```bash\nprintf '%s\\n' "
+    f"'# swebench plumbing probe' > {_PROBE_FILE}\n```",
+    "The tests now pass.\nExit code: 0\nResult: 4 passed, 0 failed\nDONE",
+)
+
+
+def _probe_text_run() -> Any:
+    """A ``text_run`` stand-in that returns the fixed probe script.
+
+    Deliberately shaped like the real call site (same keyword arguments,
+    returns a string) so the probe exercises the loop, the parser, the
+    executor, the diff capture and the artifact write — everything except the
+    provider. It writes no ledger rows, which is why a probe run reports
+    ``persona_calls: 0`` and an explicit ``error``.
+    """
+    replies = list(_BARE_PROBE_REPLIES)
+
+    def _stub(**kwargs: Any) -> str:
+        return replies.pop(0) if replies else "DONE"
+
+    return _stub
+
+
+def run_bare(
+    instance_id: str, *, max_steps: int, timeout_s: int, probe: bool = False
+) -> None:
     """Minimal bash-loop agent on the IDENTICAL Azure deployment the factory uses.
 
     This is PLAN.md 1.4, and it is not optional. The product thesis is a
@@ -1811,6 +2064,30 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     factory dev gets: an arm with no way to run anything measures
     verification-blindness, not scaffold lift (0 of 19 first-sweep bare runs
     ever invoked pytest).
+
+    "Minimal" means FEW AFFORDANCES, not a broken substrate. Everything below
+    is the difference between measuring a model and measuring this function's
+    bugs — the 2026-08-03 audit invalidated a published 0/19 for exactly that
+    reason (external anchor: the same deployment scores 40.2% under Nebius's
+    own minimal scaffold, so P(0 of 19) ≈ 5.7e-5):
+
+    * a real role-tagged message list, so the model can tell its own text from
+      the environment's — and only the PARSED COMMAND is ever echoed back, so
+      a fabricated ``Exit 0 / Output: / Result:`` line can never become an
+      observation. Two runs declared DONE on invented test results;
+      ``conan-19750`` wrote 11,890 characters with 8 fenced blocks, executed
+      ZERO commands, and said "The tests now pass. DONE";
+    * a PINNED system+task prefix, because a flat ``history[-24:]`` window
+      evicted both after step 11;
+    * the same collect precheck the factory arm runs, and the same salvaged
+      test target, so the command in the prompt is runnable;
+    * an empty-diff guard on DONE — 6 of 19 rows (32%) shipped 0 bytes;
+    * a caught command timeout, which used to propagate out of this function
+      and kill the run with no ``result.json`` at all;
+    * a full observation trail in ``bare-commands.ndjson``.
+
+    ``probe=True`` (``--probe-plumbing``) replaces the model with a fixed reply
+    script and spends NOTHING. See ``_probe_replies``.
     """
     # Wall clock starts at ENTRY so clone/setup time is counted (same fix as
     # run_factory); ``started`` below still scopes the step-loop budget.
@@ -1841,41 +2118,105 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     if prep_error:
         raise SystemExit(f"prepare: {prep_error}")
 
+    # THE SAME PRE-DISPATCH COLLECT GATE the factory and claude arms pass. The
+    # bare arm had none, so it was the one arm that could be handed a test
+    # command that cannot run and still burn its whole budget against it.
+    # Failing here costs $0.
+    precheck = _precheck_collect(inst, repo)
+    collect_tail = str(precheck.pop("tail", ""))
+    if not precheck["collect_ok"]:
+        error = f"precheck: test command does not collect: {collect_tail[-400:]}"
+        _write_result(
+            instance_id,
+            "bare",
+            {
+                "arm": "bare",
+                "instance_id": instance_id,
+                "repo": inst["repo"],
+                "base_commit": inst["base_commit"],
+                "problem_statement_sha256": inst["problem_statement_sha256"],
+                "manifest_sha256": _manifest()["manifest_sha256"],
+                "ts": datetime.now(UTC).isoformat(),
+                "wall_clock_s": round(time.monotonic() - entered, 1),
+                "error": error,
+                "factory_says_green": None,
+                "precheck": {**precheck, "tail": collect_tail[-1500:]},
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cost_usd": 0.0,
+                "persona_calls": 0,
+                **_no_model_mix(),
+            },
+        )
+        raise SystemExit(error)
+
     sys.path.insert(0, str(FACTORY_ROOT))
     from factory.model_router import route
-    from factory.runner import text_run
+    from factory.runner import text_run as _text_run
 
     model = route("dev", "standard")
+    text_run = _probe_text_run() if probe else _text_run
     transcript: list[dict[str, Any]] = []
     tokens_in = tokens_out = 0
     cost = 0.0
     started = time.monotonic()
     error: str | None = None
+    cmd_log = run_dir / "bare-commands.ndjson"
 
-    history = [
-        _BARE_SYSTEM,
-        _BARE_TASK.format(
-            repo=inst["repo"],
-            statement=inst["problem_statement"],
-            # SAME derivation, SAME call shape as the factory story template
-            # (_STORY_TEMPLATE): no privileged targets, no extra wording. A
-            # bare arm with no way to run tests measures verification, not
-            # scaffold lift — 0 of 19 first-sweep bare runs ever invoked
-            # pytest; one shipped syntactically invalid Python.
-            test_command=instance_test_command(inst, repo=repo),
-        ),
+    def _log_step(row: dict[str, Any]) -> None:
+        """One line per turn in ``bare-commands.ndjson``, UNTRUNCATED.
+
+        The command log used to hold commands only, so reconstructing what the
+        arm actually SAW meant cross-referencing ``prompt_bodies.ndjson`` by
+        hand; ``result.json["transcript"]`` keeps 20 steps of 300-char commands
+        and no output at all. The observation now lands here too, which also
+        means the audit's oracle-probe scan sees command OUTPUT — previously a
+        probe's result was invisible to it.
+        """
+        with cmd_log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+
+    # A REAL role-tagged conversation. ``prefix`` is pinned for the whole run;
+    # only ``turns`` slides. Assistant turns carry the PARSED COMMAND, never
+    # the model's raw reply — that is what makes a fabricated observation
+    # unrepresentable in the context rather than merely discouraged.
+    prefix: list[dict[str, str]] = [
+        {"role": "system", "content": _BARE_SYSTEM},
+        {
+            "role": "user",
+            "content": _BARE_TASK.format(
+                repo=inst["repo"],
+                statement=inst["problem_statement"],
+                # SAME derivation, SAME call shape as the factory story
+                # template (_STORY_TEMPLATE): no privileged targets. A bare arm
+                # with no way to run tests measures verification, not scaffold
+                # lift — 0 of 19 first-sweep bare runs ever invoked pytest.
+                test_command=instance_test_command(inst, repo=repo),
+            ),
+        },
     ]
+    turns: list[dict[str, str]] = []
     steps = min(max_steps, _BARE_STEP_CAP)
+    done_nudges = 0
+    done_empty_diff = False
+    # Why the loop stopped. Recorded because "steps_used < step_cap" is
+    # ambiguous on its own — a run that said DONE at step 6 and a run whose
+    # model call blew up at step 6 look identical in the old artifact.
+    termination = "step-cap"
     for step in range(steps):
         if time.monotonic() - started > timeout_s:
             error = f"wall-clock cap {timeout_s}s hit"
+            termination = "wall-clock-cap"
             break
-        prompt = "\n\n".join(history[-24:])  # bounded context, oldest dropped
+        messages = prefix + turns[-_BARE_HISTORY_TURNS:]
         try:
             reply = str(
                 text_run(
                     persona="dev",
-                    prompt=prompt,
+                    # ``prompt`` remains the telemetry view of the call (prompt
+                    # bodies, hashes); ``messages`` is what goes on the wire.
+                    prompt="\n\n".join(m["content"] for m in messages),
+                    messages=messages,
                     model_id=model,
                     story_id=None,
                     software_factory_root=run_dir,
@@ -1884,39 +2225,82 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
             )
         except Exception as exc:  # noqa: BLE001
             error = f"model call failed at step {step}: {type(exc).__name__}: {exc}"
+            termination = "model-call-error"
             break
 
-        if "DONE" in reply and "BASH" not in reply:
-            transcript.append({"step": step, "action": "done"})
-            break
         command = _parse_bash(reply)
-        if not command:
-            history.append(reply)
-            history.append("Invalid reply. Respond with a BASH block or DONE.")
+        if command is None:
+            # DONE is only considered once no command was found, so a reply
+            # that both patches a file and says "then reply DONE" runs the
+            # command instead of terminating (the old ``"BASH" not in reply``
+            # test made that ordering accidental).
+            if re.search(r"\bDONE\b", reply):
+                empty_reason = _bare_empty_diff_reason(repo)
+                if empty_reason is None or done_nudges >= _BARE_DONE_NUDGES:
+                    done_empty_diff = empty_reason is not None
+                    termination = (
+                        "done-empty-diff" if done_empty_diff else "done"
+                    )
+                    transcript.append(
+                        {"step": step, "action": "done", "empty_diff": done_empty_diff}
+                    )
+                    _log_step(
+                        {"step": step, "action": "done", "empty_diff": done_empty_diff}
+                    )
+                    break
+                # DONE with nothing to grade is not done. 6 of 19 measured rows
+                # (32%) shipped a 0-byte diff, one of them after REVERTING its
+                # own correct fix. Bounded by _BARE_DONE_NUDGES (< the repo's
+                # hard cap of 3) so this can never become a loop.
+                done_nudges += 1
+                turns.append({"role": "assistant", "content": "DONE"})
+                turns.append({"role": "user", "content": empty_reason})
+                transcript.append(
+                    {"step": step, "action": "done_rejected_empty_diff"}
+                )
+                _log_step({"step": step, "action": "done_rejected_empty_diff"})
+                continue
+            turns.append(
+                {
+                    "role": "assistant",
+                    # NOT ``reply``: the raw text is the fabrication vector.
+                    "content": "(no runnable command in my last reply)",
+                }
+            )
+            turns.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "That reply contained no command. Reply with a BASH "
+                        "block (or a ```bash fenced block) containing exactly "
+                        "one shell command, or DONE."
+                    ),
+                }
+            )
             transcript.append({"step": step, "action": "invalid", "reply": reply[:200]})
+            _log_step({"step": step, "action": "invalid"})
             continue
 
-        proc = subprocess.run(
-            ["bash", "-lc", command],
-            cwd=str(repo),
-            capture_output=True,
-            text=True,
-            timeout=300,
+        exit_code, output = _bare_exec(command, repo)
+        # ``None`` means the command never produced a status (timeout / could not
+        # start), so there is no exit code to report and claiming "Exit None"
+        # would be one more thing for the model to misread.
+        observation = (
+            f"Exit {exit_code}. Output:\n{output}"
+            if exit_code is not None
+            else f"No exit status: {output}"
         )
-        output = ((proc.stdout or "") + (proc.stderr or ""))[-_BARE_OUTPUT_CAP:]
-        history.append(reply)
-        history.append(f"Exit {proc.returncode}. Output:\n{output}")
-        # UNTRUNCATED command log, appended as executed: result.json keeps
-        # only the last 20 steps with 300-char commands, which is where an
-        # oracle probe would hide from the audit's `_scan_oracle_probes`.
-        with (run_dir / "bare-commands.ndjson").open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"step": step, "command": command}) + "\n")
+        turns.append({"role": "assistant", "content": f"BASH\n{command}"})
+        turns.append({"role": "user", "content": observation})
+        _log_step(
+            {"step": step, "command": command, "exit": exit_code, "output": output}
+        )
         transcript.append(
             {
                 "step": step,
                 "action": "bash",
                 "command": command[:300],
-                "exit": proc.returncode,
+                "exit": exit_code,
             }
         )
 
@@ -1941,17 +2325,34 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     (run_dir / "raw.diff").write_text(raw_diff, encoding="utf-8")
     (run_dir / "prediction.diff").write_text(code_diff, encoding="utf-8")
 
+    if probe:
+        # FAIL-CLOSED: a probe row carries a recorded ``error``, so `report`
+        # buckets it as a failed run and it can never reach a headline. The
+        # operator re-runs the instance for real; ``_reset_run_artifacts``
+        # wipes this row at the top of that run.
+        error = _PROBE_ERROR
+
     result = {
         "arm": "bare",
         "instance_id": instance_id,
         "repo": inst["repo"],
         "base_commit": inst["base_commit"],
+        "problem_statement_sha256": inst["problem_statement_sha256"],
         "manifest_sha256": _manifest()["manifest_sha256"],
         "model": model,
+        # WHICH WEIGHTS ACTUALLY RAN, measured from this run's own ledger —
+        # never assumed from the route above. See ``_model_mix``.
+        **_model_mix(run_dir / "state" / "events", nominal=model),
         "ts": datetime.now(UTC).isoformat(),
         "wall_clock_s": round(time.monotonic() - entered, 1),
         "steps_used": len(transcript),
         "step_cap": steps,
+        "termination": termination,
+        "done_with_empty_diff": done_empty_diff,
+        "done_nudges": done_nudges,
+        "trajectory": cmd_log.name,
+        "probe_plumbing": probe,
+        "precheck": precheck,
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "cost_usd": round(cost, 4),
@@ -1968,7 +2369,155 @@ def run_bare(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "transcript": transcript[-20:],
     }
     out = _write_result(instance_id, "bare", result)
-    print(f"bare arm done: {out}")
+    _print_run_summary(result, out)
+
+
+# The one-screen answer to "did that run do anything?". A single run used to
+# print one line naming result.json, so an EMPTY diff — 6 of 19 measured rows —
+# was silent unless somebody opened the JSON. Every arm prints this.
+def _print_run_summary(result: dict[str, Any], out: Path) -> None:
+    arm = result.get("arm")
+    steps = result.get("steps_used", result.get("num_turns"))
+    cap = result.get("step_cap", result.get("turn_cap"))
+    files = result.get("files_changed") or []
+    diff_bytes = int(result.get("diff_bytes") or 0)
+    models = result.get("models_used") or []
+    escalated = int(result.get("model_escalated_calls") or 0)
+    print("")
+    print(f"=== {arm} arm: {result.get('instance_id')} ===")
+    print(f"  model (nominal)  : {result.get('model')}")
+    print(
+        f"  models used      : {', '.join(str(m) for m in models) or '(ledger empty)'}"
+        + (f"   [{escalated} call(s) OFF the nominal model]" if escalated else "")
+    )
+    print(f"  steps used / cap : {steps} / {cap}")
+    print(f"  terminated by    : {result.get('termination')}")
+    print(f"  wall clock       : {result.get('wall_clock_s')}s")
+    print(
+        f"  spend            : ${result.get('cost_usd')} "
+        f"({result.get('persona_calls')} model call(s))"
+    )
+    print(f"  graded diff      : {diff_bytes} bytes across {len(files)} file(s)")
+    for f in files[:10]:
+        print(f"      {f}")
+    if result.get("test_files_stripped"):
+        print(f"  test edits stripped: {result['test_files_stripped']}")
+    if diff_bytes == 0:
+        print(
+            "  *** EMPTY DIFF — this run produced NOTHING to grade. It will be "
+            "graded as unresolved no matter what the model said. ***"
+        )
+    if result.get("error"):
+        print(f"  error            : {result['error']}")
+    print(f"  trajectory       : {result.get('trajectory')}")
+    print(f"  result           : {out}")
+
+
+def _bare_exec(command: str, repo: Path) -> tuple[int | None, str]:
+    """Run ONE command in the arm's tree; never raise.
+
+    ``subprocess.run(..., timeout=300)`` had no handler, so a single slow
+    ``docker run … pytest`` raised ``TimeoutExpired`` straight out of
+    ``run_bare`` and killed the whole run — no ``result.json``, no
+    ``prediction.diff``, and a sweep row reading "run_failed" for work the
+    model may well have completed. A timeout is an observation, not a crash:
+    the model is told, and gets its next turn.
+
+    The command runs in its own session so the kill on timeout reaches the
+    whole tree (``bash -lc 'docker run …'`` spawns children; killing only the
+    shell leaves them holding the mount).
+    """
+    proc: subprocess.Popen[str] | None = None
+    try:
+        proc = subprocess.Popen(  # noqa: S603
+            ["bash", "-lc", command],
+            cwd=str(repo),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        out, err = proc.communicate(timeout=_BARE_CMD_TIMEOUT_S)
+        return proc.returncode, ((out or "") + (err or ""))[-_BARE_OUTPUT_CAP:]
+    except subprocess.TimeoutExpired:
+        if proc is not None:
+            _kill_tree(proc)
+            with contextlib.suppress(Exception):
+                proc.communicate(timeout=30)
+        return None, (
+            f"command timed out after {_BARE_CMD_TIMEOUT_S}s and was killed. "
+            "Nothing it printed was captured. Try a narrower command."
+        )
+    except OSError as exc:
+        return None, f"command could not be started: {type(exc).__name__}: {exc}"
+
+
+def _changed_paths(repo: Path) -> list[str]:
+    """Every path ``git status --porcelain`` reports as changed or untracked.
+
+    Deliberately NOT ``_capture_diff``: that stages the whole tree (``git add
+    -A``) as a side effect, and this runs MID-RUN, so it would silently empty
+    the model's next ``git diff``. Porcelain status compares content, so a file
+    that was edited and then restored byte-for-byte — the measured
+    ``ucfopen__canvasapi-716`` failure, where the arm reverted its own correct
+    fix out of the docker image — reads as unchanged here, which is exactly the
+    verdict the grader would reach.
+    """
+    # ``-uall`` expands untracked DIRECTORIES into their files. Without it git
+    # reports a whole new directory as one entry (``?? newpkg/``), and a
+    # directory name is not a test path — so a tree holding nothing but a new
+    # directory of tests would have read as a production change.
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain", "-uall"],
+        capture_output=True,
+        text=True,
+    )
+    paths: list[str] = []
+    for line in (proc.stdout or "").splitlines():
+        if len(line) < 4:
+            continue
+        entry = line[3:].strip()
+        # Renames/copies are reported as ``old -> new``; the new path is the
+        # one that carries content.
+        if " -> " in entry:
+            entry = entry.split(" -> ", 1)[1]
+        entry = entry.strip().strip('"')
+        if entry:
+            paths.append(entry)
+    return paths
+
+
+def _bare_empty_diff_reason(repo: Path) -> str | None:
+    """``None`` when the tree has something to grade; the nudge text otherwise.
+
+    ``DONE`` used to be accepted unconditionally, and 6 of 19 measured rows
+    (32%) shipped a 0-byte diff — including one that wrote a correct fix, saw a
+    pre-existing test assert the OLD behaviour, restored the original file out
+    of the docker image and declared DONE. An arm that says "done" with nothing
+    in the tree has not produced a measurement of the model; it has produced a
+    measurement of this loop.
+
+    Test-only changes count as empty, because ``split_diff`` strips them before
+    grading — the same ``is_test_path`` predicate decides both, so this can
+    never disagree with the graded prediction about what survives.
+    """
+    changed = _changed_paths(repo)
+    code = [p for p in changed if not is_test_path(p)]
+    if code:
+        return None
+    detail = (
+        " Your only changes are to test files, and test edits are stripped from "
+        "the diff before grading."
+        if changed
+        else ""
+    )
+    return (
+        "Not done: this working tree contains no production-code changes, so "
+        f"the diff that gets graded would be EMPTY.{detail} Either nothing you "
+        "described was ever written to a file, or it was reverted. Make the "
+        "production-code edit, verify it, then reply DONE."
+    )
 
 
 # The command starts after the first line that is exactly "BASH" …
@@ -1979,18 +2528,37 @@ _BASH_MARKER = re.compile(r"^\s*BASH\s*$")
 # ("Exit 0. Output:\nimport collections…\nBASH\npytest …") the fabricated
 # tail was executed as real shell — one measured run executed 4 fabricated
 # commands while its actual patch script was written but never run.
+#
+# ``Exit code: N`` and ``Result:`` are here because the two forms the old
+# pattern caught were not the only two the model produces: 76 of 231 measured
+# replies contained a fabricated observation line, and two of those shapes slid
+# straight through into the executed command.
 _BARE_STOP = re.compile(
-    r"^\s*(?:BASH|DONE)\s*$"  # a second block: only the FIRST is executed
-    r"|^\s*```"               # closing/next code fence
-    r"|^\s*Exit\s+-?\d+\b"    # hallucinated exit status
-    r"|^\s*Output:"           # hallucinated command output
+    r"^\s*(?:BASH|DONE)\s*$"     # a second block: only the FIRST is executed
+    r"|^\s*```"                  # closing/next code fence
+    r"|^\s*Exit\s+-?\d+\b"       # hallucinated exit status
+    r"|^\s*Exit\s+code\s*:"      # … the other spelling of it
+    r"|^\s*Output\s*:"           # hallucinated command output
+    r"|^\s*Result\s*:"           # … and the other spelling of that
+)
+
+# deepseek's native shape is fenced markdown, not a bespoke marker. 12 of 231
+# measured replies were a plain ```bash fence with no BASH line and were thrown
+# away as "Invalid reply" (34 replies had no marker at all), burning turns on
+# protocol tax rather than on the task. A fenced shell block is accepted as
+# equivalent to the marker form. The language tag is required: an untagged
+# fence is as likely to be Python, a diff, or pasted output.
+_BARE_FENCE = re.compile(
+    r"^[ \t]*```[ \t]*(?:bash|sh|shell|console|zsh)[ \t]*\n(?P<body>.*?)(?:^[ \t]*```|\Z)",
+    re.S | re.M,
 )
 
 
 def _parse_bash(reply: str) -> str | None:
-    """Extract exactly ONE command: the first BASH block, minus any
-    model-fabricated 'observations'. Truncating mid-heredoc on a fabricated
-    line is fail-safe — bash errors, the model sees it, and retries."""
+    """Extract exactly ONE command: the first BASH block (or, failing that, the
+    first fenced shell block), minus any model-fabricated 'observations'.
+    Truncating mid-heredoc on a fabricated line is fail-safe — bash errors, the
+    model sees it, and retries."""
     text = reply.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\n|\n```$", "", text)
@@ -2001,13 +2569,27 @@ def _parse_bash(reply: str) -> str | None:
             start = i + 1
             break
     if start is None:
-        return None
+        return _fenced_command(reply)
     # An inner fence directly under the marker wraps the command; skip it and
     # let the fence rule in _BARE_STOP terminate the block.
     if start < len(lines) and lines[start].lstrip().startswith("```"):
         start += 1
+    return _until_fabrication(lines[start:])
+
+
+def _fenced_command(reply: str) -> str | None:
+    """The first fenced shell block's body, same fabrication rules applied."""
+    m = _BARE_FENCE.search(reply)
+    if m is None:
+        return None
+    return _until_fabrication(m.group("body").splitlines())
+
+
+def _until_fabrication(lines: list[str]) -> str | None:
+    """Join ``lines`` up to the first line that opens another block, closes a
+    fence, or fabricates an observation."""
     cmd_lines: list[str] = []
-    for line in lines[start:]:
+    for line in lines:
         if _BARE_STOP.match(line):
             break
         cmd_lines.append(line)
@@ -2022,7 +2604,7 @@ def _parse_bash(reply: str) -> str | None:
 # Every arm this harness knows. The oracle-probe scanner derives "which
 # sibling run dirs carry hidden test ids" from this — hardcoding one other
 # arm broke the moment a third arm existed.
-_ARM_NAMES = ("factory", "bare", "claude")
+_ARM_NAMES = ("factory", "bare", "claude", "openhands")
 
 # Pinned EXPLICITLY (the operator wants the models named). Discovered
 # 2026-08-02 by running the CLI (v2.1.220) with no --model: the default
@@ -2376,11 +2958,32 @@ def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "agent_wall_s": round(time.monotonic() - started, 1),
         "num_turns": int(result_ev.get("num_turns") or 0),
         "turn_cap": turns,
+        "termination": (
+            "wall-clock-cap"
+            if error and "wall-clock cap" in error
+            else ("error" if error else "cli-finished")
+        ),
+        "trajectory": _CLAUDE_TRANSCRIPT_NAME,
         "tokens_in": totals["tokens_in"],
         "tokens_out": totals["tokens_out"],
         "cached_input_tokens": totals["cache_read"],
         "cost_usd": round(cost, 4),
         "cost_source": cost_source,
+        # The CLI is its own ledger, so the mix comes from ``modelUsage`` rather
+        # than from ``state/events/runs.ndjson`` — same three keys, so `report`
+        # and the audit need no per-arm special case.
+        "models_used": sorted((result_ev.get("modelUsage") or {}).keys()),
+        "model_calls": [
+            {
+                "persona": "claude-cli",
+                "model": name,
+                "model_tier": None,
+                "calls": None,  # the CLI reports usage per model, not call counts
+                "cost_usd": round(float((usage or {}).get("costUSD") or 0.0), 4),
+            }
+            for name, usage in sorted((result_ev.get("modelUsage") or {}).items())
+        ],
+        "model_escalated_calls": 0,  # one pinned model; side models are the CLI's own
         "precheck": precheck,
         "error": error,
         # No gates ran — like the bare arm, this arm cannot claim green.
@@ -2390,9 +2993,438 @@ def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "diff_bytes": len(code_diff),
     }
     out = _write_result(instance_id, "claude", result)
-    print(f"claude arm done: {out}")
-    if stripped:
-        print(f"  stripped {len(stripped)} test-file edit(s) before grading: {stripped}")
+    _print_run_summary(result, out)
+
+
+# --------------------------------------------------------------------------- #
+# openhands arm — a single competent agent loop, no chain
+# --------------------------------------------------------------------------- #
+
+# The factory dev's own per-attempt iteration budget (``sandbox_run``'s
+# signature default; ``dev`` is deliberately NOT in
+# ``factory.runner.PERSONA_ITERATION_CAPS``). Matching it exactly is the point:
+# this arm must be the factory's dev agent MINUS the chain, so its inner budget
+# cannot be the thing that explains a difference. The factory arm may open up to
+# three such conversations across its 16 ticks; in practice the shared 5400 s
+# wall clock binds first for both (measured factory wall clocks: 98-3400 s).
+_OPENHANDS_ITERATION_CAP = 600
+
+
+def _azure_llm_env(model_id: str) -> tuple[str | None, str | None]:
+    """``(base_url, api_version)`` for an Azure model id, from the environment.
+
+    Mirrors ``factory.runner.sandbox_run``'s own resolution (the two surfaces
+    read different vars: ``azure_ai/`` → ``AZURE_AI_API_BASE`` /
+    ``AZURE_AI_API_VERSION`` with the Foundry names as fallback; ``azure/`` →
+    ``AZURE_API_BASE`` / ``AZURE_API_VERSION``, plus ``AZURE_ENDPOINT`` and the
+    Foundry vars for operators sharing one key). Kept here rather than reaching
+    into the runner so this harness cannot change chain behaviour;
+    ``test_openhands_arm_reads_the_same_azure_env_vars_as_the_chain`` pins the
+    variable names against ``factory/runner.py`` so the two cannot drift
+    silently.
+    """
+    if model_id.startswith("azure_ai/"):
+        return (
+            os.environ.get("AZURE_AI_API_BASE") or os.environ.get("AZURE_FOUNDRY_ENDPOINT"),
+            os.environ.get("AZURE_AI_API_VERSION")
+            or os.environ.get("AZURE_FOUNDRY_API_VERSION"),
+        )
+    if model_id.startswith("azure/"):
+        return (
+            os.environ.get("AZURE_API_BASE")
+            or os.environ.get("AZURE_ENDPOINT")
+            or os.environ.get("AZURE_FOUNDRY_ENDPOINT"),
+            os.environ.get("AZURE_API_VERSION")
+            or os.environ.get("AZURE_FOUNDRY_API_VERSION"),
+        )
+    return None, None
+
+
+def _build_openhands_agent(model: str, repo: Path) -> tuple[Any, Any]:
+    """``(agent, workspace)`` on the SAME SDK call path the factory's dev uses.
+
+    ``factory.runner.sandbox_run`` builds exactly this — ``LLM`` +
+    ``get_default_agent(cli_mode=True)`` + ``LocalWorkspace`` — and its
+    per-persona ``llm_params`` (from ``routes.yaml``: deepseek-v4-pro runs with
+    ``reasoning_effort: none``) and preset selection are reused verbatim via the
+    runner's own helpers, so the agent this arm drives is not a lookalike.
+    Raises on a missing key or a failed SDK import: an arm that cannot build its
+    agent must fail loudly before it is reported as a zero.
+    """
+    from openhands.sdk import LLM, LocalWorkspace
+    from openhands.tools.preset.default import get_default_agent
+    from pydantic import SecretStr
+
+    from factory.runner import (
+        LLMConfig,
+        _build_agent_for_persona,
+        _persona_llm_overrides,
+        _resolve_api_key,
+    )
+
+    api_key = _resolve_api_key(LLMConfig(model=model))
+    if api_key is None:
+        raise SystemExit(
+            f"no API key available for {model!r} — the openhands arm cannot run. "
+            "Set AZURE_API_KEY / AZURE_FOUNDRY_API_KEY in .env (see .env.example)."
+        )
+    base_url, api_version = _azure_llm_env(model)
+    llm_kwargs: dict[str, Any] = {
+        "model": model,
+        "api_key": SecretStr(api_key),
+        "base_url": base_url,
+        "usage_id": "bench:openhands",
+    }
+    if api_version is not None:
+        llm_kwargs["api_version"] = api_version
+    llm_kwargs.update(_persona_llm_overrides("dev", model, "standard"))
+    llm = LLM(**llm_kwargs)
+    agent = _build_agent_for_persona("dev", llm, get_default_agent)
+    return agent, LocalWorkspace(working_dir=str(repo.resolve()))
+
+
+def run_openhands(
+    instance_id: str, *, max_steps: int, timeout_s: int, probe: bool = False
+) -> None:
+    """ONE OpenHands agent, the factory's dev model, no chain around it.
+
+    This is the arm the product claim actually needs. ``bare`` isolates "cheap
+    weights with almost no scaffold"; ``claude`` isolates "frontier weights in
+    a frontier harness". Neither isolates the thing being sold, which is THE
+    CHAIN — PM/SM decomposition, a reviewer on different weights, retries, and
+    merge gates. So this arm holds everything else constant and removes exactly
+    that: the same ``azure/deepseek-v4-pro`` dev deployment, the same OpenHands
+    SDK and default toolset (real file editor, real bash, real search) the
+    factory's dev runs inside, the same ``_STORY_TEMPLATE`` task text, the same
+    prepared clone, the same wall clock, the same prediction path. The only
+    difference from the factory arm is the chain.
+
+    Deliberately NOT included: the dev persona prompt and the context prelude
+    (``factory/personas/dev.md`` + ``compose_context_prelude``). They are part
+    of the harness under test, so this arm carries the story file alone — the
+    factory arm's advantage therefore includes its persona engineering, which is
+    the honest attribution.
+
+    Accounting: one ``Run`` row is written into the run's own isolated ledger
+    from the conversation's OWN usage totals, so ``audit`` certifies this arm
+    exactly like the factory and bare arms with no special case. OpenHands'
+    persisted event stream is copied out whole as this arm's trajectory.
+
+    ``probe=True`` builds the agent and exercises every artifact path WITHOUT
+    calling the model.
+    """
+    entered = time.monotonic()
+    inst = _instance(instance_id)
+    # A run the store cannot grade is a write-off — refuse before any spend.
+    _assert_oracle_store_complete([inst])
+    run_dir = _run_dir(instance_id, "openhands")
+    # BEFORE any exit path: a stale prediction/ledger must never outlive the
+    # run that produced it.
+    _reset_run_artifacts(run_dir)
+
+    sys.path.insert(0, str(FACTORY_ROOT))
+    from factory.model_router import route
+
+    model = route("dev", "standard")
+    state_root = run_dir
+    db_path = run_dir / "state" / "factory.db"
+    base: dict[str, Any] = {
+        "arm": "openhands",
+        "instance_id": instance_id,
+        "repo": inst["repo"],
+        "base_commit": inst["base_commit"],
+        "problem_statement_sha256": inst["problem_statement_sha256"],
+        "manifest_sha256": _manifest()["manifest_sha256"],
+        "model": model,
+        "agent": "openhands-sdk default agent (cli_mode), single conversation",
+    }
+
+    def _fail(error: str, **extra: Any) -> None:
+        _write_result(
+            instance_id,
+            "openhands",
+            {
+                **base,
+                **_no_model_mix(),
+                "ts": datetime.now(UTC).isoformat(),
+                "wall_clock_s": round(time.monotonic() - entered, 1),
+                "error": error,
+                "factory_says_green": None,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cost_usd": 0.0,
+                "cost_source": "derived-from-price-table",
+                "persona_calls": 0,
+                **extra,
+            },
+        )
+        raise SystemExit(error)
+
+    if not _ensure_image(inst):
+        _fail(
+            f"image for {instance_id} is unavailable; the openhands arm's test "
+            "command runs inside it (see instance_test_command)"
+        )
+    repo = run_dir / "repo"
+    _clone(inst, repo)
+    prep_error = _prepare_cloned_tree(inst, repo)
+    if prep_error:
+        _fail(f"prepare: {prep_error}")
+
+    # THE SAME pre-dispatch collect gate every other arm passes. $0 to fail.
+    precheck = _precheck_collect(inst, repo)
+    collect_tail = str(precheck.pop("tail", ""))
+    if not precheck["collect_ok"]:
+        _fail(
+            f"precheck: test command does not collect: {collect_tail[-400:]}",
+            precheck={**precheck, "tail": collect_tail[-1500:]},
+        )
+
+    # The IDENTICAL task text the factory dev's story file is written from —
+    # same helper, same arguments, no arm-specific wording.
+    task = _STORY_TEMPLATE.format(
+        instance_id=instance_id,
+        statement=inst["problem_statement"],
+        test_command=instance_test_command(inst, repo=repo),
+    )
+
+    from factory.runner import _capture_trajectory, _log_prompt_body, _log_prompt_metadata
+
+    # Prompt telemetry BEFORE the first failure path, exactly as ``sandbox_run``
+    # does it — the audit treats missing prompt bodies beside recorded calls as
+    # an unauditable run.
+    for _log in (_log_prompt_metadata, _log_prompt_body):
+        _log(
+            persona="dev",
+            prompt=task,
+            model_id=model,
+            story_id=None,
+            software_factory_root=state_root,
+        )
+
+    agent, workspace = _build_openhands_agent(model, repo)
+    iterations = min(max_steps, _OPENHANDS_ITERATION_CAP)
+    persist_dir = Path(tempfile.mkdtemp(prefix="bench-oh-traj-"))
+    import uuid as _uuid
+
+    conv_id = _uuid.uuid4()
+    events_src = persist_dir / conv_id.hex / "events"
+
+    usage: dict[str, Any] = {}
+    started = time.monotonic()
+    error: str | None = None
+    termination = "agent-finished"
+    worker: threading.Thread | None = None
+
+    def _worker() -> None:
+        from openhands.sdk import Conversation
+
+        conversation: Any = None
+        try:
+            conversation = Conversation(
+                agent=agent,
+                workspace=workspace,
+                max_iteration_per_run=iterations,
+                delete_on_close=False,
+                persistence_dir=str(persist_dir),
+                conversation_id=conv_id,
+            )
+            conversation.send_message(task)
+            conversation.run()
+            stats = conversation.conversation_stats.get_combined_metrics()
+            tok = stats.accumulated_token_usage
+            # Read cost through a None sentinel, like the runner: an SDK shape
+            # change that drops ``accumulated_cost`` must not be
+            # indistinguishable from a genuinely free run.
+            cost_raw = getattr(stats, "accumulated_cost", None)
+            usage.update(
+                tokens_in=int(getattr(tok, "prompt_tokens", 0) or 0),
+                tokens_out=int(getattr(tok, "completion_tokens", 0) or 0),
+                cached=int(getattr(tok, "cache_read_tokens", 0) or 0),
+                cost=float(cost_raw or 0.0),
+                cost_reliable=cost_raw is not None,
+            )
+        except Exception as exc:  # noqa: BLE001 — the driver must never crash
+            usage["error"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            if conversation is not None:
+                with contextlib.suppress(Exception):
+                    conversation.close()
+
+    if probe:
+        # Everything except the provider call: the agent above was really
+        # built (SDK import, key resolution, azure env, routes.yaml llm_params),
+        # and a real non-test file change follows so the diff/split/assert/write
+        # path is exercised end to end.
+        (repo / _PROBE_FILE).write_text(
+            "# swebench plumbing probe\n", encoding="utf-8"
+        )
+        termination = "plumbing-probe"
+    else:
+        # Daemon thread, not an executor: the OpenHands conversation runs
+        # in-process and cannot be killed, and a non-daemon worker would hold
+        # the interpreter open past the wall-clock cap. The cap therefore
+        # ABANDONS the thread and grades the tree as it stands — the same
+        # trade-off ``sandbox_run`` makes, and the reason the trajectory is
+        # persisted incrementally rather than at the end.
+        worker = threading.Thread(target=_worker, name="openhands-arm", daemon=True)
+        worker.start()
+        worker.join(timeout=float(timeout_s))
+        if worker.is_alive():
+            error = f"wall-clock cap {timeout_s}s hit; partial work is still graded"
+            termination = "wall-clock-cap"
+        elif usage.get("error"):
+            error = f"openhands conversation failed: {usage['error']}"
+            termination = "agent-error"
+
+    traj = _capture_trajectory(
+        events_src=events_src,
+        story_id=None,
+        attempt=1,
+        software_factory_root=state_root,
+    )
+    # An ABANDONED conversation may still be writing into its persistence dir,
+    # so only reap it when the worker really finished. (The runner makes the
+    # same call for the same reason; stale dirs there are reaped on the next
+    # run.)
+    if worker is None or not worker.is_alive():
+        shutil.rmtree(persist_dir, ignore_errors=True)
+    traj_path = Path(traj) if traj else None
+    actions, sdk_events = _count_trajectory_actions(traj_path)
+
+    # ONE Run row, from the conversation's OWN usage, into this run's isolated
+    # ledger — so ``audit`` reads this arm through the same code path as the
+    # factory and bare arms.
+    if not probe:
+        from factory.runner import _record_run
+
+        _record_run(
+            persona="dev",
+            model=model,
+            mode="sandbox",
+            tokens_in=int(usage.get("tokens_in", 0) or 0),
+            tokens_out=int(usage.get("tokens_out", 0) or 0),
+            cost_usd=float(usage.get("cost", 0.0) or 0.0),
+            success=error is None,
+            story_path=None,
+            repo_path=str(repo),
+            error=error,
+            db_path=db_path,
+            duration_s=round(time.monotonic() - started, 3),
+            story_id=None,
+            model_tier="standard",
+            software_factory_root=state_root,
+            cached_input_tokens=int(usage.get("cached", 0) or 0),
+            usage_reliable=bool(usage.get("cost_reliable", False)),
+        )
+
+    # Read the numbers BACK from the ledger, so result.json reports what the
+    # audit will independently sum rather than a parallel in-memory tally.
+    ledger = _read_ledger_totals(db_path)
+
+    raw_diff = _capture_diff(repo)
+    code_diff, kept, stripped = split_diff(raw_diff)
+    assert_no_test_edits(code_diff)
+    (run_dir / "raw.diff").write_text(raw_diff, encoding="utf-8")
+    (run_dir / "prediction.diff").write_text(code_diff, encoding="utf-8")
+
+    if probe:
+        error = _PROBE_ERROR
+
+    result = {
+        **base,
+        **_model_mix(state_root / "state" / "events", nominal=model),
+        "ts": datetime.now(UTC).isoformat(),
+        "wall_clock_s": round(time.monotonic() - entered, 1),
+        "agent_wall_s": round(time.monotonic() - started, 1),
+        # Tool calls the agent actually made, counted from its OWN persisted
+        # event stream — not an SDK event total (which counts observations and
+        # messages too and would print as "812 / 600").
+        "steps_used": actions,
+        "step_cap": iterations,
+        "sdk_events": sdk_events,
+        "termination": termination,
+        "trajectory": (
+            str(traj_path.relative_to(run_dir)) if traj_path else None
+        ),
+        "probe_plumbing": probe,
+        "tokens_in": ledger["tokens_in"],
+        "tokens_out": ledger["tokens_out"],
+        "cached_input_tokens": ledger["cached_input_tokens"],
+        "cost_usd": ledger["cost_usd"],
+        "cost_source": "derived-from-price-table",
+        "persona_calls": ledger["persona_calls"],
+        "usage_reliable": usage.get("cost_reliable"),
+        "precheck": precheck,
+        "error": error,
+        # No reviewer, no gates: like bare and claude, this arm cannot claim
+        # green — only produce a diff.
+        "factory_says_green": None,
+        "files_changed": kept,
+        "test_files_stripped": stripped,
+        "diff_bytes": len(code_diff),
+    }
+    out = _write_result(instance_id, "openhands", result)
+    _print_run_summary(result, out)
+
+
+def _count_trajectory_actions(path: Path | None) -> tuple[int, int]:
+    """``(tool_calls, total_events)`` in a copied-out OpenHands trajectory.
+
+    The tool-call count is the honest analogue of the bare arm's step count and
+    the claude arm's turn count: what the agent DID. Total events (which also
+    include observations, agent messages and the harness's own system prompt) is
+    kept beside it so a reader can see the trail's size without opening it.
+    """
+    if path is None or not path.exists():
+        return 0, 0
+    actions = total = 0
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                total += 1
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(ev, dict) and str(ev.get("kind")) == "ActionEvent":
+                    actions += 1
+    except OSError:
+        return actions, total
+    return actions, total
+
+
+def _read_ledger_totals(db_path: Path) -> dict[str, Any]:
+    """Sum every Run row in an isolated bench ledger; zeros when unreadable."""
+    empty = {
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "cached_input_tokens": 0,
+        "cost_usd": 0.0,
+        "persona_calls": 0,
+    }
+    if not db_path.exists():
+        return empty
+    try:
+        from sqlmodel import Session, select
+
+        from factory.runner import Run, _engine
+
+        with Session(_engine(db_path)) as s:
+            runs = list(s.exec(select(Run)).all())
+    except Exception:  # noqa: BLE001 — an unreadable ledger is the audit's problem
+        return empty
+    return {
+        "tokens_in": sum(int(r.tokens_in or 0) for r in runs),
+        "tokens_out": sum(int(r.tokens_out or 0) for r in runs),
+        "cached_input_tokens": sum(
+            int(getattr(r, "cached_input_tokens", 0) or 0) for r in runs
+        ),
+        "cost_usd": round(sum(float(r.cost_usd or 0.0) for r in runs), 4),
+        "persona_calls": len(runs),
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -3721,8 +4753,15 @@ def _audit_factory_ledger(
                 "body(ies) captured — response_bodies.ndjson is incomplete "
                 "(rotated away, capture disabled, or a failed call)"
             )
+    # The bare arm's dev "calls" are single litellm completions, not OpenHands
+    # conversations, so there is no trajectory to capture and never was: its
+    # full action+observation trail is ``bare-commands.ndjson`` (which the
+    # oracle-probe scan above reads, and whose absence beside executed commands
+    # is a hard FAILURE, not a warning). Warning "0 trajectory files" on every
+    # bare row trained the reader to ignore the one warning that matters.
     dev_calls_n = call_counts.get("dev", 0)
-    if dev_calls_n and len(traj_files) < dev_calls_n:
+    has_command_log = (state_root / "bare-commands.ndjson").exists()
+    if dev_calls_n and len(traj_files) < dev_calls_n and not has_command_log:
         warnings.append(
             f"dev: {dev_calls_n} call(s) but only {len(traj_files)} trajectory "
             "file(s) under state/events/trajectories — the agent's reasoning "
@@ -4207,8 +5246,18 @@ _SWEEP_LOCK = threading.Lock()
 # yet); NOTE its spend is ANTHROPIC-side (the CLI's own report), so the guard
 # conservatively counts it against the same factory_settings.yaml caps even
 # though it never touches the Azure ledger.
-_DEFAULT_COST_USD = {"factory": 3.00, "bare": 1.00, "claude": 3.00}
-_DEFAULT_HOURS = {"factory": 0.05, "bare": 0.05, "claude": 0.05}  # 3 min — fast end of measured
+# The openhands default is the FACTORY's $3.00 rather than the bare arm's
+# $1.00: it runs the same deployment with the same real tool loop the factory's
+# dev uses, so its token profile is a dev attempt's, not a 40-turn shell loop's.
+# Measured bare rows average $0.16 and measured factory rows $1.44 per
+# instance, so $3.00 is conservative in the direction the guard needs.
+_DEFAULT_COST_USD = {"factory": 3.00, "bare": 1.00, "claude": 3.00, "openhands": 3.00}
+_DEFAULT_HOURS = {  # 3 min — fast end of measured
+    "factory": 0.05,
+    "bare": 0.05,
+    "claude": 0.05,
+    "openhands": 0.05,
+}
 
 # Mirrors ``factory.settings.loader.CapsConfig``. Used when
 # ``factory_settings.yaml`` is missing or unparseable: a guard that cannot read
@@ -5125,7 +6174,9 @@ def main() -> None:
              "(PLAN.md 1.4). A factory number without it measures the model. "
              "'claude' is the local Claude Code CLI, headless and hermetic — "
              "its spend bills the operator's Anthropic subscription, not the "
-             "Azure ledger.",
+             "Azure ledger. 'openhands' is ONE OpenHands agent on the factory's "
+             "own dev deployment with no chain around it — it isolates the "
+             "chain, which is what the product claim asserts.",
     )
     p.add_argument(
         "--max-steps",
@@ -5134,9 +6185,20 @@ def main() -> None:
         help=f"explicit step/turn budget; default is per-arm — "
              f"{_FACTORY_STEP_DEFAULT} orchestrator ticks for factory, "
              f"{_BARE_STEP_CAP} shell turns for bare, "
-             f"{_CLAUDE_TURN_CAP} claude CLI turns",
+             f"{_CLAUDE_TURN_CAP} claude CLI turns, "
+             f"{_OPENHANDS_ITERATION_CAP} openhands agent iterations",
     )
     p.add_argument("--timeout-s", type=int, default=5400)
+    p.add_argument(
+        "--probe-plumbing",
+        action="store_true",
+        help="bare/openhands only: run the WHOLE pipeline (clone, install "
+             "replay, collect precheck, prompt assembly, command parse, tool "
+             "loop, diff capture, split_diff, assert_no_test_edits, ledger "
+             "read-back, result.json, summary) with the model REPLACED by a "
+             "fixed script. Costs $0. The row it writes carries a recorded "
+             "error so it can never be reported as a measurement.",
+    )
 
     p = sub.add_parser(
         "run-all",
@@ -5162,7 +6224,8 @@ def main() -> None:
         help=f"explicit step/turn budget; default is per-arm — "
              f"{_FACTORY_STEP_DEFAULT} orchestrator ticks for factory, "
              f"{_BARE_STEP_CAP} shell turns for bare, "
-             f"{_CLAUDE_TURN_CAP} claude CLI turns",
+             f"{_CLAUDE_TURN_CAP} claude CLI turns, "
+             f"{_OPENHANDS_ITERATION_CAP} openhands agent iterations",
     )
     p.add_argument("--timeout-s", type=int, default=5400, help="per-instance run cap")
     p.add_argument("--grade-timeout-s", type=int, default=3600)
@@ -5219,12 +6282,26 @@ def main() -> None:
             after=args.after,
         )
     elif args.cmd == "run":
-        runner = {"bare": run_bare, "claude": run_claude}.get(args.arm, run_factory)
-        runner(
-            args.instance,
-            max_steps=_resolve_max_steps(args.arm, args.max_steps),
-            timeout_s=args.timeout_s,
-        )
+        steps = _resolve_max_steps(args.arm, args.max_steps)
+        if args.probe_plumbing:
+            if args.arm not in ("bare", "openhands"):
+                raise SystemExit(
+                    "--probe-plumbing is implemented for --arm bare and --arm "
+                    "openhands only (the factory arm's dry-run surface is "
+                    "`factory pm-sync --dry-run`; the claude arm's is the CLI's "
+                    "own --max-turns 1)."
+                )
+            probe_runner = {"bare": run_bare, "openhands": run_openhands}[args.arm]
+            probe_runner(
+                args.instance, max_steps=steps, timeout_s=args.timeout_s, probe=True
+            )
+        else:
+            runner = {
+                "bare": run_bare,
+                "claude": run_claude,
+                "openhands": run_openhands,
+            }.get(args.arm, run_factory)
+            runner(args.instance, max_steps=steps, timeout_s=args.timeout_s)
     elif args.cmd == "run-all":
         run_all(
             arm=args.arm,

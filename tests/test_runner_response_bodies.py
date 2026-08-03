@@ -426,3 +426,93 @@ def test_trajectory_capture_never_raises_on_bad_root(tmp_path: Path) -> None:
         )
         is None
     )
+
+
+# --------------------------------------------------------------------------- #
+# text_run(messages=…) — a real multi-turn role list on the wire
+# --------------------------------------------------------------------------- #
+
+
+def _recording_litellm(
+    monkeypatch: pytest.MonkeyPatch, content: str
+) -> dict[str, Any]:
+    """Install a fake litellm that records the kwargs it was called with."""
+    seen: dict[str, Any] = {}
+    mod = types.ModuleType("litellm")
+
+    def completion(**kwargs: Any) -> _FakeResponse:
+        seen.update(kwargs)
+        return _FakeResponse(content)
+
+    mod.completion = completion  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "litellm", mod)
+    return seen
+
+
+def test_text_run_sends_a_caller_supplied_role_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Multi-turn callers need real roles, and the reason is not cosmetic: the
+    SWE-bench bare arm collapsed its whole conversation into ONE flat user
+    string, so the model could not tell its own previous text from the
+    environment's replies — and 76 of 231 measured replies then contained a
+    fabricated ``Exit 0 / Output: / Result:`` block that it read back as a real
+    tool result. ``prompt`` stays the telemetry view, so one call is still one
+    auditable row."""
+    seen = _recording_litellm(monkeypatch, "ok")
+    convo = [
+        {"role": "system", "content": "you are a shell"},
+        {"role": "user", "content": "fix the bug"},
+        {"role": "assistant", "content": "BASH\nls"},
+        {"role": "user", "content": "Exit 0. Output:\nwidget.py"},
+    ]
+    text_run(
+        persona="dev",
+        prompt="TELEMETRY VIEW",
+        messages=convo,
+        model_id="stub/model",
+        api_key="test-key",
+        story_id=None,
+        software_factory_root=tmp_path,
+        db_path=tmp_path / "state" / "factory.db",
+    )
+    assert seen["messages"] == convo
+    assert _read_stream(tmp_path, "prompt_bodies")[0]["prompt"] == "TELEMETRY VIEW"
+
+
+def test_text_run_without_messages_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _recording_litellm(monkeypatch, "ok")
+    text_run(
+        persona="sm",
+        prompt="just one turn",
+        model_id="stub/model",
+        api_key="test-key",
+        story_id=None,
+        software_factory_root=tmp_path,
+        db_path=tmp_path / "state" / "factory.db",
+    )
+    assert seen["messages"] == [{"role": "user", "content": "just one turn"}]
+
+
+def test_json_mode_owns_the_message_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller passing BOTH ``schema`` and ``messages`` must not lose the schema
+    instruction — JSON mode wins, predictably."""
+    seen = _recording_litellm(monkeypatch, '{"ok": true}')
+    text_run(
+        persona="pm",
+        prompt="triage",
+        messages=[{"role": "assistant", "content": "ignored"}],
+        schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+        model_id="stub/model",
+        api_key="test-key",
+        story_id=None,
+        software_factory_root=tmp_path,
+        db_path=tmp_path / "state" / "factory.db",
+    )
+    assert len(seen["messages"]) == 1
+    assert seen["messages"][0]["role"] == "user"
+    assert "Return ONLY a JSON object" in seen["messages"][0]["content"]
