@@ -674,18 +674,43 @@ subscription). Ordered by what blocks what.
       "claude recall 0/16 = 0%"; flag `pass_to_pass_count == 0`; filter
       `estimate_instance_cost` by `manifest_sha256`; archive
       `sweep-<arm>.json` and `selftest.json` alongside the rows.
-- [ ] **D — one clean re-run, n=19, k=1, four arms** (factory / bare /
-      openhands / claude) on the same pinned manifest, single sweep, no
-      re-rolls. If a row is audit-invalidated, publish it as invalid — do not
-      re-roll it.
+- [ ] **D0 — probe before you sweep.** Two gates, in order, before spending on
+      D. (i) The free one: a stubbed-model plumbing run that exercises clone →
+      prompt assembly → command parse → diff capture → `split_diff` →
+      `assert_no_test_edits` → `result.json` for the bare and openhands arms
+      without a single model call. (ii) One paid single-instance run per new arm
+      (~$2 total): read the trajectory and confirm the arm actually produced a
+      non-empty patch, that commands AND their observations are on disk, and that
+      the run prints its termination reason, step count and diff size. An arm
+      that gives up in six steps or ships an empty diff must be caught here for
+      $2, not discovered for $50. This is the probe-first rule; skipping it is
+      what produced the void bare column.
+- [ ] **D — one clean re-run, n=19, k=1, five arms** (factory / bare /
+      openhands / claude-opus-5 / claude-opus-4-8) on the same pinned manifest,
+      single sweep, no re-rolls. If a row is audit-invalidated, publish it as
+      invalid — do not re-roll it. The fifth arm is the contamination probe: the
+      claude arm is subscription-billed, so an older-cutoff twin costs almost
+      nothing and is the only way to tell capability from memorization on a
+      manifest where **19/19 instances predate `claude-opus-5`'s cutoff**.
+      Keeping the same 19 instances is deliberate — it makes the re-run a direct
+      before/after on the parity fixes rather than a new experiment.
 - [ ] **E — re-publish with the caveats structural, not prose:** per-arm CIs, the
       paired McNemar, the MDE (~±38 pp at n=19 against a 58% baseline), the
       model mix per row, and the subset relation between arms.
-- [ ] **F — record the contamination margin per arm.** Every instance in the
-      current manifest predates `claude-opus-5`'s cutoff; the Azure/DeepSeek
-      cutoffs are not recorded anywhere in the repo, so no arm's margin is
-      currently known. Phase 2's manifest must be built with a positive margin
-      for the newest model in any arm, or the absolute rates mean nothing either.
+- [ ] **F — record the contamination margin per arm. Measured 2026-08-03, so
+      this is no longer an open question — it is a number to print.** Cutoffs:
+      `gpt-5.4` and `gpt-5.3-codex` **2025-08-31** (published);
+      `deepseek-v4-pro` **unpublished**, bound by its release date
+      **2026-04-24**; `claude-opus-5` **May 2026** (system card §1.1);
+      `claude-opus-4-8` **Jan 2026**. Margins on the pinned 19: **0/19 negative**
+      vs the OpenAI deployments, **15/19 negative** vs deepseek's release bound,
+      **19/19 negative** vs `claude-opus-5`. So the claude-opus-5 rate is an
+      upper bound and the DeepSeek arms are questionable on 15 of 19 rows — print
+      `margin_days` and the bound type per row, and never publish an absolute
+      rate without them. Note the repo currently records **no** model metadata
+      anywhere (`routes.yaml`, `azure_foundry.py`, `.env.example` carry
+      deployment names and prices only), and the factory arm's `result.json`
+      records `model: null` — fix that in B. Phase 2's manifest design is in 2.1.
 
 ## Phase 2 — the trustworthy benchmark
 
@@ -696,8 +721,64 @@ subscription). Ordered by what blocks what.
 - [ ] 120 tasks, **frozen before the first run**: a published RNG seed, a
       hash-pinned manifest (task id → repo → base SHA → problem statement
       hash), committed and tagged.
-- [ ] Plus 30 post-cutoff instances from SWE-bench-Live as a contamination
-      control.
+- [ ] ~~Plus 30 post-cutoff instances from SWE-bench-Live as a contamination
+      control.~~ **NOT EXECUTABLE — measured 2026-08-03.**
+      `SWE-bench-Live/SWE-bench-Live` was last modified 2025-09-18, its newest
+      instance is `created_at` **2025-09-02**, and it holds **0 rows after
+      2025-10-01**. It cannot clear even the *2025-08-31* OpenAI cutoff by more
+      than 3 instances. Replace with the two-stratum design below.
+- [ ] **Two-stratum design (this is the contamination control that exists).**
+      Measured supply in `nebius/SWE-rebench-leaderboard` (860 test rows) by
+      `created_at`: `>2026-01-01` = 215 (this is exactly the current manifest's
+      `pool_size`), `>2026-02-01` = **167**, `>2026-04-24` = **30**,
+      `>2026-06-01` = **0**; corpus max is **2026-05-12**. So pin:
+      - **main stratum: 120 tasks from `created_at > 2026-02-01`** — clears both
+        OpenAI deployments' published 2025-08-31 cutoff with 167 available.
+      - **high-margin stratum: the 30 tasks from `created_at > 2026-04-24`** —
+        additionally clears `deepseek-v4-pro`'s release-date bound (its cutoff is
+        published nowhere; see below). Report every arm **per stratum**. A rate
+        that holds across strata says memorization is not carrying it; a rate
+        that drops on the high-margin stratum says it is. At n=30 that resolves a
+        large effect (~±9 pp at 50%), not a subtle one.
+- [ ] **Filter on `created_at`, never on split label.** SWE-rebench's `2026_03`
+      split (110 rows) is exactly `created_at > 2026-03-01` — it aggregates
+      March, April *and* May PRs.
+- [ ] **No positive-margin manifest exists for `claude-opus-5`.** Its cutoff is
+      May 2026 (Opus 5 system card §1.1) and the freshest public instance in the
+      whole family is 2026-05-12, so **19/19** of the current manifest and
+      **100%** of any manifest buildable today sit inside its window. Two ways
+      out, pick one and say which: (a) run the reference arm on
+      **`claude-opus-4-8`** (published cutoff Jan 2026, released 2026-05-28),
+      which makes an absolute rate publishable for all arms; or (b) keep
+      `claude-opus-5` and label its number an **upper bound**, never a capability
+      measure. Recommended: do both in the same sweep — the pair *is* the
+      contamination probe, and the claude arm is subscription-billed, so the
+      second arm is nearly free.
+- [ ] **Record the bound, not just the date.** `deepseek-v4-pro` publishes **no**
+      cutoff — absent from the model card and from arXiv 2606.19348 (full text
+      grepped) — so its only defensible bound is its **release date,
+      2026-04-24**, and 15 of the current 19 instances are inside it. Azure's
+      catalog metadata is *not* a source: Microsoft published Oct 2024 for
+      GPT-5.2 whose real cutoff is 2025-08-31 (MS Q&A 5667726). Print, per row,
+      `margin_days` against each arm's newest model **and** which bound was used
+      (`published-cutoff` vs `release-date-proxy`).
+- [ ] **State what a positive margin does not buy.** `created_at` is the
+      *merge-PR* creation date; the issue text, its pre-solution comments (the
+      dataset ships `hints_text`) and the repository wholesale all predate it.
+      arXiv 2506.12286 shows models name the file to edit from repo name + issue
+      text alone far above their accuracy on equally-popular non-benchmark repos;
+      arXiv 2410.06992 found 32.67% of SWE-bench issues carry the solution in the
+      issue or comments and 31.08% of passing patches pass only because the tests
+      are weak — together dropping SWE-agent+GPT-4 from 12.47% to 3.97%. A date
+      filter touches neither. This is why the strata are a *measurement* and the
+      date is only a *bound*.
+- [ ] **If you want a genuinely post-cutoff suite, the options are wait or
+      build.** Nebius's cadence is ~40–55 validated instances/month with a
+      ~10–12 week publication lag, so a 120-row `>2026-05-31` pool should exist
+      around **Oct–Nov 2026**. Minting your own (SWE-Bench++ style, arXiv
+      2512.17419) means owning docker images and oracle extraction — a multi-week
+      build, and `swebench_harness_selftest` is the reason to respect that: the
+      gold-patch control caught three harness bugs that each faked a 0% score.
 - [ ] **Do not reuse the July task pool.** All six directions behind bench
       tasks t1–t6 (`023`–`028`) are now `closed` — the factory has shipped
       them, so they are contaminated. The held-out pool is the **45
