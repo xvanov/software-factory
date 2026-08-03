@@ -1,0 +1,84 @@
+{
+  "arm": "bare",
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "repo": "line/line-bot-sdk-python",
+  "base_commit": "f0d222be1a25553005bff35c2ace82424a683fd9",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-03T03:56:23.165870+00:00",
+  "wall_clock_s": 107.6,
+  "steps_used": 5,
+  "step_cap": 40,
+  "tokens_in": 10718,
+  "tokens_out": 2377,
+  "cost_usd": 0.0244,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 5,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "linebot/v3/oauth/api/async_channel_access_token.py",
+    "linebot/v3/oauth/api/channel_access_token.py"
+  ],
+  "test_files_stripped": [],
+  "diff_bytes": 144176,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "cat > linebot/v3/oauth/api/channel_access_token.py <<'EOF'\nimport inspect\nfrom typing import Optional, Dict, Any\n\nfrom linebot.v3.oauth.api_response import ApiResponse\nfrom linebot.v3.oauth.rest import RESTClient\nfrom linebot.v3.oauth.models.issue_stateless_channel_access_token_response import Issue",
+      "exit": 0
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "cat > linebot/v3/oauth/api/channel_access_token.py <<'ENDOFFILE'\nimport inspect\nfrom typing import Optional, Dict, Any\n\nfrom linebot.v3.oauth.api_response import ApiResponse\nfrom linebot.v3.oauth.rest import RESTClient\nfrom linebot.v3.oauth.models.issue_stateless_channel_access_token_response import",
+      "exit": 0
+    },
+    {
+      "step": 2,
+      "action": "bash",
+      "command": "cat > linebot/v3/oauth/api/async_channel_access_token.py <<'ENDOFFILE'\nimport inspect\nfrom typing import Optional, Dict, Any\n\nfrom linebot.v3.oauth.api_response import ApiResponse\nfrom linebot.v3.oauth.rest import AsyncRESTClient\nfrom linebot.v3.oauth.models.issue_stateless_channel_access_token_resp",
+      "exit": 0
+    },
+    {
+      "step": 3,
+      "action": "bash",
+      "command": "docker run --rm -v \"$PWD\":/testbed -w /testbed --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.line_1776_line-bot-sdk-python-981_interface@sha256:11b622466b7f8734ef20f3e5d595b533a8eb11d01f033a7e929c4e1269b4b1d4 -lc 'source /opt/conda",
+      "exit": 4
+    },
+    {
+      "step": 4,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "line__line-bot-sdk-python-981_interface",
+    "image": "swerebench/sweb.eval.x86_64.line_1776_line-bot-sdk-python-981_interface@sha256:11b622466b7f8734ef20f3e5d595b533a8eb11d01f033a7e929c4e1269b4b1d4",
+    "graded_at": "2026-08-03T03:56:23.532264+00:00",
+    "fail_to_pass_count": 4,
+    "pass_to_pass_count": 0,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "generate-code.py",
+      "linebot/v3/oauth/api/async_channel_access_token.py",
+      "linebot/v3/oauth/api/channel_access_token.py"
+    ],
+    "touched_files": [
+      "linebot/v3/oauth/api/async_channel_access_token.py",
+      "linebot/v3/oauth/api/channel_access_token.py"
+    ],
+    "gold_files_overlap": [
+      "linebot/v3/oauth/api/async_channel_access_token.py",
+      "linebot/v3/oauth/api/channel_access_token.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 10.2,
+    "log_tail": "Checking patch tests/api/test_issue_stateless_channel_token.py...\nApplied patch tests/api/test_issue_stateless_channel_token.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_cb63324fd4f133bc: OK (red as expected)\nChecking patch linebot/v3/oauth/api/async_channel_access_token.py...\nChecking patch linebot/v3/oauth/api/channel_access_token.py...\nApplied patch linebot/v3/oauth/api/async_channel_access_token.py cleanly.\nApplied patch linebot/v3/oauth/api/channel_access_token.py cleanly.\nSWEBENCH_APPLY_cb63324fd4f133bc: OK\n/opt/conda/envs/testbed/lib/python3.13/site-packages/pytest_pep8.py:91: SyntaxWarning: invalid escape sequence '\\d'\n  def __init__(self, ignorelines, coderex=re.compile(\"[EW]\\d\\d\\d\")):\n/opt/conda/envs/testbed/lib/python3.13/site-packages/pep8.py:110: FutureWarning: Possible nested set at position 1\n  EXTRANEOUS_WHITESPACE_REGEX = re.compile(r'[[({] | []}),;:]')\nERROR: found no collectors for /testbed/tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_client_secret\n\nERROR: found no collectors for /testbed/tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_jwt_assertion\n\nERROR: found no collectors for /testbed/tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_client_secret\n\nERROR: found no collectors for /testbed/tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_jwt_assertion\n\n\n==================================== ERRORS ====================================\n_______ ERROR collecting tests/api/test_issue_stateless_channel_token.py _______\nImportError while importing test module '/testbed/tests/api/test_issue_stateless_channel_token.py'.\nHint: make sure your test modules/packages have valid Python names.\nTraceback:\n/opt/conda/envs/testbed/lib/python3.13/importlib/__init__.py:88: in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntests/api/test_issue_stateless_channel_token.py:19: in <module>\n    from linebot.v3.oauth import (\nlinebot/v3/oauth/__init__.py:18: in <module>\n    from linebot.v3.oauth.api.channel_access_token import ChannelAccessToken\nlinebot/v3/oauth/api/__init__.py:4: in <module>\n    from linebot.v3.oauth.api.channel_access_token import ChannelAccessToken\nlinebot/v3/oauth/api/channel_access_token.py:5: in <module>\n    from linebot.v3.oauth.rest import RESTClient\nE   ImportError: cannot import name 'RESTClient' from 'linebot.v3.oauth.rest' (/testbed/linebot/v3/oauth/rest.py)\n=========================== short test summary info ============================\nERROR tests/api/test_issue_stateless_channel_token.py\n1 error in 0.14s\nSWEBENCH_RESULT_cb63324fd4f133bc: UNRESOLVED\n"
+  }
+}

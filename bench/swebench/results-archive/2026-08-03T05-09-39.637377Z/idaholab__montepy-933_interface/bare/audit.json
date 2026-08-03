@@ -1,0 +1,107 @@
+{
+  "instance_id": "idaholab__montepy-933_interface",
+  "arm": "bare",
+  "audited_at": "2026-08-03T03:40:10.720572+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 7 call(s) but only 0 trajectory file(s) under state/events/trajectories \u2014 the agent's reasoning trail is incomplete"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T03:39:36.589235+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1049,
+      "tokens_out": 675,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.004609820000000001,
+      "duration_s": 8.501,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:39:42.001433+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1731,
+      "tokens_out": 395,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.00485368,
+      "duration_s": 5.353,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:39:45.640517+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 2132,
+      "tokens_out": 282,
+      "cached_input_tokens": 1024,
+      "cost_usd": 0.003383364,
+      "duration_s": 3.584,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:39:49.509479+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 2420,
+      "tokens_out": 455,
+      "cached_input_tokens": 2048,
+      "cost_usd": 0.002790338,
+      "duration_s": 3.825,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:39:53.555560+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 2881,
+      "tokens_out": 356,
+      "cached_input_tokens": 1536,
+      "cost_usd": 0.004206626,
+      "duration_s": 3.996,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:39:55.914266+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 3249,
+      "tokens_out": 167,
+      "cached_input_tokens": 2816,
+      "cost_usd": 0.0019286760000000003,
+      "duration_s": 2.349,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:39:59.829384+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 3541,
+      "tokens_out": 3,
+      "cached_input_tokens": 2304,
+      "cost_usd": 0.002769844,
+      "duration_s": 0.752,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.0245,
+  "ledger_tokens_in": 17003,
+  "ledger_tokens_out": 2333,
+  "result_cost_usd": 0.0245
+}

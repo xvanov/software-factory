@@ -1,0 +1,39 @@
+diff --git a/pandas/core/col.py b/pandas/core/col.py
+index 7d21ce0..6250176 100644
+--- a/pandas/core/col.py
++++ b/pandas/core/col.py
+@@ -343,3 +343,34 @@ def col(col_name: Hashable) -> Expression:
+ 
+ 
+ __all__ = ["Expression", "col"]
++
++    # Unary ops
++    def __neg__(self) -> Expression:
++        if self._needs_parentheses:
++            repr_str = f"-({self!r})"
++        else:
++            repr_str = f"-{self!r}"
++        return Expression(
++            lambda df: -self._eval_expression(df),
++            repr_str,
++        )
++
++    def __pos__(self) -> Expression:
++        if self._needs_parentheses:
++            repr_str = f"+({self!r})"
++        else:
++            repr_str = f"+{self!r}"
++        return Expression(
++            lambda df: +self._eval_expression(df),
++            repr_str,
++        )
++
++    def __invert__(self) -> Expression:
++        if self._needs_parentheses:
++            repr_str = f"~({self!r})"
++        else:
++            repr_str = f"~{self!r}"
++        return Expression(
++            lambda df: ~self._eval_expression(df),
++            repr_str,
++        )

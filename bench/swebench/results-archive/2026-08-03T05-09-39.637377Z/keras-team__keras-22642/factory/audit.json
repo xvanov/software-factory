@@ -1,0 +1,40 @@
+{
+  "instance_id": "keras-team__keras-22642",
+  "arm": "factory",
+  "audited_at": "2026-08-03T01:27:30.848900+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T01:26:57.832557+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1453721,
+      "tokens_out": 11081,
+      "cached_input_tokens": 1161728,
+      "cost_usd": 0.7930249279999999,
+      "duration_s": 510.466,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:27:00.450021+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5060,
+      "tokens_out": 108,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.00851,
+      "duration_s": 1.907,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.8015,
+  "ledger_tokens_in": 1458781,
+  "ledger_tokens_out": 11189,
+  "result_cost_usd": 0.8015
+}

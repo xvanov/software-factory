@@ -1,0 +1,53 @@
+{
+  "instance_id": "vyperlang__vyper-4801",
+  "arm": "factory",
+  "audited_at": "2026-08-03T01:48:54.965725+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T01:35:26.798822+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1572826,
+      "tokens_out": 15449,
+      "cached_input_tokens": 1234176,
+      "cost_usd": 0.911466506,
+      "duration_s": 465.7,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-03T01:48:14.919764+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 3158049,
+      "tokens_out": 23932,
+      "cached_input_tokens": 3000064,
+      "cost_usd": 1.13653295,
+      "duration_s": 767.698,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:48:17.431953+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 4990,
+      "tokens_out": 93,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.008110000000000001,
+      "duration_s": 1.813,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.0561,
+  "ledger_tokens_in": 4735865,
+  "ledger_tokens_out": 39474,
+  "result_cost_usd": 2.0561
+}

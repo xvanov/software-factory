@@ -1,0 +1,40 @@
+{
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "arm": "factory",
+  "audited_at": "2026-08-03T00:32:33.657784+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T00:32:24.888092+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1214642,
+      "tokens_out": 8739,
+      "cached_input_tokens": 667136,
+      "cost_usd": 1.197565846,
+      "duration_s": 286.659,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T00:32:27.192095+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5600,
+      "tokens_out": 105,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.009815,
+      "duration_s": 1.523,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.2074,
+  "ledger_tokens_in": 1220242,
+  "ledger_tokens_out": 8844,
+  "result_cost_usd": 1.2074
+}

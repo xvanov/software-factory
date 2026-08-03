@@ -1,0 +1,40 @@
+{
+  "instance_id": "tox-dev__tox-3931",
+  "arm": "factory",
+  "audited_at": "2026-08-03T02:46:18.091997+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T02:46:04.527257+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2761248,
+      "tokens_out": 18855,
+      "cached_input_tokens": 2261248,
+      "cost_usd": 1.401275578,
+      "duration_s": 502.343,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T02:46:07.863938+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5161,
+      "tokens_out": 166,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.0096325,
+      "duration_s": 2.558,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.4109,
+  "ledger_tokens_in": 2766409,
+  "ledger_tokens_out": 19021,
+  "result_cost_usd": 1.4109
+}

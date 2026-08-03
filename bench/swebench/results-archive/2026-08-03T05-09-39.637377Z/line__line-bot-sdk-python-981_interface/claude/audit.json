@@ -1,0 +1,13 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:52:00.380486+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 3.0695,
+  "ledger_tokens_in": 2977374,
+  "ledger_tokens_out": 33081,
+  "result_cost_usd": 3.0695
+}

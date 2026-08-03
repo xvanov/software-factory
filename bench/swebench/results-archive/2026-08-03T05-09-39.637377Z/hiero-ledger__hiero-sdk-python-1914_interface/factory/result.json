@@ -1,0 +1,71 @@
+{
+  "arm": "factory",
+  "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+  "repo": "hiero-ledger/hiero-sdk-python",
+  "base_commit": "93eed7c340fb65356c3a06ac78f74402c3a169af",
+  "problem_statement_sha256": "ffd670c2ee16b9cc31ebe5492b19d2624c027ca7b128591bcf2e75128f038cea",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T02:10:14.460328+00:00",
+  "wall_clock_s": 1279.4,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 1,
+  "tokens_in": 4581075,
+  "tokens_out": 49016,
+  "cached_input_tokens": 3599104,
+  "cost_usd": 2.6975,
+  "persona_calls": 4,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.4,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/unit/account_info_test.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "src/hiero_sdk_python/account/account_info.py"
+  ],
+  "test_files_stripped": [
+    "tests/unit/account_info_test.py"
+  ],
+  "diff_bytes": 13789,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+    "image": "swerebench/sweb.eval.x86_64.hiero-ledger_1776_hiero-sdk-python-1914_interface@sha256:7379c707cc7e9f690d07a08c3abfc1f97b9f70fd283bc2084040a052b79af57f",
+    "graded_at": "2026-08-03T02:10:15.052820+00:00",
+    "fail_to_pass_count": 12,
+    "pass_to_pass_count": 9,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "CHANGELOG.md",
+      "src/hiero_sdk_python/account/account_info.py"
+    ],
+    "touched_files": [
+      "src/hiero_sdk_python/account/account_info.py"
+    ],
+    "gold_files_overlap": [
+      "src/hiero_sdk_python/account/account_info.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 13.7,
+    "log_tail": "Checking patch tests/integration/account_create_transaction_e2e_test.py...\nChecking patch tests/integration/account_update_transaction_e2e_test.py...\nChecking patch tests/unit/account_info_test.py...\n/tmp/test_patch.diff:300: new blank line at EOF.\n+\nApplied patch tests/integration/account_create_transaction_e2e_test.py cleanly.\nApplied patch tests/integration/account_update_transaction_e2e_test.py cleanly.\nApplied patch tests/unit/account_info_test.py cleanly.\nwarning: 1 line adds whitespace errors.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_d05a5ce42e881409: OK (red as expected)\nChecking patch src/hiero_sdk_python/account/account_info.py...\nApplied patch src/hiero_sdk_python/account/account_info.py cleanly.\nSWEBENCH_APPLY_d05a5ce42e881409: OK\nE        +  where 0 = len([])\n\ntests/unit/account_info_test.py:292: AssertionError\n___________ TestDeprecatedProperties.test_staked_node_id_deprecated ____________\n\nself = <tests.unit.account_info_test.TestDeprecatedProperties object at 0x758ee3c8b9d0>\n\n    def test_staked_node_id_deprecated(self):\n        import warnings\n        info = self._make_info()\n        with warnings.catch_warnings(record=True) as w:\n            warnings.simplefilter(\"always\")\n            val = info.staked_node_id\n        assert val is None\n>       assert issubclass(w[0].category, DeprecationWarning)\n                          ^^^^\nE       IndexError: list index out of range\n\ntests/unit/account_info_test.py:303: IndexError\n_______ TestDeprecatedProperties.test_decline_staking_reward_deprecated ________\n\nself = <tests.unit.account_info_test.TestDeprecatedProperties object at 0x758ee3cd56e0>\n\n    def test_decline_staking_reward_deprecated(self):\n        import warnings\n        info = self._make_info()\n        with warnings.catch_warnings(record=True) as w:\n            warnings.simplefilter(\"always\")\n            val = info.decline_staking_reward\n        assert val is True\n>       assert issubclass(w[0].category, DeprecationWarning)\n                          ^^^^\nE       IndexError: list index out of range\n\ntests/unit/account_info_test.py:312: IndexError\n=========================== short test summary info ============================\nFAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_deprecated\nFAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_deprecated\nFAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_deprecated\n3 failed, 9 passed in 0.43s\n.........                                                                [100%]\n9 passed in 0.38s\nSWEBENCH_RESULT_d05a5ce42e881409: UNRESOLVED\n"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "instance_id": "conan-io__conan-19735_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-03T02:34:12.773294+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T02:34:02.963596+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 623604,
+      "tokens_out": 5952,
+      "cached_input_tokens": 415232,
+      "cost_usd": 0.4918064720000001,
+      "duration_s": 438.846,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T02:34:05.125122+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 4082,
+      "tokens_out": 92,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.005825,
+      "duration_s": 1.401,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.4976,
+  "ledger_tokens_in": 627686,
+  "ledger_tokens_out": 6044,
+  "result_cost_usd": 0.4976
+}

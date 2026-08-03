@@ -1,0 +1,42 @@
+{
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "arm": "bare",
+  "audited_at": "2026-08-03T03:40:24.037814+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 2 call(s) but only 0 trajectory file(s) under state/events/trajectories \u2014 the agent's reasoning trail is incomplete"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T03:40:22.036277+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1846,
+      "tokens_out": 46,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0037389600000000004,
+      "duration_s": 1.577,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:40:23.424347+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1899,
+      "tokens_out": 3,
+      "cached_input_tokens": 1792,
+      "cost_usd": 0.000506512,
+      "duration_s": 1.372,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.0042,
+  "ledger_tokens_in": 3745,
+  "ledger_tokens_out": 49,
+  "result_cost_usd": 0.0042
+}

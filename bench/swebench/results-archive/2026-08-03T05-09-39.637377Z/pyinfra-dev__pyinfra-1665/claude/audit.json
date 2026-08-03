@@ -1,0 +1,13 @@
+{
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:12:42.791357+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.9196,
+  "ledger_tokens_in": 618995,
+  "ledger_tokens_out": 7584,
+  "result_cost_usd": 0.9196
+}

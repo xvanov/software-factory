@@ -1,0 +1,66 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-03T02:37:34.157645+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T02:32:55.655267+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1891250,
+      "tokens_out": 18584,
+      "cached_input_tokens": 1433856,
+      "cost_usd": 1.184797956,
+      "duration_s": 368.663,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T02:32:59.675512+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 13358,
+      "tokens_out": 297,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.03785,
+      "duration_s": 3.33,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T02:37:16.276725+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1444676,
+      "tokens_out": 15811,
+      "cached_input_tokens": 1121280,
+      "cost_usd": 0.8652364900000001,
+      "duration_s": 256.117,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T02:37:19.533377+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 15427,
+      "tokens_out": 114,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.034517500000000007,
+      "duration_s": 2.002,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.1224,
+  "ledger_tokens_in": 3364711,
+  "ledger_tokens_out": 34806,
+  "result_cost_usd": 2.1224
+}

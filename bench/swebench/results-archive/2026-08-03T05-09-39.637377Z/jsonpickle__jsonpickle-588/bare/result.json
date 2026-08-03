@@ -1,0 +1,46 @@
+{
+  "arm": "bare",
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "repo": "jsonpickle/jsonpickle",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-03T03:40:23.440031+00:00",
+  "wall_clock_s": 12.6,
+  "steps_used": 2,
+  "step_cap": 40,
+  "tokens_in": 3745,
+  "tokens_out": 49,
+  "cost_usd": 0.0042,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 2,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [],
+  "test_files_stripped": [],
+  "diff_bytes": 0,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "sed -i 's/if util.is_dictionary_subclass(obj):/if type(obj) is not collections.defaultdict and util.is_dictionary_subclass(obj):/' jsonpickle/pickler.py",
+      "exit": 0
+    },
+    {
+      "step": 1,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "jsonpickle__jsonpickle-588",
+    "image": "swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588@sha256:0eae843824198c5cfb0b6bb25b5c9b50c1b415ea7295867a314a3a8ce65c7fb4",
+    "graded_at": "2026-08-03T03:40:23.935536+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 82,
+    "empty_patch": true,
+    "oracle_resolved": false,
+    "outcome": "empty_patch",
+    "log_tail": ""
+  }
+}

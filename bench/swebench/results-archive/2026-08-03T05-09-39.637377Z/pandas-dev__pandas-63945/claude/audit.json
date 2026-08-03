@@ -1,0 +1,13 @@
+{
+  "instance_id": "pandas-dev__pandas-63945",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:30:02.112677+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.9522,
+  "ledger_tokens_in": 800303,
+  "ledger_tokens_out": 11065,
+  "result_cost_usd": 0.9522
+}

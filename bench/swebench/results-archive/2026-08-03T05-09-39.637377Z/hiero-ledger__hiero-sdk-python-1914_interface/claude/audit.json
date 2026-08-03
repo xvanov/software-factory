@@ -1,0 +1,13 @@
+{
+  "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:52:18.905917+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.4229,
+  "ledger_tokens_in": 970895,
+  "ledger_tokens_out": 19097,
+  "result_cost_usd": 1.4229
+}
