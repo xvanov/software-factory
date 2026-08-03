@@ -1,0 +1,40 @@
+{
+  "instance_id": "zauberzeug__nicegui-5858",
+  "arm": "factory",
+  "audited_at": "2026-08-03T01:39:12.876566+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T01:38:00.434287+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 949368,
+      "tokens_out": 10265,
+      "cached_input_tokens": 838912,
+      "cost_usd": 0.387559862,
+      "duration_s": 237.203,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T01:38:04.286400+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5351,
+      "tokens_out": 102,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.0091475,
+      "duration_s": 1.951,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.3967,
+  "ledger_tokens_in": 954719,
+  "ledger_tokens_out": 10367,
+  "result_cost_usd": 0.3967
+}

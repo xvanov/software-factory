@@ -1,0 +1,33 @@
+diff --git a/moto/kms/models.py b/moto/kms/models.py
+index d773be1..436dc4a 100644
+--- a/moto/kms/models.py
++++ b/moto/kms/models.py
+@@ -511,14 +511,21 @@ class KmsBackend(BaseBackend):
+         return key.aliases[alias_name]
+ 
+     def update_alias(self, target_key_id: str, alias_name: str) -> Alias:
++        raw_key_id = self.get_key_id(target_key_id)
++        # Remove alias from any existing key (may already have been removed
++        # by _set_alias in the API flow, or still exist in the CloudFormation flow)
+         for key in self.keys.values():
+-            if alias_name in key.aliases and target_key_id != key.id:
+-                # Updating the Key that this is an alias of
+-                alias = key.aliases.pop(alias_name)
+-                self.keys[target_key_id].aliases[alias_name] = alias
+-                return alias
+-        # TargetKeyId hasn't changed - nothing to update
+-        return self.keys[target_key_id].aliases[alias_name]
++            if alias_name in key.aliases and raw_key_id != key.id:
++                key.aliases.pop(alias_name)
++        # Create alias on the target key
++        key = self.keys[raw_key_id]
++        key.aliases[alias_name] = Alias(
++            account_id=self.account_id,
++            region=self.region_name,
++            name=alias_name,
++            key=key,
++        )
++        return key.aliases[alias_name]
+ 
+     def delete_alias(self, alias_name: str) -> None:
+         """Delete the alias."""

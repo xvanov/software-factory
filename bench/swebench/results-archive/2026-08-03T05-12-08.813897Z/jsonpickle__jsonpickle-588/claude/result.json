@@ -1,0 +1,63 @@
+{
+  "arm": "claude",
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "repo": "jsonpickle/jsonpickle",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "problem_statement_sha256": "e7d6a3edc32ba6f4ef4ebc10a28b9b9118eda5058b8cc3450bb5e4940970d124",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "0619f417-390b-42dd-9b12-541c2246e288",
+  "ts": "2026-08-03T04:43:28.260522+00:00",
+  "wall_clock_s": 825.3,
+  "agent_wall_s": 817.8,
+  "num_turns": 56,
+  "turn_cap": 60,
+  "tokens_in": 4080731,
+  "tokens_out": 51944,
+  "cached_input_tokens": 3981358,
+  "cost_usd": 4.2566,
+  "cost_source": "claude-cli-reported",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.3,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/object_test.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "CHANGES.rst",
+    "jsonpickle/pickler.py",
+    "jsonpickle/unpickler.py"
+  ],
+  "test_files_stripped": [
+    "tests/object_test.py"
+  ],
+  "diff_bytes": 6964,
+  "grade": {
+    "arm": "claude",
+    "instance_id": "jsonpickle__jsonpickle-588",
+    "image": "swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588@sha256:0eae843824198c5cfb0b6bb25b5c9b50c1b415ea7295867a314a3a8ce65c7fb4",
+    "graded_at": "2026-08-03T04:43:28.436177+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 82,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 16.9,
+    "log_tail": "Checking patch tests/object_test.py...\nApplied patch tests/object_test.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_4a05a8faae3300dd: OK (red as expected)\nChecking patch CHANGES.rst...\nChecking patch jsonpickle/pickler.py...\nChecking patch jsonpickle/unpickler.py...\nApplied patch CHANGES.rst cleanly.\nApplied patch jsonpickle/pickler.py cleanly.\nApplied patch jsonpickle/unpickler.py cleanly.\nSWEBENCH_APPLY_4a05a8faae3300dd: OK\n.                                                                        [100%]\n1 passed in 0.09s\n........................................................................ [ 87%]\n..........                                                               [100%]\n82 passed in 0.17s\nSWEBENCH_RESULT_4a05a8faae3300dd: RESOLVED\n"
+  }
+}

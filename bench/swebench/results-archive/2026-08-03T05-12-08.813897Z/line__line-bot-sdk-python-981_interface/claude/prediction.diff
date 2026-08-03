@@ -1,0 +1,525 @@
+diff --git a/generate-code.py b/generate-code.py
+index dfb3867..d3ed3e6 100644
+--- a/generate-code.py
++++ b/generate-code.py
+@@ -37,6 +37,177 @@ def rewrite_liff_function_name_backward_compats():
+                  fp.write(f"        warnings.warn('{orig} was deprecated. use {cur} instead.', DeprecationWarning)\n")
+                  fp.write(f"        return self.{cur}(*args, **kwargs)\n")
+ 
++## The LINE OAuth API accepts two mutually exclusive ways of authenticating when issuing a
++## stateless channel access token, but the OpenAPI definition can only describe a single
++## operation taking the union of both parameter sets. These shortcuts let users pick one way
++## without passing empty values for the parameters belonging to the other one.
++STATELESS_CHANNEL_TOKEN_SHORTCUTS = '''
++    @validate_arguments
++    def issue_stateless_channel_token_by_jwt_assertion(self, client_assertion : Annotated[StrictStr, Field(..., description="A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key.")], **kwargs) -> IssueStatelessChannelAccessTokenResponse:  # noqa: E501
++        """issue_stateless_channel_token_by_jwt_assertion  # noqa: E501
++
++        Issues a new stateless channel access token by using a JWT assertion. Unlike issue_stateless_channel_token, this doesn't require the unused client id and client secret.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_by_jwt_assertion(client_assertion, async_req=True)
++        >>> result = thread.get()
++
++        :param client_assertion: A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key. (required)
++        :type client_assertion: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: IssueStatelessChannelAccessTokenResponse
++        """
++        return self.issue_stateless_channel_token(
++            grant_type='client_credentials',
++            client_assertion_type='urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
++            client_assertion=client_assertion,
++            client_id='',
++            client_secret='',
++            **kwargs)  # noqa: E501
++
++    @validate_arguments
++    def issue_stateless_channel_token_with_http_info_by_jwt_assertion(self, client_assertion : Annotated[StrictStr, Field(..., description="A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key.")], **kwargs) -> ApiResponse:  # noqa: E501
++        """issue_stateless_channel_token_with_http_info_by_jwt_assertion  # noqa: E501
++
++        Issues a new stateless channel access token by using a JWT assertion. Unlike issue_stateless_channel_token_with_http_info, this doesn't require the unused client id and client secret.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_with_http_info_by_jwt_assertion(client_assertion, async_req=True)
++        >>> result = thread.get()
++
++        :param client_assertion: A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key. (required)
++        :type client_assertion: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _preload_content: if False, the ApiResponse.data will
++                                 be set to none and raw_data will store the
++                                 HTTP response body without reading/decoding.
++                                 Default is True.
++        :type _preload_content: bool, optional
++        :param _return_http_data_only: response data instead of ApiResponse
++                                       object with status code, headers, etc
++        :type _return_http_data_only: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :param _request_auth: set to override the auth_settings for an a single
++                              request; this effectively ignores the authentication
++                              in the spec for a single request.
++        :type _request_auth: dict, optional
++        :type _content_type: string, optional: force content-type for the request
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: tuple(IssueStatelessChannelAccessTokenResponse, status_code(int), headers(HTTPHeaderDict))
++        """
++        return self.issue_stateless_channel_token_with_http_info(
++            grant_type='client_credentials',
++            client_assertion_type='urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
++            client_assertion=client_assertion,
++            client_id='',
++            client_secret='',
++            **kwargs)  # noqa: E501
++
++    @validate_arguments
++    def issue_stateless_channel_token_by_client_secret(self, client_id : Annotated[StrictStr, Field(..., description="Channel ID.")], client_secret : Annotated[StrictStr, Field(..., description="Channel secret.")], **kwargs) -> IssueStatelessChannelAccessTokenResponse:  # noqa: E501
++        """issue_stateless_channel_token_by_client_secret  # noqa: E501
++
++        Issues a new stateless channel access token by using a channel ID and a channel secret. Unlike issue_stateless_channel_token, this doesn't require the unused JWT assertion parameters.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_by_client_secret(client_id, client_secret, async_req=True)
++        >>> result = thread.get()
++
++        :param client_id: Channel ID. (required)
++        :type client_id: str
++        :param client_secret: Channel secret. (required)
++        :type client_secret: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: IssueStatelessChannelAccessTokenResponse
++        """
++        return self.issue_stateless_channel_token(
++            grant_type='client_credentials',
++            client_assertion_type='',
++            client_assertion='',
++            client_id=client_id,
++            client_secret=client_secret,
++            **kwargs)  # noqa: E501
++
++    @validate_arguments
++    def issue_stateless_channel_token_with_http_info_by_client_secret(self, client_id : Annotated[StrictStr, Field(..., description="Channel ID.")], client_secret : Annotated[StrictStr, Field(..., description="Channel secret.")], **kwargs) -> ApiResponse:  # noqa: E501
++        """issue_stateless_channel_token_with_http_info_by_client_secret  # noqa: E501
++
++        Issues a new stateless channel access token by using a channel ID and a channel secret. Unlike issue_stateless_channel_token_with_http_info, this doesn't require the unused JWT assertion parameters.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_with_http_info_by_client_secret(client_id, client_secret, async_req=True)
++        >>> result = thread.get()
++
++        :param client_id: Channel ID. (required)
++        :type client_id: str
++        :param client_secret: Channel secret. (required)
++        :type client_secret: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _preload_content: if False, the ApiResponse.data will
++                                 be set to none and raw_data will store the
++                                 HTTP response body without reading/decoding.
++                                 Default is True.
++        :type _preload_content: bool, optional
++        :param _return_http_data_only: response data instead of ApiResponse
++                                       object with status code, headers, etc
++        :type _return_http_data_only: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :param _request_auth: set to override the auth_settings for an a single
++                              request; this effectively ignores the authentication
++                              in the spec for a single request.
++        :type _request_auth: dict, optional
++        :type _content_type: string, optional: force content-type for the request
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: tuple(IssueStatelessChannelAccessTokenResponse, status_code(int), headers(HTTPHeaderDict))
++        """
++        return self.issue_stateless_channel_token_with_http_info(
++            grant_type='client_credentials',
++            client_assertion_type='',
++            client_assertion='',
++            client_id=client_id,
++            client_secret=client_secret,
++            **kwargs)  # noqa: E501
++'''
++
++
++def add_stateless_channel_token_shortcuts():
++    for fname in ['channel_access_token.py', 'async_channel_access_token.py']:
++        with open(f'linebot/v3/oauth/api/{fname}', 'a') as fp:
++            fp.write("\n")
++            fp.write(STATELESS_CHANNEL_TOKEN_SHORTCUTS)
++
+ def main():
+ 
+     os.chdir("generator")
+@@ -101,6 +272,8 @@ def main():
+     ## TODO(v4): Delete this workaround in v4. This workaround keeps backward compatibility.
+     rewrite_liff_function_name_backward_compats()
+ 
++    add_stateless_channel_token_shortcuts()
++
+ 
+ if __name__ == "__main__":
+     main()
+diff --git a/linebot/v3/oauth/api/async_channel_access_token.py b/linebot/v3/oauth/api/async_channel_access_token.py
+index 2149ff7..0b22e96 100644
+--- a/linebot/v3/oauth/api/async_channel_access_token.py
++++ b/linebot/v3/oauth/api/async_channel_access_token.py
+@@ -1376,3 +1376,162 @@ class AsyncChannelAccessToken(object):
+             _host=_host,
+             collection_formats=_collection_formats,
+             _request_auth=_params.get('_request_auth'))
++
++
++    @validate_arguments
++    def issue_stateless_channel_token_by_jwt_assertion(self, client_assertion : Annotated[StrictStr, Field(..., description="A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key.")], **kwargs) -> IssueStatelessChannelAccessTokenResponse:  # noqa: E501
++        """issue_stateless_channel_token_by_jwt_assertion  # noqa: E501
++
++        Issues a new stateless channel access token by using a JWT assertion. Unlike issue_stateless_channel_token, this doesn't require the unused client id and client secret.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_by_jwt_assertion(client_assertion, async_req=True)
++        >>> result = thread.get()
++
++        :param client_assertion: A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key. (required)
++        :type client_assertion: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: IssueStatelessChannelAccessTokenResponse
++        """
++        return self.issue_stateless_channel_token(
++            grant_type='client_credentials',
++            client_assertion_type='urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
++            client_assertion=client_assertion,
++            client_id='',
++            client_secret='',
++            **kwargs)  # noqa: E501
++
++    @validate_arguments
++    def issue_stateless_channel_token_with_http_info_by_jwt_assertion(self, client_assertion : Annotated[StrictStr, Field(..., description="A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key.")], **kwargs) -> ApiResponse:  # noqa: E501
++        """issue_stateless_channel_token_with_http_info_by_jwt_assertion  # noqa: E501
++
++        Issues a new stateless channel access token by using a JWT assertion. Unlike issue_stateless_channel_token_with_http_info, this doesn't require the unused client id and client secret.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_with_http_info_by_jwt_assertion(client_assertion, async_req=True)
++        >>> result = thread.get()
++
++        :param client_assertion: A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key. (required)
++        :type client_assertion: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _preload_content: if False, the ApiResponse.data will
++                                 be set to none and raw_data will store the
++                                 HTTP response body without reading/decoding.
++                                 Default is True.
++        :type _preload_content: bool, optional
++        :param _return_http_data_only: response data instead of ApiResponse
++                                       object with status code, headers, etc
++        :type _return_http_data_only: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :param _request_auth: set to override the auth_settings for an a single
++                              request; this effectively ignores the authentication
++                              in the spec for a single request.
++        :type _request_auth: dict, optional
++        :type _content_type: string, optional: force content-type for the request
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: tuple(IssueStatelessChannelAccessTokenResponse, status_code(int), headers(HTTPHeaderDict))
++        """
++        return self.issue_stateless_channel_token_with_http_info(
++            grant_type='client_credentials',
++            client_assertion_type='urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
++            client_assertion=client_assertion,
++            client_id='',
++            client_secret='',
++            **kwargs)  # noqa: E501
++
++    @validate_arguments
++    def issue_stateless_channel_token_by_client_secret(self, client_id : Annotated[StrictStr, Field(..., description="Channel ID.")], client_secret : Annotated[StrictStr, Field(..., description="Channel secret.")], **kwargs) -> IssueStatelessChannelAccessTokenResponse:  # noqa: E501
++        """issue_stateless_channel_token_by_client_secret  # noqa: E501
++
++        Issues a new stateless channel access token by using a channel ID and a channel secret. Unlike issue_stateless_channel_token, this doesn't require the unused JWT assertion parameters.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_by_client_secret(client_id, client_secret, async_req=True)
++        >>> result = thread.get()
++
++        :param client_id: Channel ID. (required)
++        :type client_id: str
++        :param client_secret: Channel secret. (required)
++        :type client_secret: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: IssueStatelessChannelAccessTokenResponse
++        """
++        return self.issue_stateless_channel_token(
++            grant_type='client_credentials',
++            client_assertion_type='',
++            client_assertion='',
++            client_id=client_id,
++            client_secret=client_secret,
++            **kwargs)  # noqa: E501
++
++    @validate_arguments
++    def issue_stateless_channel_token_with_http_info_by_client_secret(self, client_id : Annotated[StrictStr, Field(..., description="Channel ID.")], client_secret : Annotated[StrictStr, Field(..., description="Channel secret.")], **kwargs) -> ApiResponse:  # noqa: E501
++        """issue_stateless_channel_token_with_http_info_by_client_secret  # noqa: E501
++
++        Issues a new stateless channel access token by using a channel ID and a channel secret. Unlike issue_stateless_channel_token_with_http_info, this doesn't require the unused JWT assertion parameters.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_with_http_info_by_client_secret(client_id, client_secret, async_req=True)
++        >>> result = thread.get()
++
++        :param client_id: Channel ID. (required)
++        :type client_id: str
++        :param client_secret: Channel secret. (required)
++        :type client_secret: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _preload_content: if False, the ApiResponse.data will
++                                 be set to none and raw_data will store the
++                                 HTTP response body without reading/decoding.
++                                 Default is True.
++        :type _preload_content: bool, optional
++        :param _return_http_data_only: response data instead of ApiResponse
++                                       object with status code, headers, etc
++        :type _return_http_data_only: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :param _request_auth: set to override the auth_settings for an a single
++                              request; this effectively ignores the authentication
++                              in the spec for a single request.
++        :type _request_auth: dict, optional
++        :type _content_type: string, optional: force content-type for the request
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: tuple(IssueStatelessChannelAccessTokenResponse, status_code(int), headers(HTTPHeaderDict))
++        """
++        return self.issue_stateless_channel_token_with_http_info(
++            grant_type='client_credentials',
++            client_assertion_type='',
++            client_assertion='',
++            client_id=client_id,
++            client_secret=client_secret,
++            **kwargs)  # noqa: E501
+diff --git a/linebot/v3/oauth/api/channel_access_token.py b/linebot/v3/oauth/api/channel_access_token.py
+index 15634e6..5bede19 100644
+--- a/linebot/v3/oauth/api/channel_access_token.py
++++ b/linebot/v3/oauth/api/channel_access_token.py
+@@ -1294,3 +1294,162 @@ class ChannelAccessToken(object):
+             _host=_host,
+             collection_formats=_collection_formats,
+             _request_auth=_params.get('_request_auth'))
++
++
++    @validate_arguments
++    def issue_stateless_channel_token_by_jwt_assertion(self, client_assertion : Annotated[StrictStr, Field(..., description="A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key.")], **kwargs) -> IssueStatelessChannelAccessTokenResponse:  # noqa: E501
++        """issue_stateless_channel_token_by_jwt_assertion  # noqa: E501
++
++        Issues a new stateless channel access token by using a JWT assertion. Unlike issue_stateless_channel_token, this doesn't require the unused client id and client secret.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_by_jwt_assertion(client_assertion, async_req=True)
++        >>> result = thread.get()
++
++        :param client_assertion: A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key. (required)
++        :type client_assertion: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: IssueStatelessChannelAccessTokenResponse
++        """
++        return self.issue_stateless_channel_token(
++            grant_type='client_credentials',
++            client_assertion_type='urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
++            client_assertion=client_assertion,
++            client_id='',
++            client_secret='',
++            **kwargs)  # noqa: E501
++
++    @validate_arguments
++    def issue_stateless_channel_token_with_http_info_by_jwt_assertion(self, client_assertion : Annotated[StrictStr, Field(..., description="A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key.")], **kwargs) -> ApiResponse:  # noqa: E501
++        """issue_stateless_channel_token_with_http_info_by_jwt_assertion  # noqa: E501
++
++        Issues a new stateless channel access token by using a JWT assertion. Unlike issue_stateless_channel_token_with_http_info, this doesn't require the unused client id and client secret.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_with_http_info_by_jwt_assertion(client_assertion, async_req=True)
++        >>> result = thread.get()
++
++        :param client_assertion: A JSON Web Token the client needs to create and sign with the private key of the Assertion Signing Key. (required)
++        :type client_assertion: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _preload_content: if False, the ApiResponse.data will
++                                 be set to none and raw_data will store the
++                                 HTTP response body without reading/decoding.
++                                 Default is True.
++        :type _preload_content: bool, optional
++        :param _return_http_data_only: response data instead of ApiResponse
++                                       object with status code, headers, etc
++        :type _return_http_data_only: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :param _request_auth: set to override the auth_settings for an a single
++                              request; this effectively ignores the authentication
++                              in the spec for a single request.
++        :type _request_auth: dict, optional
++        :type _content_type: string, optional: force content-type for the request
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: tuple(IssueStatelessChannelAccessTokenResponse, status_code(int), headers(HTTPHeaderDict))
++        """
++        return self.issue_stateless_channel_token_with_http_info(
++            grant_type='client_credentials',
++            client_assertion_type='urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
++            client_assertion=client_assertion,
++            client_id='',
++            client_secret='',
++            **kwargs)  # noqa: E501
++
++    @validate_arguments
++    def issue_stateless_channel_token_by_client_secret(self, client_id : Annotated[StrictStr, Field(..., description="Channel ID.")], client_secret : Annotated[StrictStr, Field(..., description="Channel secret.")], **kwargs) -> IssueStatelessChannelAccessTokenResponse:  # noqa: E501
++        """issue_stateless_channel_token_by_client_secret  # noqa: E501
++
++        Issues a new stateless channel access token by using a channel ID and a channel secret. Unlike issue_stateless_channel_token, this doesn't require the unused JWT assertion parameters.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_by_client_secret(client_id, client_secret, async_req=True)
++        >>> result = thread.get()
++
++        :param client_id: Channel ID. (required)
++        :type client_id: str
++        :param client_secret: Channel secret. (required)
++        :type client_secret: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: IssueStatelessChannelAccessTokenResponse
++        """
++        return self.issue_stateless_channel_token(
++            grant_type='client_credentials',
++            client_assertion_type='',
++            client_assertion='',
++            client_id=client_id,
++            client_secret=client_secret,
++            **kwargs)  # noqa: E501
++
++    @validate_arguments
++    def issue_stateless_channel_token_with_http_info_by_client_secret(self, client_id : Annotated[StrictStr, Field(..., description="Channel ID.")], client_secret : Annotated[StrictStr, Field(..., description="Channel secret.")], **kwargs) -> ApiResponse:  # noqa: E501
++        """issue_stateless_channel_token_with_http_info_by_client_secret  # noqa: E501
++
++        Issues a new stateless channel access token by using a channel ID and a channel secret. Unlike issue_stateless_channel_token_with_http_info, this doesn't require the unused JWT assertion parameters.  # noqa: E501
++        This method makes a synchronous HTTP request by default. To make an
++        asynchronous HTTP request, please pass async_req=True
++
++        >>> thread = api.issue_stateless_channel_token_with_http_info_by_client_secret(client_id, client_secret, async_req=True)
++        >>> result = thread.get()
++
++        :param client_id: Channel ID. (required)
++        :type client_id: str
++        :param client_secret: Channel secret. (required)
++        :type client_secret: str
++        :param async_req: Whether to execute the request asynchronously.
++        :type async_req: bool, optional
++        :param _preload_content: if False, the ApiResponse.data will
++                                 be set to none and raw_data will store the
++                                 HTTP response body without reading/decoding.
++                                 Default is True.
++        :type _preload_content: bool, optional
++        :param _return_http_data_only: response data instead of ApiResponse
++                                       object with status code, headers, etc
++        :type _return_http_data_only: bool, optional
++        :param _request_timeout: timeout setting for this request. If one
++                                 number provided, it will be total request
++                                 timeout. It can also be a pair (tuple) of
++                                 (connection, read) timeouts.
++        :param _request_auth: set to override the auth_settings for an a single
++                              request; this effectively ignores the authentication
++                              in the spec for a single request.
++        :type _request_auth: dict, optional
++        :type _content_type: string, optional: force content-type for the request
++        :return: Returns the result object.
++                 If the method is called asynchronously,
++                 returns the request thread.
++        :rtype: tuple(IssueStatelessChannelAccessTokenResponse, status_code(int), headers(HTTPHeaderDict))
++        """
++        return self.issue_stateless_channel_token_with_http_info(
++            grant_type='client_credentials',
++            client_assertion_type='',
++            client_assertion='',
++            client_id=client_id,
++            client_secret=client_secret,
++            **kwargs)  # noqa: E501

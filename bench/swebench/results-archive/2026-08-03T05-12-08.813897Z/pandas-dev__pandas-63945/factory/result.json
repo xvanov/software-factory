@@ -1,0 +1,82 @@
+{
+  "arm": "factory",
+  "instance_id": "pandas-dev__pandas-63945",
+  "repo": "pandas-dev/pandas",
+  "base_commit": "a4523484f6267501ae0bc240c5baf2108c622373",
+  "problem_statement_sha256": "ab43725b946a02996523ecbb67ecb10857ce2234281d236fe2150fdc9cbad4a6",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T02:46:02.134530+00:00",
+  "wall_clock_s": 709.3,
+  "final_state": "blocked_tests_need_clarification",
+  "dev_retries": 3,
+  "reviewer_cycles": 0,
+  "tokens_in": 1712344,
+  "tokens_out": 24671,
+  "cached_input_tokens": 1434880,
+  "cost_usd": 1.0456,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 3.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "pandas/tests/groupby/test_categorical.py",
+      "pandas/tests/test_col.py",
+      "pandas/tests/copy_view/test_constructors.py",
+      "pandas/tests/indexing/test_iloc.py",
+      "pandas/tests/tseries/offsets/test_custom_business_day.py",
+      "pandas/tests/strings/test_extract.py",
+      "pandas/tests/strings/test_find_replace.py",
+      "pandas/tests/strings/test_split_partition.py",
+      "pandas/tests/strings/test_strings.py",
+      "pandas/tests/io/json/test_pandas.py",
+      "pandas/tests/indexes/datetimes/test_setops.py",
+      "pandas/tests/series/test_arithmetic.py",
+      "pandas/tests/arrays/test_array.py",
+      "pandas/tests/arrays/test_datetimelike.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> dev_retry",
+    "dev: dev_retry -> blocked_tests_need_clarification"
+  ],
+  "error": null,
+  "factory_says_green": false,
+  "files_changed": [
+    "pandas/core/col.py"
+  ],
+  "test_files_stripped": [
+    "pandas/tests/test_col.py"
+  ],
+  "diff_bytes": 848,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "pandas-dev__pandas-63945",
+    "image": "swerebench/sweb.eval.x86_64.pandas-dev_1776_pandas-63945@sha256:d61cfb479844bb4dfdc495dffb55c7806502df21e3a452b7969796490436f93a",
+    "graded_at": "2026-08-03T02:46:02.686991+00:00",
+    "fail_to_pass_count": 16215,
+    "pass_to_pass_count": 0,
+    "empty_patch": false,
+    "post_patch_ids_collect": false,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "doc/source/whatsnew/v3.0.1.rst",
+      "pandas/core/col.py"
+    ],
+    "touched_files": [
+      "pandas/core/col.py"
+    ],
+    "gold_files_overlap": [
+      "pandas/core/col.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 102.6,
+    "log_tail": "lected, 1 error in 3.29s\nChecking patch pandas/core/col.py...\nApplied patch pandas/core/col.py cleanly.\nSWEBENCH_APPLY_a7a9c57b4f923682: OK\nSWEBENCH_POST_PATCH_a7a9c57b4f923682: FAIL_TO_PASS_IDS_DO_NOT_COLLECT (even with the patch applied)\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_expression_getitem\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_property\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_cached_property\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_qcut\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_where\n\n\n==================================== ERRORS ====================================\n__________________ ERROR collecting pandas/tests/test_col.py ___________________\npandas/tests/test_col.py:54: in <module>\n    (abs(pd.col(\"a\")), [1, 2], \"abs(col('a'))\"),\n     ^^^^^^^^^^^^^^^^\nE   TypeError: bad operand type for abs(): 'Expression'\n=========================== short test summary info ============================\nERROR pandas/tests/test_col.py - TypeError: bad operand type for abs(): 'Expr...\n16918 tests collected, 1 error in 3.27s\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_getitem\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_setitem\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_loc\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_iloc\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_namespaces\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_namespaces\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_namespaces\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_invalid\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_custom_accessor\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_col_logical_ops\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_expression_getitem\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_property\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_cached_property\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_qcut\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_where\n\n\n==================================== ERRORS ====================================\n__________________ ERROR collecting pandas/tests/test_col.py ___________________\npandas/tests/test_col.py:54: in <module>\n    (abs(pd.col(\"a\")), [1, 2], \"abs(col('a'))\"),\n     ^^^^^^^^^^^^^^^^\nE   TypeError: bad operand type for abs(): 'Expression'\n=========================== short test summary info ============================\nERROR pandas/tests/test_col.py - TypeError: bad operand type for abs(): 'Expr...\n1 error in 3.01s\nSWEBENCH_RESULT_a7a9c57b4f923682: UNRESOLVED\n"
+  }
+}

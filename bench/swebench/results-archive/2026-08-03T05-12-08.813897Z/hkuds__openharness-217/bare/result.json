@@ -1,0 +1,114 @@
+{
+  "arm": "bare",
+  "instance_id": "hkuds__openharness-217",
+  "repo": "HKUDS/OpenHarness",
+  "base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "ts": "2026-08-03T03:31:08.285825+00:00",
+  "wall_clock_s": 114.7,
+  "steps_used": 11,
+  "step_cap": 40,
+  "tokens_in": 32136,
+  "tokens_out": 3653,
+  "cost_usd": 0.0402,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 11,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "src/openharness/auth/flows.py"
+  ],
+  "test_files_stripped": [],
+  "diff_bytes": 5138,
+  "transcript": [
+    {
+      "step": 0,
+      "action": "bash",
+      "command": "python - <<'EOF'\nimport os\n\nfilepath = 'src/openharness/auth/flows.py'\n\nwith open(filepath, 'r') as f:\n    content = f.read()\n\nold_block = '''        if os.name == \"nt\":\n            subprocess.Popen(\n                [\"start\", \"\", url],\n                shell=True,\n                stdout=subprocess.DE",
+      "exit": 1
+    },
+    {
+      "step": 1,
+      "action": "bash",
+      "command": "grep -n \"os.name\\|start\\|shell\\|url\" src/openharness/auth/flows.py",
+      "exit": 0
+    },
+    {
+      "step": 2,
+      "action": "bash",
+      "command": "sed -i 's/^            subprocess.Popen(\\n                \\[\"start\", \"\", url\\],\\n                shell=True,\\n                stdout=subprocess.DEVNULL,\\n                stderr=subprocess.DEVNULL,\\n            )$/            from urllib.parse import urlparse\\n            parsed = urlparse(url)\\n    ",
+      "exit": 0
+    },
+    {
+      "step": 3,
+      "action": "invalid",
+      "reply": "sed -i '/[\"start\", \"\", url]/,/)/c\\            from urllib.parse import urlparse\\n            parsed = urlparse(url)\\n            if parsed.scheme not in (\"http\", \"https\"):\\n                raise Value"
+    },
+    {
+      "step": 4,
+      "action": "bash",
+      "command": "python - <<'EOF'\nfilepath = 'src/openharness/auth/flows.py'\nwith open(filepath, 'r') as f:\n    lines = f.readlines()\n\n# Find and replace the block precisely\nstart_marker = '            subprocess.Popen(\\n'\n    start_idx = lines.index(start_marker)\n    # Consume until the closing parenthesis\n    end_",
+      "exit": 1
+    },
+    {
+      "step": 5,
+      "action": "bash",
+      "command": "python - <<'EOF'\nfilepath = 'src/openharness/auth/flows.py'\nwith open(filepath, 'r') as f:\n    lines = f.readlines()\n\n# Find and replace the block precisely\nstart_marker = '            subprocess.Popen(\\n'\ntry:\n    start_idx = lines.index(start_marker)\n    # Consume until the closing parenthesis\n   ",
+      "exit": 1
+    },
+    {
+      "step": 6,
+      "action": "bash",
+      "command": "cat -n src/openharness/auth/flows.py | head -100",
+      "exit": 0
+    },
+    {
+      "step": 7,
+      "action": "bash",
+      "command": "cat > src/openharness/auth/flows.py <<'EOF'\n\"\"\"Authentication flows for various provider types.\n\nEach flow is a self-contained class with a single ``run()`` method that\nperforms the interactive authentication and returns the obtained credential.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport loggin",
+      "exit": 0
+    },
+    {
+      "step": 8,
+      "action": "bash",
+      "command": "python - <<'EOF'\nfilepath = 'src/openharness/auth/flows.py'\nwith open(filepath, 'r') as f:\n    content = f.read()\n\n# Make sure 'import os' is present\nif 'import os' not in content:\n    # Add it after the import block\n    import_line = 'import os\\n'\n    # Find a good insertion point - after the last ",
+      "exit": 1
+    },
+    {
+      "step": 9,
+      "action": "bash",
+      "command": "python - <<'EOF'\nfilepath = 'src/openharness/auth/flows.py'\nwith open(filepath, 'r') as f:\n    content = f.read()\n\nif 'import os' not in content:\n    import_line = 'import os\\n'\n    marker = 'from abc import ABC, abstractmethod\\n'\n    idx = content.find(marker) + len(marker)\n    content = content[:i",
+      "exit": 0
+    },
+    {
+      "step": 10,
+      "action": "done"
+    }
+  ],
+  "grade": {
+    "arm": "bare",
+    "instance_id": "hkuds__openharness-217",
+    "image": "swerebench/sweb.eval.x86_64.hkuds_1776_openharness-217@sha256:ad0997cf2e90f0a31f3e6f8fd5cba18ced7f364ae3a62bd59f4c9e1d88b7678d",
+    "graded_at": "2026-08-03T03:31:08.686336+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 2,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "src/openharness/auth/flows.py"
+    ],
+    "touched_files": [
+      "src/openharness/auth/flows.py"
+    ],
+    "gold_files_overlap": [
+      "src/openharness/auth/flows.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 5.5,
+    "log_tail": "Checking patch tests/test_auth/test_flows.py...\nApplied patch tests/test_auth/test_flows.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_8e67fcea031fc081: OK (red as expected)\nChecking patch src/openharness/auth/flows.py...\nApplied patch src/openharness/auth/flows.py cleanly.\nSWEBENCH_APPLY_8e67fcea031fc081: OK\n             ^^^^^^^^^^^^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nname = 'openharness.auth.flows.os'\n\n    def resolve(name: str) -> object:\n        # Simplified from zope.dottedname.\n        parts = name.split(\".\")\n    \n        used = parts.pop(0)\n        found: object = __import__(used)\n        for part in parts:\n            used += \".\" + part\n            try:\n                found = getattr(found, part)\n            except AttributeError:\n                pass\n            else:\n                continue\n            # We use explicit un-nesting of the handling block in order\n            # to avoid nested exceptions.\n            try:\n                __import__(used)\n            except ImportError as ex:\n                expected = str(ex).split()[-1]\n                if expected == used:\n                    raise\n                else:\n>                   raise ImportError(f\"import error in {used}: {ex}\") from ex\nE                   ImportError: import error in openharness.auth.flows.os: No module named 'openharness.auth.flows.os'; 'openharness.auth.flows' is not a package\n\n/opt/conda/envs/testbed/lib/python3.13/site-packages/_pytest/monkeypatch.py:85: ImportError\n=========================== short test summary info ============================\nERROR tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]\n6 errors in 0.06s\n..                                                                       [100%]\n2 passed in 0.01s\nSWEBENCH_RESULT_8e67fcea031fc081: UNRESOLVED\n"
+  }
+}

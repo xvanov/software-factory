@@ -1,0 +1,13 @@
+{
+  "instance_id": "getmoto__moto-9841",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:45:57.955081+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.8629,
+  "ledger_tokens_in": 663760,
+  "ledger_tokens_out": 9641,
+  "result_cost_usd": 0.8629
+}

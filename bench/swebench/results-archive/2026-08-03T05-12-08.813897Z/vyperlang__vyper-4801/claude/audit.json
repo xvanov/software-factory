@@ -1,0 +1,13 @@
+{
+  "instance_id": "vyperlang__vyper-4801",
+  "arm": "claude",
+  "audited_at": "2026-08-03T05:07:54.658898+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.7498,
+  "ledger_tokens_in": 1687565,
+  "ledger_tokens_out": 17841,
+  "result_cost_usd": 1.7498
+}

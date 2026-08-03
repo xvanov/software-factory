@@ -1,0 +1,27 @@
+{
+  "instance_id": "keras-team__keras-22316",
+  "arm": "factory",
+  "audited_at": "2026-08-03T00:43:55.613591+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T00:43:54.392674+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 163402,
+      "tokens_out": 5772,
+      "cached_input_tokens": 114688,
+      "cost_usd": 0.134589548,
+      "duration_s": 143.203,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.1346,
+  "ledger_tokens_in": 163402,
+  "ledger_tokens_out": 5772,
+  "result_cost_usd": 0.1346
+}

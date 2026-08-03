@@ -1,0 +1,64 @@
+{
+  "arm": "claude",
+  "instance_id": "harumiweb__exstruct-113",
+  "repo": "harumiWeb/exstruct",
+  "base_commit": "c0c8c52d0a3b507ac13feb4b700e5d858f2a81dc",
+  "problem_statement_sha256": "0e985bc7f916867bd0c6857c934c51dbe021e3bcefcb27669bd11de1badc3718",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "27f74f9b-51c4-4fd2-9608-c35d15c7626d",
+  "ts": "2026-08-03T04:23:08.978004+00:00",
+  "wall_clock_s": 633.3,
+  "agent_wall_s": 629.9,
+  "num_turns": 61,
+  "turn_cap": 60,
+  "tokens_in": 5503836,
+  "tokens_out": 43109,
+  "cached_input_tokens": 5393092,
+  "cost_usd": 4.8648,
+  "cost_source": "claude-cli-reported",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.6,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/cli/test_cli_lazy_imports.py"
+    ],
+    "exit_code": 0
+  },
+  "error": "claude CLI exited 1: ",
+  "factory_says_green": null,
+  "files_changed": [
+    "src/exstruct/__init__.py",
+    "src/exstruct/core/ranges.py",
+    "src/exstruct/engine.py",
+    "src/exstruct/render/__init__.py"
+  ],
+  "test_files_stripped": [
+    "tests/cli/test_cli_lazy_imports.py"
+  ],
+  "diff_bytes": 12056,
+  "grade": {
+    "arm": "claude",
+    "instance_id": "harumiweb__exstruct-113",
+    "image": "swerebench/sweb.eval.x86_64.harumiweb_1776_exstruct-113@sha256:a3234ba6d5ca57a07137b6e70c870111a00d4ca638329745ef65bde1a75c865e",
+    "graded_at": "2026-08-03T04:23:09.071206+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 6,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 6.3,
+    "log_tail": "Checking patch tests/cli/test_cli_lazy_imports.py...\nApplied patch tests/cli/test_cli_lazy_imports.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_4ba9d934acb29f97: OK (red as expected)\nChecking patch src/exstruct/__init__.py...\nChecking patch src/exstruct/core/ranges.py...\nChecking patch src/exstruct/engine.py...\nChecking patch src/exstruct/render/__init__.py...\nApplied patch src/exstruct/__init__.py cleanly.\nApplied patch src/exstruct/core/ranges.py cleanly.\nApplied patch src/exstruct/engine.py cleanly.\nApplied patch src/exstruct/render/__init__.py cleanly.\nSWEBENCH_APPLY_4ba9d934acb29f97: OK\n..                                                                       [100%]\n2 passed in 0.24s\n......                                                                   [100%]\n6 passed in 0.34s\nSWEBENCH_RESULT_4ba9d934acb29f97: RESOLVED\n"
+  }
+}

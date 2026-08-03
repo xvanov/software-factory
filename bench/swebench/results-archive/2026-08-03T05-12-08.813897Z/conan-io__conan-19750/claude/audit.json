@@ -1,0 +1,13 @@
+{
+  "instance_id": "conan-io__conan-19750",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:32:38.617390+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.6201,
+  "ledger_tokens_in": 491402,
+  "ledger_tokens_out": 6514,
+  "result_cost_usd": 0.6201
+}

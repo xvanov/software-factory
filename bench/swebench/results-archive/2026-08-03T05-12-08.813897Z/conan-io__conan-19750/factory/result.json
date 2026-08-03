@@ -1,0 +1,72 @@
+{
+  "arm": "factory",
+  "instance_id": "conan-io__conan-19750",
+  "repo": "conan-io/conan",
+  "base_commit": "6c9356b3e5bd75f7d7061a708785e80aaacb3b43",
+  "problem_statement_sha256": "cb32e64d72a0fd1f698bd20569bfdc427513161ecacc7856c6ffbf6a225654ce",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T01:33:37.417569+00:00",
+  "wall_clock_s": 1133.8,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 1,
+  "tokens_in": 2223120,
+  "tokens_out": 19814,
+  "cached_input_tokens": 1702656,
+  "cost_usd": 1.3715,
+  "persona_calls": 5,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.9,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "test/integration/graph/test_system_tools.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> dev_retry",
+    "dev: dev_retry -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "conan/internal/api/profile/profile_loader.py"
+  ],
+  "test_files_stripped": [
+    "test/integration/graph/test_platform_requires.py",
+    "test/integration/graph/test_system_tools.py"
+  ],
+  "diff_bytes": 1621,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "conan-io__conan-19750",
+    "image": "swerebench/sweb.eval.x86_64.conan-io_1776_conan-19750@sha256:4161da9a64b97cb6755a6c4416bb0ad46ae6bf4b255ca2bf9153c4414430152c",
+    "graded_at": "2026-08-03T01:33:37.975392+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 18,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "conan/internal/api/profile/profile_loader.py"
+    ],
+    "touched_files": [
+      "conan/internal/api/profile/profile_loader.py"
+    ],
+    "gold_files_overlap": [
+      "conan/internal/api/profile/profile_loader.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 6.3,
+    "log_tail": "Checking patch test/integration/graph/test_system_tools.py...\nApplied patch test/integration/graph/test_system_tools.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_55a19cb732d40112: OK (red as expected)\nChecking patch conan/internal/api/profile/profile_loader.py...\nApplied patch conan/internal/api/profile/profile_loader.py cleanly.\nSWEBENCH_APPLY_55a19cb732d40112: OK\nF                                                                        [100%]\n=================================== FAILURES ===================================\n________________ TestToolRequires.test_platform_requires_error _________________\n\nself = <test.integration.graph.test_system_tools.TestToolRequires object at 0x7ed88e0b0910>\n\n    def test_platform_requires_error(self):\n        \"\"\"\n        https://github.com/conan-io/conan/issues/19745\n        \"\"\"\n        c = TestClient(light=True)\n        profile = textwrap.dedent(\"\"\"\\\n            include(default)\n    \n            [platform_tool_requires]\n            cmake/[*]\n            \"\"\")\n        c.save({\"conanfile.py\": GenConanfile(\"catch2\").with_tool_requires(\"cmake/[*]\"),\n                \"profile\": profile})\n    \n        c.run(\"create  --version=3.6.0 -pr=profile\", assert_error=True)\n        assert \"AssertionError\" not in c.out\n>       assert (\"ERROR: Error reading 'profile' profile: Profile [platform_requires]/\"\n                \"[platform_tool_requires] must be exact versions, \"\n                \"not version ranges: [cmake/[*]]\") in c.out\nE       assert \"ERROR: Error reading 'profile' profile: Profile [platform_requires]/[platform_tool_requires] must be exact versions, not version ranges: [cmake/[*]]\" in \"ERROR: Error reading 'profile' profile: Error in [platform_tool_requires]: 'cmake/[*]' is a version range. [platform_tool_requires] only accepts exact package references, not version ranges.\\n\"\nE        +  where \"ERROR: Error reading 'profile' profile: Error in [platform_tool_requires]: 'cmake/[*]' is a version range. [platform_tool_requires] only accepts exact package references, not version ranges.\\n\" = <conan.test.utils.tools.TestClient object at 0x7ed88e236660>.out\n\ntest/integration/graph/test_system_tools.py:176: AssertionError\n=========================== short test summary info ============================\nFAILED test/integration/graph/test_system_tools.py::TestToolRequires::test_platform_requires_error\n1 failed in 0.19s\n..................                                                       [100%]\n18 passed in 0.67s\nSWEBENCH_RESULT_55a19cb732d40112: UNRESOLVED\n"
+  }
+}

@@ -1,0 +1,226 @@
+diff --git a/server/configuration.md b/server/configuration.md
+index f573c53..d5e8006 100644
+--- a/server/configuration.md
++++ b/server/configuration.md
+@@ -220,6 +220,8 @@ Host-side storage related to **volume mounts** (host bind allowlist and OSSFS mo
+ | `ossfs_mount_root` | string | `"/mnt/ossfs"` | Host directory under which OSSFS-backed mounts are resolved (`<root>/<bucket>/...`). |
+ | `volume_default_size` | string | `"1Gi"` | Default storage size for auto-created Kubernetes PVCs when the caller does not specify a size in the PVC provisioning hints. |
+ 
++Host paths are matched **lexically** against the prefixes and are additionally required to contain **no symbolic link** in any component: the container runtime resolves symlinks at mount time, so a link planted under an allowed prefix (for example `/data/opensandbox/evil -> /`) would otherwise mount an arbitrary host path. Such requests are rejected, as are paths whose canonical (symlink-resolved) location falls outside every allowed prefix.
++
+ Sandbox **volume** models (`host`, `pvc`, `ossfs`) in API requests are documented in the OpenAPI specs and OSEPs; this table only covers **server** storage settings.
+ 
+ ---
+diff --git a/server/opensandbox_server/services/docker.py b/server/opensandbox_server/services/docker.py
+index 66d4422..f5c6517 100644
+--- a/server/opensandbox_server/services/docker.py
++++ b/server/opensandbox_server/services/docker.py
+@@ -1466,8 +1466,9 @@ class DockerSandboxService(DockerDiagnosticsMixin, OSSFSMixin, SandboxService, E
+         Docker-specific validation for host bind mount volumes.
+ 
+         Validates that the resolved host path (host.path + optional subPath)
+-        remains within allowed prefixes, then ensures the directory exists on
+-        the filesystem — creating it automatically if it does not.
++        remains within allowed prefixes — both lexically and after symbolic
++        link resolution — then ensures the directory exists on the filesystem,
++        creating it automatically if it does not.
+ 
+         Args:
+             volume: Volume with host backend.
+@@ -1483,10 +1484,19 @@ class DockerSandboxService(DockerDiagnosticsMixin, OSSFSMixin, SandboxService, E
+         # Defense in depth: re-validate the resolved path against the
+         # allowlist.  Even though sub_path traversal (../) is blocked by
+         # ensure_valid_sub_path(), normalizing and re-checking prevents
+-        # any edge-case bypass.
++        # any edge-case bypass.  ensure_valid_host_path() also rejects paths
++        # that traverse a symbolic link.
+         if allowed_prefixes and resolved_path != volume.host.path:
+             ensure_valid_host_path(resolved_path, allowed_prefixes)
+ 
++        # Canonical (symlink-resolved) allowlist check, matching the standard
++        # already applied to PVC subPaths: Docker resolves symlinks when it
++        # performs the bind mount, so the lexical checks above are not by
++        # themselves sufficient to enforce the allowlist.
++        DockerSandboxService._ensure_canonical_host_path_allowed(
++            volume, resolved_path, allowed_prefixes
++        )
++
+         # Allow existing host files (for example ISO binds to /boot.iso)
+         # without attempting directory creation.
+         if os.path.isfile(resolved_path):
+@@ -1506,6 +1516,72 @@ class DockerSandboxService(DockerDiagnosticsMixin, OSSFSMixin, SandboxService, E
+                 },
+             )
+ 
++    @staticmethod
++    def _ensure_canonical_host_path_allowed(
++        volume, resolved_path: str, allowed_prefixes: Optional[list[str]]
++    ) -> None:
++        """
++        Verify a host path stays inside the allowlist after symlink resolution.
++
++        ``os.path.normpath`` only normalises a path lexically, so a symbolic
++        link planted under an allowed prefix (for example
++        ``/data/opensandbox/evil -> /``) passes every string comparison while
++        Docker actually bind-mounts the link target.  Canonicalising both the
++        requested path and the allowed prefixes with ``os.path.realpath``
++        closes that hole — the same standard already enforced for PVC subPaths.
++
++        Args:
++            volume: Volume with host backend.
++            resolved_path: Host path after applying subPath.
++            allowed_prefixes: Optional allowlist of host path prefixes.
++
++        Raises:
++            HTTPException: When the canonical path escapes every allowed prefix.
++        """
++        if not allowed_prefixes:
++            return
++
++        # Windows-style paths ('D:\\data') cannot be canonicalised on a POSIX
++        # server: realpath would resolve them against the working directory.
++        if not os.path.isabs(resolved_path):
++            return
++        canonical_prefixes = [
++            os.path.realpath(prefix) for prefix in allowed_prefixes if os.path.isabs(prefix)
++        ]
++        if not canonical_prefixes:
++            return
++
++        try:
++            canonical_path = os.path.realpath(resolved_path, strict=True)
++        except OSError:
++            # The path does not exist yet (it is auto-created further below) or
++            # is not traversable.  Resolve as far as the filesystem allows so
++            # that a symlinked ancestor is still detected.
++            canonical_path = os.path.realpath(resolved_path)
++
++        for canonical_prefix in canonical_prefixes:
++            prefix_with_sep = (
++                canonical_prefix
++                if canonical_prefix.endswith(os.sep)
++                else canonical_prefix + os.sep
++            )
++            if canonical_path == canonical_prefix or canonical_path.startswith(
++                prefix_with_sep
++            ):
++                return
++
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail={
++                "code": SandboxErrorCodes.HOST_PATH_NOT_ALLOWED,
++                "message": (
++                    f"Volume '{volume.name}': host path '{resolved_path}' resolves to "
++                    f"'{canonical_path}', which is not under any allowed prefix after "
++                    f"symlink resolution. Allowed prefixes: {allowed_prefixes}"
++                ),
++            },
++        )
++
+     def _validate_pvc_volume(self, volume) -> tuple[dict, bool]:
+         """
+         Docker-specific validation for PVC (named volume) backend.
+diff --git a/server/opensandbox_server/services/validators.py b/server/opensandbox_server/services/validators.py
+index 4b37b57..1b921a0 100644
+--- a/server/opensandbox_server/services/validators.py
++++ b/server/opensandbox_server/services/validators.py
+@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
+ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+ 
+ from fastapi import HTTPException, status
++import os
+ import re
+ 
+ from opensandbox_server.services.constants import RESERVED_LABEL_PREFIX, SandboxErrorCodes
+@@ -68,6 +69,69 @@ def _normalize_prefix_path(path: str) -> str:
+     return normalized
+ 
+ 
++def _host_path_components(path: str) -> List[str]:
++    """
++    Split a host path into the successive absolute prefixes it is built from.
++
++    ``/data/opensandbox/user-a`` yields ``['/data', '/data/opensandbox',
++    '/data/opensandbox/user-a']``; ``D:/sandbox-mnt/ReMe`` yields
++    ``['D:/sandbox-mnt', 'D:/sandbox-mnt/ReMe']``.  The root itself is never
++    returned because it can never be a symbolic link.
++    """
++    normalized = path.replace("\\", "/")
++    if re.match(r"^[A-Za-z]:/", normalized):
++        current, tail = normalized[:3], normalized[3:]
++    else:
++        current, tail = "/", normalized[1:]
++
++    prefixes: List[str] = []
++    for component in tail.split("/"):
++        if not component:
++            continue
++        current = current + component if current.endswith("/") else current + "/" + component
++        prefixes.append(current)
++    return prefixes
++
++
++def ensure_no_symlink_components(path: str) -> None:
++    """
++    Reject a host path when any of its components is a symbolic link.
++
++    Lexical validation alone (``normpath`` + prefix matching) is not enough to
++    enforce the ``allowed_host_paths`` allowlist: the container runtime resolves
++    symbolic links when it performs the bind mount, so a link planted inside an
++    allowed prefix (for example ``/data/opensandbox/evil -> /``) would mount an
++    arbitrary host path while passing every lexical check.
++
++    Every existing component of the path — intermediate directories as well as
++    the final one — must therefore be a real directory or file.  Components that
++    do not exist are not links and are accepted (host paths may be created on
++    demand).
++
++    Args:
++        path: Host path to validate.
++
++    Raises:
++        HTTPException: When any component of the path is a symbolic link.
++    """
++    for component in _host_path_components(path):
++        # os.path.islink() swallows OSError and returns False, so an
++        # unreadable parent directory cannot make this check raise.
++        if os.path.islink(component):
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST,
++                detail={
++                    "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                    "message": (
++                        f"Host path '{path}' contains a symbolic link component "
++                        f"'{component}'. A path containing a symlink is rejected "
++                        "because the runtime resolves it at mount time, which "
++                        "would bypass the allowed host path allowlist."
++                    ),
++                },
++            )
++
++
+ def _is_valid_label_key(key: str) -> bool:
+     if "/" in key:
+         prefix, name = key.split("/", 1)
+@@ -450,6 +514,12 @@ def ensure_valid_host_path(
+             },
+         )
+ 
++    # Reject paths that traverse a symbolic link.  This must happen for every
++    # host path (not only when an allowlist is configured) because the runtime
++    # resolves links at mount time, so a lexically valid path can still point
++    # somewhere else entirely.
++    ensure_no_symlink_components(path)
++
+     # Check against allowed prefixes if provided
+     if allowed_prefixes is not None:
+         # Normalize separators for cross-platform prefix checks so Windows-style
+@@ -699,6 +769,7 @@ __all__ = [
+     "ensure_valid_mount_path",
+     "ensure_valid_sub_path",
+     "ensure_valid_host_path",
++    "ensure_no_symlink_components",
+     "ensure_valid_pvc_name",
+     "ensure_valid_ossfs_volume",
+     "ensure_volumes_valid",

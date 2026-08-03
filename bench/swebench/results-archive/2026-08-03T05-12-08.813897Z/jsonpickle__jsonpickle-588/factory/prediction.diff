@@ -1,0 +1,83 @@
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..246aede 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -709,8 +709,7 @@ class Pickler:
+             return data
+ 
+         if util._is_dictionary_subclass(obj):
+-            self._flatten_dict_obj(obj, data, exclude=exclude)
+-            return data
++            return self._flatten_dict_obj(obj, data, exclude=exclude)
+ 
+         if util._is_sequence_subclass(obj):
+             return self._flatten_sequence_obj(obj, data)
+@@ -808,6 +807,37 @@ class Pickler:
+         data[k] = self._flatten(v)
+         return data
+ 
++    def _flatten_reduce(self, obj: Any) -> Dict[str, Any]:
++        """Serialize *obj* using its __reduce__() protocol.
++
++        Used when the standard dict-serialization path would cause key
++        collisions (e.g. a defaultdict whose data contains a key named
++        ``'default_factory'``).
++        """
++        reduce_val = obj.__reduce__()
++        rv_as_list = list(reduce_val)
++        insufficiency = 5 - len(rv_as_list)
++        if insufficiency:
++            rv_as_list += [None] * insufficiency
++
++        if getattr(rv_as_list[0], "__name__", "") == "__newobj__":
++            rv_as_list[0] = tags.NEWOBJ
++
++        # Convert iterators into iterables for serialization
++        if rv_as_list[3]:
++            rv_as_list[3] = tuple(rv_as_list[3])
++        if rv_as_list[4]:
++            rv_as_list[4] = tuple(rv_as_list[4])
++
++        reduce_args = list(map(self._flatten, rv_as_list))
++        last_index = len(reduce_args) - 1
++        while last_index >= 2 and reduce_args[last_index] is None:
++            last_index -= 1
++
++        data: Dict[str, Any] = {}
++        data[tags.REDUCE] = reduce_args[: last_index + 1]
++        return data
++
+     def _flatten_dict_obj(
+         self,
+         obj: dict[Any, Any],
+@@ -818,6 +848,17 @@ class Pickler:
+         if data is None:
+             data = obj.__class__()
+ 
++        # Detect collision between a dict key named 'default_factory' and
++        # the defaultdict.default_factory attribute before serializing
++        # anything, so reference tracking is not polluted by a first pass.
++        if (
++            self.unpicklable
++            and hasattr(obj, "default_factory")
++            and callable(obj.default_factory)
++            and "default_factory" in obj
++        ):
++            return self._flatten_reduce(obj)
++
+         # If we allow non-string keys then we have to do a two-phase
+         # encoding to ensure that the reference IDs are deterministic.
+         if self.keys:
+@@ -837,7 +878,11 @@ class Pickler:
+                 flatten(k, v, data)
+ 
+         # the collections.defaultdict protocol
+-        if hasattr(obj, "default_factory") and callable(obj.default_factory):
++        if (
++            hasattr(obj, "default_factory")
++            and callable(obj.default_factory)
++            and "default_factory" not in data
++        ):
+             factory = obj.default_factory
+             if util._is_type(factory):
+                 # Reference the class/type

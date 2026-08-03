@@ -1,0 +1,51 @@
+{
+  "arm": "factory",
+  "instance_id": "keras-team__keras-22316",
+  "repo": "keras-team/keras",
+  "base_commit": "34e55d4561ba2a61bbc72562e88b3704e0a43081",
+  "problem_statement_sha256": "19ccbc1e05bc8e92e3a4f0adbc94eb3ee098d7ef27b3c37fdc2061a7cbc855f1",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T00:43:54.968678+00:00",
+  "wall_clock_s": 160.1,
+  "final_state": "blocked_review_nonconvergent",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "tokens_in": 163402,
+  "tokens_out": 5772,
+  "cached_input_tokens": 114688,
+  "cost_usd": 0.1346,
+  "persona_calls": 1,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 4.3,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "keras/src/ops/function_test.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> blocked_review_nonconvergent"
+  ],
+  "error": null,
+  "factory_says_green": false,
+  "files_changed": [],
+  "test_files_stripped": [],
+  "diff_bytes": 0,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "keras-team__keras-22316",
+    "image": "swerebench/sweb.eval.x86_64.keras-team_1776_keras-22316@sha256:2a85415e1bcc6b0e03d08d36e0d922d9428d4b4fc0b6299dadf4c36d9f6a6520",
+    "graded_at": "2026-08-03T00:43:55.528706+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 8,
+    "empty_patch": true,
+    "oracle_resolved": false,
+    "outcome": "empty_patch",
+    "log_tail": ""
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "instance_id": "idaholab__montepy-933_interface",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:29:42.846565+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 2.3427,
+  "ledger_tokens_in": 2477578,
+  "ledger_tokens_out": 19644,
+  "result_cost_usd": 2.3427
+}

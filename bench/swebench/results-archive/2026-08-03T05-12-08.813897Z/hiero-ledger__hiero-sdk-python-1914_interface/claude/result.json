@@ -1,0 +1,61 @@
+{
+  "arm": "claude",
+  "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+  "repo": "hiero-ledger/hiero-sdk-python",
+  "base_commit": "93eed7c340fb65356c3a06ac78f74402c3a169af",
+  "problem_statement_sha256": "ffd670c2ee16b9cc31ebe5492b19d2624c027ca7b128591bcf2e75128f038cea",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "90183e9c-24d2-46f5-8be4-737769ec88c6",
+  "ts": "2026-08-03T04:51:54.006394+00:00",
+  "wall_clock_s": 270.5,
+  "agent_wall_s": 254.8,
+  "num_turns": 22,
+  "turn_cap": 60,
+  "tokens_in": 970895,
+  "tokens_out": 19097,
+  "cached_input_tokens": 920558,
+  "cost_usd": 1.4229,
+  "cost_source": "claude-cli-reported",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 2.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/unit/account_info_test.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "src/hiero_sdk_python/account/account_info.py"
+  ],
+  "test_files_stripped": [
+    "tests/unit/account_info_test.py"
+  ],
+  "diff_bytes": 12619,
+  "grade": {
+    "arm": "claude",
+    "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+    "image": "swerebench/sweb.eval.x86_64.hiero-ledger_1776_hiero-sdk-python-1914_interface@sha256:7379c707cc7e9f690d07a08c3abfc1f97b9f70fd283bc2084040a052b79af57f",
+    "graded_at": "2026-08-03T04:51:54.199863+00:00",
+    "fail_to_pass_count": 12,
+    "pass_to_pass_count": 9,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 24.5,
+    "log_tail": "Checking patch tests/integration/account_create_transaction_e2e_test.py...\nChecking patch tests/integration/account_update_transaction_e2e_test.py...\nChecking patch tests/unit/account_info_test.py...\n/tmp/test_patch.diff:300: new blank line at EOF.\n+\nApplied patch tests/integration/account_create_transaction_e2e_test.py cleanly.\nApplied patch tests/integration/account_update_transaction_e2e_test.py cleanly.\nApplied patch tests/unit/account_info_test.py cleanly.\nwarning: 1 line adds whitespace errors.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_b54cd649fd4c96f7: OK (red as expected)\nChecking patch src/hiero_sdk_python/account/account_info.py...\nApplied patch src/hiero_sdk_python/account/account_info.py cleanly.\nSWEBENCH_APPLY_b54cd649fd4c96f7: OK\n............                                                             [100%]\n12 passed in 0.94s\n.........                                                                [100%]\n9 passed in 0.93s\nSWEBENCH_RESULT_b54cd649fd4c96f7: RESOLVED\n"
+  }
+}

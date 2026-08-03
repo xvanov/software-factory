@@ -1,0 +1,81 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "bare",
+  "audited_at": "2026-08-03T03:56:33.815630+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 5 call(s) but only 0 trajectory file(s) under state/events/trajectories \u2014 the agent's reasoning trail is incomplete"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T03:55:57.829279+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 65.997,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:56:06.760459+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1226,
+      "tokens_out": 1023,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.00628427,
+      "duration_s": 8.919,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:56:18.630355+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 2255,
+      "tokens_out": 1061,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.00841578,
+      "duration_s": 11.857,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:56:21.588181+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 3321,
+      "tokens_out": 290,
+      "cached_input_tokens": 1024,
+      "cost_usd": 0.005708774,
+      "duration_s": 2.938,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:56:23.146661+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 3916,
+      "tokens_out": 3,
+      "cached_input_tokens": 2048,
+      "cost_usd": 0.003946458000000001,
+      "duration_s": 0.812,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.0244,
+  "ledger_tokens_in": 10718,
+  "ledger_tokens_out": 2377,
+  "result_cost_usd": 0.0244
+}

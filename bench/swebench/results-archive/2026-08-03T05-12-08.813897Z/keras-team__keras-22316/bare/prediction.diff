@@ -1,0 +1,191 @@
+diff --git a/patch.py b/patch.py
+new file mode 100644
+index 0000000..d6e1fe5
+--- /dev/null
++++ b/patch.py
+@@ -0,0 +1,164 @@
++import sys
++
++with open('keras/src/ops/function.py', 'r') as f:
++    content = f.read()
++
++old_map_graph = '''def map_graph(inputs, outputs):
++    """Validates a graph's topology and gather its operations and nodes.
++
++    Args:
++        inputs: List of input tensors.
++        outputs: List of outputs tensors.
++
++    Returns:
++        A tuple `(nodes, nodes_by_depth, operations, operations_by_depth)`.
++            - nodes: set of all Node instances in the graph.
++            - nodes_by_depth: dict mapping ints (depth) to lists of Node instances.
++            - operations: list of Operation instances.
++            - operations_by_depth: dict mapping ints (depth) to lists of Operation
++                instances.
++    """
++    # "depth" is number of operations between output Node and the Node.
++    # We need to track this to prioritize deeper operations
++    # in the startup phase, to avoid creating extra variables.
++    nodes = set()
++    nodes_by_depth = {}  # dict {depth: [nodes]}
++    operations = set()
++    operations_by_depth = {}  # dict {depth: [operations]}
++    # BFS backwards from outputs.
++    queue = tree.flatten(outputs)
++    operations_depths = {}  # dict {operation: depth value}
++    depth = 0
++    while queue:
++        node = queue.pop(0)
++        if node in nodes:
++            continue
++        nodes.add(node)
++        previous_depth = operations_depths.get(node.operation, 0)
++        # Track the greatest depth that the operation has been seen at.
++        # This is necessary for shared operations that have inputs at
++        # different depths.
++        depth = max(depth, previous_depth)
++        operations.add(node.operation)
++        operations_depths[node.operation] = depth
++        if node.operation is not None:
++            inputs = node.operation.input
++            for input_node in tree.flatten(inputs):
++                if input_node not in nodes:
++                    queue.append(input_node)
++        nodes_by_depth.setdefault(depth, []).append(node)
++        depth += 1
++    # Now all reachable nodes and operations are gathered.
++    # We need to remove the inputs and their corresponding operations
++    # if they are not connected to the outputs via other operations.
++    # Inputs will be nodes with no incoming edges (i.e., node.operation is None
++    # or node.operation.input is None).
++    inputs_set = set(tree.flatten(inputs))
++    nodes_to_remove = set()
++    operations_to_remove = set()
++    for node in nodes:
++        if node in inputs_set and node.operation is None:
++            nodes_to_remove.add(node)
++    # Also remove operations that have all their outputs in nodes_to_remove.
++    for operation in operations:
++        if all(node in nodes_to_remove for node in tree.flatten(operation.output)):
++            operations_to_remove.add(operation)
++    nodes -= nodes_to_remove
++    operations -= operations_to_remove
++    # Reorganize nodes and operations by depth.
++    nodes_by_depth = {}
++    for node in nodes:
++        depth = operations_depths.get(node.operation, 0)
++        nodes_by_depth.setdefault(depth, []).append(node)
++    operations_by_depth = {}
++    for operation in operations:
++        depth = operations_depths.get(operation, 0)
++        operations_by_depth.setdefault(depth, []).append(operation)
++    return (
++        list(nodes),
++        nodes_by_depth,
++        list(operations),
++        operations_by_depth,
++    )'''
++
++new_map_graph = '''def map_graph(inputs, outputs):
++    """Validates a graph's topology and gather its operations and nodes.
++
++    Args:
++        inputs: List of input tensors.
++        outputs: List of outputs tensors.
++
++    Returns:
++        A tuple `(nodes, nodes_by_depth, operations, operations_by_depth)`.
++            - nodes: set of all Node instances in the graph.
++            - nodes_by_depth: dict mapping ints (depth) to lists of Node instances.
++            - operations: list of Operation instances.
++            - operations_by_depth: dict mapping ints (depth) to lists of Operation
++                instances.
++    """
++    # "depth" is number of operations between output Node and the Node.
++    # We need to track this to prioritize deeper operations
++    # in the startup phase, to avoid creating extra variables.
++    nodes = set()
++    nodes_by_depth = {}  # dict {depth: [nodes]}
++    operations = set()
++    operations_by_depth = {}  # dict {depth: [operations]}
++    # BFS backwards from outputs.
++    queue = tree.flatten(outputs)
++    operations_depths = {}  # dict {operation: depth value}
++    # Track the function's input nodes so we stop traversal at them.
++    function_inputs_set = set(tree.flatten(inputs))
++    depth = 0
++    while queue:
++        node = queue.pop(0)
++        if node in nodes:
++            continue
++        nodes.add(node)
++        if node.operation is None:
++            # This is an input node (no operation), add but don't traverse further.
++            nodes_by_depth.setdefault(depth, []).append(node)
++            continue
++        previous_depth = operations_depths.get(node.operation, 0)
++        # Track the greatest depth that the operation has been seen at.
++        # This is necessary for shared operations that have inputs at
++        # different depths.
++        depth = max(depth, previous_depth)
++        operations.add(node.operation)
++        operations_depths[node.operation] = depth
++        operation_inputs = node.operation.input
++        for input_node in tree.flatten(operation_inputs):
++            if input_node not in nodes:
++                queue.append(input_node)
++        nodes_by_depth.setdefault(depth, []).append(node)
++        depth += 1
++    # Remove function input nodes that have no operation (pure input placeholders)
++    # from the nodes set, as they are not part of the computation graph.
++    nodes_to_remove = set()
++    for node in nodes:
++        if node.operation is None and node in function_inputs_set:
++            nodes_to_remove.add(node)
++    nodes -= nodes_to_remove
++    # Reorganize nodes and operations by depth.
++    nodes_by_depth = {}
++    for node in nodes:
++        node_depth = operations_depths.get(node.operation, 0)
++        nodes_by_depth.setdefault(node_depth, []).append(node)
++    operations_by_depth = {}
++    for operation in operations:
++        op_depth = operations_depths.get(operation, 0)
++        operations_by_depth.setdefault(op_depth, []).append(operation)
++    return (
++        list(nodes),
++        nodes_by_depth,
++        list(operations),
++        operations_by_depth,
++    )'''
++
++if old_map_graph in content:
++    content = content.replace(old_map_graph, new_map_graph)
++    with open('keras/src/ops/function.py', 'w') as f:
++        f.write(content)
++    print("Patch applied successfully")
++else:
++    print("ERROR: Could not find the function to patch")
++    sys.exit(1)
+diff --git a/restore.py b/restore.py
+new file mode 100644
+index 0000000..dc3aebd
+--- /dev/null
++++ b/restore.py
+@@ -0,0 +1,15 @@
++# Restore the original map_graph function
++content = open('keras/src/ops/function.py').read()
++
++# Find the current map_graph and replace with original
++# The original is the one from the repository
++import re
++
++# Read the original from the git history
++import subprocess
++result = subprocess.run(['git', 'show', 'HEAD:keras/src/ops/function.py'], capture_output=True, text=True)
++original = result.stdout
++
++with open('keras/src/ops/function.py', 'w') as f:
++    f.write(original)
++print("Restored from git")

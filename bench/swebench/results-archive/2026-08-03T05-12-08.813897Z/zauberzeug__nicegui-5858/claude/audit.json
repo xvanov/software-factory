@@ -1,0 +1,13 @@
+{
+  "instance_id": "zauberzeug__nicegui-5858",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:41:42.016955+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.295,
+  "ledger_tokens_in": 1243259,
+  "ledger_tokens_out": 13508,
+  "result_cost_usd": 1.295
+}

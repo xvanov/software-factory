@@ -1,0 +1,42 @@
+{
+  "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+  "arm": "bare",
+  "audited_at": "2026-08-03T03:55:47.826874+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 2 call(s) but only 0 trajectory file(s) under state/events/trajectories \u2014 the agent's reasoning trail is incomplete"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T03:55:33.355081+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1027,
+      "tokens_out": 1173,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0064747,
+      "duration_s": 9.325,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T03:55:34.020995+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 2207,
+      "tokens_out": 3,
+      "cached_input_tokens": 768,
+      "cost_usd": 0.002912408,
+      "duration_s": 0.654,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.0094,
+  "ledger_tokens_in": 3234,
+  "ledger_tokens_out": 1176,
+  "result_cost_usd": 0.0094
+}

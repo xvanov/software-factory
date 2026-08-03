@@ -1,0 +1,59 @@
+{
+  "arm": "factory",
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "repo": "raullenchai/Rapid-MLX",
+  "base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+  "problem_statement_sha256": "3ae27ef5d79a458199fe77579d9c2737af36949b5eba763d0b1ef7f02c8a8edf",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-03T01:13:02.633626+00:00",
+  "wall_clock_s": 1467.4,
+  "final_state": "reviewer_done",
+  "dev_retries": 1,
+  "reviewer_cycles": 0,
+  "tokens_in": 4389311,
+  "tokens_out": 48780,
+  "cached_input_tokens": 3434240,
+  "cost_usd": 2.6946,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_reasoning_parsers.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> dev_retry",
+    "dev: dev_retry -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "vllm_mlx/reasoning/gemma4_parser.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_reasoning_parsers.py"
+  ],
+  "diff_bytes": 3003,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "raullenchai__rapid-mlx-289",
+    "image": "swerebench/sweb.eval.x86_64.raullenchai_1776_rapid-mlx-289@sha256:c518273fc729729206db46632ff3ae99052e00d2279aad795302692b4a6e02b0",
+    "graded_at": "2026-08-03T01:13:03.175551+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 122,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 5.3,
+    "log_tail": "Checking patch tests/test_reasoning_parsers.py...\nApplied patch tests/test_reasoning_parsers.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_673072f0171e06a2: OK (red as expected)\nChecking patch vllm_mlx/reasoning/gemma4_parser.py...\nApplied patch vllm_mlx/reasoning/gemma4_parser.py cleanly.\nSWEBENCH_APPLY_673072f0171e06a2: OK\n============================= test session starts ==============================\nplatform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0\nrootdir: /testbed\nconfigfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)\nplugins: anyio-4.13.0\ncollected 2 items\n\ntests/test_reasoning_parsers.py ..                                       [100%]\n\n============================== 2 passed in 0.02s ===============================\n============================= test session starts ==============================\nplatform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0\nrootdir: /testbed\nconfigfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)\nplugins: anyio-4.13.0\ncollected 122 items\n\ntests/test_reasoning_parsers.py ........................................ [ 32%]\n........................................................................ [ 91%]\n..........                                                               [100%]\n\n============================= 122 passed in 0.08s ==============================\nSWEBENCH_RESULT_673072f0171e06a2: RESOLVED\n"
+  }
+}
