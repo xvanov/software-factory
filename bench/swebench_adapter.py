@@ -120,14 +120,17 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import contextlib
+import difflib
 import hashlib
 import json
+import math
 import os
 import random
 import re
 import secrets
 import shutil
 import signal
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -1325,6 +1328,13 @@ def _story_slug(instance_id: str) -> str:
 
 
 def _run_dir(instance_id: str, arm: str) -> Path:
+    """The one directory holding everything about one (instance, arm, MODEL).
+
+    ``arm`` here is a RUN KEY, not necessarily a bare arm id — see ``run_key``.
+    The key had no model component until the five-arm re-run, so two runs of
+    the Claude CLI on different models shared this directory and the second
+    silently destroyed the first's artifacts.
+    """
     d = RUNS_DIR / instance_id / arm
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -1346,8 +1356,15 @@ def _write_result(
 
     ``merge=True`` is for ``grade``, which legitimately adds its verdict onto
     the run's existing result.
+
+    A fresh write also stamps the row with the two facts a reader must not have
+    to reconstruct: which ATTEMPT this is (the retracted run published 4 second
+    attempts, disclosed nowhere) and whether the run ran out of BUDGET (one
+    rule, all arms — a cap hit is a counted, flagged attempt). Both are derived
+    from the artifact right here so no arm can forget to record them.
     """
-    out = _run_dir(instance_id, arm) / "result.json"
+    run_dir = _run_dir(instance_id, arm)
+    out = run_dir / "result.json"
     existing: dict[str, Any] = {}
     if merge and out.exists():
         try:
@@ -1355,8 +1372,177 @@ def _write_result(
         except json.JSONDecodeError:
             existing = {}
     existing.update(payload)
+    if not merge:
+        existing["attempt"] = _attempt_count(run_dir)
+        # Through the SHARED classifier, not the raw reason, so the artifact
+        # agrees with every consumer: a plumbing probe that happens to end on
+        # its last step is a failed run, not a budget-exhausted attempt.
+        status, detail = classify_run(existing)
+        existing["budget_exhausted"] = status == _RUN_BUDGET_EXHAUSTED
+        existing["budget_exhausted_reason"] = (
+            detail if status == _RUN_BUDGET_EXHAUSTED else None
+        )
     out.write_text(json.dumps(existing, indent=2), encoding="utf-8")
     return out
+
+
+_ATTEMPT_NAME = "attempt.json"
+
+
+def _bump_attempt(run_dir: Path) -> int:
+    """Increment and return this (instance, arm, model)'s attempt counter.
+
+    Survives ``_reset_run_artifacts`` deliberately — it is the ONE fact about a
+    run directory that must outlive the run, because "this is the third time we
+    ran this cell" is not visible in any other artifact. The retracted
+    2026-08-03 run published four second attempts after the integrity gate
+    invalidated the first, and nothing in the evidence said so.
+    """
+    run_dir.mkdir(parents=True, exist_ok=True)
+    # ``missing=0``: no counter file means no attempt has happened YET, so this
+    # one is the first. (Reading it back defaults to 1 instead — a row that
+    # predates the counter WAS an attempt.)
+    n = _attempt_count(run_dir, missing=0) + 1
+    (run_dir / _ATTEMPT_NAME).write_text(
+        json.dumps({"attempts": n}) + "\n", encoding="utf-8"
+    )
+    return n
+
+
+def _attempt_count(run_dir: Path, *, missing: int = 1) -> int:
+    try:
+        data = json.loads((run_dir / _ATTEMPT_NAME).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return missing  # pre-1.6 rows and hand-made fixtures are attempt 1
+    try:
+        return max(missing, int(data["attempts"]))
+    except (KeyError, TypeError, ValueError):
+        return missing
+
+
+# --------------------------------------------------------------------------- #
+# ONE run classifier, shared by the sweep roll-up and the report
+# --------------------------------------------------------------------------- #
+#
+# There used to be two. ``sweep_one`` set its row status from the run child's
+# EXIT CODE; ``report`` set ``_run_failed`` from ``result.json["error"]``. On
+# the retracted 2026-08-03 run they disagreed — ``sweep-claude.json`` reported
+# 17 resolved while ``results.md`` reported 16 of 18 — and neither number could
+# be checked against the other because they were computed from different facts.
+# One function now owns the question, and both callers ask it.
+
+_RUN_OK = "ok"
+_RUN_BUDGET_EXHAUSTED = "budget_exhausted"
+_RUN_FAILED = "run_failed"
+_RUN_NO_RESULT = "no_result"
+
+# Every arm's cap-hit termination value. ONE rule for all arms (pre-registered
+# decision rule 4): a turn-cap / wall-cap hit is a COMPLETED, COUNTED, FLAGGED
+# attempt, never an excluded run. The retracted run excluded a Claude row that
+# hit its turn cap AND PASSED the oracle, which silently improved its own
+# denominator; that is the failure this constant exists to prevent.
+_BUDGET_TERMINATIONS = frozenset(
+    {
+        "wall-clock-cap",  # every arm
+        "tick-cap",  # factory: ran out of orchestrator ticks
+        "step-cap",  # bare: ran out of shell turns
+        "iteration-cap",  # openhands
+        "turn-cap",  # claude
+    }
+)
+
+# Pre-1.6 rows recorded the cap hit ONLY as this substring inside ``error``.
+# Recognising it keeps the one rule applicable to the already-archived
+# evidence, which is the only way the retracted run can be re-read honestly.
+_BUDGET_ERROR_MARK = "wall-clock cap"
+
+# Terminations that mean something BROKE. A run that stopped here is a failure
+# even if it happens to have used its last step, so the step-count heuristic
+# below must not fire for it.
+_ERROR_TERMINATIONS = frozenset({"error", "model-call-error", "agent-error"})
+
+
+def budget_exhausted_reason(result: dict[str, Any]) -> str | None:
+    """Why this run ran out of budget, or ``None`` if it did not.
+
+    Derived, not trusted. ``termination`` is authoritative; the ``error``
+    substring and the step count are fallbacks for rows written before
+    ``termination`` carried a cap value — which is what lets the retracted run's
+    archive be re-read under the new rule instead of being taken on faith.
+
+    The step count matters for a real, measured case: the Claude row for
+    ``harumiweb__exstruct-113`` recorded ``num_turns 61`` against
+    ``turn_cap 60`` and ``error: "claude CLI exited 1: "`` (empty stderr). That
+    is the CLI stopping AT its cap, and the retracted report read it as a
+    crashed run — dropping a row that had PASSED the oracle out of both
+    numerator and denominator.
+    """
+    term = str(result.get("termination") or "")
+    if term in _BUDGET_TERMINATIONS:
+        return f"{term} ({result.get('wall_clock_s')}s wall)"
+    err = str(result.get("error") or "")
+    if _BUDGET_ERROR_MARK in err:
+        return err
+    if term in _ERROR_TERMINATIONS:
+        return None
+    used = result.get("steps_used", result.get("num_turns"))
+    cap = result.get("step_cap", result.get("turn_cap"))
+    if isinstance(used, int) and isinstance(cap, int) and cap > 0 and used >= cap:
+        return f"used all {cap} of its steps/turns ({used})"
+    return None
+
+
+def classify_run(
+    result: dict[str, Any] | None, *, rc: int | None = None
+) -> tuple[str, str | None]:
+    """``(status, detail)`` for one run. THE single source of that verdict.
+
+    Order matters and is fail-closed in the direction that keeps evidence
+    VISIBLE — a flagged, counted row is safer than a silently dropped one,
+    because a dropped row moves a published denominator:
+
+    1. no readable ``result.json`` -> ``no_result`` (nothing to report at all);
+    2. a plumbing PROBE -> ``run_failed``, always: it called no model and must
+       never reach a rate, whatever else its fields say;
+    3. any budget cap hit -> ``budget_exhausted``: a COUNTED attempt, flagged,
+       with any recorded error text carried along rather than discarded;
+    4. a recorded ``error`` -> ``run_failed``;
+    5. a non-zero child exit code -> ``run_failed`` (the child died after
+       writing an otherwise clean result);
+    6. otherwise ``ok``.
+
+    ``rc`` is optional because ``report`` reads archived rows with no child
+    process to ask.
+    """
+    if not isinstance(result, dict) or not result:
+        # A child that also exited non-zero gets the more informative verdict:
+        # the caller has the exit code and the log tail, which "no result" does
+        # not convey. Both are failures either way.
+        if rc is not None and rc != 0:
+            return _RUN_FAILED, f"run exited {rc} and wrote no readable result.json"
+        return _RUN_NO_RESULT, "run wrote no readable result.json"
+    err = str(result.get("error") or "")
+    if result.get("probe_plumbing") or err.startswith("PLUMBING PROBE"):
+        return _RUN_FAILED, err or "plumbing probe — not a measurement"
+    budget = budget_exhausted_reason(result)
+    if budget is not None:
+        return _RUN_BUDGET_EXHAUSTED, (
+            f"{budget}; recorded error: {err}" if err else budget
+        )
+    if err:
+        return _RUN_FAILED, err
+    if rc is not None and rc != 0:
+        return _RUN_FAILED, f"run exited {rc}"
+    return _RUN_OK, None
+
+
+def _read_result(run_dir: Path) -> dict[str, Any] | None:
+    """This run's ``result.json``, or ``None`` when it is absent or unreadable."""
+    try:
+        data = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _reset_run_artifacts(run_dir: Path) -> None:
@@ -1373,7 +1559,14 @@ def _reset_run_artifacts(run_dir: Path) -> None:
     totals (the factory arm's ``root/`` is already rebuilt by
     ``_build_bench_root``). A crashed run therefore leaves NO result.json,
     which ``audit`` treats as a failure — fail safe, never a stale pass.
+
+    ONE file is deliberately exempt and is BUMPED here instead: ``attempt.json``
+    (see ``_bump_attempt``). Every run function calls this at its top before any
+    exit path — a contract an existing AST test enforces — which makes this the
+    only hook guaranteed to fire exactly once per attempt, including the
+    attempts that die early.
     """
+    _bump_attempt(run_dir)
     for name in (
         "prediction.diff",
         "raw.diff",
@@ -1618,6 +1811,41 @@ def _prepare_cloned_tree(
 # red-green feedback loop the factory's thesis rests on, while factory and
 # claude were told to build it. A prompt asymmetry on the control arm
 # invalidates the comparison, not just the arm.
+# The base-suite warning — EVERY arm receives this, byte-identical.
+#
+# It exists because the test command every arm gates DONE on CANNOT FAIL for
+# this task: it targets the fail_to_pass FILES at base_commit, i.e. before the
+# withheld gold test patch adds the tests that encode the required behaviour.
+# Measured over the 19 pinned rebench instances: 3 target a file that does not
+# exist at base, 11 more contain ZERO of the fail_to_pass test functions, and
+# the remaining 5 contain them asserting the OLD behaviour. So "N passed" is
+# the default state of the tree and says nothing. Three confirmed consequences:
+# conan-19735 ran a `sed` that matched nothing, saw "28 passed", and replied
+# DONE at step 6 with a 0-byte diff; nicegui-5858 the same;
+# ucfopen__canvasapi-716 wrote a CORRECT fix, saw the pre-existing test assert
+# the old behaviour and fail, restored the original file out of the docker
+# image ("the tests are designed for the original implementation") and declared
+# DONE with a 0-byte diff.
+#
+# #223 fixed this for the BARE arm only, deliberately, to keep the other arms'
+# prompt bytes stable and avoid confounding two axes at once, and left an
+# operator to-do saying it had to reach every arm before any run could be
+# published as "matched prompt". That is now discharged: the operator's decision
+# (2026-08-03) is to apply it identically everywhere, so the parity claim is
+# actually true. The five-arm re-run is therefore a FRESH BASELINE, not a
+# before/after against the retracted run: every arm's prompt changed.
+#
+# Appended to `_STORY_TEMPLATE` (factory, openhands, claude) and to `_BARE_TASK`
+# (bare) — one string, four arms, no privileged wording.
+_BASE_TESTS_NOTE = """\
+Read this before you trust a green run: the tests that command selects ALREADY
+PASS in this checkout, unchanged, and they do NOT cover the task above. A
+"passed" line from them is the state of the tree you were handed, not evidence
+of anything you did. They are a regression check only. The behaviour the hidden
+suite judges is not asserted anywhere in this tree yet — the test that proves
+it is a test YOU write.
+"""
+
 _TEST_POLICY = """\
 Work exactly as you normally do: write tests that express the required
 behaviour, then make them pass. A separate held-out test suite, written by the
@@ -1660,7 +1888,9 @@ tests YOUR edits:
 ```
 {test_command}
 ```
+
 """
+    + _BASE_TESTS_NOTE
 )
 
 
@@ -2353,36 +2583,6 @@ Rules:
     + "\n"
 )
 
-# The base-suite warning. It exists because the test command every arm gates
-# DONE on CANNOT FAIL for this task: it targets the fail_to_pass FILES at
-# base_commit, i.e. before the withheld gold test patch adds the tests that
-# encode the required behaviour. Measured over the 19 pinned rebench
-# instances: 3 target a file that does not exist at base, 11 more contain ZERO
-# of the fail_to_pass test functions, and the remaining 5 contain them
-# asserting the OLD behaviour. So "N passed" is the default state of the tree
-# and says nothing. Three confirmed consequences: conan-19735 ran a `sed` that
-# matched nothing, saw "28 passed", and replied DONE at step 6 with a 0-byte
-# diff; nicegui-5858 the same; ucfopen__canvasapi-716 wrote a CORRECT fix, saw
-# the pre-existing test assert the old behaviour and fail, restored the
-# original file out of the docker image ("the tests are designed for the
-# original implementation") and declared DONE with a 0-byte diff.
-#
-# TODO(operator): this defect is IDENTICAL for the factory and claude prompts
-# (both render ``_STORY_TEMPLATE``, which carries the same unqualified "run
-# this command" instruction). It is fixed for bare ONLY in this PR so the
-# factory/claude prompt text stays byte-stable and the re-run is not
-# confounded on two axes at once. Lift this paragraph into ``_TEST_POLICY`` —
-# i.e. give it to all three arms — before any run is published as
-# "matched prompt".
-_BARE_BASE_TESTS_NOTE = """\
-Read this before you trust a green run: the tests that command selects ALREADY
-PASS in this checkout, unchanged, and they do NOT cover the task above. A
-"passed" line from them is the state of the tree you were handed, not evidence
-of anything you did. They are a regression check only. The behaviour the hidden
-suite judges is not asserted anywhere in this tree yet — the test that proves
-it is a test YOU write.
-"""
-
 _BARE_STEP_CAP = 40
 _BARE_OUTPUT_CAP = 4000
 _FACTORY_STEP_DEFAULT = 16
@@ -2420,7 +2620,7 @@ it to check your fix before replying DONE:
 {test_command}
 
 """
-    + _BARE_BASE_TESTS_NOTE
+    + _BASE_TESTS_NOTE
 )
 
 
@@ -2430,22 +2630,19 @@ def _resolve_max_steps(arm: str, requested: int | None) -> int:
     The ONE place per-arm budgets resolve — the units differ per arm: a
     factory "step" is one orchestrator tick (a whole dev/review/gate pass),
     a bare "step" is ONE shell command, a claude "step" is one CLI turn
-    (``--max-turns``). All 19 bare runs of the first rebench sweep inherited
-    the factory's default of 16 while ``_BARE_STEP_CAP`` sat unused, so the
-    bare arm ran at less than half its intended budget. Bare now defaults to
-    its cap, claude to its turn cap; the factory keeps its 16 ticks.
+    (``--max-turns``), an openhands "step" is one agent iteration. All 19 bare
+    runs of the first rebench sweep inherited the factory's default of 16 while
+    ``_BARE_STEP_CAP`` sat unused, so the bare arm ran at less than half its
+    intended budget.
+
+    Reads ``_ARMS`` and FAILS LOUD on an unknown arm. The old if-chain ended in
+    ``return _FACTORY_STEP_DEFAULT``, so any name it did not enumerate silently
+    got 16 — which for the Claude CLI is 16 turns instead of 60, i.e. a
+    quarter of the pre-registered budget, reported as if it were the budget.
     """
     if requested is not None:
         return requested
-    if arm == "bare":
-        return _BARE_STEP_CAP
-    if arm == "claude":
-        return _CLAUDE_TURN_CAP
-    if arm == "openhands":
-        # One OpenHands agent iteration — the same unit, and the same number,
-        # as the factory dev's own per-attempt cap.
-        return _OPENHANDS_ITERATION_CAP
-    return _FACTORY_STEP_DEFAULT
+    return arm_spec(arm).max_steps
 
 
 # The file a plumbing probe writes so the run has a real, non-test production
@@ -3055,13 +3252,28 @@ def _until_fabrication(lines: list[str]) -> str | None:
 
 
 # --------------------------------------------------------------------------- #
-# claude arm — the local Claude Code CLI, headless and hermetic
+# the arm registry — ONE table, every arm, every per-arm budget and guard
 # --------------------------------------------------------------------------- #
+#
+# Why a registry and not four `if arm == ...` chains. Adding the fifth arm
+# (the Claude CLI a second time, on an older-cutoff model) touched, in the old
+# shape: `_ARM_NAMES`, three separate argparse `choices=`, `_resolve_max_steps`,
+# `_DEFAULT_COST_USD`, `_DEFAULT_HOURS` and `_ARM_TRAJECTORY_EXPECTATION` — six
+# places, three of which FELL BACK SILENTLY on an unknown key. A new arm
+# silently inheriting the factory's 16-tick cap and a wrong cost guard is
+# exactly how a sweep produces a table nobody can interpret. Every lookup below
+# is fail-loud, and the argparse choices are derived, so registering an arm is
+# a one-entry change.
 
-# Every arm this harness knows. The oracle-probe scanner derives "which
-# sibling run dirs carry hidden test ids" from this — hardcoding one other
-# arm broke the moment a third arm existed.
-_ARM_NAMES = ("factory", "bare", "claude", "openhands")
+# The factory dev's own per-attempt iteration budget (``sandbox_run``'s
+# signature default; ``dev`` is deliberately NOT in
+# ``factory.runner.PERSONA_ITERATION_CAPS``). Matching it exactly is the point:
+# the openhands arm must be the factory's dev agent MINUS the chain, so its
+# inner budget cannot be the thing that explains a difference. The factory arm
+# may open up to three such conversations across its 16 ticks; in practice the
+# shared 5400 s wall clock binds first for both (measured factory wall clocks:
+# 98-3400 s).
+_OPENHANDS_ITERATION_CAP = 600
 
 # Pinned EXPLICITLY (the operator wants the models named). Discovered
 # 2026-08-02 by running the CLI (v2.1.220) with no --model: the default
@@ -3072,6 +3284,12 @@ _ARM_NAMES = ("factory", "bare", "claude", "openhands")
 # not this constant's claim.
 _CLAUDE_MODEL = "claude-opus-5"
 
+# The contamination probe's twin: the SAME CLI, the same flags, an older
+# published cutoff (2026-01-31 vs 2026-05-31). Every pinned instance predates
+# opus-5's cutoff, so a gap favouring opus-5 on the low-margin rows is the
+# memorization signal.
+_CLAUDE_MODEL_OLD = "claude-opus-4-8"
+
 # Generous but bounded (CLAUDE.md: nothing loops without a cap). ``--max-turns``
 # is accepted by CLI 2.1.220 (hidden from --help but validated: an unknown
 # option fails argv parsing immediately, this one does not). The wall clock is
@@ -3079,6 +3297,235 @@ _CLAUDE_MODEL = "claude-opus-5"
 _CLAUDE_TURN_CAP = 60
 
 _CLAUDE_TRANSCRIPT_NAME = "claude-transcript.ndjson"
+
+# Cost-column provenance, printed per arm in the report. The two are NOT
+# comparable and must never be summed: the Azure arms' dollars are derived from
+# a price table over measured tokens, the Claude arms' are the CLI's own report
+# against a subscription.
+_COST_PRICE_TABLE = "price-table estimate"
+_COST_CLI_SUBSCRIPTION = "CLI-reported, subscription"
+
+_TRAJECTORIES_PER_DEV_CALL = "per-call"
+_TRAJECTORIES_AT_LEAST_ONE = "at-least-one"
+_TRAJECTORIES_NONE_EXPECTED = "none"
+_TRAJECTORIES_TRANSCRIPT = "transcript"
+
+
+class ArmSpec(NamedTuple):
+    """Everything the harness needs to know about one arm.
+
+    ``harness`` and ``model`` are BOTH load-bearing: an arm is a (harness,
+    model set) pair, and no number from this bench may be quoted with either
+    half omitted (see ``bench/swebench/PRE-REGISTRATION-1.6.md``). The report
+    prints both inline on every headline row for exactly that reason.
+    """
+
+    name: str  # the id passed to --arm, and the run-dir name
+    base: str  # which runner family: factory | bare | claude | openhands
+    harness: str  # human label, printed in the report's headline table
+    harness_id: str  # comparisons key: same id => the harness is held constant
+    model: str | None  # the arm's nominal model; None => resolved from routes
+    model_selectable: bool  # may --model override it?
+    max_steps: int  # the arm's own step/tick/turn/iteration budget
+    step_unit: str  # what one "step" IS for this arm (units differ per arm)
+    default_cost_usd: float  # spend-guard fallback with no measured runs
+    default_hours: float
+    trajectories: str  # _TRAJECTORIES_*
+    cost_source: str  # _COST_*
+    has_chain: bool  # can this arm produce a chain verdict at all?
+
+
+def _arm(**kw: Any) -> ArmSpec:
+    return ArmSpec(**kw)
+
+
+_ARMS: dict[str, ArmSpec] = {
+    "factory": _arm(
+        name="factory",
+        base="factory",
+        harness="software-factory chain on OpenHands",
+        harness_id="software-factory",
+        model=None,  # routes.yaml resolves dev/standard; the LEDGER is the record
+        model_selectable=False,
+        max_steps=_FACTORY_STEP_DEFAULT,
+        step_unit="orchestrator ticks",
+        default_cost_usd=3.00,
+        default_hours=0.05,
+        trajectories=_TRAJECTORIES_PER_DEV_CALL,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+    ),
+    "openhands": _arm(
+        name="openhands",
+        base="openhands",
+        harness="OpenHands single agent, no chain",
+        harness_id="openhands",
+        model=None,  # the factory dev's own deployment, from routes.yaml
+        model_selectable=False,
+        max_steps=_OPENHANDS_ITERATION_CAP,
+        step_unit="agent iterations",
+        # NOT the bare arm's $1.00: it runs the same deployment with the same
+        # real tool loop the factory's dev uses, so its token profile is a dev
+        # attempt's, not a 40-turn shell loop's.
+        default_cost_usd=3.00,
+        default_hours=0.05,
+        trajectories=_TRAJECTORIES_AT_LEAST_ONE,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=False,
+    ),
+    "bare": _arm(
+        name="bare",
+        base="bare",
+        harness="hand-rolled text loop, no tool calls",
+        harness_id="bare-loop",
+        model=None,
+        model_selectable=False,
+        max_steps=_BARE_STEP_CAP,
+        step_unit="shell turns",
+        default_cost_usd=1.00,
+        default_hours=0.05,
+        trajectories=_TRAJECTORIES_NONE_EXPECTED,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=False,
+    ),
+    # THREE claude entries, one runner. `claude` is the back-compatible name
+    # (default model unchanged); `claude-5` and `claude-4.8` are the
+    # pre-registered five-arm ids, so the sweep needs no --model at all and the
+    # two runs land in DIFFERENT run dirs by construction.
+    "claude": _arm(
+        name="claude",
+        base="claude",
+        harness="Claude Code CLI",
+        harness_id="claude-code",
+        model=_CLAUDE_MODEL,
+        model_selectable=True,
+        max_steps=_CLAUDE_TURN_CAP,
+        step_unit="CLI turns",
+        default_cost_usd=3.00,
+        default_hours=0.05,
+        trajectories=_TRAJECTORIES_TRANSCRIPT,
+        cost_source=_COST_CLI_SUBSCRIPTION,
+        has_chain=False,
+    ),
+    "claude-5": _arm(
+        name="claude-5",
+        base="claude",
+        harness="Claude Code CLI",
+        harness_id="claude-code",
+        model=_CLAUDE_MODEL,
+        model_selectable=True,
+        max_steps=_CLAUDE_TURN_CAP,
+        step_unit="CLI turns",
+        default_cost_usd=3.00,
+        default_hours=0.05,
+        trajectories=_TRAJECTORIES_TRANSCRIPT,
+        cost_source=_COST_CLI_SUBSCRIPTION,
+        has_chain=False,
+    ),
+    "claude-4.8": _arm(
+        name="claude-4.8",
+        base="claude",
+        harness="Claude Code CLI",
+        harness_id="claude-code",
+        model=_CLAUDE_MODEL_OLD,
+        model_selectable=True,
+        max_steps=_CLAUDE_TURN_CAP,
+        step_unit="CLI turns",
+        default_cost_usd=3.00,
+        default_hours=0.05,
+        trajectories=_TRAJECTORIES_TRANSCRIPT,
+        cost_source=_COST_CLI_SUBSCRIPTION,
+        has_chain=False,
+    ),
+}
+
+# Every arm this harness knows, derived — the oracle-probe scanner and all
+# three argparse `choices=` read this, so a registry entry is the only edit
+# needed to add an arm.
+_ARM_NAMES = tuple(_ARMS)
+
+# Separates an arm id from a NON-default model in a run key. Chosen over ``-``
+# so the claude-prefix recognition in ``_is_claude_arm`` keeps working, and
+# over ``/`` because a run key is a single directory name.
+_ARM_MODEL_SEP = "@"
+
+
+def _split_run_key(key: str) -> tuple[str, str | None]:
+    """``"claude@claude-opus-4-8"`` -> ``("claude", "claude-opus-4-8")``.
+
+    A key with no separator is a bare arm id and carries no model override.
+    """
+    arm, sep, model = key.partition(_ARM_MODEL_SEP)
+    return arm, (model or None) if sep else None
+
+
+def arm_spec(arm: str) -> ArmSpec:
+    """The registry entry for an arm id or a run key. FAIL LOUD on unknown.
+
+    The three lookups this replaces (`_resolve_max_steps`, `_DEFAULT_COST_USD`,
+    `_DEFAULT_HOURS`) all fell back silently, so a typo'd or newly added arm
+    inherited the factory's tick cap and a wrong cost guard and produced a row
+    nobody could interpret. An unknown arm is a configuration error, not a
+    default.
+    """
+    base, _model = _split_run_key(arm)
+    try:
+        return _ARMS[base]
+    except KeyError:
+        raise SystemExit(
+            f"unknown arm {arm!r}. Registered arms: {', '.join(sorted(_ARMS))}. "
+            "Add an entry to _ARMS (one place) rather than special-casing a "
+            "name — every per-arm budget, cost guard and gate reads that table."
+        ) from None
+
+
+def resolve_arm_model(arm: str, model: str | None = None) -> str | None:
+    """The model id this (arm, --model) pair will actually run.
+
+    ``None`` means "this arm resolves its own weights from ``routes.yaml``" —
+    the factory/openhands/bare arms, whose real mix is measured from the
+    per-run ledger (``_model_mix``), never claimed by a constant here.
+    """
+    spec = arm_spec(arm)
+    _base, keyed = _split_run_key(arm)
+    requested = model or keyed
+    if requested is None:
+        return spec.model
+    if not spec.model_selectable:
+        raise SystemExit(
+            f"--model is not accepted for --arm {arm}: this arm resolves its "
+            "weights from routes.yaml, and pinning one here would report a "
+            "model the run did not necessarily use. Change routes.yaml instead."
+        )
+    return requested
+
+
+def run_key(arm: str, model: str | None = None) -> str:
+    """The per-(instance, arm, MODEL) key: run dir, report row and sweep row.
+
+    SILENT DATA LOSS this closes: the key used to be ``(instance, arm)``, so the
+    two pre-registered Claude runs — same CLI, ``claude-opus-5`` and
+    ``claude-opus-4-8`` — resolved to the SAME ``runs/<instance>/claude``
+    directory. The second run's ``_reset_run_artifacts`` would delete the
+    first's ``result.json``, ``prediction.diff`` and transcript, and the report
+    would show one row where two runs happened. Nothing anywhere would have
+    said a measurement had been destroyed.
+
+    The default model keeps the plain arm id, so ``claude-5``/``claude-4.8``
+    (and every existing archive) are unchanged; only an explicit off-default
+    ``--model`` appends ``@<model>``.
+    """
+    spec = arm_spec(arm)
+    base, _keyed = _split_run_key(arm)
+    resolved = resolve_arm_model(arm, model)
+    if resolved is None or resolved == spec.model:
+        return base
+    return f"{base}{_ARM_MODEL_SEP}{resolved}"
+
+
+# --------------------------------------------------------------------------- #
+# claude arm — the local Claude Code CLI, headless and hermetic
+# --------------------------------------------------------------------------- #
 
 # Appended AFTER the shared story template. Mirrors the bare arm's "You cannot
 # access the network" rule — for this arm it is the contamination control in
@@ -3261,7 +3708,15 @@ def _claude_usage_totals(result_ev: dict[str, Any]) -> dict[str, int] | None:
     }
 
 
-def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
+def run_claude(
+    instance_id: str,
+    *,
+    max_steps: int,
+    timeout_s: int,
+    arm: str = "claude",
+    model: str | None = None,
+    probe: bool = False,
+) -> None:
     """Drive the LOCAL Claude Code CLI, headless, over one instance.
 
     The third arm: factory (harnessed cheap models) vs bare (same weights, no
@@ -3280,30 +3735,48 @@ def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     Spend: bills the operator's Anthropic subscription/API — NOT the Azure
     ledger, and invisible to the factory's own spend enforcer. cost/tokens are
     the CLI's own report (``cost_source: "claude-cli-reported"``).
+
+    ``probe=True`` (``--probe-plumbing``) does everything except SPAWN the CLI:
+    the clone, the install replay, the collect precheck, the prompt assembly,
+    the hermetic argv, the CLI version probe, the run-dir key, then a real
+    non-test file change so the diff/split/assert/write path runs end to end.
+    It costs nothing, and the row it writes carries a recorded ``error`` so no
+    rate can absorb it. Without it the only free-ish check on these arms was a
+    one-turn CLI call, which is still a subscription call.
     """
     entered = time.monotonic()
     inst = _instance(instance_id)
     # A run the store cannot grade is a write-off — refuse before any spend.
     _assert_oracle_store_complete([inst])
-    run_dir = _run_dir(instance_id, "claude")
+    # (instance, arm, MODEL) — never (instance, arm). The two pre-registered
+    # Claude runs are the SAME arm on two models; a model-blind key made the
+    # second overwrite the first (see `run_key`).
+    resolved_model = resolve_arm_model(arm, model)
+    assert resolved_model is not None  # the claude arms always name a model
+    key = run_key(arm, model)
+    run_dir = _run_dir(instance_id, key)
     # BEFORE any exit path: a stale prediction/transcript must never outlive
     # the run that produced it.
     _reset_run_artifacts(run_dir)
     base: dict[str, Any] = {
-        "arm": "claude",
+        "arm": key,
+        "arm_base": arm_spec(arm).base,
         "instance_id": instance_id,
         "repo": inst["repo"],
         "base_commit": inst["base_commit"],
         "problem_statement_sha256": inst["problem_statement_sha256"],
         "manifest_sha256": _manifest()["manifest_sha256"],
-        "model": _CLAUDE_MODEL,
+        # The model this run was POINTED at. What the CLI actually reports lands
+        # in ``model_reported`` / ``models_observed`` below; the report reads
+        # those, never this.
+        "model": resolved_model,
         "claude_cli_version": _claude_cli_version(),
     }
 
     def _fail(error: str, **extra: Any) -> None:
         _write_result(
             instance_id,
-            "claude",
+            key,
             {
                 **base,
                 "ts": datetime.now(UTC).isoformat(),
@@ -3327,7 +3800,7 @@ def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     # OUTSIDE the repo: the CLI's cwd is this tree, and as
     # `runs/<id>/claude/repo` it was three `..` from the oracle store and from
     # every other arm's grade log.
-    repo = _work_dir(instance_id, "claude", fresh=True) / "repo"
+    repo = _work_dir(instance_id, key, fresh=True) / "repo"
     assert_workspace_isolated(repo)
     _clone(inst, repo)
     # Same topology as the other arms: replay the dataset's install/build step
@@ -3348,41 +3821,69 @@ def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
 
     prompt = _claude_task_prompt(inst, repo)
     turns = min(max_steps, _CLAUDE_TURN_CAP)
-    argv = _claude_cli_argv(prompt, model=_CLAUDE_MODEL, max_turns=turns)
+    argv = _claude_cli_argv(prompt, model=resolved_model, max_turns=turns)
     transcript_path = run_dir / _CLAUDE_TRANSCRIPT_NAME
     error: str | None = None
+    termination: str | None = None
     stderr_text = ""
     rc: int | None = None
     started = time.monotonic()
-    try:
-        with transcript_path.open("w", encoding="utf-8") as out_fh:
-            proc = subprocess.Popen(  # noqa: S603
-                argv,
-                cwd=str(repo),
-                env=_claude_child_env(),
-                stdin=subprocess.DEVNULL,
-                stdout=out_fh,  # streamed to disk AS produced — a kill loses nothing
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,  # own process group, so the kill reaches tool children
-            )
-            try:
-                _, stderr_text = proc.communicate(timeout=timeout_s)
-            except subprocess.TimeoutExpired:
-                _kill_tree(proc)
-                _, stderr_text = proc.communicate()
-                error = f"wall-clock cap {timeout_s}s hit; partial work is still graded"
-            rc = proc.returncode
-    except OSError as exc:  # CLI not installed / not spawnable
-        error = f"claude CLI could not run: {type(exc).__name__}: {exc}"
+    if probe:
+        # Everything up to here was REAL — clone, install replay, collect
+        # precheck, prompt, hermetic argv, CLI version. Only the spawn is
+        # skipped, and a real non-test file change follows so diff capture,
+        # split_diff, assert_no_test_edits and result.json all run.
+        assert argv and argv[0], "the hermetic argv must still be constructed"
+        (repo / _PROBE_FILE).write_text(
+            "# swebench plumbing probe\n", encoding="utf-8"
+        )
+        transcript_path.write_text("", encoding="utf-8")
+        termination = "plumbing-probe"
+        rc = 0
+    else:
+        try:
+            with transcript_path.open("w", encoding="utf-8") as out_fh:
+                proc = subprocess.Popen(  # noqa: S603
+                    argv,
+                    cwd=str(repo),
+                    env=_claude_child_env(),
+                    stdin=subprocess.DEVNULL,
+                    stdout=out_fh,  # streamed to disk AS produced — a kill loses nothing
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=True,  # own process group, so the kill reaches tool children
+                )
+                try:
+                    _, stderr_text = proc.communicate(timeout=timeout_s)
+                except subprocess.TimeoutExpired:
+                    _kill_tree(proc)
+                    _, stderr_text = proc.communicate()
+                    error = (
+                        f"wall-clock cap {timeout_s}s hit; partial work is still graded"
+                    )
+                    termination = "wall-clock-cap"
+                rc = proc.returncode
+        except OSError as exc:  # CLI not installed / not spawnable
+            error = f"claude CLI could not run: {type(exc).__name__}: {exc}"
     if stderr_text.strip():
         (run_dir / "claude-stderr.log").write_text(stderr_text, encoding="utf-8")
-    if error is None and rc != 0:
-        error = f"claude CLI exited {rc}: {stderr_text.strip()[-400:]}"
 
     init_ev, result_ev, fallback = _parse_claude_transcript(transcript_path)
+    # THE TURN CAP IS NOT A CRASH. The CLI exits 1 with empty stderr when it
+    # stops at ``--max-turns``, and recording that as a generic error made the
+    # retracted run DROP a row that had passed the oracle — improving its own
+    # denominator. Recorded as a budget termination instead: a completed,
+    # counted, flagged attempt, the same rule every other arm gets.
+    used_turns = int(result_ev.get("num_turns") or 0)
+    if termination is None and used_turns >= turns > 0:
+        termination = "turn-cap"
+    elif error is None and rc != 0:
+        error = f"claude CLI exited {rc}: {stderr_text.strip()[-400:]}"
     totals = _claude_usage_totals(result_ev)
-    if totals is not None:
+    if probe:
+        totals, cost = {"tokens_in": 0, "tokens_out": 0, "cache_read": 0}, 0.0
+        cost_source = "none — plumbing probe, no CLI call"
+    elif totals is not None:
         cost = float(result_ev.get("total_cost_usd") or 0.0)
         cost_source = "claude-cli-reported"
     else:
@@ -3412,8 +3913,16 @@ def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     assert_no_test_edits(code_diff)
     (run_dir / "prediction.diff").write_text(code_diff, encoding="utf-8")
 
+    if probe:
+        # FAIL-CLOSED, exactly like the bare/openhands probe rows: `report`
+        # buckets this as a failed run (`classify_run` refuses a probe row
+        # before it looks at anything else) and `estimate_instance_cost` will
+        # not sample it.
+        error = _PROBE_ERROR
+
     result = {
         **base,
+        "probe_plumbing": probe,
         # The CLI's OWN account of what ran — recorded from the transcript,
         # never assumed from this file's constants.
         "model_reported": init_ev.get("model"),
@@ -3424,13 +3933,9 @@ def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "ts": datetime.now(UTC).isoformat(),
         "wall_clock_s": round(time.monotonic() - entered, 1),
         "agent_wall_s": round(time.monotonic() - started, 1),
-        "num_turns": int(result_ev.get("num_turns") or 0),
+        "num_turns": used_turns,
         "turn_cap": turns,
-        "termination": (
-            "wall-clock-cap"
-            if error and "wall-clock cap" in error
-            else ("error" if error else "cli-finished")
-        ),
+        "termination": termination or ("error" if error else "cli-finished"),
         "trajectory": _CLAUDE_TRANSCRIPT_NAME,
         "tokens_in": totals["tokens_in"],
         "tokens_out": totals["tokens_out"],
@@ -3461,22 +3966,13 @@ def run_claude(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "refused_paths": refused,
         "diff_bytes": len(code_diff),
     }
-    out = _write_result(instance_id, "claude", result)
+    out = _write_result(instance_id, key, result)
     _print_run_summary(result, out)
 
 
 # --------------------------------------------------------------------------- #
 # openhands arm — a single competent agent loop, no chain
 # --------------------------------------------------------------------------- #
-
-# The factory dev's own per-attempt iteration budget (``sandbox_run``'s
-# signature default; ``dev`` is deliberately NOT in
-# ``factory.runner.PERSONA_ITERATION_CAPS``). Matching it exactly is the point:
-# this arm must be the factory's dev agent MINUS the chain, so its inner budget
-# cannot be the thing that explains a difference. The factory arm may open up to
-# three such conversations across its 16 ticks; in practice the shared 5400 s
-# wall clock binds first for both (measured factory wall clocks: 98-3400 s).
-_OPENHANDS_ITERATION_CAP = 600
 
 
 def _azure_llm_env(model_id: str) -> tuple[str | None, str | None]:
@@ -5044,8 +5540,17 @@ def _is_claude_arm(arm: str) -> bool:
     claude-specific certification (the transcript scan, the missing-transcript
     failure, the ledger path) would be SKIPPED rather than applied. Prefix
     matching keeps those checks attached, which is the fail-closed direction.
+
+    Now ALSO registry-backed, because a run key may carry an off-default model
+    (``claude@claude-opus-4-8``), which no ``claude-`` prefix test matches. The
+    registry answers first; the prefix rule stays as the fallback so an arm
+    name nobody registered still fails closed rather than skipping the checks.
     """
-    return arm == "claude" or arm.startswith("claude-")
+    base, _model = _split_run_key(arm)
+    spec = _ARMS.get(base)
+    if spec is not None:
+        return spec.base == "claude"
+    return base == "claude" or base.startswith("claude-")
 
 
 def _network_probe_hits(line: str, own_repo: str | None) -> list[str]:
@@ -5661,6 +6166,10 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
         "refused_paths": result.get("refused_paths") or [],
         "trajectories_scanned": trajectories_scanned,
         "trails_scanned": trails_scanned,
+        # Recorded SEPARATELY from ``failures`` so the report can print an
+        # oracle-probe count per arm without pattern-matching prose. A blank
+        # column in the provenance table is a bug, not a result.
+        "oracle_probe_failures": probe_failures,
     }
     out = run_dir / "audit.json"
     out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -5701,13 +6210,11 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
 #               warning that matters.
 #   claude    — never reaches this function (transcript-backed, see
 #               `_audit_claude_run`).
-_TRAJECTORIES_PER_DEV_CALL = "per-call"
-_TRAJECTORIES_AT_LEAST_ONE = "at-least-one"
-_TRAJECTORIES_NONE_EXPECTED = "none"
+# Derived from the one arm registry (``_ARMS``); kept as a name because the
+# expectation is a property of the arm, and a second hand-maintained table
+# would drift from it.
 _ARM_TRAJECTORY_EXPECTATION = {
-    "factory": _TRAJECTORIES_PER_DEV_CALL,
-    "openhands": _TRAJECTORIES_AT_LEAST_ONE,
-    "bare": _TRAJECTORIES_NONE_EXPECTED,
+    name: spec.trajectories for name, spec in _ARMS.items()
 }
 
 
@@ -5729,7 +6236,10 @@ def _trajectory_coverage_warnings(
     dev_calls = call_counts.get("dev", 0)
     if not dev_calls:
         return []
-    rule = _ARM_TRAJECTORY_EXPECTATION.get(arm, _TRAJECTORIES_PER_DEV_CALL)
+    base, _model = _split_run_key(arm)
+    rule = _ARM_TRAJECTORY_EXPECTATION.get(base, _TRAJECTORIES_PER_DEV_CALL)
+    if rule == _TRAJECTORIES_TRANSCRIPT:
+        return []  # certified by `_audit_claude_run` against the CLI transcript
     n = len(_trajectory_files(state_root))
     if rule == _TRAJECTORIES_NONE_EXPECTED:
         # Not "and never was" in the abstract: its trail must actually be there.
@@ -5893,12 +6403,193 @@ def _audit_factory_ledger(
 _ROW_ARTIFACTS = ("result.json", "audit.json", "prediction.diff")
 _REPORT_META_NAME = "report-meta.json"
 
+# Bumped when the archive gains a field the report reads. An older archive is
+# still re-derivable; the fields it never recorded print as an explicit
+# ``n/a (archive predates …)`` rather than as an empty cell that reads like a
+# measured zero.
+_REPORT_META_VERSION = "1.6"
 
-def _collect_report_rows(
+# Sweep roll-ups and the gold-patch control travel INTO the archive alongside
+# the per-row evidence. The retracted run's control rested on a summary that
+# could not be re-derived at all: `selftest.json` sat in the working tree and
+# was overwritten by the next selftest.
+_ARCHIVED_EXTRAS = ("selftest.json",)
+_ARCHIVED_LOG_DIRS = ("selftest-logs",)
+
+# An OPTIONAL operator-written file inside an archive. Its contents are emitted
+# verbatim at the top of any table re-derived from that archive.
+#
+# It exists so a run can be marked retracted WITHOUT editing the evidence: the
+# rows, the audits and the original ``report-meta.json`` stay byte-for-byte as
+# they were written, and the annotation is a new file beside them. Rewriting an
+# archive to change what a published number says about itself is the failure
+# this whole PR is about.
+_DISCLAIMER_NAME = "DISCLAIMER.md"
+
+
+# --------------------------------------------------------------------------- #
+# contamination margins — one bound per model, with its TYPE
+# --------------------------------------------------------------------------- #
+
+
+class ModelBound(NamedTuple):
+    """The date after which an instance is outside a model's knowledge.
+
+    ``kind`` is load-bearing and printed: a published training cutoff and a
+    release date are not the same claim. ``deepseek-v4-pro`` publishes no
+    cutoff, so its bound is its RELEASE date — an upper bound on what it could
+    have memorised, and a weaker guarantee than a published cutoff.
+    """
+
+    date: str
+    kind: str
+
+
+_BOUND_PUBLISHED = "published-cutoff"
+_BOUND_RELEASE_PROXY = "release-date-proxy"
+
+_MODEL_BOUNDS: dict[str, ModelBound] = {
+    "deepseek-v4-pro": ModelBound("2026-04-24", _BOUND_RELEASE_PROXY),
+    "gpt-5.4": ModelBound("2025-08-31", _BOUND_PUBLISHED),
+    "gpt-5.3-codex": ModelBound("2025-08-31", _BOUND_PUBLISHED),
+    "claude-opus-5": ModelBound("2026-05-31", _BOUND_PUBLISHED),
+    "claude-opus-4-8": ModelBound("2026-01-31", _BOUND_PUBLISHED),
+}
+
+
+def _norm_model(model: str) -> str:
+    """``azure/claude-opus-5[1m]`` -> ``claude-opus-5``.
+
+    Provider prefixes and the CLI's context-variant suffix are packaging, not
+    weights, and the bound table is keyed by weights.
+    """
+    name = str(model).strip().rsplit("/", 1)[-1]
+    return re.sub(r"\[[^\]]*\]$", "", name).strip()
+
+
+def _model_bound(model: str) -> ModelBound | None:
+    return _MODEL_BOUNDS.get(_norm_model(model))
+
+
+def _margin_days(created_at: str | None, bound: ModelBound | None) -> int | None:
+    """Days from a model's bound to the instance's creation. Positive = AFTER.
+
+    A positive margin is the only kind of instance that can carry a clean
+    "this could not have been memorised" claim.
+    """
+    if not created_at or bound is None:
+        return None
+    try:
+        made = datetime.fromisoformat(str(created_at).replace(" ", "T"))
+        edge = datetime.fromisoformat(bound.date)
+    except ValueError:
+        return None
+    return (made.date() - edge.date()).days
+
+
+# --------------------------------------------------------------------------- #
+# exact statistics, in-repo — no new dependency
+# --------------------------------------------------------------------------- #
+#
+# n <= 19 here, so the exact forms are a few lines of `math.comb` and cost
+# nothing. Wilson/normal approximations at n=19 are wrong in exactly the
+# direction that flatters a small sample, and adding scipy to the bench for two
+# functions is not a trade this repo should make.
+
+
+def _binom_cdf(k: int, n: int, p: float) -> float:
+    """``P(X <= k)`` for ``X ~ Binomial(n, p)``."""
+    if k < 0:
+        return 0.0
+    if k >= n:
+        return 1.0
+    return sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k + 1))
+
+
+def _bisect_p(target: float, lo: float, hi: float, f: Any) -> float:
+    """Solve ``f(p) == target`` on ``[lo, hi]`` for a NON-INCREASING ``f``.
+
+    Both Clopper-Pearson bounds are expressed as binomial CDFs, which decrease
+    in ``p``, so one monotonicity direction covers both. (Written the other way
+    round it silently returned 1.0 for every lower bound — a confidence
+    interval that always contains the estimate is not a confidence interval.)
+    """
+    for _ in range(80):  # 2^-80 — far finer than anything printed
+        mid = (lo + hi) / 2
+        if f(mid) > target:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def clopper_pearson(k: int, n: int, alpha: float = 0.05) -> tuple[float, float]:
+    """Exact ``(lower, upper)`` binomial confidence bounds for ``k`` of ``n``.
+
+    Solved by bisection on the exact binomial CDF rather than a Beta quantile,
+    so it needs nothing outside the stdlib. Degenerate ends are exact: 0 of n
+    has a lower bound of 0, n of n an upper bound of 1.
+    """
+    if n <= 0:
+        return (0.0, 1.0)
+    k = max(0, min(k, n))
+    # Both bounds as decreasing CDFs of p:
+    #   lower solves P(X <= k-1 | p) = 1 - alpha/2
+    #   upper solves P(X <= k   | p) =     alpha/2
+    lower = (
+        0.0
+        if k == 0
+        else _bisect_p(1 - alpha / 2, 0.0, 1.0, lambda p: _binom_cdf(k - 1, n, p))
+    )
+    upper = 1.0 if k == n else _bisect_p(alpha / 2, 0.0, 1.0, lambda p: _binom_cdf(k, n, p))
+    return (lower, upper)
+
+
+def mcnemar_exact_p(b: int, c: int) -> float:
+    """Two-sided exact McNemar p for a discordant pair count ``(b, c)``.
+
+    The binomial sign test on the discordant pairs only — the concordant cells
+    carry no information about a difference. With no discordant pairs at all
+    there is nothing to test and the p-value is 1.
+    """
+    n = b + c
+    if n == 0:
+        return 1.0
+    k = min(b, c)
+    tail = float(sum(math.comb(n, i) for i in range(k + 1))) / float(2**n)
+    return min(1.0, 2.0 * tail)
+
+
+def _fmt_ci(k: int, n: int) -> str:
+    if n <= 0:
+        return "n/a (0 in denominator)"
+    lo, hi = clopper_pearson(k, n)
+    return f"[{lo:.0%}, {hi:.0%}]"
+
+
+def _fmt_p(p: float) -> str:
+    """A p-value that never rounds to a misleading ``0.000``."""
+    return f"{p:.3f}" if p >= 0.001 else "<0.001"
+
+
+def _fmt_rate(num: int, den: int) -> str:
+    return f"{num}/{den} = {num / den:.0%}" if den else "n/a (0 in denominator)"
+
+
+def _fmt_int(value: Any) -> str:
+    return f"{int(value):,}" if isinstance(value, (int, float)) else "?"
+
+
+# --------------------------------------------------------------------------- #
+# reading rows
+# --------------------------------------------------------------------------- #
+
+
+def _report_rows(
     base_dir: Path,
     expected_sha: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]], list[dict[str, str]]]:
-    """Read every ``<instance>/<arm>/result.json`` under ``base_dir``.
+    """Read every ``<instance>/<run-key>/result.json`` under ``base_dir``.
 
     Returns ``(rows, refused, foreign)``. FAIL-CLOSED: a row whose backing
     artifacts are missing or unreadable is never silently dropped and never
@@ -5915,13 +6606,19 @@ def _collect_report_rows(
     the old profile's rows into the new headline (executed probe: a Pro +
     rebench blended 100%). A row that records no sha at all is foreign too —
     unverifiable provenance is not this manifest's evidence.
+
+    The directory NAME under the instance is the row's run key — arm plus, for
+    a model-selectable arm on an off-default model, the model. The recorded
+    ``arm`` field must agree with it; a row whose two identities disagree is
+    refused rather than filed under either.
     """
     rows: list[dict[str, Any]] = []
     refused: list[dict[str, str]] = []
     foreign: list[dict[str, str]] = []
     for f in sorted(base_dir.glob("*/*/result.json")):
         run_dir = f.parent
-        row_id = f"{run_dir.parent.name}/{run_dir.name}"
+        key = run_dir.name
+        row_id = f"{run_dir.parent.name}/{key}"
         missing = [name for name in _ROW_ARTIFACTS if not (run_dir / name).is_file()]
         if missing:
             refused.append(
@@ -5935,6 +6632,15 @@ def _collect_report_rows(
             continue
         if not isinstance(r, dict):
             refused.append({"row": row_id, "why": "result.json is not a JSON object"})
+            continue
+        if str(r.get("arm") or "") != key:
+            refused.append(
+                {
+                    "row": row_id,
+                    "why": f"result.json records arm {r.get('arm')!r} but sits in "
+                    f"the {key!r} run directory — one run cannot be two arms",
+                }
+            )
             continue
         if expected_sha is not None:
             row_sha = str(r.get("manifest_sha256") or "")
@@ -5954,40 +6660,625 @@ def _collect_report_rows(
         # no longer reaches this point — the artifact check above refuses the
         # whole row, fail-closed, where the old code showed it as "not
         # audited".)
-        audit_path = run_dir / "audit.json"
+        audit: dict[str, Any] = {}
         audit_ok: bool | None = None
-        if audit_path.exists():
-            try:
-                audit_ok = json.loads(audit_path.read_text(encoding="utf-8")).get("ok") is True
-            except (json.JSONDecodeError, OSError, AttributeError):
+        try:
+            loaded = json.loads((run_dir / "audit.json").read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                audit = loaded
+                audit_ok = loaded.get("ok") is True
+            else:
                 audit_ok = False
+        except (json.JSONDecodeError, OSError):
+            audit_ok = False
+        r["_audit"] = audit
         r["_audit_ok"] = audit_ok
-        # Both run functions record ``error`` (None on a normal completion);
-        # an oracle pass from a run that failed is flagged, not counted.
-        r["_run_failed"] = bool(r.get("error"))
+        # ONE classifier, shared with the sweep roll-up — see ``classify_run``.
+        # ``_run_failed`` used to be ``bool(result["error"])`` here while the
+        # sweep used the child's exit code, and the two published different
+        # denominators for the same run.
+        status, detail = classify_run(r)
+        r["_status"] = status
+        r["_status_detail"] = detail
+        r["_run_failed"] = status in (_RUN_FAILED, _RUN_NO_RESULT)
+        r["_budget_exhausted"] = status == _RUN_BUDGET_EXHAUSTED
+        r["_arm"] = key
+        r["_attempt"] = int(r.get("attempt") or 1)
+        cache_read = int(r.get("cached_input_tokens") or 0)
+        r["_cache_read"] = cache_read
+        r["_fresh_in"] = max(int(r.get("tokens_in") or 0) - cache_read, 0)
         r["_run_dir"] = str(run_dir)
         rows.append(r)
     return rows, refused, foreign
 
 
+def _row_models(r: dict[str, Any]) -> list[str]:
+    """Which models this row's LEDGER says ran — never the config's intent.
+
+    The retracted run's config named one model while the ledger showed 7
+    escalations to a hard tier, 4 of them behind resolved rows. Config is
+    intent; the ledger is what happened.
+    """
+    used = r.get("models_used")
+    if isinstance(used, list) and used:
+        return sorted({str(m) for m in used})
+    nominal = r.get("model")
+    return [str(nominal)] if nominal else []
+
+
+def _nominal_model(rows: list[dict[str, Any]], arm: str) -> str | None:
+    """The model an arm CLAIMS, for the "does the model vary?" column.
+
+    Registry first (the claude arms pin theirs); otherwise the ``model`` field
+    the rows recorded, which for the factory/openhands arms is the dev/standard
+    route. ``None`` means no row recorded one — printed as such, never guessed.
+    """
+    spec = _ARMS.get(_split_run_key(arm)[0])
+    if spec is not None and spec.model:
+        return spec.model
+    seen = {str(r["model"]) for r in rows if r.get("model")}
+    return sorted(seen)[0] if len(seen) == 1 else None
+
+
+def _arm_label(arm: str) -> str:
+    spec = _ARMS.get(_split_run_key(arm)[0])
+    return spec.harness if spec is not None else f"(unregistered arm {arm})"
+
+
+def _arm_cost_source(arm: str) -> str:
+    spec = _ARMS.get(_split_run_key(arm)[0])
+    return spec.cost_source if spec is not None else "unknown"
+
+
+def _arm_has_chain(arm: str) -> bool:
+    spec = _ARMS.get(_split_run_key(arm)[0])
+    return bool(spec is not None and spec.has_chain)
+
+
+class ArmView(NamedTuple):
+    """One arm's rows, already bucketed by the audit + run gate.
+
+    ``valid`` is the denominator of every published rate: graded, not
+    task-broken, audit-ok, and either completed or BUDGET-EXHAUSTED. A cap hit
+    is a counted attempt for every arm (pre-registered decision rule 4) —
+    excluding one silently improved the retracted run's Claude denominator.
+    """
+
+    arm: str
+    rows: list[dict[str, Any]]
+    graded: list[dict[str, Any]]
+    gradable: list[dict[str, Any]]
+    valid: list[dict[str, Any]]
+    excluded: list[dict[str, Any]]
+    resolved: list[dict[str, Any]]
+
+
+def _arm_view(rows: list[dict[str, Any]], arm: str) -> ArmView:
+    arm_rows = [r for r in rows if r["_arm"] == arm]
+    graded = [
+        r for r in arm_rows if (r.get("grade") or {}).get("oracle_resolved") is not None
+    ]
+    gradable = [
+        r
+        for r in graded
+        if not str((r.get("grade") or {}).get("outcome", "")).startswith("task_broken")
+    ]
+    valid = [
+        r for r in gradable if r["_audit_ok"] is True and not r["_run_failed"]
+    ]
+    valid_ids = {id(r) for r in valid}
+    excluded = [r for r in gradable if id(r) not in valid_ids]
+    resolved = [r for r in valid if (r.get("grade") or {}).get("oracle_resolved")]
+    return ArmView(arm, arm_rows, graded, gradable, valid, excluded, resolved)
+
+
+def _exclusion_reason(r: dict[str, Any]) -> str:
+    """Why one row is not in its arm's denominator, and WHAT IT SCORED.
+
+    Both halves matter. The old line named only excluded PASSES, so an excluded
+    FAILURE vanished with no verdict shown — and a reader could not tell
+    whether the exclusions were helping or hurting the published rate.
+    """
+    oracle = (r.get("grade") or {}).get("oracle_resolved")
+    verdict = "PASS" if oracle else ("?" if oracle is None else "FAIL")
+    why: list[str] = []
+    if r["_status"] == _RUN_NO_RESULT:
+        why.append("no result.json")
+    elif r["_run_failed"]:
+        why.append(f"run failed ({str(r['_status_detail'] or '')[:80]})")
+    if r["_audit_ok"] is False:
+        why.append("audit failed")
+    elif r["_audit_ok"] is None:
+        why.append("not audited")
+    return f"{str(r.get('instance_id'))[:46]} [{verdict}]: {', '.join(why) or 'unknown'}"
+
+
+# --------------------------------------------------------------------------- #
+# the five pre-registered tables
+# --------------------------------------------------------------------------- #
+
+
+def _table1_headline(views: list[ArmView]) -> list[str]:
+    """Harness AND models AND cost source, inline on every row.
+
+    A headline row torn out of this file must still say what produced it: an
+    arm's score is a property of the (harness, model set) pair, never of the
+    model alone and never of the harness alone.
+    """
+    lines = [
+        "## Table 1 — headline, one row per arm",
+        "",
+        "Harness and models are repeated per row, not cross-referenced. The model",
+        "column is filled **from the per-row ledger, not from `routes.yaml`** —",
+        "config is intent, the ledger is what happened.",
+        "",
+        "`fresh in` and `cache read` are separate columns on purpose: one blended",
+        '"tokens in" column mixed them last time and cache share differed 0%-97%',
+        'across arms, which made the published "34x tokens" claim wrong by 4.5x.',
+        "",
+        "| arm | harness | model(s) actually used | resolved / audited-valid | rate "
+        "| 95% CI (Clopper-Pearson) | invalid rows | budget-exhausted | fresh in "
+        "| cache read | out | wall s (median) | $ | cost source |",
+        "|---|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---|",
+    ]
+    for v in views:
+        # CALL counts where the ledger recorded them (the spec's "(n calls)"),
+        # row counts otherwise, and the unit is stated either way — "7" with no
+        # unit is how a hard-tier escalation count gets mistaken for a row count.
+        calls: dict[str, int] = {}
+        rows_per_model: dict[str, int] = {}
+        for r in v.rows:
+            for m in _row_models(r):
+                rows_per_model[m] = rows_per_model.get(m, 0) + 1
+            for c in r.get("model_calls") or []:
+                if isinstance(c, dict) and isinstance(c.get("calls"), int):
+                    name = str(c.get("model"))
+                    calls[name] = calls.get(name, 0) + int(c["calls"])
+        if calls:
+            models = ", ".join(
+                f"`{m}` ({calls[m]} calls)"
+                if m in calls
+                else f"`{m}` ({n} rows, calls not recorded)"
+                for m, n in sorted(rows_per_model.items())
+            )
+        else:
+            models = (
+                ", ".join(
+                    f"`{m}` ({n} rows, calls not recorded)"
+                    for m, n in sorted(rows_per_model.items())
+                )
+                or "n/a (no model recorded in any row)"
+            )
+        walls = sorted(
+            float(r["wall_clock_s"]) for r in v.valid if r.get("wall_clock_s") is not None
+        )
+        median = f"{statistics.median(walls):.1f}" if walls else "n/a"
+        lines.append(
+            f"| {v.arm} | {_arm_label(v.arm)} | {models} "
+            f"| {len(v.resolved)}/{len(v.valid)} "
+            f"| {_fmt_rate(len(v.resolved), len(v.valid))} "
+            f"| {_fmt_ci(len(v.resolved), len(v.valid))} "
+            f"| {len(v.excluded)} "
+            f"| {sum(1 for r in v.valid if r['_budget_exhausted'])} "
+            f"| {sum(r['_fresh_in'] for r in v.rows):,} "
+            f"| {sum(r['_cache_read'] for r in v.rows):,} "
+            f"| {sum(int(r.get('tokens_out') or 0) for r in v.rows):,} "
+            f"| {median} "
+            f"| {sum(float(r.get('cost_usd') or 0.0) for r in v.rows):.2f} "
+            f"| {_arm_cost_source(v.arm)} |"
+        )
+    return lines
+
+
+_OUTCOME_CODES = (
+    "`R` resolved · `F` wrong patch · `E` empty patch · `B` task broken · "
+    "`X` audit-invalid or run-failed · `!` budget-exhausted (counted as an "
+    "attempt, not excluded) · `*` attempt > 1 · `·` no row"
+)
+
+
+def _outcome_cell(r: dict[str, Any] | None) -> str:
+    if r is None:
+        return "·"
+    g = r.get("grade") or {}
+    outcome = str(g.get("outcome") or "")
+    if r["_audit_ok"] is not True or r["_run_failed"]:
+        code = "X"
+    elif outcome.startswith("task_broken"):
+        code = "B"
+    elif g.get("oracle_resolved"):
+        code = "R"
+    elif outcome == "empty_patch":
+        code = "E"
+    elif g.get("oracle_resolved") is False:
+        code = "F"
+    else:
+        code = "?"
+    return code + ("!" if r["_budget_exhausted"] else "") + ("*" if r["_attempt"] > 1 else "")
+
+
+def _table2_matrix(
+    rows: list[dict[str, Any]],
+    arms: list[str],
+    created: dict[str, str],
+    bound_models: list[str],
+) -> list[str]:
+    """Per-instance outcomes, with a contamination margin per bound model.
+
+    No absolute rate is published without its margin column (pre-registered
+    decision rule 3): a resolve on an instance INSIDE a model's bound is not
+    the same evidence as a resolve outside it.
+    """
+    by_cell: dict[tuple[str, str], dict[str, Any]] = {
+        (str(r.get("instance_id")), r["_arm"]): r for r in rows
+    }
+    instances = sorted(
+        {str(r.get("instance_id")) for r in rows},
+        key=lambda i: (created.get(i, "9999"), i),
+    )
+    margin_heads = "".join(
+        f" margin vs `{m}` ({_MODEL_BOUNDS[_norm_model(m)].date}) |" for m in bound_models
+    )
+    lines = [
+        "## Table 2 — per-instance outcome matrix",
+        "",
+        _OUTCOME_CODES,
+        "",
+        "A POSITIVE margin means the instance was created after that model's",
+        "bound, i.e. it cannot have been memorised. Bound TYPE is in Table 4's",
+        "footnote: a published cutoff and a release-date proxy are different",
+        "claims.",
+        "",
+        "| instance | created_at |" + margin_heads + "".join(f" {a} |" for a in arms),
+        "|---|---|" + "---:|" * len(bound_models) + ":-:|" * len(arms),
+    ]
+    for iid in instances:
+        cells = []
+        for m in bound_models:
+            days = _margin_days(created.get(iid), _model_bound(m))
+            if days is None:
+                cells.append(" n/a |")
+            else:
+                cells.append(f" **+{days}** |" if days > 0 else f" {days} |")
+        lines.append(
+            f"| {iid[:46]} | {created.get(iid, 'n/a (not in the pinned manifest)')} |"
+            + "".join(cells)
+            + "".join(f" {_outcome_cell(by_cell.get((iid, a)))} |" for a in arms)
+        )
+    return lines
+
+
+def _table3_comparisons(
+    views: list[ArmView], rows: list[dict[str, Any]], created: dict[str, str]
+) -> list[str]:
+    """Every pair, with what is held constant and what varies.
+
+    A comparison that varies BOTH halves of the (harness, model) pair is a
+    reference point, not a measurement — printed as such, so the retracted
+    run's unattributable "+58 pp scaffold lift" cannot be restated.
+    """
+    lines = [
+        "## Table 3 — the comparisons, and which ones may mean anything",
+        "",
+        "Paired over instances where BOTH arms have an audited-valid row.",
+        "`only-A / only-B` are the discordant cells McNemar's exact test uses;",
+        "the concordant cells carry no information about a difference.",
+        "",
+        "| comparison | harness varies? | model varies? | paired n | only-A / only-B "
+        "| McNemar exact p | what it isolates |",
+        "|---|---|---|---:|---:|---:|---|",
+    ]
+    for i, a in enumerate(views):
+        for b in views[i + 1 :]:
+            pa = {
+                str(r.get("instance_id")): bool((r.get("grade") or {}).get("oracle_resolved"))
+                for r in a.valid
+            }
+            pb = {
+                str(r.get("instance_id")): bool((r.get("grade") or {}).get("oracle_resolved"))
+                for r in b.valid
+            }
+            shared = sorted(set(pa) & set(pb))
+            only_a = sum(1 for i2 in shared if pa[i2] and not pb[i2])
+            only_b = sum(1 for i2 in shared if pb[i2] and not pa[i2])
+            spec_a = _ARMS.get(_split_run_key(a.arm)[0])
+            spec_b = _ARMS.get(_split_run_key(b.arm)[0])
+            harness_varies = (
+                "n/a (unregistered arm)"
+                if spec_a is None or spec_b is None
+                else ("no" if spec_a.harness_id == spec_b.harness_id else "yes")
+            )
+            na = _nominal_model(a.rows, a.arm)
+            nb = _nominal_model(b.rows, b.arm)
+            if na is None or nb is None:
+                model_varies = "n/a (nominal model not recorded)"
+            else:
+                model_varies = "no" if na == nb else "yes"
+                observed_a = {m for r in a.rows for m in _row_models(r)}
+                observed_b = {m for r in b.rows for m in _row_models(r)}
+                if model_varies == "no" and observed_a != observed_b:
+                    model_varies = "no (nominal) †"
+            if harness_varies.startswith("n/a") or model_varies.startswith("n/a"):
+                isolates = "**n/a — one half of the pair is unrecorded**"
+            elif harness_varies == "yes" and model_varies.startswith("yes"):
+                isolates = "**nothing attributable** — reference point only"
+            elif harness_varies == "yes":
+                isolates = "the harness"
+            elif model_varies.startswith("yes"):
+                isolates = "the model (same harness)"
+            else:
+                isolates = "nothing — the arms are the same pair"
+            lines.append(
+                f"| {a.arm} vs {b.arm} | {harness_varies} | {model_varies} "
+                f"| {len(shared)} | {only_a} / {only_b} "
+                f"| {_fmt_p(mcnemar_exact_p(only_a, only_b))} | {isolates} |"
+            )
+    lines += [
+        "",
+        "† nominal models match but the observed ledgers differ — the chain",
+        "escalates a stuck dev to a harder tier, so a matched-weights claim must",
+        "be checked against Table 4's per-tier call counts, not against config.",
+        "",
+        "### High-margin stratum, within each arm",
+        "",
+        "Descriptive only: the stratum is whatever instances post-date the arm's",
+        "OWN nominal model's bound, and at this n it is a handful of rows.",
+        "",
+        "| arm | bound | high-margin | rest |",
+        "|---|---|---:|---:|",
+    ]
+    for v in views:
+        nominal = _nominal_model(v.rows, v.arm)
+        bound = _model_bound(nominal) if nominal else None
+        if bound is None:
+            lines.append(
+                f"| {v.arm} | n/a (no bound for "
+                f"{('`' + str(nominal) + '`') if nominal else 'an unrecorded model'}) "
+                "| n/a | n/a |"
+            )
+            continue
+        hi = [
+            r
+            for r in v.valid
+            if (_margin_days(created.get(str(r.get("instance_id"))), bound) or -1) > 0
+        ]
+        rest = [r for r in v.valid if r not in hi]
+        lines.append(
+            f"| {v.arm} | `{nominal}` after {bound.date} ({bound.kind}) "
+            f"| {_fmt_rate(sum(1 for r in hi if (r.get('grade') or {}).get('oracle_resolved')), len(hi))} "
+            f"| {_fmt_rate(sum(1 for r in rest if (r.get('grade') or {}).get('oracle_resolved')), len(rest))} |"
+        )
+    return lines
+
+
+def _table4_provenance(views: list[ArmView]) -> list[str]:
+    """Filled from result.json / audit.json. Any blank here is a bug."""
+    lines = [
+        "## Table 4 — provenance and integrity, per arm",
+        "",
+        "`attempts` exists because the retracted run published 4 second attempts",
+        "after the integrity gate invalidated the first, disclosed nowhere. Any",
+        "value > 1 is a protocol violation, not a data point.",
+        "",
+        "| arm | resolved model id(s) | per-tier call counts | max attempt "
+        "| audit ok / invalid | action trails present | test files stripped "
+        "| oracle-probe hits | p2p empty rows | p2p source(s) |",
+        "|---|---|---|---:|---|---|---:|---:|---:|---|",
+    ]
+    for v in views:
+        models = sorted({m for r in v.rows for m in _row_models(r)})
+        tiers: dict[str, int] = {}
+        recorded_calls = False
+        for r in v.rows:
+            calls = r.get("model_calls")
+            if isinstance(calls, list) and calls:
+                recorded_calls = True
+                for c in calls:
+                    if not isinstance(c, dict):
+                        continue
+                    tier = str(c.get("model_tier") or "—")
+                    n = c.get("calls")
+                    tiers[tier] = tiers.get(tier, 0) + (int(n) if isinstance(n, int) else 0)
+        tier_cell = (
+            ", ".join(f"{k}={v2}" for k, v2 in sorted(tiers.items()))
+            if recorded_calls
+            else "n/a (not recorded by these rows)"
+        )
+        if any("trails_scanned" in r["_audit"] for r in v.rows):
+            n_trails = sum(
+                1 for r in v.rows if int(r["_audit"].get("trails_scanned") or 0) > 0
+            )
+            trail_cell = f"{n_trails}/{len(v.rows)}"
+        else:
+            trail_cell = "n/a (not recorded)"
+        probes = sum(len(r["_audit"].get("oracle_probe_failures") or []) for r in v.rows)
+        probe_cell = (
+            str(probes)
+            if any("oracle_probe_failures" in r["_audit"] for r in v.rows)
+            else "n/a (not recorded)"
+        )
+        p2p_counts = [
+            (r.get("grade") or {}).get("pass_to_pass_count")
+            for r in v.rows
+            if isinstance((r.get("grade") or {}).get("pass_to_pass_count"), int)
+        ]
+        p2p_cell = str(sum(1 for c in p2p_counts if c == 0)) if p2p_counts else "n/a"
+        p2p_sources = sorted(
+            {
+                str((r.get("grade") or {}).get("pass_to_pass_source"))
+                for r in v.rows
+                if (r.get("grade") or {}).get("pass_to_pass_source")
+            }
+        )
+        lines.append(
+            f"| {v.arm} "
+            f"| {', '.join('`' + m + '`' for m in models) or 'n/a (none recorded)'} "
+            f"| {tier_cell} "
+            f"| {max((r['_attempt'] for r in v.rows), default=0)} "
+            f"| {sum(1 for r in v.rows if r['_audit_ok'] is True)} ok / "
+            f"{sum(1 for r in v.rows if r['_audit_ok'] is not True)} invalid "
+            f"| {trail_cell} "
+            f"| {sum(len(r.get('test_files_stripped') or []) for r in v.rows)} "
+            f"| {probe_cell} "
+            f"| {p2p_cell} "
+            f"| {', '.join(p2p_sources) or 'n/a'} |"
+        )
+    lines += [
+        "",
+        "An `p2p empty rows` count above 0 is a real property of the suite, not a",
+        "harness fault: those instances declare NO PASS_TO_PASS, so their grade",
+        "has no regression half and a patch cannot be caught breaking anything.",
+        "",
+        "Model bounds used for the margin columns:",
+        "",
+        "| model | bound | type |",
+        "|---|---|---|",
+    ]
+    lines += [
+        f"| `{m}` | {b.date} | {b.kind} |" for m, b in sorted(_MODEL_BOUNDS.items())
+    ]
+    return lines
+
+
+def _table5_chain(views: list[ArmView]) -> list[str]:
+    """Chain-verdict quality — for the arms that HAVE a chain verdict.
+
+    An arm with no chain (`factory_says_green is None` on every row) gets
+    `n/a (arm has no chain verdict)` for BOTH rates. The retracted run
+    published "claude recall 0/16 = 0%", which was a division artifact on a
+    column that does not exist for that arm — and it read as a finding.
+    """
+    lines = [
+        "## Table 5 — chain-verdict quality",
+        "",
+        "`factory says green` is the chain's OWN verdict (it reached",
+        "`reviewer_done`: dev got its tests green and the reviewer approved).",
+        "These are **chain-verdict** precision/recall, NOT merge-gate precision —",
+        "this harness drives dev+review only; no merge gate runs.",
+        "",
+        "| arm | quantity | value | 95% CI |",
+        "|---|---|---|---|",
+    ]
+    for v in views:
+        has_verdict = any(r.get("factory_says_green") is not None for r in v.valid)
+        if not has_verdict:
+            reason = "n/a (arm has no chain verdict)"
+            lines += [
+                f"| {v.arm} | chain-verdict precision | {reason} | {reason} |",
+                f"| {v.arm} | chain-verdict recall | {reason} | {reason} |",
+            ]
+            if _arm_has_chain(v.arm):
+                lines.append(
+                    f"| {v.arm} | **WARNING** | this arm HAS a chain but recorded no "
+                    "verdict on any valid row | — |"
+                )
+            continue
+        said_green = [r for r in v.valid if r.get("factory_says_green")]
+        tp = [r for r in said_green if (r.get("grade") or {}).get("oracle_resolved")]
+        lines += [
+            f"| {v.arm} | chain-verdict precision (oracle passes \\| chain said green) "
+            f"| {_fmt_rate(len(tp), len(said_green))} | {_fmt_ci(len(tp), len(said_green))} |",
+            f"| {v.arm} | chain-verdict recall (chain said green \\| oracle passes) "
+            f"| {_fmt_rate(len(tp), len(v.resolved))} | {_fmt_ci(len(tp), len(v.resolved))} |",
+            f"| {v.arm} | reviewer cycles, distribution "
+            f"| {_distribution(v.valid, 'reviewer_cycles')} | — |",
+            f"| {v.arm} | dev retries, distribution "
+            f"| {_distribution(v.valid, 'dev_retries')} | — |",
+        ]
+    return lines
+
+
+def _distribution(rows: list[dict[str, Any]], field: str) -> str:
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[str(r.get(field))] = counts.get(str(r.get(field)), 0) + 1
+    if set(counts) <= {"None"}:
+        return "n/a (not recorded)"
+    return ", ".join(f"{k}x{v}" for k, v in sorted(counts.items()))
+
+
+# --------------------------------------------------------------------------- #
+# archiving
+# --------------------------------------------------------------------------- #
+
+
+def _archive_disclaimer(from_archive: Path | None) -> list[str]:
+    """The archive's ``DISCLAIMER.md``, verbatim, or nothing.
+
+    Read at RENDER time, so a run can be marked retracted after the fact
+    without any archived row, audit or meta file being touched. A live report
+    has no archive yet, hence no disclaimer — and adding one later makes
+    ``--check`` fail until the table is re-published, which is the correct
+    prompt rather than a silent divergence.
+    """
+    if from_archive is None:
+        return []
+    path = from_archive / _DISCLAIMER_NAME
+    if not path.is_file():
+        return []
+    return [*path.read_text(encoding="utf-8").strip().splitlines(), ""]
+
+
+def _archive_stamp(generated_at: str) -> str:
+    """The archive directory name for a ``generated_at``.
+
+    ONE derivation, used both to write the archive and to NAME it in the
+    published table — so the table always says which snapshot backs it, in live
+    mode and in a re-derivation alike, without either mode having to know the
+    other's paths.
+    """
+    return generated_at.replace(":", "-").replace("+00-00", "Z")
+
+
 def _archive_report_artifacts(
-    rows: list[dict[str, Any]], *, generated_at: str, table_text: str
+    rows: list[dict[str, Any]],
+    *,
+    generated_at: str,
+    table_text: str,
+    refused: list[dict[str, str]],
+    foreign: list[dict[str, str]],
+    created: dict[str, str],
 ) -> Path:
     """Snapshot every consumed artifact into a dated results-archive dir.
 
-    Copies ONLY the three per-row evidence files (no state roots, no
-    trajectories — archives must stay small enough to commit) plus the
-    rendered table and a meta file, so ``report --from-archive`` can re-derive
-    the table byte-for-byte with no live runs dir.
+    Copies the three per-row evidence files (no state roots, no trajectories —
+    archives must stay small enough to commit), the sweep roll-up for every arm
+    present, the gold-patch control (``selftest.json`` and its per-instance
+    logs), the rendered table, and a meta file — so ``report --from-archive``
+    can re-derive the table byte-for-byte with no live runs dir.
+
+    The refused/foreign DISCLOSURES are persisted into the meta. They used to be
+    recomputed from ``runs/`` at report time, so from an archive they were
+    always EMPTY: a re-derivation silently dropped a 20-line "these rows ran
+    under another manifest" section from the committed evidence. A disclosure
+    that does not survive re-derivation is not a disclosure.
     """
-    stamp = generated_at.replace(":", "-").replace("+00-00", "Z")
-    archive_dir = RESULTS_ARCHIVE_DIR / stamp
+    archive_dir = RESULTS_ARCHIVE_DIR / _archive_stamp(generated_at)
+    arms = sorted({r["_arm"] for r in rows})
     for r in rows:
         run_dir = Path(r["_run_dir"])
         dest = archive_dir / run_dir.parent.name / run_dir.name
         dest.mkdir(parents=True, exist_ok=True)
         for name in _ROW_ARTIFACTS:
             shutil.copy2(run_dir / name, dest / name)
+    sweeps: list[str] = []
+    for arm in arms:
+        src = SWE_DIR / f"sweep-{arm}.json"
+        if src.is_file():
+            shutil.copy2(src, archive_dir / src.name)
+            sweeps.append(src.name)
+    extras: list[str] = []
+    for name in _ARCHIVED_EXTRAS:
+        src = SWE_DIR / name
+        if src.is_file():
+            shutil.copy2(src, archive_dir / name)
+            extras.append(name)
+    log_files = 0
+    for dirname in _ARCHIVED_LOG_DIRS:
+        src_dir = SWE_DIR / dirname
+        if src_dir.is_dir():
+            shutil.copytree(src_dir, archive_dir / dirname, dirs_exist_ok=True)
+            log_files += sum(1 for p in src_dir.rglob("*") if p.is_file())
     # The profile AND the manifest sha are pinned into the meta so
     # ``--from-archive`` re-derives the SAME heading and the SAME row set
     # even after the live manifest moves to another dataset. Because the
@@ -6002,11 +7293,22 @@ def _archive_report_artifacts(
     (archive_dir / _REPORT_META_NAME).write_text(
         json.dumps(
             {
+                "meta_version": _REPORT_META_VERSION,
                 "generated_at": generated_at,
                 "source": str(RUNS_DIR),
                 "rows": len(rows),
+                "arms": arms,
                 "profile": profile_name,
                 "manifest_sha256": manifest_sha,
+                # The disclosures, PERSISTED — see the docstring.
+                "refused": refused,
+                "foreign": foreign,
+                # created_at per instance, so the margin columns survive a
+                # manifest move as well.
+                "instances": {iid: {"created_at": ts} for iid, ts in sorted(created.items())},
+                "sweeps": sweeps,
+                "extras": extras,
+                "log_files": log_files,
             },
             indent=2,
         )
@@ -6017,20 +7319,48 @@ def _archive_report_artifacts(
     return archive_dir
 
 
-def report(*, from_archive: Path | None = None) -> str:
-    """Render ``results.md`` from artifacts; archive the evidence.
+# --------------------------------------------------------------------------- #
+# report
+# --------------------------------------------------------------------------- #
 
-    Live mode (default): rows come from ``runs/``, and every artifact a row
-    consumed is copied into ``results-archive/<generated-at>/`` so the
-    published table stays reproducible after the next sweep wipes ``runs/``.
 
-    ``from_archive``: re-derive the table purely from a previous archive dir
-    (no live runs dir touched, no new archive written). Reuses the archived
-    ``generated_at`` so the output is byte-for-byte the committed table.
+def report(
+    *, from_archive: Path | None = None, check: bool = False, publish: bool = False
+) -> str:
+    """Render the pre-registered tables from artifacts; archive the evidence.
+
+    Live mode (default): rows come from ``runs/``, every artifact a row consumed
+    is copied into ``results-archive/<generated-at>/``, and ``results.md`` is
+    written.
+
+    ``from_archive``: re-derive the table purely from a previous archive dir and
+    print it to STDOUT. It writes NOTHING. It used to overwrite the very file it
+    was verifying — which is how a hand-written 20-line disclosure section was
+    silently deleted from committed evidence by a command whose whole purpose
+    was to confirm that evidence.
+
+    ``check``: re-derive from the archive and DIFF against the committed
+    ``results.md``, exiting non-zero on any difference. This is the executable
+    form of PLAN 1.5's acceptance criterion — "a second report run re-derives
+    the committed table byte-for-byte" — which was previously unfalsifiable
+    because the re-derivation overwrote its own reference.
+
+    ``publish``: the ONE way to write ``results.md`` from an archive. Explicit,
+    opt-in and never implied, so re-deriving stays a read-only act; a shell
+    redirect is not an acceptable substitute because ``print`` adds a trailing
+    newline and the result then fails its own ``--check``.
     """
+    if check and publish:
+        raise SystemExit(
+            "--check and --publish are opposites: one asserts the committed "
+            "table is unchanged, the other replaces it. Pick one."
+        )
+    if (check or publish) and from_archive is None:
+        from_archive = _latest_archive()
     base_dir = from_archive if from_archive is not None else RUNS_DIR
     generated_at = datetime.now(UTC).isoformat()
     archive_profile: str | None = None
+    meta: dict[str, Any] = {}
     if from_archive is not None:
         meta_path = from_archive / _REPORT_META_NAME
         try:
@@ -6053,11 +7383,25 @@ def report(*, from_archive: Path | None = None) -> str:
     else:
         expected_sha = str(_manifest().get("manifest_sha256") or "") or None
 
-    rows, refused, foreign = _collect_report_rows(base_dir, expected_sha)
-    if not rows:
-        detail = "; ".join(
-            f"{x['row']}: {x['why']}" for x in refused + foreign
+    rows, refused, foreign = _report_rows(base_dir, expected_sha)
+    if from_archive is not None:
+        # The archive's OWN record of what it excluded, re-emitted. Rows
+        # refused at archive time were never copied in, so recomputing here
+        # yields nothing — the disclosure has to be read back, not recomputed.
+        recorded_refused = meta.get("refused")
+        recorded_foreign = meta.get("foreign")
+        disclosure_recorded = isinstance(recorded_refused, list) and isinstance(
+            recorded_foreign, list
         )
+        if isinstance(recorded_refused, list):
+            refused = [dict(x) for x in recorded_refused] + refused
+        if isinstance(recorded_foreign, list):
+            foreign = [dict(x) for x in recorded_foreign] + foreign
+    else:
+        disclosure_recorded = True
+
+    if not rows:
+        detail = "; ".join(f"{x['row']}: {x['why']}" for x in refused + foreign)
         raise SystemExit(
             f"no reportable results under {base_dir} for manifest "
             f"{expected_sha or '(unpinned)'}"
@@ -6092,42 +7436,155 @@ def report(*, from_archive: Path | None = None) -> str:
             "non-trivial `task_broken` rate means THIS harness's plumbing "
             "broke, not the tasks."
         )
+
+    arms = sorted({r["_arm"] for r in rows})
+    views = [_arm_view(rows, a) for a in arms]
+    created = _instance_created_at(rows, meta)
+    bound_models = sorted(
+        {
+            _norm_model(m)
+            for r in rows
+            for m in ([str(r["model"])] if r.get("model") else [])
+            if _model_bound(m) is not None
+        }
+        | {
+            _norm_model(str(spec.model))
+            for a in arms
+            if (spec := _ARMS.get(_split_run_key(a)[0])) is not None and spec.model
+            if _model_bound(str(spec.model)) is not None
+        }
+    )
+
     lines = [
         f"# {profile.title} — externally graded",
         "",
         f"Generated {generated_at}.",
         "",
-        "`factory says` is the chain's OWN verdict — it reached `reviewer_done`, "
-        "i.e. dev got its tests green and the reviewer approved. `oracle` is the "
-        "hidden held-out suite.",
+        "Every row here is backed by the evidence snapshot in",
+        f"`bench/swebench/results-archive/{_archive_stamp(generated_at)}/`, and",
+        "`report --check` asserts that this table is still byte-for-byte",
+        "re-derivable from it.",
         "",
-        "NOTE ON NAMING: the rates below are **chain-verdict** precision/recall, "
-        "NOT merge-gate precision. This harness drives dev+review only; no merge "
-        "gate runs. Of the six gates, only `tests-green` and `tests-meaningful` "
-        "could even apply to a SWE-bench repo — `docs-current`, "
-        "`acceptance-verified`, `smoke-green` and `canonical-paths-only` all "
-        "require app capabilities these repos do not have. Calling this "
-        "\"gate precision\" would overclaim.",
+        *_archive_disclaimer(from_archive),
+        "Tables 1-5 are the shape fixed in `bench/swebench/PRE-REGISTRATION-1.6.md`",
+        "before the run. Every cell is filled from an archived artifact or printed",
+        "as `n/a` with a reason; no cell is filled by hand.",
+        "",
+        "**An arm is a (harness, model set) pair.** Neither half may be omitted",
+        "when a number from this run is quoted: a score is never a property of the",
+        "model alone and never of the harness alone.",
         "",
         broken_note,
         "",
-        "| instance | arm | factory says | oracle | audit | outcome | tokens in | tokens out | wall s |",
-        "|---|---|---|---|---|---|---:|---:|---:|",
     ]
-    for r in rows:
+    lines += _table1_headline(views)
+    lines += ["", *_table2_matrix(rows, arms, created, bound_models)]
+    lines += ["", *_table3_comparisons(views, rows, created)]
+    lines += ["", *_table4_provenance(views)]
+    lines += ["", *_table5_chain(views)]
+
+    # Per-arm gate accounting, and the loud exclusion line.
+    for v in views:
+        broken = len(v.graded) - len(v.gradable)
+        headline = (
+            f"- resolve rate: **{_fmt_rate(len(v.resolved), len(v.valid))} "
+            f"audited-valid**, 95% CI {_fmt_ci(len(v.resolved), len(v.valid))}"
+        )
+        lines += [
+            "",
+            f"## {v.arm} — gate accounting",
+            "",
+            f"- harness: {_arm_label(v.arm)}",
+            f"- graded instances: **{len(v.graded)}** "
+            f"({broken} excluded as `task_broken`, leaving {len(v.gradable)})",
+            f"- audit gate: **{len(v.valid)} audited-valid** of {len(v.gradable)} "
+            f"gradable (audit failed: "
+            f"{sum(1 for r in v.gradable if r['_audit_ok'] is False)}, "
+            f"not audited: {sum(1 for r in v.gradable if r['_audit_ok'] is None)}, "
+            f"run failed: {sum(1 for r in v.gradable if r['_run_failed'])})",
+            f"- budget-exhausted, COUNTED as attempts: "
+            f"{sum(1 for r in v.valid if r['_budget_exhausted'])} "
+            "(one rule, every arm: a turn-cap or wall-cap hit is a completed, "
+            "counted, flagged attempt)",
+            headline,
+        ]
+        if v.excluded:
+            lines.append(
+                f"- **{len(v.excluded)} row(s) EXCLUDED from the denominator, "
+                "passes AND failures named**: "
+                + "; ".join(_exclusion_reason(r) for r in v.excluded)
+            )
+
+    discarded = [r for r in rows if r["_attempt"] > 1]
+    lines += [
+        "",
+        "## Discarded runs (attempt > 1)",
+        "",
+    ]
+    if discarded:
+        lines += [
+            "Each row below is a RE-RUN of a cell that had already been attempted.",
+            "The retracted run published 4 second attempts after the integrity gate",
+            "invalidated the first, disclosed nowhere; under the no-re-rolls rule any",
+            "row here is a protocol violation, not a data point.",
+            "",
+        ]
+        lines += [
+            f"- `{str(r.get('instance_id'))}/{r['_arm']}` — attempt {r['_attempt']}"
+            for r in sorted(discarded, key=lambda r: (str(r.get("instance_id")), r["_arm"]))
+        ]
+    else:
+        lines.append("None — every published row is its cell's first attempt.")
+
+    lines += [
+        "",
+        "## Per-row ledger",
+        "",
+        "The row-level evidence every table above is derived from. `p2p` is the",
+        "instance's PASS_TO_PASS count: a **0** means the grade has no regression",
+        "half at all, so nothing there can catch a patch breaking the suite.",
+        "",
+    ]
+    lines += [
+        "| instance | arm | model(s) | attempt | budget | factory says | oracle "
+        "| audit | outcome | p2p | fresh in | cache read | tokens out | wall s | $ |",
+        "|---|---|---|---:|:-:|---|---|---|---|---:|---:|---:|---:|---:|",
+    ]
+    for r in sorted(rows, key=lambda r: (str(r.get("instance_id")), r["_arm"])):
         g = r.get("grade") or {}
         oracle = g.get("oracle_resolved")
         audit_cell = "ok" if r["_audit_ok"] else ("—" if r["_audit_ok"] is None else "FAIL")
+        p2p = g.get("pass_to_pass_count")
+        p2p_cell = (
+            "**0 (no regression half)**" if p2p == 0 else (str(p2p) if p2p is not None else "?")
+        )
         lines.append(
-            f"| {str(r.get('instance_id'))[:46]} | {r.get('arm')} "
-            f"| {'green' if r.get('factory_says_green') else 'not green'} "
+            f"| {str(r.get('instance_id'))[:46]} | {r['_arm']} "
+            f"| {', '.join(_row_models(r)) or '?'} "
+            f"| {r['_attempt']} "
+            f"| {'!' if r['_budget_exhausted'] else '—'} "
+            f"| {'green' if r.get('factory_says_green') else ('not green' if r.get('factory_says_green') is not None else 'n/a')} "
             f"| {'PASS' if oracle else ('?' if oracle is None else 'FAIL')} "
             f"| {audit_cell} "
             f"| {g.get('outcome', '—')} "
-            f"| {r.get('tokens_in', '?'):,} | {r.get('tokens_out', '?'):,} "
-            f"| {r.get('wall_clock_s', '—')} |"
+            f"| {p2p_cell} "
+            f"| {r['_fresh_in']:,} | {r['_cache_read']:,} "
+            f"| {_fmt_int(r.get('tokens_out'))} "
+            f"| {r.get('wall_clock_s', '—')} "
+            f"| {float(r.get('cost_usd') or 0.0):.2f} |"
         )
 
+    if not disclosure_recorded:
+        lines += [
+            "",
+            "## Excluded-row disclosure",
+            "",
+            f"n/a (archive predates `{_REPORT_META_NAME}` version "
+            f"{_REPORT_META_VERSION}, which is the first to PERSIST the refused",
+            "and foreign row lists). Rows refused or excluded when this archive was",
+            "made cannot be recovered from it — that gap is exactly why the lists",
+            "are persisted now.",
+        ]
     if refused:
         lines += [
             "",
@@ -6153,101 +7610,138 @@ def report(*, from_archive: Path | None = None) -> str:
         ]
         lines += [f"- `{x['row']}` — {x['why']}" for x in foreign]
 
-    for arm in sorted({str(r.get("arm")) for r in rows}):
-        arm_rows = [
-            r
-            for r in rows
-            if r.get("arm") == arm and (r.get("grade") or {}).get("oracle_resolved") is not None
-        ]
-        gradable = [
-            r
-            for r in arm_rows
-            if not str((r.get("grade") or {}).get("outcome", "")).startswith("task_broken")
-        ]
-        # The audit gate: the headline counts ONLY rows whose run completed
-        # normally AND whose audit passed. Everything else lands in a loud
-        # bucket — an oracle pass with a failed (or absent) audit is not a
-        # result, and silently laundering it into the resolve rate is exactly
-        # the number-inflation this harness exists to prevent.
-        valid = [r for r in gradable if r["_audit_ok"] is True and not r["_run_failed"]]
-        valid_ids = {id(r) for r in valid}
-        audit_failed = [r for r in gradable if r["_audit_ok"] is False]
-        not_audited = [r for r in gradable if r["_audit_ok"] is None]
-        run_failed = [r for r in gradable if r["_run_failed"]]
-        excluded_passes = [
-            r
-            for r in gradable
-            if (r.get("grade") or {}).get("oracle_resolved") and id(r) not in valid_ids
-        ]
-        said_green = [r for r in valid if r.get("factory_says_green")]
-        oracle_pass = [r for r in valid if (r["grade"] or {}).get("oracle_resolved")]
-        tp = [r for r in said_green if (r["grade"] or {}).get("oracle_resolved")]
-        broken = len(arm_rows) - len(gradable)
-
-        def _rate(num: int, den: int) -> str:
-            return f"{num}/{den} = {num / den:.0%}" if den else "n/a (0 in denominator)"
-
-        headline = f"- resolve rate: **{_rate(len(oracle_pass), len(valid))} audited-valid**"
-        if excluded_passes:
-            reasons = ", ".join(
-                f"{str(r.get('instance_id'))[:46]}: "
-                + ("run failed" if r["_run_failed"] else "")
-                + (" + " if r["_run_failed"] and r["_audit_ok"] is not True else "")
-                + (
-                    ("audit failed" if r["_audit_ok"] is False else "not audited")
-                    if r["_audit_ok"] is not True
-                    else ""
-                )
-                for r in excluded_passes
-            )
-            headline += (
-                f"; **{len(excluded_passes)} oracle-pass EXCLUDED** ({reasons})"
-            )
-        lines += [
-            "",
-            f"## {arm}",
-            "",
-            f"- graded instances: **{len(arm_rows)}** "
-            f"({broken} excluded as `task_broken`, leaving {len(gradable)})",
-            f"- audit gate: **{len(valid)} audited-valid** of {len(gradable)} gradable "
-            f"(audit failed: {len(audit_failed)}, not audited: {len(not_audited)}, "
-            f"run failed: {len(run_failed)})",
-            headline,
-            f"- chain-verdict precision (oracle passes | chain said green): "
-            f"**{_rate(len(tp), len(said_green))}**",
-            f"- chain-verdict recall (chain said green | oracle passes): "
-            f"**{_rate(len(tp), len(oracle_pass))}**",
-        ]
     n = len({r.get("instance_id") for r in rows})
     if n < 30:
         lines += [
             "",
             f"> **n={n} — preliminary.** Do not draw conclusions beyond "
             "\"the harness runs\". The MDE at this size is far wider than any "
-            "difference worth acting on.",
+            "difference worth acting on; k>=3 is required before any delta from "
+            "this suite is quoted as a result.",
         ]
     lines += [
         "",
-        "> A factory number without the matched **bare-model** number beside it "
-        "measures the MODEL, not the harness. See `PLAN.md` 1.4.",
+        "> Cost columns are NOT comparable across arms and must never be summed: "
+        "the Azure arms' dollars are a price-table estimate over measured tokens, "
+        "the Claude arms' are the CLI's own report against a subscription.",
     ]
 
     text = "\n".join(lines) + "\n"
+
+    if check:
+        return _check_against_committed(text, base_dir)
+
     # Archive BEFORE publishing results.md: a table whose evidence snapshot
     # failed must not exist. The reverse order would recreate the exact gap
     # this exists to close (published number, no backing artifacts).
     if from_archive is None:
         archive_dir = _archive_report_artifacts(
-            rows, generated_at=generated_at, table_text=text
+            rows,
+            generated_at=generated_at,
+            table_text=text,
+            refused=refused,
+            foreign=foreign,
+            created=created,
         )
         print(f"archived evidence -> {archive_dir}")
-    SWE_DIR.mkdir(parents=True, exist_ok=True)
-    out = SWE_DIR / "results.md"
-    out.write_text(text, encoding="utf-8")
-    print(out)
+        SWE_DIR.mkdir(parents=True, exist_ok=True)
+        out = SWE_DIR / "results.md"
+        out.write_text(text, encoding="utf-8")
+        print(out)
+    elif publish:
+        SWE_DIR.mkdir(parents=True, exist_ok=True)
+        out = SWE_DIR / "results.md"
+        out.write_text(text, encoding="utf-8")
+        print(f"published {out} from {base_dir} (now `report --check`-clean)")
+    else:
+        # STDOUT ONLY. A verification pass must not mutate the thing it
+        # verifies; `--publish` is the explicit way to write it.
+        print(
+            f"re-derived from {base_dir} — printing to stdout, results.md untouched "
+            "(`report --check` asserts byte-for-byte equality; `--publish` writes it)"
+        )
     print(text)
     return text
 
+
+def _instance_created_at(
+    rows: list[dict[str, Any]], meta: dict[str, Any]
+) -> dict[str, str]:
+    """``created_at`` per instance, for the contamination margins.
+
+    Prefers the ARCHIVE's own persisted copy, so the margins survive the live
+    manifest moving to another dataset; falls back to the live manifest, which
+    is what makes pre-1.6 archives still render margins today.
+    """
+    out: dict[str, str] = {}
+    recorded = meta.get("instances")
+    if isinstance(recorded, dict):
+        for iid, info in recorded.items():
+            if isinstance(info, dict) and info.get("created_at"):
+                out[str(iid)] = str(info["created_at"])
+    wanted = {str(r.get("instance_id")) for r in rows}
+    if not wanted - set(out):
+        return {k: v for k, v in out.items() if k in wanted}
+    try:
+        manifest = _manifest()
+    except SystemExit:
+        return {k: v for k, v in out.items() if k in wanted}
+    for inst in manifest.get("instances") or []:
+        iid = str(inst.get("instance_id"))
+        if iid in wanted and iid not in out and inst.get("created_at"):
+            out[iid] = str(inst["created_at"])
+    return {k: v for k, v in out.items() if k in wanted}
+
+
+def _latest_archive() -> Path:
+    """The newest results-archive dir, by name (the names are timestamps)."""
+    if not RESULTS_ARCHIVE_DIR.is_dir():
+        raise SystemExit(
+            f"no {RESULTS_ARCHIVE_DIR} to check against — run `report` first"
+        )
+    dirs = sorted(p for p in RESULTS_ARCHIVE_DIR.iterdir() if p.is_dir())
+    if not dirs:
+        raise SystemExit(f"{RESULTS_ARCHIVE_DIR} holds no archive dirs")
+    return dirs[-1]
+
+
+def _check_against_committed(text: str, base_dir: Path) -> str:
+    """Diff a re-derivation against the committed ``results.md``. Exit 1 on any
+    difference.
+
+    Fail-closed in both directions: a missing ``results.md`` is a failure (there
+    is nothing to have reproduced), and so is any byte of drift. The diff itself
+    is printed, because "they differ" is not actionable.
+    """
+    out = SWE_DIR / "results.md"
+    if not out.is_file():
+        raise SystemExit(
+            f"--check has nothing to compare against: {out} does not exist. "
+            "The committed table IS the reference."
+        )
+    committed = out.read_text(encoding="utf-8")
+    if committed == text:
+        print(
+            f"CHECK OK — {out} is byte-for-byte re-derivable from {base_dir} "
+            f"({len(text)} bytes, {len(text.splitlines())} lines)."
+        )
+        return text
+    diff = "".join(
+        difflib.unified_diff(
+            committed.splitlines(keepends=True),
+            text.splitlines(keepends=True),
+            fromfile=f"committed {out}",
+            tofile=f"re-derived from {base_dir}",
+        )
+    )
+    print(diff)
+    raise SystemExit(
+        f"CHECK FAILED — {out} is NOT byte-for-byte re-derivable from {base_dir}. "
+        "Either the archive is not the one that produced it, or the report code "
+        "changed without the published table being regenerated. A published "
+        "number whose own evidence no longer reproduces it is retracted, not "
+        "explained."
+    )
 
 # --------------------------------------------------------------------------- #
 # run-all — the parallel sweep
@@ -6291,22 +7785,43 @@ _SWEEP_LOCK = threading.Lock()
 # as $3.00 with NO credit for cache hits. Erring high on cost and LOW on
 # duration both push the projected burn rate UP, which is the fail-safe
 # direction for a guard whose job is to refuse.
-# The claude default is the documented $3 first-run stand-in (no measured runs
-# yet); NOTE its spend is ANTHROPIC-side (the CLI's own report), so the guard
-# conservatively counts it against the same factory_settings.yaml caps even
-# though it never touches the Azure ledger.
-# The openhands default is the FACTORY's $3.00 rather than the bare arm's
-# $1.00: it runs the same deployment with the same real tool loop the factory's
-# dev uses, so its token profile is a dev attempt's, not a 40-turn shell loop's.
+# The claude default is the documented $3 first-run stand-in; NOTE its spend is
+# ANTHROPIC-side (the CLI's own report), so the guard conservatively counts it
+# against the same factory_settings.yaml caps even though it never touches the
+# Azure ledger.
 # Measured bare rows average $0.16 and measured factory rows $1.44 per
 # instance, so $3.00 is conservative in the direction the guard needs.
-_DEFAULT_COST_USD = {"factory": 3.00, "bare": 1.00, "claude": 3.00, "openhands": 3.00}
-_DEFAULT_HOURS = {  # 3 min — fast end of measured
-    "factory": 0.05,
-    "bare": 0.05,
-    "claude": 0.05,
-    "openhands": 0.05,
-}
+#
+# Both tables are DERIVED VIEWS of the one arm registry, and both are
+# fail-loud: the old plain dicts were read with ``.get(arm, 3.00)`` /
+# ``.get(arm, 0.05)``, so a new or misspelled arm silently inherited a cost
+# guard tuned for a different arm — a projection that refuses (or fails to
+# refuse) for reasons the operator cannot see.
+
+
+class _FailLoudArmMap(dict[str, float]):
+    """A per-arm table with no silent default. ``in`` still works."""
+
+    def __init__(self, values: dict[str, float], what: str) -> None:
+        super().__init__(values)
+        self._what = what
+
+    def __missing__(self, key: str) -> float:
+        raise SystemExit(
+            f"no {self._what} registered for arm {key!r}. Registered arms: "
+            f"{', '.join(sorted(self))}. Add the arm to _ARMS — a guard that "
+            "guesses its own limits is not a guard."
+        )
+
+
+_DEFAULT_COST_USD = _FailLoudArmMap(
+    {name: spec.default_cost_usd for name, spec in _ARMS.items()},
+    "default per-instance cost",
+)
+_DEFAULT_HOURS = _FailLoudArmMap(  # 3 min — fast end of measured
+    {name: spec.default_hours for name, spec in _ARMS.items()},
+    "default per-instance duration",
+)
 
 # Mirrors ``factory.settings.loader.CapsConfig``. Used when
 # ``factory_settings.yaml`` is missing or unparseable: a guard that cannot read
@@ -6412,7 +7927,12 @@ def load_spend_caps(settings_path: Path | None = None) -> tuple[float, float]:
     return hourly, daily
 
 
-def estimate_instance_cost(arm: str, runs_dir: Path | None = None) -> tuple[float, float, str]:
+def estimate_instance_cost(
+    arm: str,
+    runs_dir: Path | None = None,
+    *,
+    manifest_sha: str | None = None,
+) -> tuple[float, float, str]:
     """``(usd_per_instance, hours_per_instance, source)`` for the spend guard.
 
     Prefers what previous CLEAN runs of this arm actually cost over a baked
@@ -6425,27 +7945,48 @@ def estimate_instance_cost(arm: str, runs_dir: Path | None = None) -> tuple[floa
     there are >=2 such runs — one clean-but-cheap run is an anecdote and must
     never LOWER the guard.
 
+    Samples are restricted to ONE manifest (``manifest_sha``, defaulting to the
+    live pinned one). Without that filter the guard pooled every leftover run
+    in ``runs/`` regardless of dataset: SWE-bench-Pro instances are far bigger
+    than SWE-rebench ones, and their MINIMUM wall clock became the rebench
+    sweep's projected per-instance duration — which is the denominator of the
+    hourly burn rate. Mixing datasets in a projection is the same error class
+    as mixing them in a headline; ``report`` already refuses it, and so does
+    this. A row that records no sha is unverifiable provenance and is never a
+    sample.
+
     Uses the MAXIMUM cost and MINIMUM duration: both push the projected burn
     rate up, which is the fail-safe direction for a guard whose job is to
     refuse.
     """
     base = RUNS_DIR if runs_dir is None else runs_dir
+    if manifest_sha is None:
+        try:
+            manifest_sha = str(_manifest().get("manifest_sha256") or "")
+        except SystemExit:
+            manifest_sha = ""
+    key = run_key(arm)
     costs: list[float] = []
     hours: list[float] = []
-    for f in sorted(base.glob(f"*/{arm}/result.json")):
+    foreign = 0
+    for f in sorted(base.glob(f"*/{key}/result.json")):
         try:
             r = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
         if not isinstance(r, dict) or r.get("error"):
             continue  # a failed run's partial spend is not a cost sample
+        if manifest_sha and str(r.get("manifest_sha256") or "") != manifest_sha:
+            foreign += 1
+            continue
         cost = float(r.get("cost_usd") or 0.0)
         wall = float(r.get("wall_clock_s") or 0.0)
         if cost > 0:
             costs.append(cost)
         if wall > 0:
             hours.append(wall / 3600.0)
-    default_usd = _DEFAULT_COST_USD.get(arm, 3.00)
+    default_usd = _DEFAULT_COST_USD[key]
+    skipped = f", {foreign} other-manifest row(s) ignored" if foreign else ""
     if costs:
         usd = max(costs)
         floored = len(costs) < 2 and usd < default_usd
@@ -6454,13 +7995,16 @@ def estimate_instance_cost(arm: str, runs_dir: Path | None = None) -> tuple[floa
         return (
             usd,
             max(min(hours, default=0.05), 0.01),
-            f"measured over {len(costs)} clean prior {arm} run(s)"
-            + (f", floored at the ${default_usd:,.2f} default" if floored else ""),
+            f"measured over {len(costs)} clean prior {key} run(s) on manifest "
+            f"{manifest_sha or '(unpinned)'}"
+            + (f", floored at the ${default_usd:,.2f} default" if floored else "")
+            + skipped,
         )
     return (
         default_usd,
-        _DEFAULT_HOURS.get(arm, 0.05),
-        "default estimate (no clean prior runs to measure)",
+        _DEFAULT_HOURS[key],
+        "default estimate (no clean prior runs on this manifest to measure)"
+        + skipped,
     )
 
 
@@ -6638,6 +8182,7 @@ def sweep_one(
     max_steps: int,
     run_timeout_s: int,
     grade_timeout_s: int,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Run, GRADE, then AUDIT one instance, in this worker's own child processes.
 
@@ -6656,10 +8201,15 @@ def sweep_one(
     the pool is that it never raises.
     """
     started = time.monotonic()
-    run_dir = _run_dir(instance_id, arm)
+    # (instance, arm, MODEL): two runs of one arm on two models are two rows in
+    # two directories, never one row that silently replaced the other.
+    key = run_key(arm, model)
+    model_argv = ["--model", model] if model else []
+    run_dir = _run_dir(instance_id, key)
     record: dict[str, Any] = {
         "instance_id": instance_id,
-        "arm": arm,
+        "arm": key,
+        "model": resolve_arm_model(arm, model),
         "status": "ok",
         "error": None,
         "audit_ok": None,  # set after run+grade; None = the audit never ran
@@ -6674,6 +8224,7 @@ def sweep_one(
                 instance_id,
                 "--arm",
                 arm,
+                *model_argv,
                 "--max-steps",
                 str(max_steps),
                 "--timeout-s",
@@ -6689,9 +8240,23 @@ def sweep_one(
             record["status"] = "aborted"
             record["error"] = tail or "aborted"
             return _finish_record(record, run_dir, started)
-        if rc != 0:
-            record["status"] = "run_failed"
-            record["error"] = tail or f"run exited {rc}"
+        # ONE classifier, shared with `report` — see ``classify_run``. The sweep
+        # used to set this status from the child's exit code alone while the
+        # report set its own from ``result.json["error"]``, and the two
+        # DISAGREED on the retracted run: sweep-claude.json said 17 resolved,
+        # results.md said 16/18. The exit code is still consulted (it catches a
+        # child that died without writing anything) but it no longer overrides
+        # the artifact.
+        child_result = _read_result(run_dir)
+        status, detail = classify_run(child_result, rc=rc)
+        if status != _RUN_OK:
+            record["status"] = status
+            # With an artifact, the artifact's own reason wins. WITHOUT one, the
+            # child's last log line is the only evidence there is (a timeout, a
+            # traceback) and must not be replaced by a generic message.
+            record["error"] = (
+                detail if child_result else (tail or detail)
+            ) or f"run exited {rc}"
 
         # Grade whatever the run produced. A run that failed LATE can still
         # have written a prediction; a run that failed early has not, and
@@ -6713,6 +8278,7 @@ def sweep_one(
                     instance_id,
                     "--arm",
                     arm,
+                    *model_argv,
                     "--timeout-s",
                     str(grade_timeout_s),
                 ],
@@ -6720,10 +8286,14 @@ def sweep_one(
                 log_path=run_dir / "sweep-grade.log",
             )
             record["grade_rc"] = grc
-            if grc != 0 and record["status"] == "ok":
+            # ``budget_exhausted`` counts as "nothing has gone wrong YET": a
+            # cap hit is a completed attempt, so a grade failure on top of it
+            # must still be reported rather than hidden behind the flag. The
+            # flag itself survives in ``_finish_record``.
+            if grc != 0 and record["status"] in (_RUN_OK, _RUN_BUDGET_EXHAUSTED):
                 record["status"] = "grade_failed"
                 record["error"] = gtail or f"grade exited {grc}"
-        elif record["status"] == "ok":
+        elif record["status"] in (_RUN_OK, _RUN_BUDGET_EXHAUSTED):
             record["status"] = "no_prediction"
             record["error"] = "run produced no prediction.diff"
 
@@ -6747,6 +8317,7 @@ def sweep_one(
                 instance_id,
                 "--arm",
                 arm,
+                *model_argv,
             ],
             timeout_s=600,
             log_path=run_dir / "sweep-audit.log",
@@ -6793,23 +8364,24 @@ def _finish_record(
     writing its result still has real tokens to account for, and dropping them
     would under-report spend.
     """
-    result_path = run_dir / "result.json"
-    result: dict[str, Any] = {}
-    if result_path.exists():
-        try:
-            result = json.loads(result_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            result = {}
+    result = _read_result(run_dir) or {}
     g = result.get("grade") or {}
     record.update(
         {
             "final_state": result.get("final_state") or "—",
             "tokens_in": int(result.get("tokens_in") or 0),
+            "cache_read": int(result.get("cached_input_tokens") or 0),
             "tokens_out": int(result.get("tokens_out") or 0),
             "cost_usd": float(result.get("cost_usd") or 0.0),
             "factory_says_green": result.get("factory_says_green"),
             "oracle_resolved": g.get("oracle_resolved"),
             "outcome": g.get("outcome") or "—",
+            # Same derivation the report uses, from the same artifact.
+            "attempt": int(result.get("attempt") or 1),
+            # Same shared classifier the report uses, so the sweep roll-up and
+            # the published table can never disagree about this row again.
+            "budget_exhausted": classify_run(result)[0] == _RUN_BUDGET_EXHAUSTED,
+            "models_used": result.get("models_used") or [],
             "sweep_wall_s": round(time.monotonic() - started, 1),
         }
     )
@@ -6821,7 +8393,7 @@ def _progress_line(n: int, total: int, r: dict[str, Any]) -> str:
     mark = "PASS" if oracle else ("?" if oracle is None else "FAIL")
     audit_ok = r.get("audit_ok")
     audit_mark = "ok" if audit_ok else ("—" if audit_ok is None else "FAIL")
-    status = "" if r["status"] == "ok" else f"  !{r['status']}: {str(r.get('error'))[:80]}"
+    status = "" if r["status"] == _RUN_OK else f"  !{r['status']}: {str(r.get('error'))[:80]}"
     return (
         f"[{n:>3}/{total:<3}] {str(r['instance_id'])[:46]:<46} "
         f"{str(r['final_state']):<22} "
@@ -6843,8 +8415,13 @@ def run_all(
     grade_timeout_s: int,
     force_over_cap: bool,
     dry_run: bool = False,
+    model: str | None = None,
 ) -> None:
     manifest = _manifest()
+    # Resolve (and refuse) the arm/model pair BEFORE any spend, and key every
+    # artifact this sweep writes — run dirs, records, sweep-<key>.json — by it.
+    key = run_key(arm, model)
+    resolved_model = resolve_arm_model(arm, model)
     chosen = select_instances(
         [str(i["instance_id"]) for i in manifest["instances"]],
         requested=instances,
@@ -6865,7 +8442,9 @@ def run_all(
     workers = max(1, min(workers, len(chosen)))
 
     hourly_cap, daily_cap = load_spend_caps()
-    usd, hours, source = estimate_instance_cost(arm)
+    usd, hours, source = estimate_instance_cost(
+        key, manifest_sha=str(manifest.get("manifest_sha256") or "")
+    )
     total, peak, refusal = spend_guard(
         n_instances=len(chosen),
         workers=workers,
@@ -6875,7 +8454,8 @@ def run_all(
         daily_cap=daily_cap,
     )
     _emit(
-        f"sweep: arm={arm} instances={len(chosen)} workers={workers}\n"
+        f"sweep: arm={key} model={resolved_model or '(from routes.yaml)'} "
+        f"instances={len(chosen)} workers={workers}\n"
         f"spend: ~${usd:,.2f}/instance ({source}); projected ${total:,.2f} total, "
         f"${peak:,.2f}/h peak vs caps ${hourly_cap:,.2f}/h, ${daily_cap:,.2f}/day"
     )
@@ -6892,10 +8472,15 @@ def run_all(
             f"dry-run: would run+grade+audit {len(chosen)} instance(s) "
             f"on {workers} worker(s):"
         )
+        model_flag = f" --model {model}" if model else ""
         for i, iid in enumerate(chosen, 1):
-            _emit(f"  [{i:>3}] run --instance {iid} --arm {arm} --max-steps {max_steps}")
-            _emit(f"        then grade --instance {iid} --arm {arm}")
-            _emit(f"        then audit --instance {iid} --arm {arm}")
+            _emit(
+                f"  [{i:>3}] run --instance {iid} --arm {arm}{model_flag} "
+                f"--max-steps {max_steps}"
+            )
+            _emit(f"        then grade --instance {iid} --arm {arm}{model_flag}")
+            _emit(f"        then audit --instance {iid} --arm {arm}{model_flag}")
+            _emit(f"        -> bench/swebench/runs/{iid}/{key}/")
         _emit("dry-run: nothing was executed and nothing was written.")
         return
 
@@ -6916,6 +8501,7 @@ def run_all(
                 sweep_one,
                 iid,
                 arm=arm,
+                model=model,
                 max_steps=max_steps,
                 run_timeout_s=run_timeout_s,
                 grade_timeout_s=grade_timeout_s,
@@ -6931,7 +8517,7 @@ def run_all(
                 try:
                     rec = done.result()
                 except Exception as exc:  # noqa: BLE001 - belt and braces; sweep_one swallows
-                    rec = _blank_record(iid, arm, f"{type(exc).__name__}: {exc}")
+                    rec = _blank_record(iid, key, f"{type(exc).__name__}: {exc}")
                 recorded.add(done)
                 records.append(rec)
                 _emit(_progress_line(len(records), len(chosen), rec))
@@ -6994,24 +8580,27 @@ def run_all(
             reason = "cancelled before start"
             if stopped_reason:
                 reason += f" ({stopped_reason})"
-            records.append(_blank_record(iid, arm, reason, status="aborted"))
+            records.append(_blank_record(iid, key, reason, status="aborted"))
             continue
         try:
             records.append(fut.result(timeout=0))
         except BaseException as exc:  # noqa: BLE001 - KeyboardInterrupt included
             records.append(
-                _blank_record(iid, arm, f"{type(exc).__name__}: {exc}", status="aborted")
+                _blank_record(iid, key, f"{type(exc).__name__}: {exc}", status="aborted")
             )
 
     records.sort(key=lambda r: str(r["instance_id"]))
     summary = _sweep_summary(
         records,
-        arm=arm,
+        arm=key,
+        model=resolved_model,
         workers=workers,
         wall_s=time.monotonic() - started,
         stopped_reason=stopped_reason,
     )
-    out = SWE_DIR / f"sweep-{arm}.json"
+    # Keyed by the RUN KEY, not the bare arm: two claude sweeps on two models
+    # would otherwise write one file and the second would erase the first.
+    out = SWE_DIR / f"sweep-{key}.json"
     out.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     _emit(_render_summary(summary) + f"\nwrote {out}\nnext: `report`")
     # Non-zero exits, AFTER the summary is written (it is the evidence):
@@ -7039,11 +8628,15 @@ def _blank_record(
         "error": error,
         "final_state": "—",
         "tokens_in": 0,
+        "cache_read": 0,
         "tokens_out": 0,
         "cost_usd": 0.0,
         "factory_says_green": None,
         "oracle_resolved": None,
         "outcome": "—",
+        "attempt": 0,  # never started, so it is not an attempt at anything
+        "budget_exhausted": False,
+        "models_used": [],
         "audit_ok": None,
         "sweep_wall_s": 0.0,
     }
@@ -7056,6 +8649,7 @@ def _sweep_summary(
     workers: int,
     wall_s: float,
     stopped_reason: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     outcomes: dict[str, int] = {}
     statuses: dict[str, int] = {}
@@ -7069,35 +8663,43 @@ def _sweep_summary(
         and not str(r.get("outcome") or "").startswith("task_broken")
     ]
     # DELIBERATE: the headline ``resolved`` counts only rows that are clean
-    # end-to-end — run ok AND audit ok. An oracle pass produced by a run that
-    # failed late, or by a run whose audit found the trail invalid, is real
-    # information but not a trustworthy result: it stays VISIBLE in its own
-    # flagged counter instead of being silently conflated into the number a
-    # comparison would be built on.
+    # end-to-end — run completed (or ran out of budget, which is a COMPLETED
+    # attempt under the one shared rule) AND audit ok. An oracle pass produced
+    # by a run that genuinely failed, or by a run whose audit found the trail
+    # invalid, is real information but not a trustworthy result: it stays
+    # VISIBLE in its own flagged counter instead of being silently conflated
+    # into the number a comparison would be built on.
+    #
+    # ``budget_exhausted`` joining ``ok`` here is the fix for the retracted
+    # run's silently-improved denominator: a Claude row that hit its turn cap
+    # AND passed the oracle was dropped from both numerator and denominator.
+    def _counted(r: dict[str, Any]) -> bool:
+        return r.get("status") in (_RUN_OK, _RUN_BUDGET_EXHAUSTED)
+
     resolved_clean = sum(
-        1
-        for r in gradable
-        if r.get("oracle_resolved") and r.get("status") == "ok" and r.get("audit_ok") is True
+        1 for r in gradable if r.get("oracle_resolved") and _counted(r) and r.get("audit_ok") is True
     )
     resolved_run_failed = sum(
-        1 for r in gradable if r.get("oracle_resolved") and r.get("status") != "ok"
+        1 for r in gradable if r.get("oracle_resolved") and not _counted(r)
     )
     resolved_audit_failed = sum(
         1
         for r in gradable
-        if r.get("oracle_resolved")
-        and r.get("status") == "ok"
-        and r.get("audit_ok") is not True
+        if r.get("oracle_resolved") and _counted(r) and r.get("audit_ok") is not True
     )
     return {
         "arm": arm,
+        # Both halves of the (harness, model) pair, in the artifact, so a
+        # sweep-<arm>.json torn out of context still says what produced it.
+        "model": model,
+        "harness": arm_spec(arm).harness,
         "workers": workers,
         "finished_at": datetime.now(UTC).isoformat(),
         "wall_clock_s": round(wall_s, 1),
         "stopped_reason": stopped_reason,
         "instances": len(records),
-        "ok": statuses.get("ok", 0),
-        "failed": len(records) - statuses.get("ok", 0),
+        "ok": sum(1 for r in records if _counted(r)),
+        "failed": sum(1 for r in records if not _counted(r)),
         "statuses": statuses,
         "outcomes": outcomes,
         "audited_valid": sum(1 for r in records if r.get("audit_ok") is True),
@@ -7106,10 +8708,18 @@ def _sweep_summary(
         "resolved": resolved_clean,
         "resolved_but_run_failed": resolved_run_failed,
         "resolved_but_audit_failed": resolved_audit_failed,
+        "budget_exhausted": sum(1 for r in records if r.get("budget_exhausted")),
+        "retried_rows": sum(1 for r in records if int(r.get("attempt") or 1) > 1),
         "gradable": len(gradable),
         "tokens_in": sum(int(r.get("tokens_in") or 0) for r in records),
+        "cache_read": sum(int(r.get("cache_read") or 0) for r in records),
+        "fresh_in": sum(
+            max(int(r.get("tokens_in") or 0) - int(r.get("cache_read") or 0), 0)
+            for r in records
+        ),
         "tokens_out": sum(int(r.get("tokens_out") or 0) for r in records),
         "cost_usd": round(sum(float(r.get("cost_usd") or 0.0) for r in records), 4),
+        "cost_source": arm_spec(arm).cost_source,
         "results": records,
     }
 
@@ -7122,22 +8732,33 @@ def _render_summary(s: dict[str, Any]) -> str:
         flagged.append(f"+{s['resolved_but_audit_failed']} resolved but audit FAILED")
     lines = [
         "-" * 100,
-        f"sweep done: {s['instances']} instance(s) in {s['wall_clock_s']}s "
+        f"sweep done: arm={s['arm']} model={s.get('model') or '(from routes.yaml)'} "
+        f"{s['instances']} instance(s) in {s['wall_clock_s']}s "
         f"on {s['workers']} worker(s) — {s['ok']} ok, {s['failed']} failed",
-        f"  tokens: in={s['tokens_in']:,} out={s['tokens_out']:,}  "
-        f"cost=${s['cost_usd']:,.2f} (derived-from-price-table)",
+        # fresh vs cache-read, never one blended "tokens in": cache share ranged
+        # 0%-97% across the arms of the retracted run, which made its published
+        # token ratio wrong by 4.5x.
+        f"  tokens: fresh_in={s.get('fresh_in', s['tokens_in']):,} "
+        f"cache_read={s.get('cache_read', 0):,} out={s['tokens_out']:,}  "
+        f"cost=${s['cost_usd']:,.2f} ({s.get('cost_source', _COST_PRICE_TABLE)})",
         f"  oracle: {s['resolved']}/{s['gradable']} resolved clean"
         + (" (task_broken excluded)" if s["gradable"] < s["instances"] else "")
         + (" — flagged, NOT counted: " + ", ".join(flagged) if flagged else ""),
         f"  audit: {s['audited_valid']} valid, {s['audit_failed']} failed, "
         f"{s['not_audited']} not audited",
+        f"  budget-exhausted (counted as attempts): {s.get('budget_exhausted', 0)}; "
+        f"rows on attempt>1: {s.get('retried_rows', 0)}",
         "  outcomes: "
         + ", ".join(f"{k}={v}" for k, v in sorted(s["outcomes"].items()))
         + "",
     ]
     if s.get("stopped_reason"):
         lines.insert(1, f"  STOPPED EARLY — {s['stopped_reason']}")
-    failures = [r for r in s["results"] if r.get("status") != "ok"]
+    failures = [
+        r
+        for r in s["results"]
+        if r.get("status") not in (_RUN_OK, _RUN_BUDGET_EXHAUSTED)
+    ]
     if failures:
         lines.append("  failures (isolated — the sweep continued):")
         lines += [
@@ -7184,6 +8805,25 @@ def _load_env() -> None:
             load_dotenv(path, override=False)
 
 
+def _add_model_arg(p: argparse.ArgumentParser) -> None:
+    """``--model`` for every command that addresses a run directory.
+
+    ``grade`` and ``audit`` take it too, not just ``run``: the run directory is
+    keyed by (instance, arm, MODEL), so a grade that could not name the model
+    could not find the right prediction — it would silently grade whichever run
+    happened to own the plain arm directory.
+    """
+    p.add_argument(
+        "--model",
+        default=None,
+        help="model id for a model-selectable arm (the claude arms). Defaults "
+             f"to {_CLAUDE_MODEL}. An off-default id keys its own run "
+             f"directory (`<arm>{_ARM_MODEL_SEP}<model>`) so two runs of one "
+             "arm on two models cannot overwrite each other. Rejected for the "
+             "arms whose weights come from routes.yaml.",
+    )
+
+
 def main() -> None:
     _load_env()
 
@@ -7223,10 +8863,13 @@ def main() -> None:
              "(PLAN.md 1.4). A factory number without it measures the model. "
              "'claude' is the local Claude Code CLI, headless and hermetic — "
              "its spend bills the operator's Anthropic subscription, not the "
-             "Azure ledger. 'openhands' is ONE OpenHands agent on the factory's "
-             "own dev deployment with no chain around it — it isolates the "
-             "chain, which is what the product claim asserts.",
+             "Azure ledger; 'claude-5'/'claude-4.8' are that same CLI pinned to "
+             "the two pre-registered models (the older cutoff is the "
+             "contamination probe). 'openhands' is ONE OpenHands agent on the "
+             "factory's own dev deployment with no chain around it — it isolates "
+             "the chain, which is what the product claim asserts.",
     )
+    _add_model_arg(p)
     p.add_argument(
         "--max-steps",
         type=int,
@@ -7241,7 +8884,7 @@ def main() -> None:
     p.add_argument(
         "--probe-plumbing",
         action="store_true",
-        help="bare/openhands only: run the WHOLE pipeline (clone, install "
+        help="bare/openhands/claude-* (not factory): run the WHOLE pipeline (clone, install "
              "replay, collect precheck, prompt assembly, command parse, tool "
              "loop, diff capture, split_diff, assert_no_test_edits, ledger "
              "read-back, result.json, summary) with the model REPLACED by a "
@@ -7254,6 +8897,7 @@ def main() -> None:
         help="parallel sweep: run + grade many instances across a worker pool",
     )
     p.add_argument("--arm", default="factory", choices=list(_ARM_NAMES))
+    _add_model_arg(p)
     p.add_argument("--workers", type=int, default=4)
     p.add_argument(
         "--instances",
@@ -7294,6 +8938,7 @@ def main() -> None:
     p = sub.add_parser("grade", help="run the hidden oracle in the official image")
     p.add_argument("--instance", required=True)
     p.add_argument("--arm", default="factory", choices=list(_ARM_NAMES))
+    _add_model_arg(p)
     p.add_argument("--timeout-s", type=int, default=3600)
 
     p = sub.add_parser(
@@ -7307,6 +8952,7 @@ def main() -> None:
     )
     p.add_argument("--instance", required=True)
     p.add_argument("--arm", default="factory", choices=list(_ARM_NAMES))
+    _add_model_arg(p)
     p.add_argument(
         "--show-responses",
         action="store_true",
@@ -7318,7 +8964,25 @@ def main() -> None:
     p.add_argument(
         "--from-archive",
         default=None,
-        help="re-derive the table purely from a results-archive dir (no live runs)",
+        help="re-derive the table purely from a results-archive dir and print it "
+             "to STDOUT. Writes NOTHING — this mode used to overwrite the very "
+             "results.md it was verifying, and silently deleted a disclosure "
+             "section from committed evidence.",
+    )
+    p.add_argument(
+        "--check",
+        action="store_true",
+        help="re-derive from an archive (newest by default) and DIFF against the "
+             "committed results.md; exit non-zero on any difference. The "
+             "executable form of 'a second report run re-derives the committed "
+             "table byte-for-byte'.",
+    )
+    p.add_argument(
+        "--publish",
+        action="store_true",
+        help="write results.md FROM an archive. The only way to do that; plain "
+             "--from-archive is read-only so verifying never mutates what it "
+             "verifies.",
     )
 
     args = ap.parse_args()
@@ -7332,28 +8996,50 @@ def main() -> None:
         )
     elif args.cmd == "run":
         steps = _resolve_max_steps(args.arm, args.max_steps)
+        # Validated (and refused for a non-selectable arm) BEFORE anything is
+        # cloned or spent.
+        key = run_key(args.arm, args.model)
+        base = arm_spec(args.arm).base
         if args.probe_plumbing:
-            if args.arm not in ("bare", "openhands"):
+            if base not in ("bare", "openhands", "claude"):
                 raise SystemExit(
-                    "--probe-plumbing is implemented for --arm bare and --arm "
-                    "openhands only (the factory arm's dry-run surface is "
-                    "`factory pm-sync --dry-run`; the claude arm's is the CLI's "
-                    "own --max-turns 1)."
+                    "--probe-plumbing is implemented for --arm bare, openhands "
+                    "and the claude arms (the factory arm's dry-run surface is "
+                    "`factory pm-sync --dry-run`)."
                 )
-            probe_runner = {"bare": run_bare, "openhands": run_openhands}[args.arm]
-            probe_runner(
-                args.instance, max_steps=steps, timeout_s=args.timeout_s, probe=True
+            if base == "claude":
+                run_claude(
+                    args.instance,
+                    max_steps=steps,
+                    timeout_s=args.timeout_s,
+                    arm=args.arm,
+                    model=args.model,
+                    probe=True,
+                )
+            else:
+                probe_runner = {"bare": run_bare, "openhands": run_openhands}[base]
+                probe_runner(
+                    args.instance, max_steps=steps, timeout_s=args.timeout_s, probe=True
+                )
+        elif base == "claude":
+            run_claude(
+                args.instance,
+                max_steps=steps,
+                timeout_s=args.timeout_s,
+                arm=args.arm,
+                model=args.model,
             )
         else:
             runner = {
                 "bare": run_bare,
-                "claude": run_claude,
                 "openhands": run_openhands,
-            }.get(args.arm, run_factory)
+            }.get(base, run_factory)
+            assert key == base  # non-selectable arms are 1:1 with their run dir
             runner(args.instance, max_steps=steps, timeout_s=args.timeout_s)
     elif args.cmd == "run-all":
         run_all(
             arm=args.arm,
+            model=args.model,
             workers=args.workers,
             instances=(
                 [s.strip() for s in args.instances.split(",") if s.strip()]
@@ -7368,14 +9054,20 @@ def main() -> None:
             dry_run=args.dry_run,
         )
     elif args.cmd == "grade":
-        grade(args.instance, args.arm, timeout_s=args.timeout_s)
+        grade(args.instance, run_key(args.arm, args.model), timeout_s=args.timeout_s)
     elif args.cmd == "selftest":
         selftest(args.instance, timeout_s=args.timeout_s)
     elif args.cmd == "audit":
-        audit(args.instance, args.arm, show_responses=args.show_responses)
+        audit(
+            args.instance,
+            run_key(args.arm, args.model),
+            show_responses=args.show_responses,
+        )
     elif args.cmd == "report":
         report(
-            from_archive=Path(args.from_archive) if args.from_archive else None
+            from_archive=Path(args.from_archive) if args.from_archive else None,
+            check=args.check,
+            publish=args.publish,
         )
 
 

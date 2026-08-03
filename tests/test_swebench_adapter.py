@@ -346,8 +346,14 @@ def test_fresh_run_result_drops_stale_keys(
     A._write_result("i1", "factory", {"cost_usd": 2.0})  # a NEW run
     data = json.loads((tmp_path / "i1" / "factory" / "result.json").read_text())
     # Nothing survives from the previous run: not the context keys, and not the
-    # grade — that verdict was for a prediction that no longer exists.
-    assert data == {"cost_usd": 2.0}
+    # grade — that verdict was for a prediction that no longer exists. The
+    # attempt/budget stamps are added BY this write, not carried over.
+    assert data == {
+        "cost_usd": 2.0,
+        "attempt": 1,
+        "budget_exhausted": False,
+        "budget_exhausted_reason": None,
+    }
 
 
 def test_grade_still_merges_onto_the_run_result(
@@ -2363,6 +2369,7 @@ def test_cli_wires_run_all_through(A: Any, monkeypatch: pytest.MonkeyPatch) -> N
     A.main()
     assert seen == {
         "arm": "bare",
+        "model": None,
         "workers": 7,
         "instances": ["a", "b"],
         "only_working": True,
@@ -2522,7 +2529,7 @@ def test_report_headline_counts_only_audited_valid_rows(  # noqa: N803
     _report_run(runs, "inst_audit_failed_pass", resolved=True, audit=False)
     _report_run(
         runs, "inst_run_failed_pass", resolved=True, audit=True,
-        error="wall-clock cap 5400s hit",
+        error="dev: RuntimeError: boom",
     )
     _patch_report_dirs(A, tmp_path, monkeypatch)
 
@@ -2532,9 +2539,9 @@ def test_report_headline_counts_only_audited_valid_rows(  # noqa: N803
     # Headline: 1 resolved of 2 audited-valid (valid_pass + valid_fail); the
     # two other oracle passes are excluded, each with its reason.
     assert "resolve rate: **1/2 = 50% audited-valid**" in md
-    assert "2 oracle-pass EXCLUDED" in md
-    assert "inst_audit_failed_pass: audit failed" in md
-    assert "inst_run_failed_pass: run failed" in md
+    assert "2 row(s) EXCLUDED" in md
+    assert "inst_audit_failed_pass [PASS]: audit failed" in md
+    assert "inst_run_failed_pass [PASS]: run failed" in md
     assert "audit gate: **2 audited-valid** of 4 gradable" in md
     # The per-row table carries the audit column.
     assert "| audit |" in md
@@ -2640,7 +2647,7 @@ def test_report_from_archive_rederives_the_table_byte_for_byte(  # noqa: N803
     A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """report --from-archive re-derives the committed table purely from the
-    archive — no live runs dir, no new archive, identical bytes."""
+    archive — no live runs dir, no new archive, identical bytes, AND NO WRITE."""
     import shutil as _shutil
 
     runs = _patch_report_dirs(A, tmp_path, monkeypatch)
@@ -2654,12 +2661,12 @@ def test_report_from_archive_rederives_the_table_byte_for_byte(  # noqa: N803
     # The next sweep wipes runs/ — exactly the scenario that destroyed the
     # 1.3 evidence. The archive must be sufficient on its own.
     _shutil.rmtree(runs)
-    (tmp_path / "results.md").unlink()
 
     rederived = A.report(from_archive=archive)
     capsys.readouterr()
 
     assert rederived == live_text
+    # AND it must not have touched the file it is verifying.
     assert (tmp_path / "results.md").read_text(encoding="utf-8") == live_text
     # Re-deriving must not mint a second archive.
     assert len(list((tmp_path / "results-archive").iterdir())) == 1
@@ -3955,8 +3962,8 @@ def test_cli_claude_arm_defaults_to_the_turn_cap(
     seen: dict[str, Any] = {}
     monkeypatch.setattr(A, "_load_env", lambda: None)
     monkeypatch.setattr(
-        A, "run_claude", lambda iid, *, max_steps, timeout_s: seen.update(
-            iid=iid, max_steps=max_steps, timeout_s=timeout_s
+        A, "run_claude", lambda iid, *, max_steps, timeout_s, arm, model: seen.update(
+            iid=iid, max_steps=max_steps, timeout_s=timeout_s, arm=arm, model=model
         )
     )
     monkeypatch.setattr(

@@ -785,7 +785,9 @@ def test_reset_run_artifacts_clears_the_sweep_logs(A: Any, tmp_path: Path) -> No
     ):
         (tmp_path / name).write_text("x", encoding="utf-8")
     A._reset_run_artifacts(tmp_path)
-    assert sorted(p.name for p in tmp_path.iterdir()) == []
+    # ``attempt.json`` is the ONE deliberate survivor: it is the attempt
+    # counter, which must outlive the run it counts (see `_bump_attempt`).
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["attempt.json"]
 
 
 # --------------------------------------------------------------------------- #
