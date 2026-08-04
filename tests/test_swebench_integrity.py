@@ -617,24 +617,33 @@ def test_selftest_prepares_its_clone_outside_the_repo(A: Any) -> None:  # noqa: 
 
 
 @pytest.mark.parametrize(
-    "line",
+    "command",
     [
         "curl -s https://github.com/x/y/pull/981.diff",
         "wget http://example.com/patch",
         "git fetch origin main",
         "git pull --rebase",
         "git ls-remote https://github.com/x/y",
+        "git clone https://github.com/x/y /tmp/upstream",
         "gh pr view 981 --json files",
+        "gh api repos/x/y/pulls/981",
         "urllib.request.urlopen('https://github.com/x/y')",
-        "see https://github.com/x/y/commit/deadbeef",
+        "requests.get('https://api.github.com/repos/x/y/pulls/981')",
+        "httpx.get('http://example.com/patch.diff')",
+        "pip install https://github.com/x/y/archive/main.zip",
+        "pip install git+https://github.com/x/y",
+        "curl -s https://raw.githubusercontent.com/x/y/main/src/mod.py",
     ],
 )
-def test_network_retrieval_is_flagged(A: Any, line: str) -> None:  # noqa: N803
-    assert A._probe_line_hits(line, "x__y-1", "factory"), line
+def test_network_retrieval_is_flagged(A: Any, command: str) -> None:  # noqa: N803
+    """A retrieval ACTION invalidates the run. This is the fail-closed half and
+    it must never be softened into a warning: every instance is a merged public
+    PR, so one fetch is the whole answer."""
+    assert A._retrieval_hits(command), command
 
 
 @pytest.mark.parametrize(
-    "line",
+    "command",
     [
         "python -m pytest tests/test_x.py",
         "git status --porcelain",
@@ -642,10 +651,307 @@ def test_network_retrieval_is_flagged(A: Any, line: str) -> None:  # noqa: N803
         "import requests  # unused",
         "ls -la src/",
         "docker run --rm -v \"$PWD\":/testbed img -lc 'pytest'",
+        # A hostname with NO fetch verb beside it. Each of these was a live
+        # false positive that invalidated real rows (218 flagged lines across
+        # 46 rows of the completed five-arm sweep) under the old bare-URL rule.
+        "see https://github.com/x/y/commit/deadbeef",
+        "git remote -v",
+        "origin\thttps://github.com/x/y.git (fetch)",
+        '["clang version 18.1.0rc (https://github.com/llvm/llvm-project.git 4612)", "18.1.0"]',
+        '# see https://github.com/pandas-dev/pandas/issues/12345 for context',
+        'url = "https://github.com/login/device"; urllib.parse.urlparse(url)',
+        "Home-page: https://github.com/x/y",
     ],
 )
-def test_ordinary_commands_are_not_flagged(A: Any, line: str) -> None:  # noqa: N803
-    assert not A._probe_line_hits(line, "x__y-1", "factory"), line
+def test_a_mention_is_not_a_retrieval(A: Any, command: str) -> None:  # noqa: N803
+    """Layer 1 of the false-positive fix: the patterns need a fetch VERB.
+
+    A ``github.com`` hostname on its own is not evidence of anything — it is in
+    half the docstrings on PyPI.
+    """
+    hits = A._retrieval_hits(command)
+    assert not hits, (command, hits)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '"$id": "https://raw.githubusercontent.com/tox-dev/tox/main/src/tox/tox.schema.json"',
+        "- Verification: `gh api repos/x/y/pulls/112/comments`",
+    ],
+)
+def test_verb_shaped_text_relies_on_the_action_observation_split(A: Any, text: str) -> None:  # noqa: N803
+    """Layer 2, and the reason both layers are needed.
+
+    These two DO match a pattern, deliberately. ``api``/``raw.githubusercontent``
+    stays a bare-URL match and ``gh api`` stays verb-shaped because on the
+    COMMAND side they are the catch-all for a fetch through a tool this list
+    does not enumerate — dropping them would be fail-open. Both measured
+    instances of this text were observations (tox's own JSON schema; a
+    maintainer note in a file the agent read), and it is the caller's
+    action/observation split, not the pattern, that clears them. Asserting the
+    match here keeps that division of labour explicit: if someone ever routes
+    observation text into ``_retrieval_hits`` again, these rows come straight
+    back.
+    """
+    assert A._retrieval_hits(text)
+
+
+def _seed_trajectory(A: Any, run_dir: Path, *events: dict[str, Any]) -> None:  # noqa: N803
+    d = run_dir / "state" / "events" / "trajectories"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "1-1.ndjson").write_text(
+        "".join(json.dumps(e) + "\n" for e in events), encoding="utf-8"
+    )
+
+
+def _scan(A: Any, run_dir: Path, arm: str = "factory") -> list[str]:  # noqa: N803
+    failures, _traj, _trails = A._scan_oracle_probes(
+        run_dir,
+        run_dir,
+        {"arm": arm, "repo": "x/y"},
+        instance_id="x__y-1",
+        arm=arm,
+    )
+    return failures
+
+
+def test_a_curl_action_in_a_trajectory_fails_the_scan(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """TRUE POSITIVE, end to end. A fetch of the public fix must invalidate the
+    run — this is the control the whole detector exists to be, and softening it
+    into a warning would remove the only thing standing between this bench and
+    an answer-key leak."""
+    run_dir = tmp_path / "runs" / "x__y-1" / "factory"
+    run_dir.mkdir(parents=True)
+    _seed_trajectory(
+        A,
+        run_dir,
+        {
+            "kind": "ActionEvent",
+            "source": "agent",
+            "action": {
+                "kind": "TerminalAction",
+                "command": "curl -sL https://github.com/x/y/pull/113.diff -o /tmp/fix.diff",
+            },
+        },
+    )
+    failures = _scan(A, run_dir)
+    assert failures, "a curl of the gold patch must fail the scan"
+    assert any("curl" in f for f in failures), failures
+
+
+def test_a_read_observation_naming_a_host_is_not_a_retrieval(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """FALSE POSITIVE regression, end to end, from the measured artifact.
+
+    The exact line that invalidated the majority of every arm's rows: conan's
+    own test fixture cites an llvm URL, and the agent had merely READ the file.
+    A hostname in an observation is not an action.
+    """
+    run_dir = tmp_path / "runs" / "x__y-1" / "factory"
+    run_dir.mkdir(parents=True)
+    fixture = (
+        '["clang version 18.1.0rc (https://github.com/llvm/llvm-project.git '
+        '4612a09e)", "18.1.0"]'
+    )
+    _seed_trajectory(
+        A,
+        run_dir,
+        {
+            "kind": "ActionEvent",
+            "source": "agent",
+            "action": {"kind": "FileEditorAction", "command": "view", "path": "t.py"},
+        },
+        {
+            "kind": "ObservationEvent",
+            "source": "environment",
+            "observation": {"kind": "FileEditorObservation", "content": fixture},
+        },
+        # …and the same host inside content the agent WROTE, plus a git remote
+        # echo. Both are text, neither is a fetch.
+        {
+            "kind": "ActionEvent",
+            "source": "agent",
+            "action": {
+                "kind": "FileEditorAction",
+                "command": "str_replace",
+                "path": "t.py",
+                "old_str": "x = 1",
+                "new_str": f"# see {fixture}\nx = 2",
+            },
+        },
+        {
+            "kind": "ObservationEvent",
+            "source": "environment",
+            "observation": {
+                "kind": "TerminalObservation",
+                "content": "origin\thttps://github.com/x/y.git (fetch)",
+            },
+        },
+    )
+    assert _scan(A, run_dir) == []
+
+
+def test_a_curl_hidden_in_an_actionless_event_still_fails(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """34 ActionEvents in the live sweep carry ``action: null`` and record what
+    ran ONLY in ``tool_call.arguments``. Skipping that string would have been a
+    silent fail-open hole, so the arguments are parsed and scanned too."""
+    run_dir = tmp_path / "runs" / "x__y-1" / "factory"
+    run_dir.mkdir(parents=True)
+    _seed_trajectory(
+        A,
+        run_dir,
+        {
+            "kind": "ActionEvent",
+            "source": "agent",
+            "action": None,
+            "tool_name": "execute_bash",
+            "tool_call": {
+                "name": "execute_bash",
+                "arguments": json.dumps(
+                    {"command": "wget https://example.com/gold.patch"}
+                ),
+            },
+        },
+    )
+    failures = _scan(A, run_dir)
+    assert failures, "an actionless ActionEvent must still be scanned"
+
+
+def test_a_claude_tool_result_is_not_a_retrieval_but_its_tool_use_is(
+    A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    """The claude transcript's split: ``tool_use.input`` is what the CLI RAN,
+    ``tool_result`` is what came back. Both halves asserted in one place so a
+    future refactor cannot quietly move the boundary."""
+    run_dir = tmp_path / "runs" / "x__y-1" / "claude-5"
+    run_dir.mkdir(parents=True)
+    log = run_dir / A._CLAUDE_TRANSCRIPT_NAME
+    read_back = {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "content": '"$id": "https://raw.githubusercontent.com/x/y/main/s.json"',
+                }
+            ],
+        },
+    }
+    wrote_a_url = {
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "Edit",
+                    "input": {
+                        "file_path": "t.py",
+                        "old_string": "a",
+                        "new_string": "# https://github.com/x/y/pull/113",
+                    },
+                }
+            ],
+        },
+    }
+    log.write_text(
+        json.dumps(read_back) + "\n" + json.dumps(wrote_a_url) + "\n", encoding="utf-8"
+    )
+    assert _scan(A, run_dir, arm="claude-5") == []
+
+    fetched = {
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "Bash",
+                    "input": {"command": "curl https://github.com/x/y/pull/113.diff"},
+                }
+            ],
+        },
+    }
+    log.write_text(json.dumps(fetched) + "\n", encoding="utf-8")
+    assert _scan(A, run_dir, arm="claude-5")
+
+
+def test_a_server_side_webfetch_counter_fails_the_scan(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """The CLI is launched with WebFetch/WebSearch removed, but the result
+    event's own counters are the artifact-backed proof. A non-zero counter is a
+    retrieval whatever the tool_use blocks show."""
+    run_dir = tmp_path / "runs" / "x__y-1" / "claude-5"
+    run_dir.mkdir(parents=True)
+    (run_dir / A._CLAUDE_TRANSCRIPT_NAME).write_text(
+        json.dumps(
+            {
+                "type": "result",
+                "usage": {"server_tool_use": {"web_fetch_requests": 1,
+                                              "web_search_requests": 0}},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    failures = _scan(A, run_dir, arm="claude-5")
+    assert any("WebFetch" in f for f in failures), failures
+
+
+def test_a_bare_command_is_scanned_but_its_output_is_not(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """`bare-commands.ndjson` splits `command` (ran) from `output` (saw). The
+    measured true positive lived in `command`; the measured false positives
+    were all in `output` or in heredoc'd file bodies."""
+    run_dir = tmp_path / "runs" / "x__y-1" / "bare"
+    run_dir.mkdir(parents=True)
+    log = run_dir / "bare-commands.ndjson"
+    log.write_text(
+        json.dumps(
+            {
+                "step": 1,
+                "command": "cat setup.py",
+                "exit": 0,
+                "output": "url='https://github.com/x/y', download_url='https://api.github.com/x'",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert _scan(A, run_dir, arm="bare") == []
+    log.write_text(
+        json.dumps(
+            {
+                "step": 1,
+                "command": "curl -s https://raw.githubusercontent.com/x/y/main/src/mod.py",
+                "exit": 0,
+                "output": "",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert _scan(A, run_dir, arm="bare")
+
+
+def test_an_unparsable_trail_line_is_scanned_whole(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """Fail-closed on a format we cannot read: with no action/observation split
+    available, the whole line is the command side."""
+    run_dir = tmp_path / "runs" / "x__y-1" / "bare"
+    run_dir.mkdir(parents=True)
+    (run_dir / "bare-commands.ndjson").write_text(
+        "{not json at all: curl https://github.com/x/y/pull/1.diff\n", encoding="utf-8"
+    )
+    assert _scan(A, run_dir, arm="bare")
+
+
+def test_path_probes_and_retrieval_are_separate_scans(A: Any) -> None:  # noqa: N803
+    """``_probe_line_hits`` is the PATH scan and reads whole lines (both
+    sides); ``_retrieval_hits`` is the ACTION scan and only ever sees the
+    command side. Keeping them separate is what lets the path half stay
+    exactly as strict as it was while the network half stops flagging text."""
+    assert A._probe_line_hits("curl -s https://github.com/x/y.diff", "x__y-1", "f") == []
+    assert A._retrieval_hits("cat bench/swebench/oracle.json.z") == []
+    assert A._probe_line_hits("cat bench/swebench/oracle.json.z", "x__y-1", "f")
 
 
 def test_an_oracle_bearing_filename_in_the_own_subtree_is_still_flagged(A: Any) -> None:  # noqa: N803

@@ -1,0 +1,99 @@
+{
+  "arm": "claude-5",
+  "arm_base": "claude",
+  "instance_id": "idaholab__montepy-933_interface",
+  "repo": "idaholab/MontePy",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "problem_statement_sha256": "18f56a6b2c0dd104befdcf7caf0f58fd82cc82d7dc0c96b05a307b064e3b81f1",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "9a02356d-e29f-4f75-b0b4-e7b767046001",
+  "ts": "2026-08-03T22:26:52.836394+00:00",
+  "wall_clock_s": 280.2,
+  "agent_wall_s": 271.4,
+  "num_turns": 39,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 1927447,
+  "tokens_out": 16768,
+  "cached_input_tokens": 1860755,
+  "cost_usd": 1.9978,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.0021
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-5",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 1.9957
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 2.9,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_universe.py",
+      "tests/test_universe_integration.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "doc/source/changelog.rst",
+    "montepy/cell.py",
+    "montepy/data_inputs/universe_input.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_universe.py",
+    "tests/test_universe_integration.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 4308,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-5",
+    "instance_id": "idaholab__montepy-933_interface",
+    "image": "swerebench/sweb.eval.x86_64.idaholab_1776_montepy-933_interface@sha256:d79f83f33b0f25749596dd0038adecb80e9b443300200890dca0f6d23488567c",
+    "graded_at": "2026-08-03T22:26:52.958981+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 40,
+    "pass_to_pass_declared_count": 40,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 8.3,
+    "log_tail": "verse::test_init\nPASSED tests/test_universe.py::TestUniverse::test_number_setter\nPASSED tests/test_universe.py::TestLattice::test_lattice_init\nPASSED tests/test_universe.py::TestLattice::test_lattice_setter\nPASSED tests/test_universe.py::TestLattice::test_lattice_deleter\nPASSED tests/test_universe.py::TestLattice::test_lattice_merge\nPASSED tests/test_universe.py::TestLattice::test_lattice_cell_format\nPASSED tests/test_universe.py::TestLattice::test_lattice_repr\nPASSED tests/test_universe.py::TestLattice::test_deprecated_lattice\nPASSED tests/test_universe.py::TestFill::test_complex_transform_fill_init\nPASSED tests/test_universe.py::TestFill::test_complicated_lattice_fill_init\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1 0:1 hi-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 hi:1 0:1 hi-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1 0:1 -1-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 1:0 0:1 1 2 3 4 5 6 7 8-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1.5 0:1 1 2 3 4 5 6 7 8-ValueError]\nPASSED tests/test_universe.py::TestFill::test_data_fill_init\nPASSED tests/test_universe.py::TestFill::test_fill_universe_setter\nPASSED tests/test_universe.py::TestFill::test_fill_universes_setter\nPASSED tests/test_universe.py::TestFill::test_fill_str\nPASSED tests/test_universe.py::TestFill::test_fill_merge\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-hi-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-hi-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-value2-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-value3-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-value4-ValueError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-value5-ValueError]\nPASSED tests/test_universe.py::TestFill::test_fill_multi_unis\nPASSED tests/test_universe.py::test_cell_universe_setter_type_error\nPASSED tests/test_universe_integration.py::test_universe_setter\nPASSED tests/test_universe_integration.py::test_fill_setter\nPASSED tests/test_universe_integration.py::test_lattice_setter\nPASSED tests/test_universe_integration.py::test_uni_fill_latt_setter\nPASSED tests/test_universe_integration.py::test_mc_workshop_edge_case\nPASSED tests/test_universe_integration.py::test_no_universe\nPASSED tests/test_universe_integration.py::test_fill_multi_universe_order\nPASSED tests/test_universe_integration.py::test_fill_long_mcnp_str_wrap\n44 passed in 0.98s\nSWEBENCH_TALLY_e353f8c167e51a4f: pass_to_pass 44 passed in 0.98s\n[46 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_e353f8c167e51a4f: RESOLVED\n"
+  }
+}

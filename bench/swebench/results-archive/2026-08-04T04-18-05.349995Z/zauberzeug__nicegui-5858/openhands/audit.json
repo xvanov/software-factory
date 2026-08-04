@@ -1,0 +1,38 @@
+{
+  "instance_id": "zauberzeug__nicegui-5858",
+  "arm": "openhands",
+  "audited_at": "2026-08-04T04:17:25.903239+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:41:50.041567+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 556491,
+      "tokens_out": 4988,
+      "cached_input_tokens": 320000,
+      "cost_usd": 0.52705167,
+      "duration_s": 206.714,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.5271,
+  "ledger_tokens_in": 556491,
+  "ledger_tokens_out": 4988,
+  "result_cost_usd": 0.5271,
+  "prediction_sha256": "35a1e0f2eda7dc714c3d9d86496cff567b6277c2cb581968c08dcd54a39c573e",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "stripped_test_paths": [
+    "tests/test_xterm.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

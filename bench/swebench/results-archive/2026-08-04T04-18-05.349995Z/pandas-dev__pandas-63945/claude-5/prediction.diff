@@ -1,0 +1,70 @@
+diff --git a/doc/source/whatsnew/v3.0.1.rst b/doc/source/whatsnew/v3.0.1.rst
+index 7ad9233..37200f6 100644
+--- a/doc/source/whatsnew/v3.0.1.rst
++++ b/doc/source/whatsnew/v3.0.1.rst
+@@ -16,6 +16,8 @@ Bug fixes
+ - Fixed a bug in the :class:`DataFrame` constructor when passed a :class:`Series` or
+   :class:`Index` correctly handling Copy-on-Write (:issue:`63899`)
+ - Allow :class:`.ExtensionArray` to have dtypes involving :class:`numpy.void` (:issue:`54810`)
++- Fixed a bug where the unary operators ``-``, ``+`` and ``abs`` raised ``TypeError``
++  when applied to expressions created with :func:`col` (:issue:`63930`)
+ 
+ .. ---------------------------------------------------------------------------
+ .. _whatsnew_301.contributors:
+diff --git a/pandas/core/col.py b/pandas/core/col.py
+index 7d21ce0..f3485c9 100644
+--- a/pandas/core/col.py
++++ b/pandas/core/col.py
+@@ -4,6 +4,7 @@ from collections.abc import (
+     Callable,
+     Hashable,
+ )
++import operator
+ from typing import (
+     TYPE_CHECKING,
+     Any,
+@@ -223,11 +224,40 @@ class Expression:
+         self_repr, other_repr = self._maybe_wrap_parentheses(other)
+         return self._with_op("__rxor__", other, f"{other_repr} ^ {self_repr}")
+ 
+-    def __invert__(self) -> Expression:
++    # Unary ops
++    def _with_unary_op(
++        self,
++        op: Callable[[Any], Any],
++        repr_str: str,
++        needs_parentheses: bool = True,
++    ) -> Expression:
+         return Expression(
+-            lambda df: ~self._eval_expression(df),
+-            f"~{self._repr_str}",
+-            needs_parenthese=True,
++            lambda df: op(self._eval_expression(df)),
++            repr_str,
++            needs_parenthese=needs_parentheses,
++        )
++
++    def _maybe_wrap_self_parentheses(self) -> str:
++        if self._needs_parentheses:
++            return f"({self!r})"
++        return f"{self!r}"
++
++    def __neg__(self) -> Expression:
++        return self._with_unary_op(
++            operator.neg, f"-{self._maybe_wrap_self_parentheses()}"
++        )
++
++    def __pos__(self) -> Expression:
++        return self._with_unary_op(
++            operator.pos, f"+{self._maybe_wrap_self_parentheses()}"
++        )
++
++    def __abs__(self) -> Expression:
++        return self._with_unary_op(operator.abs, f"abs({self!r})", False)
++
++    def __invert__(self) -> Expression:
++        return self._with_unary_op(
++            operator.invert, f"~{self._maybe_wrap_self_parentheses()}"
+         )
+ 
+     def __array_ufunc__(

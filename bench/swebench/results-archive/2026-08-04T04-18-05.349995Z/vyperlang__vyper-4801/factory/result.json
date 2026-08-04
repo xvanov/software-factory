@@ -1,0 +1,106 @@
+{
+  "arm": "factory",
+  "instance_id": "vyperlang__vyper-4801",
+  "repo": "vyperlang/vyper",
+  "base_commit": "7d53bab7f8cce2a5fb037052663d85596d7eb2d1",
+  "problem_statement_sha256": "84f2becd4c3b96c244bb5420904e22abeb95c92c7b0836d3c4761a016e7130f7",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/deepseek-v4-pro",
+    "azure/gpt-5.4"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 2.0399
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0121
+    }
+  ],
+  "model_escalated_calls": 1,
+  "ts": "2026-08-03T20:39:44.877720+00:00",
+  "wall_clock_s": 965.4,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "steps_used": 2,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 2799935,
+  "tokens_out": 19149,
+  "cached_input_tokens": 1938944,
+  "cost_usd": 2.0521,
+  "persona_calls": 2,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 2.9,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/unit/compiler/venom"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "vyper/venom/passes/sccp/eval.py",
+    "vyper/venom/venom_to_assembly.py"
+  ],
+  "test_files_stripped": [
+    "tests/unit/compiler/venom/test_sccp.py",
+    "tests/unit/compiler/venom/test_venom_to_assembly.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1383,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "vyperlang__vyper-4801",
+    "image": "swerebench/sweb.eval.x86_64.vyperlang_1776_vyper-4801@sha256:dc4b97c064a4bb67707e45875ccc0556aba2facc7d024a0172b9e53e3a3361ff",
+    "graded_at": "2026-08-03T20:39:45.430572+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 1,
+    "pass_to_pass_declared_count": 1,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/unit/compiler/venom/test_memory_allocator.py::test_allocate_overlapping_reserved_intervals: node(s) FAILED/ERROR: ['tests/unit/compiler/venom/test_memory_allocator.py::test_allocate_overlapping_reserved_intervals']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "vyper/venom/memory_allocator.py"
+    ],
+    "touched_files": [
+      "vyper/venom/passes/sccp/eval.py",
+      "vyper/venom/venom_to_assembly.py"
+    ],
+    "gold_files_overlap": [],
+    "oracle_resolved": false,
+    "outcome": "wrong_place",
+    "exit_code": 0,
+    "grade_wall_s": 36.9,
+    "log_tail": "ests/unit/compiler/venom/test_memory_allocator.py...\nApplied patch tests/functional/codegen/features/test_immutable_allocator_overlap.py cleanly.\nApplied patch tests/unit/compiler/venom/test_memory_allocator.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_bf28ed60c4a6cca4: OK (red as expected)\nChecking patch vyper/venom/passes/sccp/eval.py...\nChecking patch vyper/venom/venom_to_assembly.py...\nApplied patch vyper/venom/passes/sccp/eval.py cleanly.\nApplied patch vyper/venom/venom_to_assembly.py cleanly.\nSWEBENCH_APPLY_bf28ed60c4a6cca4: OK\nbringing up nodes...\nbringing up nodes...\n\nF                                                                        [100%]\n=================================== FAILURES ===================================\n_________________ test_allocate_overlapping_reserved_intervals _________________\n[gw15] linux -- Python 3.12.12 /opt/conda/envs/testbed/bin/python\n\n    def test_allocate_overlapping_reserved_intervals():\n        ctx = IRContext()\n        fn = ctx.create_function(\"main\")\n        bb = fn.entry\n    \n        imm_inst = IRInstruction(\"alloca\", [IRLiteral(480), IRLiteral(1)], outputs=[IRVariable(\"%imm\")])\n        tmp_inst = IRInstruction(\"alloca\", [IRLiteral(96), IRLiteral(2)], outputs=[IRVariable(\"%tmp\")])\n        buf_inst = IRInstruction(\"alloca\", [IRLiteral(96), IRLiteral(3)], outputs=[IRVariable(\"%buf\")])\n        bb.insert_instruction(imm_inst)\n        bb.insert_instruction(tmp_inst)\n        bb.insert_instruction(buf_inst)\n    \n        imm = Allocation(imm_inst)\n        tmp = Allocation(tmp_inst)\n        buf = Allocation(buf_inst)\n    \n        allocator = MemoryAllocator()\n        allocator.start_fn_allocation(fn)\n        allocator.set_position(imm, 0)\n        allocator.set_position(tmp, 160)\n        allocator.reserve(imm)\n        allocator.reserve(tmp)\n    \n>       assert allocator.allocate(buf) == 480\nE       assert 256 == 480\nE        +  where 256 = allocate(Allocation(inst=%buf = alloca 3, 96           ))\nE        +    where allocate = <vyper.venom.memory_allocator.MemoryAllocator object at 0x799da6b4b3e0>.allocate\n\ntests/unit/compiler/venom/test_memory_allocator.py:30: AssertionError\n=========================== short test summary info ============================\nFAILED tests/unit/compiler/venom/test_memory_allocator.py::test_allocate_overlapping_reserved_intervals\n1 failed in 7.36s\nSWEBENCH_TALLY_bf28ed60c4a6cca4: fail_to_pass 1 failed in 7.36s\n[3 node outcomes for fail_to_pass -> grade-nodes.log]\nbringing up nodes...\nbringing up nodes...\n\n.                                                                        [100%]\n=========================== short test summary info ============================\nPASSED tests/functional/codegen/features/test_immutable_allocator_overlap.py::test_immutable_hashing_overlap_regression\n1 passed in 7.40s\nSWEBENCH_TALLY_bf28ed60c4a6cca4: pass_to_pass 1 passed in 7.40s\n[3 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_bf28ed60c4a6cca4: UNRESOLVED\n"
+  }
+}

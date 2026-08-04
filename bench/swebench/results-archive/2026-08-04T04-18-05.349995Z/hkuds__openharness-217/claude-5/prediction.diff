@@ -1,0 +1,77 @@
+diff --git a/src/openharness/auth/flows.py b/src/openharness/auth/flows.py
+index ca895a4..2ca533d 100644
+--- a/src/openharness/auth/flows.py
++++ b/src/openharness/auth/flows.py
+@@ -7,14 +7,36 @@ performs the interactive authentication and returns the obtained credential.
+ from __future__ import annotations
+ 
+ import logging
++import os
+ import platform
+ import subprocess
+ import sys
+ from abc import ABC, abstractmethod
+ from typing import Any
++from urllib.parse import urlsplit
+ 
+ log = logging.getLogger(__name__)
+ 
++#: Only these URL schemes are ever handed to a platform browser launcher.
++_SAFE_BROWSER_SCHEMES = frozenset({"http", "https"})
++
++
++def _is_safe_browser_url(url: str) -> bool:
++    """Return True if *url* is an absolute ``http(s)`` URL safe to hand to a launcher.
++
++    Device-flow endpoints (including user-configured GitHub Enterprise hosts)
++    are external input, so anything that is not plainly an ``http``/``https``
++    URL with a host — ``file:``, ``javascript:``, a bare executable name, a
++    Windows drive path — is refused before it reaches the OS.
++    """
++    if not url:
++        return False
++    try:
++        parts = urlsplit(url)
++    except ValueError:
++        return False
++    return parts.scheme.lower() in _SAFE_BROWSER_SCHEMES and bool(parts.netloc)
++
+ 
+ class AuthFlow(ABC):
+     """Abstract base for all auth flows."""
+@@ -75,19 +97,28 @@ class DeviceCodeFlow(AuthFlow):
+ 
+     @staticmethod
+     def _try_open_browser(url: str) -> bool:
+-        """Attempt to open *url* in the default browser; return True if likely succeeded."""
++        """Attempt to open *url* in the default browser; return True if likely succeeded.
++
++        *url* is externally supplied (a device-flow ``verification_uri``), so it is
++        validated as an ``http(s)`` URL first and is never passed through a shell.
++        """
++        if not _is_safe_browser_url(url):
++            log.warning("Refusing to open non-http(s) URL in browser: %r", url)
++            return False
+         try:
+             plat = platform.system()
+             if plat == "Darwin":
+                 subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                 return True
+             if plat == "Windows":
+-                subprocess.Popen(
+-                    ["start", "", url],
+-                    shell=True,
+-                    stdout=subprocess.DEVNULL,
+-                    stderr=subprocess.DEVNULL,
+-                )
++                # ``os.startfile`` calls ShellExecuteW directly and hands the URL
++                # to the registered protocol handler verbatim.  Never use
++                # ``shell=True`` here: cmd.exe would treat ``&``/``|``/``^`` in the
++                # URL as command separators.
++                startfile = getattr(os, "startfile", None)
++                if startfile is None:  # pragma: no cover - non-Windows interpreter
++                    return False
++                startfile(url)
+                 return True
+             # Linux / WSL
+             proc = subprocess.Popen(

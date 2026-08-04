@@ -1,0 +1,75 @@
+{
+  "instance_id": "zauberzeug__nicegui-5858",
+  "arm": "factory",
+  "audited_at": "2026-08-04T04:17:25.762193+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T20:34:18.265559+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 808221,
+      "tokens_out": 9161,
+      "cached_input_tokens": 645120,
+      "cost_usd": 0.45373588000000004,
+      "duration_s": 297.378,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:34:27.426153+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5103,
+      "tokens_out": 704,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.0175575,
+      "duration_s": 8.424,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:36:31.455692+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 296720,
+      "tokens_out": 3405,
+      "cached_input_tokens": 184832,
+      "cost_usd": 0.25874294200000003,
+      "duration_s": 123.484,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:36:34.397047+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5786,
+      "tokens_out": 107,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.010310000000000001,
+      "duration_s": 2.164,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.7403,
+  "ledger_tokens_in": 1115830,
+  "ledger_tokens_out": 13377,
+  "result_cost_usd": 0.7403,
+  "prediction_sha256": "e6b0822002bc928b6844c3617ca2547c5d75ec607b8816fed27ff316edd7ea5f",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "stripped_test_paths": [
+    "tests/test_xterm.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

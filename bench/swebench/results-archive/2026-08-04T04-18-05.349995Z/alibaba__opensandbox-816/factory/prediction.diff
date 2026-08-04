@@ -1,0 +1,101 @@
+diff --git a/server/opensandbox_server/services/validators.py b/server/opensandbox_server/services/validators.py
+index 4b37b57..d286e18 100644
+--- a/server/opensandbox_server/services/validators.py
++++ b/server/opensandbox_server/services/validators.py
+@@ -21,6 +21,7 @@ enforce the same preconditions before performing runtime-specific work.
+ 
+ from __future__ import annotations
+ 
++import os
+ from datetime import datetime, timedelta, timezone
+ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+ 
+@@ -388,6 +389,59 @@ def ensure_valid_sub_path(sub_path: Optional[str]) -> None:
+             )
+ 
+ 
++def _ensure_no_symlink_components(path: str) -> None:
++    """
++    Check each intermediate path component for symbolic links.
++
++    Walks the path from the root downward, checking whether each component
++    is a symlink.  Symlinks in a host path can be used to bypass prefix
++    allowlists (e.g., a symlink inside an allowed prefix pointing to /),
++    so any path containing a symlink component is rejected.
++
++    Args:
++        path: An absolute host path that has passed lexical validation.
++
++    Raises:
++        HTTPException: When any path component is a symbolic link.
++    """
++    # Determine the root anchor for iteration.
++    # On Unix the root is "/"; on Windows it is the drive root "C:\\" etc.
++    drive, tail = os.path.splitdrive(path)
++    anchor = drive + os.sep if drive else os.sep
++    anchor = os.path.normpath(anchor)
++
++    # Accumulate path components one by one, checking each for symlinks.
++    current = anchor
++    if os.path.islink(current):
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail={
++                "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                "message": (
++                    f"Host path '{path}' contains a symbolic link component "
++                    f"('{current}'), which is not allowed for security reasons."
++                ),
++            },
++        )
++
++    parts = tail.lstrip(os.sep).split(os.sep)
++    for part in parts:
++        if not part:
++            continue
++        current = os.path.join(current, part)
++        if os.path.islink(current):
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST,
++                detail={
++                    "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                    "message": (
++                        f"Host path '{path}' contains a symbolic link component "
++                        f"('{current}'), which is not allowed for security reasons."
++                    ),
++                },
++            )
++
++
+ def ensure_valid_host_path(
+     path: str,
+     allowed_prefixes: Optional[List[str]] = None,
+@@ -395,12 +449,15 @@ def ensure_valid_host_path(
+     """
+     Validate that a host path is absolute and optionally within allowed prefixes.
+ 
++    Also checks that no intermediate path component is a symbolic link, which
++    prevents symlink-based escape attacks that can bypass prefix allowlists.
++
+     Args:
+         path: Host path to validate.
+         allowed_prefixes: Optional list of allowed path prefixes.
+ 
+     Raises:
+-        HTTPException: When the path is invalid or not allowed.
++        HTTPException: When the path is invalid, contains a symlink, or is not allowed.
+     """
+     if not path:
+         raise HTTPException(
+@@ -450,6 +507,11 @@ def ensure_valid_host_path(
+             },
+         )
+ 
++    # Check each intermediate path component for symlinks.  This prevents
++    # symlink-escape attacks where a malicious symlink inside an allowed
++    # prefix points outside it (e.g., a symlink to /).
++    _ensure_no_symlink_components(path)
++
+     # Check against allowed prefixes if provided
+     if allowed_prefixes is not None:
+         # Normalize separators for cross-platform prefix checks so Windows-style

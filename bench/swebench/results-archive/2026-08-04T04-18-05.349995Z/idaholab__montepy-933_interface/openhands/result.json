@@ -1,0 +1,98 @@
+{
+  "arm": "openhands",
+  "instance_id": "idaholab__montepy-933_interface",
+  "repo": "idaholab/MontePy",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "problem_statement_sha256": "18f56a6b2c0dd104befdcf7caf0f58fd82cc82d7dc0c96b05a307b064e3b81f1",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "agent": "openhands-sdk default agent (cli_mode), single conversation",
+  "models_used": [
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.7767
+    }
+  ],
+  "model_escalated_calls": 0,
+  "ts": "2026-08-03T21:23:19.592200+00:00",
+  "wall_clock_s": 343.7,
+  "agent_wall_s": 335.5,
+  "steps_used": 33,
+  "step_cap": 600,
+  "sdk_events": 68,
+  "termination": "agent-finished",
+  "trajectory": "state/events/trajectories/nostory-1.ndjson",
+  "probe_plumbing": false,
+  "tokens_in": 1049959,
+  "tokens_out": 9624,
+  "cached_input_tokens": 727296,
+  "cost_usd": 0.7767,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 1,
+  "usage_reliable": true,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.3,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_universe.py",
+      "tests/test_universe_integration.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "montepy/cell.py",
+    "montepy/data_inputs/universe_input.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_universe_integration.py"
+  ],
+  "diff_bytes": 2055,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "openhands",
+    "instance_id": "idaholab__montepy-933_interface",
+    "image": "swerebench/sweb.eval.x86_64.idaholab_1776_montepy-933_interface@sha256:d79f83f33b0f25749596dd0038adecb80e9b443300200890dca0f6d23488567c",
+    "graded_at": "2026-08-03T21:23:20.139264+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 40,
+    "pass_to_pass_declared_count": 40,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/test_universe_integration.py::test_cell_universe_nullify_with_problem: node(s) FAILED/ERROR: ['tests/test_universe_integration.py::test_cell_universe_nullify_with_problem']",
+      "tests/test_universe_integration.py::test_cell_universe_nullify_adds_zero_universe: node(s) FAILED/ERROR: ['tests/test_universe_integration.py::test_cell_universe_nullify_adds_zero_universe']",
+      "tests/test_universe_integration.py::test_cell_universe_delete_adds_zero_universe: node(s) FAILED/ERROR: ['tests/test_universe_integration.py::test_cell_universe_delete_adds_zero_universe']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "doc/source/changelog.rst",
+      "montepy/cell.py"
+    ],
+    "touched_files": [
+      "montepy/cell.py",
+      "montepy/data_inputs/universe_input.py"
+    ],
+    "gold_files_overlap": [
+      "montepy/cell.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 7.9,
+    "log_tail": "rse::test_init\nPASSED tests/test_universe.py::TestUniverse::test_number_setter\nPASSED tests/test_universe.py::TestLattice::test_lattice_init\nPASSED tests/test_universe.py::TestLattice::test_lattice_setter\nPASSED tests/test_universe.py::TestLattice::test_lattice_deleter\nPASSED tests/test_universe.py::TestLattice::test_lattice_merge\nPASSED tests/test_universe.py::TestLattice::test_lattice_cell_format\nPASSED tests/test_universe.py::TestLattice::test_lattice_repr\nPASSED tests/test_universe.py::TestLattice::test_deprecated_lattice\nPASSED tests/test_universe.py::TestFill::test_complex_transform_fill_init\nPASSED tests/test_universe.py::TestFill::test_complicated_lattice_fill_init\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1 0:1 hi-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 hi:1 0:1 hi-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1 0:1 -1-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 1:0 0:1 1 2 3 4 5 6 7 8-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1.5 0:1 1 2 3 4 5 6 7 8-ValueError]\nPASSED tests/test_universe.py::TestFill::test_data_fill_init\nPASSED tests/test_universe.py::TestFill::test_fill_universe_setter\nPASSED tests/test_universe.py::TestFill::test_fill_universes_setter\nPASSED tests/test_universe.py::TestFill::test_fill_str\nPASSED tests/test_universe.py::TestFill::test_fill_merge\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-hi-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-hi-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-value2-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-value3-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-value4-ValueError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-value5-ValueError]\nPASSED tests/test_universe.py::TestFill::test_fill_multi_unis\nPASSED tests/test_universe.py::test_cell_universe_setter_type_error\nPASSED tests/test_universe_integration.py::test_universe_setter\nPASSED tests/test_universe_integration.py::test_fill_setter\nPASSED tests/test_universe_integration.py::test_lattice_setter\nPASSED tests/test_universe_integration.py::test_uni_fill_latt_setter\nPASSED tests/test_universe_integration.py::test_mc_workshop_edge_case\nPASSED tests/test_universe_integration.py::test_no_universe\nPASSED tests/test_universe_integration.py::test_fill_multi_universe_order\nPASSED tests/test_universe_integration.py::test_fill_long_mcnp_str_wrap\n44 passed in 0.99s\nSWEBENCH_TALLY_fc63f1dd9b4fa3cf: pass_to_pass 44 passed in 0.99s\n[46 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_fc63f1dd9b4fa3cf: UNRESOLVED\n"
+  }
+}

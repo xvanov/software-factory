@@ -1,0 +1,49 @@
+{
+  "instance_id": "conan-io__conan-19735_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-04T04:17:08.896310+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T20:40:48.375286+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 424584,
+      "tokens_out": 5422,
+      "cached_input_tokens": 290304,
+      "cost_usd": 0.32666560399999994,
+      "duration_s": 190.681,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:40:51.005918+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 4197,
+      "tokens_out": 83,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.0059775,
+      "duration_s": 1.861,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.3326,
+  "ledger_tokens_in": 428781,
+  "ledger_tokens_out": 5505,
+  "result_cost_usd": 0.3326,
+  "prediction_sha256": "f82a1032f059d885ad55ca46c752919b7589105fe38a979df46037aa23d47066",
+  "base_commit": "4a65d65f53d2ab37f4ce0e52dc3f25cd832b2934",
+  "stripped_test_paths": [
+    "test/unittests/util/detect_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

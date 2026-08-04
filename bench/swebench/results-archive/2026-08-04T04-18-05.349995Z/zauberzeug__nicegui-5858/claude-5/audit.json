@@ -1,0 +1,22 @@
+{
+  "instance_id": "zauberzeug__nicegui-5858",
+  "arm": "claude-5",
+  "audited_at": "2026-08-04T04:17:25.614829+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.8126,
+  "ledger_tokens_in": 736068,
+  "ledger_tokens_out": 8277,
+  "result_cost_usd": 0.8126,
+  "prediction_sha256": "1c54f373057f1686424fa8e2ca88a9ceb7718157a69ea13113b45a00ee331652",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "stripped_test_paths": [
+    "tests/test_xterm.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

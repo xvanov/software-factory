@@ -170,13 +170,59 @@ def test_the_two_preregistered_claude_arms_are_separate_rows(
     runs = _patch_dirs(A, tmp_path, monkeypatch)
     _row(runs, "inst_old", "claude-5", resolved=True)
     _row(runs, "inst_old", "claude-4.8", resolved=False)
-    rows, refused, foreign = A._report_rows(runs, _SHA)
-    assert not refused and not foreign
+    rows, refused, foreign, superseded = A._report_rows(runs, _SHA)
+    assert not refused and not foreign and not superseded
     assert sorted(r["_arm"] for r in rows) == ["claude-4.8", "claude-5"]
     assert A.arm_spec("claude-5").model == "claude-opus-5"
     assert A.arm_spec("claude-4.8").model == "claude-opus-4-8"
     # Same harness, so a comparison of the two isolates the MODEL.
     assert A.arm_spec("claude-5").harness_id == A.arm_spec("claude-4.8").harness_id
+
+
+def test_a_superseded_run_key_is_not_a_sixth_arm(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """MEASURED: 18 rows sat in ``runs/*/claude/`` from the pre-fix sweep — the
+    same harness and model as ``claude-5``, produced before ``--model`` and the
+    model-keyed run dirs existed. The report emitted them beside ``claude-5`` as
+    a SIXTH arm, mixing pre- and post-fix evidence in one table.
+
+    The pinned-sha filter cannot catch this: both ran under the same manifest.
+    """
+    runs = _patch_dirs(A, tmp_path, monkeypatch)
+    _row(runs, "inst_old", "claude-5", resolved=True)
+    _row(runs, "inst_old", "claude", resolved=True)
+    rows, refused, foreign, superseded = A._report_rows(runs, _SHA)
+    assert [r["_arm"] for r in rows] == ["claude-5"]
+    assert not refused and not foreign
+    assert len(superseded) == 1
+    assert superseded[0]["row"] == "inst_old/claude"
+    assert "superseded by 'claude-5'" in superseded[0]["why"]
+
+
+def test_a_superseded_arm_cannot_be_run(A: Any, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: N803
+    """Detect-without-remediate guard: segregating the rows in ``report`` is
+    not enough on its own — a sweep would still spend real money producing rows
+    no table can ever show. Both spend entry points refuse."""
+    monkeypatch.setattr(A, "_load_env", lambda: None)
+    for argv in (
+        ["swebench_adapter.py", "run", "--instance", "i1", "--arm", "claude"],
+        ["swebench_adapter.py", "run-all", "--arm", "claude"],
+    ):
+        monkeypatch.setattr(sys, "argv", argv)
+        with pytest.raises(SystemExit, match="superseded by claude-5"):
+            A.main()
+
+
+def test_the_superseded_disclosure_survives_re_derivation(A: Any) -> None:  # noqa: N803
+    """A disclosure that does not survive ``--from-archive`` is not a
+    disclosure — the same defect the refused/foreign lists were persisted to
+    fix. The superseded list is written into the archive meta and read back."""
+    import inspect
+
+    assert '"superseded": superseded' in inspect.getsource(A._archive_report_artifacts)
+    src = inspect.getsource(A.report)
+    assert 'meta.get("superseded")' in src
 
 
 def test_a_row_in_the_wrong_arm_directory_is_refused(
@@ -190,7 +236,7 @@ def test_a_row_in_the_wrong_arm_directory_is_refused(
     payload = json.loads((d / "result.json").read_text(encoding="utf-8"))
     payload["arm"] = "claude-4.8"
     (d / "result.json").write_text(json.dumps(payload), encoding="utf-8")
-    rows, refused, _foreign = A._report_rows(runs, _SHA)
+    rows, refused, _foreign, _superseded = A._report_rows(runs, _SHA)
     assert rows == []
     assert "one run cannot be two arms" in refused[0]["why"]
 
@@ -240,23 +286,23 @@ def test_cli_model_reaches_run_claude_and_defaults_to_opus_5(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["swebench_adapter.py", "run", "--instance", "i1", "--arm", "claude"],
+        ["swebench_adapter.py", "run", "--instance", "i1", "--arm", "claude-5"],
     )
     A.main()
     assert seen["model"] is None
-    assert A.resolve_arm_model("claude", None) == "claude-opus-5" == A._CLAUDE_MODEL
+    assert A.resolve_arm_model("claude-5", None) == "claude-opus-5" == A._CLAUDE_MODEL
 
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "swebench_adapter.py", "run", "--instance", "i1",
-            "--arm", "claude", "--model", "claude-opus-4-8",
+            "--arm", "claude-5", "--model", "claude-opus-4-8",
         ],
     )
     A.main()
     assert seen["model"] == "claude-opus-4-8"
-    assert seen["arm"] == "claude"
+    assert seen["arm"] == "claude-5"
 
 
 def test_grade_and_audit_take_the_model_too(
@@ -570,20 +616,30 @@ def test_an_archive_can_be_marked_retracted_without_editing_its_evidence(
 
 def test_the_committed_retracted_archive_carries_its_disclaimer(A: Any) -> None:  # noqa: N803
     """The 2026-08-03 three-way numbers are kept as the report code's regression
-    corpus, and must never be re-published as a result."""
-    archive = (
-        _ADAPTER.parents[1]
-        / "bench"
-        / "swebench"
-        / "results-archive"
-        / "2026-08-03T05-12-08.813897Z"
-    )
-    disclaimer = (archive / A._DISCLAIMER_NAME).read_text(encoding="utf-8")
+    corpus, and must never be re-published as a result.
+
+    This used to also assert the retraction banner was in the PUBLISHED
+    ``results.md``, which was true only while the retracted table WAS the
+    published one. A valid five-arm sweep has since been published, so the
+    durable invariants are the two below: the retracted snapshot keeps its
+    disclaimer, and the published table is not derived from it.
+    """
+    swe = _ADAPTER.parents[1] / "bench" / "swebench"
+    retracted = swe / "results-archive" / "2026-08-03T05-12-08.813897Z"
+    disclaimer = (retracted / A._DISCLAIMER_NAME).read_text(encoding="utf-8")
     assert "RETRACTED" in disclaimer
-    published = (_ADAPTER.parents[1] / "bench" / "swebench" / "results.md").read_text(
-        encoding="utf-8"
+    published = (swe / "results.md").read_text(encoding="utf-8")
+    if "RETRACTED — do not quote these numbers" in published:
+        # Still publishing the retracted table: then it must be THAT archive's,
+        # banner and all — never a retracted number with the banner stripped.
+        assert retracted.name in published
+        return
+    # Publishing a live table: it must name its own snapshot, and that snapshot
+    # must not be the retracted one.
+    assert retracted.name not in published, (
+        "the retracted archive must not back the published table"
     )
-    assert "RETRACTED — do not quote these numbers" in published
+    assert "results-archive/" in published
 
 
 def test_check_with_no_published_table_is_a_failure_not_a_pass(

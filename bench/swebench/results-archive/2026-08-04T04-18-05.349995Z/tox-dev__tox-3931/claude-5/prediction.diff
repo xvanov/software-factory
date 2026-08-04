@@ -1,0 +1,70 @@
+diff --git a/docs/changelog/3931.bugfix.rst b/docs/changelog/3931.bugfix.rst
+new file mode 100644
+index 0000000..54ccdec
+--- /dev/null
++++ b/docs/changelog/3931.bugfix.rst
+@@ -0,0 +1,2 @@
++Fix the generated TOML schema for ``deps`` and ``constraints`` so that - matching the implementation and the
++documentation - both a single string and an array of entries are accepted - by :user:`gaborbernat`.
+diff --git a/src/tox/session/cmd/schema.py b/src/tox/session/cmd/schema.py
+index 8160434..8b92e22 100644
+--- a/src/tox/session/cmd/schema.py
++++ b/src/tox/session/cmd/schema.py
+@@ -214,10 +214,14 @@ def _process_type(of_type: typing.Any) -> dict[str, typing.Any]:  # noqa: C901,
+         str,
+         packaging.version.Version,
+         packaging.requirements.Requirement,
++    }:
++        return {"type": "string"}
++    if of_type in {
+         tox.tox_env.python.pip.req_file.PythonDeps,
+         tox.tox_env.python.pip.req_file.PythonConstraints,
+     }:
+-        return {"type": "string"}
++        # these accept either a single (multi-line) string or a list of entries
++        return {"oneOf": [{"type": "string"}, {"type": "array", "items": {"$ref": "#/definitions/subs"}}]}
+     if typing.get_origin(of_type) is typing.Union or isinstance(of_type, UnionType):
+         types = [x for x in typing.get_args(of_type) if x is not type(None)]
+         if len(types) == 1:
+diff --git a/src/tox/tox.schema.json b/src/tox/tox.schema.json
+index e2b5b38..70d5317 100644
+--- a/src/tox/tox.schema.json
++++ b/src/tox/tox.schema.json
+@@ -267,7 +267,17 @@
+           "description": "command used to install packages"
+         },
+         "constraints": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "$ref": "#/definitions/subs"
++              }
++            }
++          ],
+           "description": "constraints to apply to installed python dependencies"
+         },
+         "constrain_package_deps": {
+@@ -400,7 +410,17 @@
+           "deprecated": true
+         },
+         "deps": {
+-          "type": "string",
++          "oneOf": [
++            {
++              "type": "string"
++            },
++            {
++              "type": "array",
++              "items": {
++                "$ref": "#/definitions/subs"
++              }
++            }
++          ],
+           "description": "python dependencies with optional version specifiers, as specified by PEP-440"
+         },
+         "dependency_groups": {

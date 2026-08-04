@@ -1,0 +1,75 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-04T04:17:19.848763+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T20:50:26.048732+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2523522,
+      "tokens_out": 24150,
+      "cached_input_tokens": 1277952,
+      "cost_usd": 2.7021948720000006,
+      "duration_s": 980.618,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:50:31.954109+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 15119,
+      "tokens_out": 336,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.037077500000000006,
+      "duration_s": 4.811,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:55:53.824264+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1461737,
+      "tokens_out": 19845,
+      "cached_input_tokens": 845056,
+      "cost_usd": 1.4022546959999997,
+      "duration_s": 321.131,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:55:56.389179+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 17070,
+      "tokens_out": 106,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.038505000000000005,
+      "duration_s": 1.886,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 4.18,
+  "ledger_tokens_in": 4017448,
+  "ledger_tokens_out": 44437,
+  "result_cost_usd": 4.18,
+  "prediction_sha256": "93ce9c20ddc7eb1498a0b524694c4c2203a40790784cf7bb918bb534091046a2",
+  "base_commit": "f0d222be1a25553005bff35c2ace82424a683fd9",
+  "stripped_test_paths": [
+    "tests/api/test_issue_stateless_channel_token.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

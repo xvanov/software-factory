@@ -1,0 +1,81 @@
+{
+  "arm": "openhands",
+  "instance_id": "tox-dev__tox-3931",
+  "repo": "tox-dev/tox",
+  "base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+  "problem_statement_sha256": "87f7f4920a5afb6ad7dfdb5eb309a9dfe87f72c335218612bb94e7853a35ad8f",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "agent": "openhands-sdk default agent (cli_mode), single conversation",
+  "models_used": [
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 1.1171
+    }
+  ],
+  "model_escalated_calls": 0,
+  "ts": "2026-08-03T21:08:56.471240+00:00",
+  "wall_clock_s": 531.2,
+  "agent_wall_s": 522.9,
+  "steps_used": 30,
+  "step_cap": 600,
+  "sdk_events": 62,
+  "termination": "agent-finished",
+  "trajectory": "state/events/trajectories/nostory-1.ndjson",
+  "probe_plumbing": false,
+  "tokens_in": 1000711,
+  "tokens_out": 8507,
+  "cached_input_tokens": 478720,
+  "cost_usd": 1.1171,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 1,
+  "usage_reliable": true,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.2,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/session/cmd/test_schema.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "src/tox/session/cmd/schema.py",
+    "src/tox/tox.schema.json"
+  ],
+  "test_files_stripped": [
+    "tests/session/cmd/test_schema.py"
+  ],
+  "diff_bytes": 2163,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "openhands",
+    "instance_id": "tox-dev__tox-3931",
+    "image": "swerebench/sweb.eval.x86_64.tox-dev_1776_tox-3931@sha256:6c44571aa2f3c2e01be2ba54b3330efcb4b5ba0d00983aa4a309d27853804896",
+    "graded_at": "2026-08-03T21:08:57.017300+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 2,
+    "pass_to_pass_declared_count": 2,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 6.3,
+    "log_tail": "Checking patch tests/session/cmd/test_schema.py...\nApplied patch tests/session/cmd/test_schema.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_ff94c5ed071c83af: OK (red as expected)\nChecking patch src/tox/session/cmd/schema.py...\nChecking patch src/tox/tox.schema.json...\nApplied patch src/tox/session/cmd/schema.py cleanly.\nApplied patch src/tox/tox.schema.json cleanly.\nSWEBENCH_APPLY_ff94c5ed071c83af: OK\n.                                                                        [100%]\n=========================== short test summary info ============================\nPASSED tests/session/cmd/test_schema.py::test_schema_allows_deps_array\n1 passed in 0.02s\nSWEBENCH_TALLY_ff94c5ed071c83af: fail_to_pass 1 passed in 0.02s\n[3 node outcomes for fail_to_pass -> grade-nodes.log]\n..                                                                       [100%]\n=========================== short test summary info ============================\nPASSED tests/session/cmd/test_schema.py::test_show_schema_empty_dir\nPASSED tests/session/cmd/test_schema.py::test_schema_freshness\n2 passed in 0.07s\nSWEBENCH_TALLY_ff94c5ed071c83af: pass_to_pass 2 passed in 0.07s\n[4 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_ff94c5ed071c83af: RESOLVED\n"
+  }
+}

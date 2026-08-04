@@ -1,0 +1,40 @@
+diff --git a/pandas/core/col.py b/pandas/core/col.py
+index 7d21ce0..4d7d9c9 100644
+--- a/pandas/core/col.py
++++ b/pandas/core/col.py
+@@ -125,6 +125,35 @@ class Expression:
+             other_repr = f"{other!r}"
+         return self_repr, other_repr
+ 
++    # Unary ops
++    def __neg__(self) -> Expression:
++        return Expression(
++            lambda df: -self._eval_expression(df),
++            f"-({self._repr_str})",
++            needs_parenthese=False,
++        )
++
++    def __pos__(self) -> Expression:
++        return Expression(
++            lambda df: +self._eval_expression(df),
++            f"+({self._repr_str})",
++            needs_parenthese=False,
++        )
++
++    def __abs__(self) -> Expression:
++        return Expression(
++            lambda df: abs(self._eval_expression(df)),
++            f"abs({self._repr_str})",
++            needs_parenthese=False,
++        )
++
++    def __invert__(self) -> Expression:
++        return Expression(
++            lambda df: ~self._eval_expression(df),
++            f"~({self._repr_str})",
++            needs_parenthese=False,
++        )
++
+     # Binary ops
+     def __add__(self, other: Any) -> Expression:
+         self_repr, other_repr = self._maybe_wrap_parentheses(other)

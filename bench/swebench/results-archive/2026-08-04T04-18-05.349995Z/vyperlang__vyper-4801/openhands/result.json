@@ -1,0 +1,70 @@
+{
+  "arm": "openhands",
+  "instance_id": "vyperlang__vyper-4801",
+  "repo": "vyperlang/vyper",
+  "base_commit": "7d53bab7f8cce2a5fb037052663d85596d7eb2d1",
+  "problem_statement_sha256": "84f2becd4c3b96c244bb5420904e22abeb95c92c7b0836d3c4761a016e7130f7",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "agent": "openhands-sdk default agent (cli_mode), single conversation",
+  "models_used": [
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 1.2017
+    }
+  ],
+  "model_escalated_calls": 0,
+  "ts": "2026-08-03T21:45:33.611679+00:00",
+  "wall_clock_s": 558.3,
+  "agent_wall_s": 547.9,
+  "steps_used": 36,
+  "step_cap": 600,
+  "sdk_events": 75,
+  "termination": "agent-finished",
+  "trajectory": "state/events/trajectories/nostory-1.ndjson",
+  "probe_plumbing": false,
+  "tokens_in": 1319793,
+  "tokens_out": 14536,
+  "cached_input_tokens": 792064,
+  "cost_usd": 1.2017,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 1,
+  "usage_reliable": true,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 2.8,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/unit/compiler/venom"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [],
+  "test_files_stripped": [],
+  "diff_bytes": 0,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "openhands",
+    "instance_id": "vyperlang__vyper-4801",
+    "image": "swerebench/sweb.eval.x86_64.vyperlang_1776_vyper-4801@sha256:dc4b97c064a4bb67707e45875ccc0556aba2facc7d024a0172b9e53e3a3361ff",
+    "graded_at": "2026-08-03T21:45:34.151315+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 1,
+    "pass_to_pass_declared_count": 1,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": true,
+    "oracle_resolved": false,
+    "outcome": "empty_patch",
+    "log_tail": ""
+  }
+}

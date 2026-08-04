@@ -1,0 +1,217 @@
+{
+  "arm": "bare",
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "repo": "jsonpickle/jsonpickle",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "problem_statement_sha256": "e7d6a3edc32ba6f4ef4ebc10a28b9b9118eda5058b8cc3450bb5e4940970d124",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": null,
+      "calls": 40,
+      "cost_usd": 0.2485
+    }
+  ],
+  "model_escalated_calls": 0,
+  "ts": "2026-08-03T21:57:22.144696+00:00",
+  "wall_clock_s": 81.1,
+  "steps_used": 40,
+  "step_cap": 40,
+  "termination": "step-cap",
+  "done_with_empty_diff": false,
+  "done_nudges": 0,
+  "trajectory": "bare-commands.ndjson",
+  "probe_plumbing": false,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.2,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/object_test.py"
+    ],
+    "exit_code": 0
+  },
+  "tokens_in": 197368,
+  "tokens_out": 2425,
+  "cost_usd": 0.2485,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 40,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "jsonpickle/pickler.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_defaultdict_key_collision.py"
+  ],
+  "diff_bytes": 687,
+  "transcript": [
+    {
+      "step": 20,
+      "action": "bash",
+      "command": "python -c \"\nfrom collections import defaultdict\nimport jsonpickle.pickler as p\nimport jsonpickle.util as u\nd = defaultdict(int)\nd['a'] = 1\nprint('is_dictionary_subclass:', u.is_dictionary_subclass(d))\nprint('type is dict?', type(d) is dict)\n\"\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 21,
+      "action": "bash",
+      "command": "grep -n '_is_dictionary_subclass\\|is_dictionary_subclass' jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 22,
+      "action": "bash",
+      "command": "sed -n '700,730p' jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 23,
+      "action": "bash",
+      "command": "python -c \"\nfrom collections import defaultdict\nimport jsonpickle.pickler as p\nd = defaultdict(int)\nd['default_factory'] = 42\nprint('__reduce__:', d.__reduce__())\n\"\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 24,
+      "action": "invalid",
+      "reply": "Now let me look at how py/reduce is handled in unpickler:</think>BASH\ngrep -n 'REDUCE\\|reduce' jsonpickle/unpickler.py | head -20\nEOF"
+    },
+    {
+      "step": 25,
+      "action": "bash",
+      "command": "python -c \"\nfrom collections import defaultdict\nimport jsonpickle.pickler as p\nd = defaultdict(int)\nd['default_factory'] = 42\nd['other_key'] = 100\n# Flatten using _flatten_obj_instance path (skipping dict check) \n# to see what reduce would produce\nprint('reduce result:', d.__reduce__())\n# Let's see ",
+      "exit": 127
+    },
+    {
+      "step": 26,
+      "action": "bash",
+      "command": "sed -n '770,830p' jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 27,
+      "action": "bash",
+      "command": "sed -n '825,870p' jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 28,
+      "action": "bash",
+      "command": "cat > tests/test_defaultdict_key_collision.py <<'EOF'\n\"\"\"Tests for defaultdict key collision with 'default_factory'.\"\"\"\nfrom collections import defaultdict\nimport jsonpickle\nimport pytest\n\n\ndef test_defaultdict_preserves_key_named_default_factory():\n    \"\"\"A defaultdict with a key named 'default_fac",
+      "exit": 127
+    },
+    {
+      "step": 29,
+      "action": "bash",
+      "command": "sed -n '705,720p' jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 30,
+      "action": "bash",
+      "command": "sed -i 's/if util._is_dictionary_subclass(obj):/if type(obj) is not defaultdict and util._is_dictionary_subclass(obj):/' jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 31,
+      "action": "bash",
+      "command": "sed -n '705,720p' jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 32,
+      "action": "bash",
+      "command": "python -m pytest tests/test_defaultdict_key_collision.py -v\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 33,
+      "action": "bash",
+      "command": "grep -n \"^from collections\" jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 34,
+      "action": "bash",
+      "command": "grep -n \"collections\" jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 35,
+      "action": "bash",
+      "command": "sed -i '1s/^/from collections import defaultdict\\n/' jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 36,
+      "action": "bash",
+      "command": "grep -n \"defaultdict\" jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 37,
+      "action": "bash",
+      "command": "python -m pytest tests/test_defaultdict_key_collision.py -v\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 38,
+      "action": "bash",
+      "command": "sed -n '710,730p' jsonpickle/pickler.py\nEOF",
+      "exit": 127
+    },
+    {
+      "step": 39,
+      "action": "bash",
+      "command": "python3 -c \"\nfrom collections import defaultdict\nimport jsonpickle\nd = defaultdict(int, {'a': 1, 'b': 2})\nprint(type(d))\nprint(d.__reduce__())\nprint(jsonpickle.encode(d))\n\"\nEOF",
+      "exit": 127
+    }
+  ],
+  "attempt": 1,
+  "budget_exhausted": true,
+  "budget_exhausted_reason": "step-cap (81.1s wall)",
+  "grade": {
+    "arm": "bare",
+    "instance_id": "jsonpickle__jsonpickle-588",
+    "image": "swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588@sha256:0eae843824198c5cfb0b6bb25b5c9b50c1b415ea7295867a314a3a8ce65c7fb4",
+    "graded_at": "2026-08-03T21:57:22.632398+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 82,
+    "pass_to_pass_declared_count": 82,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/object_test.py::test_defaultdict_preserves_default_factory_key: node(s) FAILED/ERROR: ['tests/object_test.py::test_defaultdict_preserves_default_factory_key']",
+      "tests/object_test.py::test_defaultdict_roundtrip: node(s) FAILED/ERROR: ['tests/object_test.py::test_defaultdict_roundtrip']",
+      "tests/object_test.py::test_defaultdict_roundtrip_simple_lambda: node(s) FAILED/ERROR: ['tests/object_test.py::test_defaultdict_roundtrip_simple_lambda']",
+      "tests/object_test.py::test_defaultdict_roundtrip_simple_lambda2: node(s) FAILED/ERROR: ['tests/object_test.py::test_defaultdict_roundtrip_simple_lambda2']",
+      "tests/object_test.py::test_defaultdict_and_things_roundtrip_simple_lambda: node(s) FAILED/ERROR: ['tests/object_test.py::test_defaultdict_and_things_roundtrip_simple_lambda']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "CHANGES.rst",
+      "jsonpickle/pickler.py",
+      "jsonpickle/tags.py",
+      "jsonpickle/unpickler.py"
+    ],
+    "touched_files": [
+      "jsonpickle/pickler.py"
+    ],
+    "gold_files_overlap": [
+      "jsonpickle/pickler.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 11.0,
+    "log_tail": "isinstance(decoded, collections.defaultdict)\n>       assert decoded.default_factory is int\nE       assert None is int\nE        +  where None = defaultdict(None, {}).default_factory\n\ntests/object_test.py:686: AssertionError\n=========================== short test summary info ============================\nFAILED tests/object_test.py::test_defaultdict_preserves_default_factory_key\n1 failed in 0.07s\nSWEBENCH_TALLY_9de8fd2317e691de: fail_to_pass 1 failed in 0.07s\n[3 node outcomes for fail_to_pass -> grade-nodes.log]\nPASSED tests/object_test.py::test_ordered_dict_python3\nPASSED tests/object_test.py::test_ordered_dict\nPASSED tests/object_test.py::test_ordered_dict_unpicklable\nPASSED tests/object_test.py::test_ordered_dict_reduces\nPASSED tests/object_test.py::test_int_keys_in_object_with_getstate_only\nPASSED tests/object_test.py::test_ordered_dict_int_keys\nPASSED tests/object_test.py::test_ordered_dict_nested\nPASSED tests/object_test.py::test_deque_roundtrip\nPASSED tests/object_test.py::test_namedtuple_roundtrip\nPASSED tests/object_test.py::test_counter_roundtrip\nPASSED tests/object_test.py::test_counter_roundtrip_with_keys\nPASSED tests/object_test.py::test_list_with_fd\nPASSED tests/object_test.py::test_thing_with_fd\nPASSED tests/object_test.py::test_dict_with_fd\nPASSED tests/object_test.py::test_thing_with_lamda\nPASSED tests/object_test.py::test_newstyleslots\nPASSED tests/object_test.py::test_newstyleslots_inherited\nPASSED tests/object_test.py::test_newstyleslots_inherited_deleted_attr\nPASSED tests/object_test.py::test_newstyleslots_with_children\nPASSED tests/object_test.py::test_newstyleslots_with_children_inherited\nPASSED tests/object_test.py::test_newstyleslots_iterable\nPASSED tests/object_test.py::test_newstyleslots_string_slot\nPASSED tests/object_test.py::test_enum34_nested\nPASSED tests/object_test.py::test_enum_references\nPASSED tests/object_test.py::test_enum_unpicklable\nPASSED tests/object_test.py::test_enum_int_key_and_value\nPASSED tests/object_test.py::test_enum_string_key_and_value\nPASSED tests/object_test.py::test_int_enum_with_auto_value\nPASSED tests/object_test.py::test_multiple_string_enums_when_make_refs_is_false\nPASSED tests/object_test.py::test_unicode_mixin\nPASSED tests/object_test.py::test_datetime_with_tz_copies_refs\nPASSED tests/object_test.py::test_with_exclude\nPASSED tests/object_test.py::test_contained_exclusion\nPASSED tests/object_test.py::test_exclude_slots\nPASSED tests/object_test.py::test_exclude_getstate_from_slots\nFAILED tests/object_test.py::test_defaultdict_roundtrip - KeyError: 'a'\nFAILED tests/object_test.py::test_defaultdict_roundtrip_simple_lambda - KeyEr...\nFAILED tests/object_test.py::test_defaultdict_roundtrip_simple_lambda2 - KeyE...\nFAILED tests/object_test.py::test_defaultdict_and_things_roundtrip_simple_lambda\n4 failed, 78 passed in 0.16s\nSWEBENCH_TALLY_9de8fd2317e691de: pass_to_pass 4 failed, 78 passed in 0.16s\n[84 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_9de8fd2317e691de: UNRESOLVED\n"
+  }
+}

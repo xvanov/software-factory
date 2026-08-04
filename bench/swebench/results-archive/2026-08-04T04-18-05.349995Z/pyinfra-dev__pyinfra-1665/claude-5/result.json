@@ -1,0 +1,96 @@
+{
+  "arm": "claude-5",
+  "arm_base": "claude",
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "repo": "pyinfra-dev/pyinfra",
+  "base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+  "problem_statement_sha256": "6db63b001b70674a6cd551c902d802495967cec273296be8357a6e5cf1499493",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "541bcd7d-2915-428e-b761-5f34a1380e67",
+  "ts": "2026-08-03T22:12:41.939554+00:00",
+  "wall_clock_s": 135.8,
+  "agent_wall_s": 130.4,
+  "num_turns": 17,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 518561,
+  "tokens_out": 8232,
+  "cached_input_tokens": 475938,
+  "cost_usd": 0.8429,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.003
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-5",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.8398
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.0,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_connectors/test_util.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "src/pyinfra/connectors/util.py",
+    "src/pyinfra/operations/server.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_connectors/test_util.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 2694,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-5",
+    "instance_id": "pyinfra-dev__pyinfra-1665",
+    "image": "swerebench/sweb.eval.x86_64.pyinfra-dev_1776_pyinfra-1665@sha256:138a496547f392c77a1d472fd259e3c3fff6dd20bf5cba084335888857f395a3",
+    "graded_at": "2026-08-03T22:12:42.037679+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 33,
+    "pass_to_pass_declared_count": 33,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 5.9,
+    "log_tail": "ommandConnectorUtil::test_custom_shell_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_doas_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_doas_user_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_doas_user_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_dzdo_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_dzdo_user_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_dzdo_user_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_mixed_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_mixed_command_with_injection_attempts\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_preserve_su_env_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_remove_any_sudo_askpass_file_quotes_path\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_multi_arg_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_password_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_shell_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_shell_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_multi_arg_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_password_askpass_path_quoted\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_preserve_env_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_user_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_user_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_use_su_login_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_use_sudo_login_command\nPASSED tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_clears_state_and_runs_rm\nPASSED tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_noop_when_no_state\n33 passed in 0.20s\nSWEBENCH_TALLY_ef5505213c429de5: pass_to_pass 33 passed in 0.20s\n[35 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_ef5505213c429de5: RESOLVED\n"
+  }
+}

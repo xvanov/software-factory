@@ -1,0 +1,92 @@
+{
+  "arm": "openhands",
+  "instance_id": "conan-io__conan-19750",
+  "repo": "conan-io/conan",
+  "base_commit": "6c9356b3e5bd75f7d7061a708785e80aaacb3b43",
+  "problem_statement_sha256": "cb32e64d72a0fd1f698bd20569bfdc427513161ecacc7856c6ffbf6a225654ce",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "agent": "openhands-sdk default agent (cli_mode), single conversation",
+  "models_used": [
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 1.7387
+    }
+  ],
+  "model_escalated_calls": 0,
+  "ts": "2026-08-03T21:37:58.467508+00:00",
+  "wall_clock_s": 870.1,
+  "agent_wall_s": 863.6,
+  "steps_used": 56,
+  "step_cap": 600,
+  "sdk_events": 115,
+  "termination": "agent-finished",
+  "trajectory": "state/events/trajectories/nostory-1.ndjson",
+  "probe_plumbing": false,
+  "tokens_in": 1790415,
+  "tokens_out": 14319,
+  "cached_input_tokens": 1001472,
+  "cost_usd": 1.7387,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 1,
+  "usage_reliable": true,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.8,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "test/integration/graph/test_system_tools.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "conan/internal/api/profile/profile_loader.py"
+  ],
+  "test_files_stripped": [
+    "test/integration/graph/test_platform_requires.py"
+  ],
+  "diff_bytes": 1208,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "openhands",
+    "instance_id": "conan-io__conan-19750",
+    "image": "swerebench/sweb.eval.x86_64.conan-io_1776_conan-19750@sha256:4161da9a64b97cb6755a6c4416bb0ad46ae6bf4b255ca2bf9153c4414430152c",
+    "graded_at": "2026-08-03T21:37:59.019093+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 18,
+    "pass_to_pass_declared_count": 18,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "test/integration/graph/test_system_tools.py::TestToolRequires::test_platform_requires_error: node(s) FAILED/ERROR: ['test/integration/graph/test_system_tools.py::TestToolRequires::test_platform_requires_error']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "conan/internal/api/profile/profile_loader.py"
+    ],
+    "touched_files": [
+      "conan/internal/api/profile/profile_loader.py"
+    ],
+    "gold_files_overlap": [
+      "conan/internal/api/profile/profile_loader.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 6.3,
+    "log_tail": "sions, not version ranges: [cmake/[*]]\" in \"ERROR: Error reading 'profile' profile: [platform_tool_requires] does not allow version ranges, but 'cmake/[*]' is a range\\n\"\nE        +  where \"ERROR: Error reading 'profile' profile: [platform_tool_requires] does not allow version ranges, but 'cmake/[*]' is a range\\n\" = <conan.test.utils.tools.TestClient object at 0x7af58a5d2510>.out\n\ntest/integration/graph/test_system_tools.py:176: AssertionError\n=========================== short test summary info ============================\nFAILED test/integration/graph/test_system_tools.py::TestToolRequires::test_platform_requires_error\n1 failed in 0.18s\nSWEBENCH_TALLY_b33aaa991b967e74: fail_to_pass 1 failed in 0.18s\n[3 node outcomes for fail_to_pass -> grade-nodes.log]\n..................                                                       [100%]\n=========================== short test summary info ============================\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require[]\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require[#myrev]\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require_non_matching\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require_range[]\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require_range[#myrev]\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require_range_non_matching\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require_no_host\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_graph_info_system_tool_require_range\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_consumer_resolved_version\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_consumer_resolved_revision\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_consumer_unresolved_revision\nPASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_require_build_context\nPASSED test/integration/graph/test_system_tools.py::TestToolRequiresLock::test_system_tool_require_range[]\nPASSED test/integration/graph/test_system_tools.py::TestToolRequiresLock::test_system_tool_require_range[#myrev]\nPASSED test/integration/graph/test_system_tools.py::TestGenerators::test_system_tool_require_range\nPASSED test/integration/graph/test_system_tools.py::TestPackageID::test_package_id_modes[recipe_revision_mode]\nPASSED test/integration/graph/test_system_tools.py::TestPackageID::test_package_id_modes[full_package_mode]\nPASSED test/integration/graph/test_system_tools.py::TestPackageID::test_package_id_explicit_revision\n18 passed in 0.74s\nSWEBENCH_TALLY_b33aaa991b967e74: pass_to_pass 18 passed in 0.74s\n[20 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_b33aaa991b967e74: UNRESOLVED\n"
+  }
+}

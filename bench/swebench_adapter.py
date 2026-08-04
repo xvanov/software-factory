@@ -3356,6 +3356,11 @@ class ArmSpec(NamedTuple):
     trajectories: str  # _TRAJECTORIES_*
     cost_source: str  # _COST_*
     has_chain: bool  # can this arm produce a chain verdict at all?
+    # Set when this run key was REPLACED by another arm id rather than retired:
+    # the same (harness, model) pair, measured again under a later harness. Its
+    # rows stay on disk as the "before" evidence, but the report segregates
+    # them — see ``_report_rows``. A superseded key is not a peer arm.
+    superseded_by: str | None = None
 
 
 def _arm(**kw: Any) -> ArmSpec:
@@ -3415,6 +3420,15 @@ _ARMS: dict[str, ArmSpec] = {
     # (default model unchanged); `claude-5` and `claude-4.8` are the
     # pre-registered five-arm ids, so the sweep needs no --model at all and the
     # two runs land in DIFFERENT run dirs by construction.
+    #
+    # `claude` is SUPERSEDED by `claude-5`. It is the same pair — Claude Code
+    # CLI on the default model — measured before `--model` and the model-keyed
+    # run dirs existed, and 18 of its rows are still on disk from the pre-fix
+    # 2026-08-03 sweep. Left un-flagged, the report emitted them as a SIXTH
+    # arm beside `claude-5`, mixing pre-fix and post-fix evidence in one table
+    # and double-counting one (harness, model) pair. The rows are not deleted:
+    # they are the "before" evidence for the retraction, and
+    # `results-archive/` holds copies. They are segregated instead.
     "claude": _arm(
         name="claude",
         base="claude",
@@ -3429,6 +3443,7 @@ _ARMS: dict[str, ArmSpec] = {
         trajectories=_TRAJECTORIES_TRANSCRIPT,
         cost_source=_COST_CLI_SUBSCRIPTION,
         has_chain=False,
+        superseded_by="claude-5",
     ),
     "claude-5": _arm(
         name="claude-5",
@@ -3500,6 +3515,24 @@ def arm_spec(arm: str) -> ArmSpec:
             "Add an entry to _ARMS (one place) rather than special-casing a "
             "name — every per-arm budget, cost guard and gate reads that table."
         ) from None
+
+
+def refuse_superseded_arm(arm: str) -> None:
+    """Refuse to SPEND on an arm id whose rows the report will segregate.
+
+    Detect-without-remediate, otherwise: ``report`` correctly excludes a
+    superseded run key, but a sweep would still burn real money producing rows
+    that can never appear in a table. Only the spend paths (``run``,
+    ``run-all``) call this — ``grade``, ``audit`` and ``report`` must still be
+    able to read the existing rows, which are kept as evidence on purpose.
+    """
+    spec = arm_spec(arm)
+    if spec.superseded_by:
+        raise SystemExit(
+            f"--arm {arm} is superseded by {spec.superseded_by}: its rows are "
+            "segregated out of every report table, so a run would spend money "
+            f"on evidence nothing can publish. Use --arm {spec.superseded_by}."
+        )
 
 
 def resolve_arm_model(arm: str, model: str | None = None) -> str | None:
@@ -5722,23 +5755,85 @@ _CLIP_SENTINEL = "<response clipped"
 # (only forbidden by the prompt), which the README already lists as the
 # residual risk. Detection is therefore the control, so it belongs here.
 #
-# Each pattern requires an actual RETRIEVAL shape, not a mention: `curl` and
-# `wget` need a URL, `urlopen` needs one too. A bare "curl" in prose or in an
-# echoed README is not a probe, and a detector that flags those flags
-# everything (13/19 rows were false-flagged once already by an over-strict
-# own-cwd rule).
+# Every pattern is anchored on a retrieval VERB — the thing the agent RAN.
+# There used to be a bare ``https://github.com/...`` rule as well, and it was
+# a false-positive machine: measured over the completed five-arm sweep it
+# flagged 218 lines across 46 rows, and every single one was a hostname the
+# agent merely SAW — a URL literal in the target repo's own source (conan's
+# `clang version 18.1.0rc (https://github.com/llvm/llvm-project.git …)`
+# fixture), an `$id` in tox's JSON schema, a docstring, a `git remote -v`
+# echo of the clone's legitimate origin. A mention is not an action, so the
+# bare-URL rule is gone; what remains needs a fetch verb next to the URL.
 _NETWORK_PROBE_PATTERNS = (
     ("curl", re.compile(r"\bcurl\b[^\n]{0,200}?(?:https?://|ftp://)")),
     ("wget", re.compile(r"\bwget\b[^\n]{0,200}?(?:https?://|ftp://)")),
     ("git fetch/pull/ls-remote", re.compile(r"\bgit\s+(?:fetch|pull|ls-remote)\b")),
     ("git remote add", re.compile(r"\bgit\s+remote\s+add\b")),
+    (
+        "git clone from a URL",
+        re.compile(r"\bgit\s+clone\b[^\n]{0,200}?(?:https?://|git@|ssh://|git://)"),
+    ),
     ("gh cli", re.compile(r"\bgh\s+(?:pr|api|issue|repo|release|search|browse)\b")),
-    ("urlopen", re.compile(r"\burlopen\b[^\n]{0,200}?https?://")),
-    ("github api/raw", re.compile(r"https?://(?:api|raw)\.githubusercontent\.com|https?://api\.github\.com")),
+    (
+        "python http fetch",
+        re.compile(
+            r"\b(?:urlopen|urlretrieve|"
+            r"requests\.(?:get|post|put|head|patch|request)|"
+            r"httpx\.(?:get|post|put|head|patch|request)|"
+            r"aiohttp\.\w+\.(?:get|post))\s*\("
+            r"[^\n]{0,200}?https?://"
+        ),
+    ),
+    (
+        "pip install from a URL",
+        re.compile(
+            r"\bpip3?\s+install\b[^\n]{0,200}?(?:https?://|git\+)|"
+            r"\buv\s+pip\s+install\b[^\n]{0,200}?(?:https?://|git\+)"
+        ),
+    ),
+    (
+        "github api/raw",
+        re.compile(
+            r"https?://(?:api|raw)\.githubusercontent\.com|https?://api\.github\.com"
+        ),
+    ),
 )
 
-# A github.com URL, so the own-origin exemption below can look at its path.
-_GITHUB_URL = re.compile(r"https?://(?:www\.)?github\.com/([^\s'\"`,;)\]}>]*)")
+# Claude Code tool names that ARE a retrieval, whatever their arguments say.
+# Matched on the tool name so a fetch cannot hide behind an opaque input.
+_RETRIEVAL_TOOL_NAMES = frozenset(
+    {"webfetch", "websearch", "fetch", "web_fetch", "web_search", "browser"}
+)
+
+# Field names inside an action payload that carry AUTHORED or QUOTED text, not
+# an executed command: the body of a file the agent wrote, the text it
+# replaced, its private reasoning, its task list. A `github.com` URL in a test
+# file the agent writes is the agent producing a string literal — measured, it
+# is by far the commonest shape of the old false positives (a `str_replace`
+# whose `old_str` is an existing comment that happens to cite an upstream
+# issue URL). Everything NOT named here is still scanned, so an unrecognised
+# future action that performs a fetch fails closed rather than slipping past.
+#
+# Kept deliberately SHORT. Every name here is a place a retrieval could hide,
+# so only fields that demonstrably carry authored text are listed — `text` and
+# `description` were dropped again after review precisely because a future tool
+# could plausibly put an executable string in one.
+_ACTION_CONTENT_FIELDS = frozenset(
+    {
+        "content",
+        "file_text",
+        "new_content",
+        "new_str",
+        "new_string",
+        "old_content",
+        "old_str",
+        "old_string",
+        "thought",
+        "thinking",
+        "task_list",
+        "message",
+    }
+)
 
 # Basenames under the run's OWN subtree that still carry answer material. The
 # blanket "anything under runs/<own-id>/ is just the cwd echoing" rule was too
@@ -5781,29 +5876,32 @@ def _is_claude_arm(arm: str) -> bool:
     return base == "claude" or base.startswith("claude-")
 
 
-def _network_probe_hits(line: str, own_repo: str | None) -> list[str]:
-    """Retrieval-shaped network activity in one trail line.
+def _retrieval_hits(command_text: str) -> list[str]:
+    """Retrieval ACTIONS in the command side of one trail entry.
 
-    ``own_repo`` exempts the instance's OWN origin URL: ``git remote -v``,
-    ``.git/config`` and clone echoes legitimately print
-    ``https://github.com/<repo>.git``, and flagging those would invalidate
-    every run. ``https://github.com/<repo>/pull/981`` is NOT exempt — that is
-    the fix.
+    Call this with what the agent RAN — a shell command, a tool input — never
+    with an observation. What the agent SAW is full of hostnames it did not
+    fetch: the repo's own source, its JSON schemas, its docstrings, its
+    `git remote -v`. Only the command side can constitute a retrieval, and
+    every pattern here is anchored on a fetch verb.
+
+    There is deliberately NO own-repo exemption. Fetching the instance's own
+    origin is the *worst* case, not an exempt one: every instance's `main` is
+    downstream of the fix, so `curl raw.githubusercontent.com/<own repo>/main/
+    <the file under test>` IS the answer. The own-origin URL only ever appears
+    without a fetch verb (clone echoes, `.git/config`, `git remote -v`), and
+    those are observations, which never reach this function.
     """
-    hits = [name for name, pat in _NETWORK_PROBE_PATTERNS if pat.search(line)]
-    for m in _GITHUB_URL.finditer(line):
-        path = m.group(1).rstrip("/").removesuffix(".git")
-        if own_repo and path.lower() == own_repo.strip("/").lower():
-            continue  # the run's own origin
-        hits.append("github.com retrieval")
-        break
-    return hits
+    return [name for name, pat in _NETWORK_PROBE_PATTERNS if pat.search(command_text)]
 
 
-def _probe_line_hits(
-    line: str, instance_id: str, arm: str, own_repo: str | None = None
-) -> list[str]:
-    """Oracle-probe markers in one trail line, own-run references excluded.
+def _probe_line_hits(line: str, instance_id: str, arm: str) -> list[str]:
+    """Oracle/manifest PATH markers in one trail line, own-run refs excluded.
+
+    Scanned over the whole line — both what the agent ran and what it saw —
+    because a run has no business so much as *printing* the oracle store's
+    path. Network retrieval is NOT scanned here; that is
+    ``_retrieval_hits``, which only ever sees the command side.
 
     Flags, fail-closed:
     * ``oracle.json`` anywhere — the store's basename never legitimately
@@ -5811,9 +5909,6 @@ def _probe_line_hits(
     * ``swebench/manifest.json`` — the pinned manifest, in any path form (a
       target repo's OWN manifest.json — web-app manifests are common — does
       not match);
-    * retrieval-shaped network activity (``_NETWORK_PROBE_PATTERNS``): every
-      instance is a merged public PR, so fetching the answer is easier than
-      decoding it locally;
     * any other ``bench/swebench`` path that does NOT stay inside the run's
       own ``runs/<instance>/`` subtree. The arm's cwd IS under that subtree,
       so its own paths echo constantly in commands, tracebacks, directory
@@ -5829,7 +5924,6 @@ def _probe_line_hits(
         hits.append("oracle.json")
     if "swebench/manifest.json" in line:
         hits.append("swebench/manifest.json")
-    hits.extend(_network_probe_hits(line, own_repo))
     own_dir = f"bench/swebench/runs/{instance_id}"
     for m in re.finditer(r"bench/swebench", line):
         reason = _classify_bench_ref(line[m.start():], own_dir, arm)
@@ -5837,6 +5931,97 @@ def _probe_line_hits(
             hits.append(reason)
             break
     return hits
+
+
+def _command_side_text(payload: Any, _depth: int = 0) -> str:
+    """Serialise an action/tool payload down to the parts the agent EXECUTED.
+
+    Drops ``_ACTION_CONTENT_FIELDS`` (file bodies, replaced text, reasoning)
+    and keeps everything else, so an unrecognised action shape still gets
+    scanned. JSON-encoded strings are recursed into: OpenHands stores the same
+    arguments twice, once parsed under ``action`` and once as the raw
+    ``tool_call.arguments`` string — and 34 of the sweep's ActionEvents have
+    ``action: null``, with the arguments string as the ONLY record of what ran.
+    Skipping it would have been a silent fail-open hole.
+    """
+    if _depth > 12:
+        return ""  # pathological nesting only; real payloads reach depth 4
+    if isinstance(payload, str):
+        stripped = payload.strip()
+        if stripped[:1] in ("{", "[") and stripped[-1:] in ("}", "]"):
+            try:
+                return _command_side_text(json.loads(stripped), _depth + 1)
+            except (json.JSONDecodeError, ValueError):
+                return payload
+        return payload
+    if isinstance(payload, dict):
+        return "\n".join(
+            _command_side_text(v, _depth + 1)
+            for k, v in payload.items()
+            if str(k) not in _ACTION_CONTENT_FIELDS
+        )
+    if isinstance(payload, list):
+        return "\n".join(_command_side_text(v, _depth + 1) for v in payload)
+    if isinstance(payload, bool) or payload is None:
+        return ""
+    return str(payload)
+
+
+def _openhands_command_text(ev: dict[str, Any]) -> str:
+    """The command side of one OpenHands trajectory event.
+
+    Only an ``ActionEvent`` has one. An ``ObservationEvent`` is the
+    environment answering, a ``MessageEvent`` is prose, an ``AgentErrorEvent``
+    is the harness complaining — none of them can execute a fetch.
+    """
+    if str(ev.get("kind")) != "ActionEvent":
+        return ""
+    return _command_side_text(
+        {"action": ev.get("action"), "tool_call": ev.get("tool_call")}
+    )
+
+
+def _claude_command_text(ev: dict[str, Any]) -> tuple[str, list[str]]:
+    """``(command text, retrieval tool names)`` for one claude transcript line.
+
+    The command side is the ``tool_use`` blocks of an assistant turn; a
+    ``tool_result`` is what came back and an assistant ``text``/``thinking``
+    block is prose. A ``result`` line additionally carries the server-side
+    web-tool counters, which are the authoritative record of a hosted
+    WebFetch/WebSearch — the tool_use block alone could be a subagent's.
+    """
+    tools: list[str] = []
+    if ev.get("type") == "result":
+        usage = ev.get("usage")
+        server = usage.get("server_tool_use") if isinstance(usage, dict) else None
+        if isinstance(server, dict):
+            for key, label in (
+                ("web_fetch_requests", "server-side WebFetch"),
+                ("web_search_requests", "server-side WebSearch"),
+            ):
+                try:
+                    if int(server.get(key) or 0) > 0:
+                        tools.append(label)
+                except (TypeError, ValueError):
+                    tools.append(f"unreadable {label} counter")
+        return "", tools
+    if ev.get("type") != "assistant":
+        return "", tools
+    msg = ev.get("message")
+    if not isinstance(msg, dict):
+        return "", tools
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return "", tools
+    inputs: list[Any] = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        name = str(block.get("name") or "")
+        if name.lower() in _RETRIEVAL_TOOL_NAMES:
+            tools.append(f"{name} tool call")
+        inputs.append(block.get("input"))
+    return _command_side_text(inputs), tools
 
 
 def _is_clipped_prefix(text: str, want: str) -> bool:
@@ -5921,6 +6106,16 @@ def _scan_oracle_probes(
     left no full command log cannot be cleared, and an unreadable trail is a
     finding, not a pass.
 
+    TWO scans per trail entry, because the two threats have different shapes:
+
+    * the oracle/manifest PATH scan reads the WHOLE line — a run has no
+      business printing the store's path in either direction;
+    * the RETRIEVAL scan reads only the command side, via each format's own
+      action/observation split (``ActionEvent`` vs ``ObservationEvent``, a
+      claude ``tool_use`` vs its ``tool_result``, ``bare-commands.ndjson``'s
+      ``command`` vs its ``output``). A hostname in an observation is what the
+      agent SAW; only what it RAN can be a fetch.
+
     The COUNTS are returned because the absence of a trail used to be silent:
     with zero trajectory files this function returned no findings at all, so a
     run whose state root had been wiped audited clean — which is exactly the
@@ -5930,25 +6125,32 @@ def _scan_oracle_probes(
     failures: list[str] = []
     trajectories = 0
     trails = 0
-    own_repo = result.get("repo") if isinstance(result.get("repo"), str) else None
     for traj in _trajectory_files(state_root):
         trajectories += 1
         trails += 1
         try:
             with traj.open(encoding="utf-8", errors="replace") as fh:
                 for n, line in enumerate(fh, 1):
-                    hits = _probe_line_hits(line, instance_id, arm, own_repo)
-                    if not hits:
-                        continue
                     try:
                         ev = json.loads(line)
                     except json.JSONDecodeError:
+                        ev = {}
+                    if not isinstance(ev, dict):
                         ev = {}
                     kind = str(ev.get("kind") or "")
                     if kind in _HARNESS_AUTHORED_KINDS:
                         continue  # the harness's own system prompt
                     if kind == "MessageEvent" and ev.get("source") == "user":
                         continue  # the harness's task message
+                    hits = _probe_line_hits(line, instance_id, arm)
+                    # An unparsed line has no action/observation split, so it
+                    # is scanned whole — fail-closed on a format we cannot read.
+                    command = (
+                        _openhands_command_text(ev) if ev else line
+                    )
+                    hits += _retrieval_hits(command)
+                    if not hits:
+                        continue
                     failures.append(
                         f"oracle-probe: trajectory {traj.name}:{n} "
                         f"({kind or 'unparsed'}) references the harness's "
@@ -5972,7 +6174,18 @@ def _scan_oracle_probes(
         try:
             with claude_log.open(encoding="utf-8", errors="replace") as fh:
                 for n, line in enumerate(fh, 1):
-                    hits = _probe_line_hits(line, instance_id, arm, own_repo)
+                    try:
+                        ev = json.loads(line)
+                    except json.JSONDecodeError:
+                        ev = {}
+                    if not isinstance(ev, dict):
+                        ev = {}
+                    hits = _probe_line_hits(line, instance_id, arm)
+                    if ev:
+                        command, tools = _claude_command_text(ev)
+                    else:
+                        command, tools = line, []  # unparsed: scan it whole
+                    hits += _retrieval_hits(command) + tools
                     if hits:
                         failures.append(
                             f"oracle-probe: {_CLAUDE_TRANSCRIPT_NAME}:{n} references "
@@ -6001,7 +6214,19 @@ def _scan_oracle_probes(
         try:
             with cmd_log.open(encoding="utf-8", errors="replace") as fh:
                 for n, line in enumerate(fh, 1):
-                    hits = _probe_line_hits(line, instance_id, arm, own_repo)
+                    try:
+                        ev = json.loads(line)
+                    except json.JSONDecodeError:
+                        ev = {}
+                    hits = _probe_line_hits(line, instance_id, arm)
+                    # `command` is what the shell ran; `output` is what came
+                    # back. An unparsed line is scanned whole (fail-closed).
+                    command = (
+                        str(ev.get("command") or "")
+                        if isinstance(ev, dict) and ev
+                        else line
+                    )
+                    hits += _retrieval_hits(command)
                     if hits:
                         failures.append(
                             f"oracle-probe: bare-commands.ndjson:{n} references "
@@ -6022,7 +6247,10 @@ def _scan_oracle_probes(
     if transcript:
         trails += 1
     for step in transcript:
-        hits = _probe_line_hits(json.dumps(step), instance_id, arm, own_repo)
+        # A result.json transcript step is `{step, action, command, exit}` —
+        # all command side, no observation, so both scans see the whole step.
+        hits = _probe_line_hits(json.dumps(step), instance_id, arm)
+        hits += _retrieval_hits(_command_side_text(step))
         if hits:
             failures.append(
                 f"oracle-probe: bare-arm transcript step {step.get('step')} "
@@ -6816,10 +7044,15 @@ def _fmt_int(value: Any) -> str:
 def _report_rows(
     base_dir: Path,
     expected_sha: str | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, str]], list[dict[str, str]]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, str]],
+    list[dict[str, str]],
+    list[dict[str, str]],
+]:
     """Read every ``<instance>/<run-key>/result.json`` under ``base_dir``.
 
-    Returns ``(rows, refused, foreign)``. FAIL-CLOSED: a row whose backing
+    Returns ``(rows, refused, foreign, superseded)``. FAIL-CLOSED: a row whose backing
     artifacts are missing or unreadable is never silently dropped and never
     emitted as a table row — it lands in ``refused`` with the exact reason,
     which the report prints. This is the same posture as the audit gate:
@@ -6839,14 +7072,35 @@ def _report_rows(
     a model-selectable arm on an off-default model, the model. The recorded
     ``arm`` field must agree with it; a row whose two identities disagree is
     refused rather than filed under either.
+
+    A row under a SUPERSEDED run key (``ArmSpec.superseded_by``) goes to
+    ``superseded``: same manifest, same profile, but produced by a harness a
+    later arm id replaced, so it is not a peer arm. Like ``foreign`` it is
+    named in the output and merged into NO table and NO rate. The pinned-sha
+    filter cannot catch these — the superseded ``claude`` rows ran under the
+    very same manifest as ``claude-5`` — which is why the run key needs its own
+    check.
     """
     rows: list[dict[str, Any]] = []
     refused: list[dict[str, str]] = []
     foreign: list[dict[str, str]] = []
+    superseded: list[dict[str, str]] = []
     for f in sorted(base_dir.glob("*/*/result.json")):
         run_dir = f.parent
         key = run_dir.name
         row_id = f"{run_dir.parent.name}/{key}"
+        spec = _ARMS.get(_split_run_key(key)[0])
+        if spec is not None and spec.superseded_by:
+            superseded.append(
+                {
+                    "row": row_id,
+                    "why": f"run key {key!r} was superseded by "
+                    f"{spec.superseded_by!r} — the same harness and model, "
+                    "re-measured under a later harness; reporting both would "
+                    "double-count one arm and mix pre- and post-fix evidence",
+                }
+            )
+            continue
         missing = [name for name in _ROW_ARTIFACTS if not (run_dir / name).is_file()]
         if missing:
             refused.append(
@@ -6917,7 +7171,7 @@ def _report_rows(
         r["_fresh_in"] = max(int(r.get("tokens_in") or 0) - cache_read, 0)
         r["_run_dir"] = str(run_dir)
         rows.append(r)
-    return rows, refused, foreign
+    return rows, refused, foreign, superseded
 
 
 def _row_models(r: dict[str, Any]) -> list[str]:
@@ -7026,6 +7280,24 @@ def _arm_view(rows: list[dict[str, Any]], arm: str) -> ArmView:
     )
 
 
+_EXCLUSION_EXCERPT_CHARS = 180
+
+
+def _excerpt(detail: Any) -> str:
+    """One-line excerpt of a failure detail, long enough to name the CAUSE.
+
+    Measured: at 80 chars the three rate-limited ``openhands`` rows read
+    ``run failed (openhands conversation failed: ConversationRunError:
+    Conversation run failed for)`` — the exact cause (``litellm.RateLimitError``
+    from Azure) fell off the end, and the newlines in the raw text broke the
+    markdown list item. A disclosure that does not say why is not a disclosure.
+    """
+    text = " ".join(str(detail or "").split())
+    if len(text) <= _EXCLUSION_EXCERPT_CHARS:
+        return text
+    return text[: _EXCLUSION_EXCERPT_CHARS - 1] + "…"
+
+
 def _exclusion_reason(r: dict[str, Any]) -> str:
     """Why one row is not in its arm's denominator, and WHAT IT SCORED.
 
@@ -7039,7 +7311,7 @@ def _exclusion_reason(r: dict[str, Any]) -> str:
     if r["_status"] == _RUN_NO_RESULT:
         why.append("no result.json")
     elif r["_run_failed"]:
-        why.append(f"run failed ({str(r['_status_detail'] or '')[:80]})")
+        why.append(f"run failed ({_excerpt(r['_status_detail'])})")
     if r["_audit_ok"] is False:
         why.append("audit failed")
     elif r["_audit_ok"] is None:
@@ -7511,6 +7783,7 @@ def _archive_report_artifacts(
     table_text: str,
     refused: list[dict[str, str]],
     foreign: list[dict[str, str]],
+    superseded: list[dict[str, str]],
     created: dict[str, str],
 ) -> Path:
     """Snapshot every consumed artifact into a dated results-archive dir.
@@ -7577,6 +7850,7 @@ def _archive_report_artifacts(
                 # The disclosures, PERSISTED — see the docstring.
                 "refused": refused,
                 "foreign": foreign,
+                "superseded": superseded,
                 # created_at per instance, so the margin columns survive a
                 # manifest move as well.
                 "instances": {iid: {"created_at": ts} for iid, ts in sorted(created.items())},
@@ -7657,13 +7931,14 @@ def report(
     else:
         expected_sha = str(_manifest().get("manifest_sha256") or "") or None
 
-    rows, refused, foreign = _report_rows(base_dir, expected_sha)
+    rows, refused, foreign, superseded = _report_rows(base_dir, expected_sha)
     if from_archive is not None:
         # The archive's OWN record of what it excluded, re-emitted. Rows
         # refused at archive time were never copied in, so recomputing here
         # yields nothing — the disclosure has to be read back, not recomputed.
         recorded_refused = meta.get("refused")
         recorded_foreign = meta.get("foreign")
+        recorded_superseded = meta.get("superseded")
         disclosure_recorded = isinstance(recorded_refused, list) and isinstance(
             recorded_foreign, list
         )
@@ -7671,16 +7946,21 @@ def report(
             refused = [dict(x) for x in recorded_refused] + refused
         if isinstance(recorded_foreign, list):
             foreign = [dict(x) for x in recorded_foreign] + foreign
+        if isinstance(recorded_superseded, list):
+            superseded = [dict(x) for x in recorded_superseded] + superseded
+
     else:
         disclosure_recorded = True
 
     if not rows:
-        detail = "; ".join(f"{x['row']}: {x['why']}" for x in refused + foreign)
+        detail = "; ".join(
+            f"{x['row']}: {x['why']}" for x in refused + foreign + superseded
+        )
         raise SystemExit(
             f"no reportable results under {base_dir} for manifest "
             f"{expected_sha or '(unpinned)'}"
             + (
-                f" — every row refused (fail-closed) or foreign: {detail}"
+                f" — every row refused (fail-closed), foreign or superseded: {detail}"
                 if detail
                 else ""
             )
@@ -7909,6 +8189,21 @@ def report(
         ]
         lines += [f"- `{x['row']}` — {x['why']}" for x in foreign]
 
+    if superseded:
+        lines += [
+            "",
+            "## Excluded rows (superseded run key — NOT a sixth arm)",
+            "",
+            "These rows ran under the pinned manifest but under a run key a",
+            "later arm id replaced, so they are NOT table rows and count in NO",
+            "rate above. They are the *before* evidence for a harness fix, kept",
+            "on disk deliberately; reporting them beside their replacement would",
+            "double-count one (harness, model) pair and blend pre-fix with",
+            "post-fix results.",
+            "",
+        ]
+        lines += [f"- `{x['row']}` — {x['why']}" for x in superseded]
+
     n = len({r.get("instance_id") for r in rows})
     if n < 30:
         lines += [
@@ -7940,6 +8235,7 @@ def report(
             table_text=text,
             refused=refused,
             foreign=foreign,
+            superseded=superseded,
             created=created,
         )
         print(f"archived evidence -> {archive_dir}")
@@ -9309,6 +9605,7 @@ def main() -> None:
             after=args.after,
         )
     elif args.cmd == "run":
+        refuse_superseded_arm(args.arm)
         steps = _resolve_max_steps(args.arm, args.max_steps)
         # Validated (and refused for a non-selectable arm) BEFORE anything is
         # cloned or spent.
@@ -9351,6 +9648,7 @@ def main() -> None:
             assert key == base  # non-selectable arms are 1:1 with their run dir
             runner(args.instance, max_steps=steps, timeout_s=args.timeout_s)
     elif args.cmd == "run-all":
+        refuse_superseded_arm(args.arm)
         run_all(
             arm=args.arm,
             model=args.model,

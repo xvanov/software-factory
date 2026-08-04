@@ -1,0 +1,38 @@
+{
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "arm": "openhands",
+  "audited_at": "2026-08-04T04:17:22.542139+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:24:23.003475+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 912.409,
+      "success": 0,
+      "error": "openhands conversation failed: ConversationRunError: Conversation run failed for id=d225adc9-c267-4054-918f-17d92cf18237: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\n\nConversation logs are stored at: /tmp/bench-oh-traj-[REDACTED]\n\nTo help debug this issue, please file a bug report at:\n  https://github.com/OpenHands/software-agent-sdk/issues/new\nand attach the conversation logs from the directory above."
+    }
+  ],
+  "ledger_cost_usd": 0.0,
+  "ledger_tokens_in": 0,
+  "ledger_tokens_out": 0,
+  "result_cost_usd": 0.0,
+  "prediction_sha256": "92cf3dedacb08fd810672497e0c66f97ccfc0361559f99767d4f06d04481b9c5",
+  "base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+  "stripped_test_paths": [
+    "tests/test_reasoning_parsers.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}
