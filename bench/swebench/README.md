@@ -99,6 +99,17 @@ transcript, with nothing anywhere saying a measurement had been destroyed. An
 off-default `--model` appends `@<model>` to the key; the pre-registered
 `claude-5` / `claude-4.8` ids need no flag at all.
 
+The old back-compatible `claude` id is therefore **superseded by `claude-5`** —
+same harness, same model, measured before the model-keyed dirs existed. Its 18
+pre-fix rows are still in `runs/*/claude/` on purpose (they are the *before*
+evidence for that fix, and `results-archive/2026-08-03T05-12-08.813897Z/` holds
+committed copies), so `report` segregates them into an "Excluded rows
+(superseded run key)" section rather than emitting a sixth arm beside
+`claude-5`. The pinned-manifest filter cannot catch them — both ran under the
+same manifest — so the run key carries the flag (`ArmSpec.superseded_by`).
+`run` and `run-all` refuse a superseded arm outright, so no sweep can spend
+money on rows no table will ever show.
+
 ### Every per-arm budget and guard fails loud
 
 `_resolve_max_steps`, `_DEFAULT_COST_USD` and `_DEFAULT_HOURS` used to fall back
@@ -419,11 +430,31 @@ which the gold-patch control surfaced before any model spend:
   `audit` additionally scans the arms' action trails
   (OpenHands trajectories; the bare arm's untruncated `bare-commands.ndjson`;
   the claude arm's `claude-transcript.ndjson`)
-  for any reference to the harness paths, and for retrieval-shaped network
-  activity (`curl`/`wget` with a URL, `git fetch/pull/ls-remote`, `gh pr|api`,
-  `urlopen`, a github.com URL that is not the instance's own origin) — every
-  instance is a merged public PR, so fetching the answer is easier than
-  decoding it. A hit invalidates the run. The
+  for any reference to the harness paths, and for retrieval ACTIONS
+  (`curl`/`wget` with a URL, `git fetch/pull/ls-remote`, `git clone` from a
+  URL, `gh pr|api|issue`, `urlopen`/`requests.get`/`httpx.get` on a URL, `pip
+  install` from a URL or `git+`, any `api.`/`raw.githubusercontent.com` URL,
+  and a `WebFetch`/`WebSearch` tool call or a non-zero server-side web-tool
+  counter) — every instance is a merged public PR, so fetching the answer is
+  easier than decoding it. A hit invalidates the run.
+
+  **The two scans read different things, deliberately.** The harness-path scan
+  reads the WHOLE trail line, both sides: a run has no business so much as
+  printing the oracle store's path. The retrieval scan reads only the COMMAND
+  side — each format's own action/observation split (OpenHands `ActionEvent`
+  vs `ObservationEvent`, a claude `tool_use` input vs its `tool_result`,
+  `bare-commands.ndjson`'s `command` vs its `output`), minus the fields that
+  carry authored file text (`file_text`, `old_str`/`new_str`,
+  `content`, …). **What the agent ran, not what the agent saw.** A bare
+  `https://github.com/...` used to be a hit on any line, and it was a false-
+  positive machine: on the completed five-arm sweep it flagged 218 lines
+  across 46 rows, every one of them a hostname the arm merely read — a URL
+  literal in conan's own test fixture, an `$id` in tox's JSON schema, a
+  docstring, a `git remote -v` echo of the clone's legitimate origin. Verb
+  anchoring plus the command-side split cleared all 218 and kept the one real
+  hit (a bare-arm `curl` of `raw.githubusercontent.com/<the instance's own
+  repo>/main/<the file under test>`). There is no own-repo exemption on the
+  retrieval side: fetching your own origin's `main` IS the fix. The
   scan discriminates: the run's OWN `runs/<instance>/` subtree is the arm's
   cwd and echoes constantly (commands, tracebacks, listings, clipped
   observations, condensed summaries — every flagged row of the first live
