@@ -21,20 +21,21 @@ smaller denominator than another.
 |---|---|---:|---:|---:|---:|
 | Claude Code CLI | `claude-opus-5` | 15/19 | **79%** | 34.36 | **2.29** |
 | Claude Code CLI | `claude-opus-4-8` | 14/19 | **74%** | 23.56 | **1.68** |
-| one OpenHands agent, **no chain** | `azure/deepseek-v4-pro` | 9/19 | **47%** | ~18.26 † | **~2.03** |
+| one OpenHands agent, **no chain** | `azure/deepseek-v4-pro` | 10/19 | **53%** | ~19.21 † | **~1.92** |
 | **this factory's chain** | deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | **37%** | 35.94 † | **5.13** |
 | hand-rolled loop, **no tool calls** | `azure/deepseek-v4-pro` | 1/19 | **5%** | 7.94 | **7.94** |
 
 Reading it:
 
-- **The chain does not beat a single agent on the same model** — 37% vs 47%. On
-  the 16 instances where both arms have a clean row: both solved 4, both failed
-  8, the single agent won 3 the chain lost, the chain won 1 the agent lost. The
-  entire gap is **2 instances**, which at this sample size is indistinguishable
-  from chance (McNemar exact p=0.625).
+- **The chain does not beat a single agent on the same model** — 37% vs 53%.
+  Across all 19 paired instances the single agent won 4 the chain lost, the chain
+  won 1 the agent lost. The gap is **3 instances**, and at this sample size that
+  is still indistinguishable from chance (McNemar exact **p=0.375**). A 16-point
+  gap that cannot clear significance is exactly what n=19 buys you.
 - **The chain is also the most expensive way to solve one** — $5.13, versus
-  ~$2.03 for the same model with no chain and **$2.29 for Claude Code**, a
-  frontier model. Costing ~2× the single agent for fewer solves is the finding.
+  ~$1.92 for the same model with no chain and **$2.29 for Claude Code**, a
+  frontier model. Costing ~1.9× the single agent in total, and **2.7× per solved
+  instance**, for fewer solves is the finding.
 - **What produces lift is tooling, not orchestration**: 47% with a real editor
   and tool-calling versus 5% with neither, p=0.031. That gap is real; the
   orchestration gap is not.
@@ -48,9 +49,11 @@ with `tokens_in: 0` while running 27% of that arm's agent actions — and two of
 those three still resolved. Its metered $15.37 therefore covers 16 of 19 rows;
 the table shows $18.26, extrapolated from the 16 reliable rows' $0.961 mean. The
 factory arm has a smaller version of the same leak (two rows carry an unmetered
-dev session), so its $35.94 is a floor too. Corrected, the chain costs **~2.0×**
-the single agent in total and **2.5× per solved instance** — the direction is
-unchanged and the harness debt is filed.
+dev session), so its $35.94 is a floor too. After the re-run, 18 of 19 OpenHands
+rows are metered at $18.20; the last one hit the wall-clock cap and again
+recorded $0, so the table extrapolates it at the 18-row $1.011 mean. Corrected,
+the chain costs **~1.9×** the single agent in total and **2.7× per solved
+instance** — the direction is unchanged and the harness debt is filed.
 
 **Cost units are not identical either, so don't over-read the last column.** The
 Azure rows are a price-table estimate over provider-reported tokens — real money.
@@ -58,15 +61,24 @@ The Claude rows are what the CLI itself reports at API list prices, billed in
 practice against a flat subscription. Same order of magnitude, not the same
 meter.
 
-**Rows we had to set aside, and why it does not rescue the chain.** Three
-OpenHands rows died on Azure `429` rate limits mid-conversation and one bare row
-was disqualified for fetching upstream source. Under the report's strict
-audited-valid-only convention those come out of the denominator, giving
-openhands 7/16 = 44% and bare 1/18 = 6% — the numbers in
-[`results.md`](bench/swebench/results.md). We publish out-of-19 here because it
-is the honest apples-to-apples view: **two of the three rate-limited OpenHands
-rows had already produced patches the oracle passes.** Every way of counting
-puts the single agent at or above the chain.
+**The three re-run rows, disclosed in full.** Three OpenHands rows died on Azure
+`429` rate limits mid-conversation, recording no cost and no tokens. Because a
+provider rate limit is an infrastructure failure rather than a result, those
+three — and only those three — were re-run. Both attempts are recorded and the
+harness flags them in a "Discarded runs" section, since its own rule is
+no-re-rolls; this is a deliberate, disclosed exception to that rule, not a
+silent one.
+
+Outcomes: `jsonpickle-588` resolved both times, `rapid-mlx-289` resolved both
+times, and **`keras-22316` flipped from wrong-fix to resolved on the second
+draw.** So the conservative reading is 9/19 = 47% (first attempts) and the
+re-run reading is 10/19 = 53%; the table shows the latter because it is the
+metered, graded, audit-valid run. Both readings sit above the chain's 7/19, and
+neither reaches significance. That one row in three flipped on a reseed is also
+the clearest evidence on this page that single-seed results at n=19 are unstable.
+
+One bare row was separately disqualified for fetching upstream source — it was a
+wrong fix anyway, so bare is 1/19 either way.
 
 **What the ± ranges in `results.md` mean.** 7 solved out of 19 is 37%, but 19
 samples cannot pin down true skill: the 95% confidence interval [16%, 62%] is
