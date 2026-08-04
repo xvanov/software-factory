@@ -21,8 +21,8 @@ smaller denominator than another.
 |---|---|---:|---:|---:|---:|
 | Claude Code CLI | `claude-opus-5` | 15/19 | **79%** | 34.36 | **2.29** |
 | Claude Code CLI | `claude-opus-4-8` | 14/19 | **74%** | 23.56 | **1.68** |
-| one OpenHands agent, **no chain** | `azure/deepseek-v4-pro` | 9/19 | **47%** | 15.37 | **1.71** |
-| **this factory's chain** | deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | **37%** | 35.94 | **5.13** |
+| one OpenHands agent, **no chain** | `azure/deepseek-v4-pro` | 9/19 | **47%** | ~18.26 † | **~2.03** |
+| **this factory's chain** | deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | **37%** | 35.94 † | **5.13** |
 | hand-rolled loop, **no tool calls** | `azure/deepseek-v4-pro` | 1/19 | **5%** | 7.94 | **7.94** |
 
 Reading it:
@@ -33,8 +33,8 @@ Reading it:
   entire gap is **2 instances**, which at this sample size is indistinguishable
   from chance (McNemar exact p=0.625).
 - **The chain is also the most expensive way to solve one** — $5.13, versus
-  $1.71 for the same model with no chain and **$2.29 for Claude Code**, a
-  frontier model. Costing 3× the single agent for fewer solves is the finding.
+  ~$2.03 for the same model with no chain and **$2.29 for Claude Code**, a
+  frontier model. Costing ~2× the single agent for fewer solves is the finding.
 - **What produces lift is tooling, not orchestration**: 47% with a real editor
   and tool-calling versus 5% with neither, p=0.031. That gap is real; the
   orchestration gap is not.
@@ -42,9 +42,19 @@ Reading it:
   the harness *and* the model at once, so treat it as a reference point, not a
   measurement of the chain.
 
-**Cost units are not identical, so don't over-read the last column.** The Azure
-rows are a price-table estimate over provider-reported tokens — real money. The
-Claude rows are what the CLI itself reports at API list prices, billed in
+**† Both Azure figures undercount, and the OpenHands one is adjusted.** Three of
+the 19 OpenHands runs crashed their sandbox session and recorded `cost_usd: 0`
+with `tokens_in: 0` while running 27% of that arm's agent actions — and two of
+those three still resolved. Its metered $15.37 therefore covers 16 of 19 rows;
+the table shows $18.26, extrapolated from the 16 reliable rows' $0.961 mean. The
+factory arm has a smaller version of the same leak (two rows carry an unmetered
+dev session), so its $35.94 is a floor too. Corrected, the chain costs **~2.0×**
+the single agent in total and **2.5× per solved instance** — the direction is
+unchanged and the harness debt is filed.
+
+**Cost units are not identical either, so don't over-read the last column.** The
+Azure rows are a price-table estimate over provider-reported tokens — real money.
+The Claude rows are what the CLI itself reports at API list prices, billed in
 practice against a flat subscription. Same order of magnitude, not the same
 meter.
 
