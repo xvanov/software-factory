@@ -250,7 +250,8 @@ negative. So, in the pre-committed words: **our lift comes from using a competen
 agent loop, not from the chain.** `STATUS.md`, `PLAN.md`, `bench/README.md` and
 the repo `README.md` all now lead with that sentence.
 
-Two things the rule does *not* license. At the MDE stated below (±38 pp) a −7 pp
+Two things the rule does *not* license. At the pre-stated MDE (±38 pp, "What this
+run cannot show" above) a −7 pp
 difference is **no measurable lift**, not measured harm — no doc may imply the
 chain hurts. And the chain's cost penalty is separate from and larger than its
 resolve-rate difference: **$5.13 per resolved instance vs $2.20**, i.e. 2.3× for
