@@ -3967,7 +3967,9 @@ def test_cli_claude_arm_defaults_to_the_turn_cap(
         )
     )
     monkeypatch.setattr(
-        sys, "argv", ["swebench_adapter.py", "run", "--instance", "i1", "--arm", "claude"]
+        sys,
+        "argv",
+        ["swebench_adapter.py", "run", "--instance", "i1", "--arm", "claude-5"],
     )
     A.main()
     assert seen["max_steps"] == A._CLAUDE_TURN_CAP
