@@ -1,0 +1,91 @@
+{
+  "instance_id": "tox-dev__tox-3931",
+  "arm": "factory",
+  "audited_at": "2026-08-03T19:49:35.240590+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory 1-1.ndjson:10 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:22 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:60 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:62 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:66 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:72 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-2.ndjson:12 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T19:41:37.684253+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1811949,
+      "tokens_out": 15942,
+      "cached_input_tokens": 1097216,
+      "cost_usd": 1.617144326,
+      "duration_s": 517.691,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T19:41:49.073893+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 4978,
+      "tokens_out": 1143,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.02383,
+      "duration_s": 10.652,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T19:49:24.774870+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 694931,
+      "tokens_out": 6619,
+      "cached_input_tokens": 306944,
+      "cost_usd": 0.823583664,
+      "duration_s": 455.183,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T19:49:28.286009+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5177,
+      "tokens_out": 110,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.0088325,
+      "duration_s": 2.728,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.4734,
+  "ledger_tokens_in": 2517035,
+  "ledger_tokens_out": 23814,
+  "result_cost_usd": 2.4734,
+  "prediction_sha256": "55e3b7c50b2b4467ce6fa190fe0e459d4b4b6c25fad6cf7195e6a06f448ebf37",
+  "base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+  "stripped_test_paths": [
+    "tests/session/cmd/test_schema.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": [
+    "oracle-probe: trajectory 1-1.ndjson:10 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:22 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:60 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:62 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:66 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:72 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-2.ndjson:12 (ObservationEvent) references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

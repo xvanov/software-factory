@@ -1,0 +1,58 @@
+{
+  "instance_id": "hkuds__openharness-217",
+  "arm": "openhands",
+  "audited_at": "2026-08-03T21:03:59.725091+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory nostory-1.ndjson:15 (ActionEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:16 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:19 (ActionEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:20 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:27 (ActionEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:28 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:32 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:35 (ActionEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:36 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:03:53.194955+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 580911,
+      "tokens_out": 11922,
+      "cached_input_tokens": 363008,
+      "cost_usd": 0.5246583380000001,
+      "duration_s": 219.018,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.5247,
+  "ledger_tokens_in": 580911,
+  "ledger_tokens_out": 11922,
+  "result_cost_usd": 0.5247,
+  "prediction_sha256": "8174054aaab1997d0a2ea7490c981dff1add1cba51145e648d454963f2d19f69",
+  "base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+  "stripped_test_paths": [
+    "tests/test_auth/test_flows.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: trajectory nostory-1.ndjson:15 (ActionEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:16 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:19 (ActionEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:20 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:27 (ActionEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:28 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:32 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:35 (ActionEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:36 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

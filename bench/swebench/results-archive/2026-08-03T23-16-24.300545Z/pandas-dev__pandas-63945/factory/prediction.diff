@@ -1,0 +1,70 @@
+diff --git a/pandas/core/col.py b/pandas/core/col.py
+index 7d21ce0..ad36b43 100644
+--- a/pandas/core/col.py
++++ b/pandas/core/col.py
+@@ -223,6 +223,28 @@ class Expression:
+         self_repr, other_repr = self._maybe_wrap_parentheses(other)
+         return self._with_op("__rxor__", other, f"{other_repr} ^ {self_repr}")
+ 
++    # Unary ops
++    def __neg__(self) -> Expression:
++        return Expression(
++            lambda df: -self._eval_expression(df),
++            f"-{self._repr_str}",
++            needs_parenthese=True,
++        )
++
++    def __pos__(self) -> Expression:
++        return Expression(
++            lambda df: +self._eval_expression(df),
++            f"+{self._repr_str}",
++            needs_parenthese=True,
++        )
++
++    def __abs__(self) -> Expression:
++        return Expression(
++            lambda df: abs(self._eval_expression(df)),
++            f"abs({self._repr_str})",
++            needs_parenthese=True,
++        )
++
+     def __invert__(self) -> Expression:
+         return Expression(
+             lambda df: ~self._eval_expression(df),
+diff --git a/stories/63945-unary-operators-pd-col.md b/stories/63945-unary-operators-pd-col.md
+new file mode 100644
+index 0000000..6fa8360
+--- /dev/null
++++ b/stories/63945-unary-operators-pd-col.md
+@@ -0,0 +1,31 @@
++# Story 63945 — BUG: unary operators not supported with `pd.col`
++
++## Source
++- Issue: `pandas-dev__pandas-63945`
++
++## Problem
++Unary operators on `pd.col(...)` expressions raised `TypeError`, e.g.:
++
++```python
++df.assign(B=-pd.col("A"))
++```
++
++## Acceptance Criteria
++1. Unary operators with `pd.col` do not raise the reported `TypeError`.
++2. Behavior is validated by tests in the repository's existing test targets.
++
++## Tasks
++- [x] Add/verify production support for unary ops in `Expression`.
++- [x] Add regression tests covering unary `pd.col` behavior.
++- [x] Validate with focused and selected regression test runs.
++
++## Dev Agent Record
++
++### Completion Notes
++- Confirmed unary support in `Expression` via `__neg__`, `__pos__`, and `__abs__` in `pandas/core/col.py`; `df.assign(B=-pd.col("A"))` now evaluates correctly.
++- Verified regression coverage in `pandas/tests/test_col.py::test_col_unary_ops` for unary expressions and composition.
++- Ran the required Docker regression selection after installing `pytest-localserver` in-container so `pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_url` can use the `httpserver` fixture; suite passed.
++
++### File List
++- `pandas/core/col.py`
++- `pandas/tests/test_col.py`

@@ -1,0 +1,38 @@
+{
+  "instance_id": "keras-team__keras-22642",
+  "arm": "openhands",
+  "audited_at": "2026-08-03T21:40:13.629078+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:39:43.372214+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 2787453,
+      "tokens_out": 25782,
+      "cached_input_tokens": 1572608,
+      "cost_usd": 2.6965857979999996,
+      "duration_s": 894.322,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.6966,
+  "ledger_tokens_in": 2787453,
+  "ledger_tokens_out": 25782,
+  "result_cost_usd": 2.6966,
+  "prediction_sha256": "9f7a652244773b54f273f0107f13c6db7deafb2622bcd1c0300c6896f0255c67",
+  "base_commit": "2b176bc33233762863fa5f3d60e060de3be934e5",
+  "stripped_test_paths": [
+    "keras/src/layers/attention/grouped_query_attention_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

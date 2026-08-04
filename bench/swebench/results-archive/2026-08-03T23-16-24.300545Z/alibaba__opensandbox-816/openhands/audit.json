@@ -1,0 +1,38 @@
+{
+  "instance_id": "alibaba__opensandbox-816",
+  "arm": "openhands",
+  "audited_at": "2026-08-03T21:06:51.811373+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:06:34.655734+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1149317,
+      "tokens_out": 9296,
+      "cached_input_tokens": 663296,
+      "cost_usd": 1.0804148660000001,
+      "duration_s": 373.747,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.0804,
+  "ledger_tokens_in": 1149317,
+  "ledger_tokens_out": 9296,
+  "result_cost_usd": 1.0804,
+  "prediction_sha256": "97b6e096b60d83462da35e3a933fd3fdc512ee1f2d2638f27718d99d5a9cb012",
+  "base_commit": "fb78091f947f62ae2c71a372af42425a764aacee",
+  "stripped_test_paths": [
+    "server/tests/test_validators.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

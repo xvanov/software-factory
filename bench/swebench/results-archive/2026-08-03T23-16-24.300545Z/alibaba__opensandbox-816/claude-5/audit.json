@@ -1,0 +1,29 @@
+{
+  "instance_id": "alibaba__opensandbox-816",
+  "arm": "claude-5",
+  "audited_at": "2026-08-03T22:16:36.898696+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: claude-transcript.ndjson:115 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:188 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 2.1639,
+  "ledger_tokens_in": 1896722,
+  "ledger_tokens_out": 23224,
+  "result_cost_usd": 2.1639,
+  "prediction_sha256": "77e01dcd29f64734e6fef0ddabb94d798a98f513bd1f45488cf4251921afe379",
+  "base_commit": "fb78091f947f62ae2c71a372af42425a764aacee",
+  "stripped_test_paths": [
+    "server/tests/test_docker_service.py",
+    "server/tests/test_validators.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: claude-transcript.ndjson:115 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:188 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

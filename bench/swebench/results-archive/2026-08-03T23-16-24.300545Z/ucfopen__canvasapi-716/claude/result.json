@@ -1,0 +1,63 @@
+{
+  "arm": "claude",
+  "instance_id": "ucfopen__canvasapi-716",
+  "repo": "ucfopen/canvasapi",
+  "base_commit": "77ff5b248603db987e57f11a104767d4b790265a",
+  "problem_statement_sha256": "b4463fa157fea02b9b7b3ddeb6cc64b1a2dc404096fc483125ee05fa961f89fb",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "f9955cf3-1411-405a-b576-b27127f8c29d",
+  "ts": "2026-08-03T04:20:40.805273+00:00",
+  "wall_clock_s": 125.4,
+  "agent_wall_s": 120.6,
+  "num_turns": 15,
+  "turn_cap": 60,
+  "tokens_in": 479693,
+  "tokens_out": 7496,
+  "cached_input_tokens": 455012,
+  "cost_usd": 0.648,
+  "cost_source": "claude-cli-reported",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.8,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_util.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "CHANGELOG.md",
+    "canvasapi/util.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_course.py",
+    "tests/test_util.py"
+  ],
+  "diff_bytes": 2939,
+  "grade": {
+    "arm": "claude",
+    "instance_id": "ucfopen__canvasapi-716",
+    "image": "swerebench/sweb.eval.x86_64.ucfopen_1776_canvasapi-716@sha256:6eb2cb4155cf4e7a75b451a3c3f7edcc0966d34a945ed99e7d66ef588c9c7e85",
+    "graded_at": "2026-08-03T04:20:40.913425+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 60,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 5.1,
+    "log_tail": "Checking patch tests/test_util.py...\nApplied patch tests/test_util.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_8b235b7eb7374c0b: OK (red as expected)\nChecking patch CHANGELOG.md...\nChecking patch canvasapi/util.py...\nApplied patch CHANGELOG.md cleanly.\nApplied patch canvasapi/util.py cleanly.\nSWEBENCH_APPLY_8b235b7eb7374c0b: OK\n..                                                                       [100%]\n2 passed in 0.05s\n............................................................             [100%]\n60 passed in 0.07s\nSWEBENCH_RESULT_8b235b7eb7374c0b: RESOLVED\n"
+  }
+}

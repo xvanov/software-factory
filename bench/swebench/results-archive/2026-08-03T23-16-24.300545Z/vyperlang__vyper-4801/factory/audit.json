@@ -1,0 +1,54 @@
+{
+  "instance_id": "vyperlang__vyper-4801",
+  "arm": "factory",
+  "audited_at": "2026-08-03T20:40:22.527302+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory 1-1.ndjson:36 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T20:39:40.425363+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2794314,
+      "tokens_out": 18893,
+      "cached_input_tokens": 1936384,
+      "cost_usd": 2.039922914,
+      "duration_s": 951.981,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:39:44.608772+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5621,
+      "tokens_out": 256,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.012132500000000001,
+      "duration_s": 3.452,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.0521,
+  "ledger_tokens_in": 2799935,
+  "ledger_tokens_out": 19149,
+  "result_cost_usd": 2.0521,
+  "prediction_sha256": "2f288f988acb13718732d3c57769f7f0279df1cabb565b128c49cc5e21085760",
+  "base_commit": "7d53bab7f8cce2a5fb037052663d85596d7eb2d1",
+  "stripped_test_paths": [
+    "tests/unit/compiler/venom/test_sccp.py",
+    "tests/unit/compiler/venom/test_venom_to_assembly.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: trajectory 1-1.ndjson:36 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

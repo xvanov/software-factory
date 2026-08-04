@@ -1,0 +1,83 @@
+{
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "arm": "factory",
+  "audited_at": "2026-08-03T19:42:46.147931+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory 1-1.ndjson:10 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:40 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-2.ndjson:7 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T19:38:02.063524+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 840507,
+      "tokens_out": 6914,
+      "cached_input_tokens": 436992,
+      "cost_usd": 0.8756202820000002,
+      "duration_s": 302.014,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T19:38:12.389179+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5555,
+      "tokens_out": 738,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0249575,
+      "duration_s": 9.524,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T19:42:33.686272+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 396029,
+      "tokens_out": 4300,
+      "cached_input_tokens": 280320,
+      "cost_usd": 0.28491889000000004,
+      "duration_s": 260.758,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T19:42:39.236926+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5735,
+      "tokens_out": 166,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.016827500000000002,
+      "duration_s": 4.783,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.2023,
+  "ledger_tokens_in": 1247826,
+  "ledger_tokens_out": 12118,
+  "result_cost_usd": 1.2023,
+  "prediction_sha256": "d2559b6847994750dfa6bf8a14df950f21b1c0c42599755f7a1f707afb144b54",
+  "base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+  "stripped_test_paths": [
+    "tests/test_connectors/test_util.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": [
+    "oracle-probe: trajectory 1-1.ndjson:10 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:40 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-2.ndjson:7 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "instance_id": "alibaba__opensandbox-816",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:18:35.313700+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.9179,
+  "ledger_tokens_in": 1307672,
+  "ledger_tokens_out": 25880,
+  "result_cost_usd": 1.9179
+}

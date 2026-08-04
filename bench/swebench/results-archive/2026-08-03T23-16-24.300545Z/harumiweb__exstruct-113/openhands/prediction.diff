@@ -1,0 +1,189 @@
+diff --git a/src/exstruct/__init__.py b/src/exstruct/__init__.py
+index 8672fc9..ce4a6a4 100644
+--- a/src/exstruct/__init__.py
++++ b/src/exstruct/__init__.py
+@@ -2,7 +2,6 @@
+ 
+ from __future__ import annotations
+ 
+-from collections.abc import Callable
+ import logging
+ from pathlib import Path
+ from typing import TYPE_CHECKING, Literal, TextIO
+@@ -91,93 +90,54 @@ __all__ = [
+ 
+ ExtractionMode = Literal["light", "libreoffice", "standard", "verbose"]
+ 
+-LazyExportLoader = Callable[[], object]
+-
+-
+-def _load_engine_attr(name: str) -> object:
+-    from . import engine as engine_module
+-
+-    return getattr(engine_module, name)
+-
+-
+-def _load_error_attr(name: str) -> object:
+-    from . import errors as errors_module
+-
+-    return getattr(errors_module, name)
+-
+-
+-def _load_model_attr(name: str) -> object:
+-    from . import models as models_module
+-
+-    return getattr(models_module, name)
+-
+-
+-def _load_render_attr(name: str) -> object:
+-    from . import render as render_module
+-
+-    return getattr(render_module, name)
+-
+-
+-def _load_io_attr(name: str) -> object:
+-    from . import io as io_module
+-
+-    return getattr(io_module, name)
+-
+-
+-def _load_core_cells_attr(name: str) -> object:
+-    from .core import cells as cells_module
+-
+-    return getattr(cells_module, name)
+-
+-
+-def _load_core_integrate_attr(name: str) -> object:
+-    from .core import integrate as integrate_module
+-
+-    return getattr(integrate_module, name)
+-
+-
+-_LAZY_EXPORTS: dict[str, LazyExportLoader] = {
+-    "ColorsOptions": lambda: _load_engine_attr("ColorsOptions"),
+-    "ConfigError": lambda: _load_error_attr("ConfigError"),
+-    "DestinationOptions": lambda: _load_engine_attr("DestinationOptions"),
+-    "ExStructEngine": lambda: _load_engine_attr("ExStructEngine"),
+-    "ExstructError": lambda: _load_error_attr("ExstructError"),
+-    "FilterOptions": lambda: _load_engine_attr("FilterOptions"),
+-    "FormatOptions": lambda: _load_engine_attr("FormatOptions"),
+-    "MissingDependencyError": lambda: _load_error_attr("MissingDependencyError"),
+-    "OutputOptions": lambda: _load_engine_attr("OutputOptions"),
+-    "PrintArea": lambda: _load_model_attr("PrintArea"),
+-    "PrintAreaError": lambda: _load_error_attr("PrintAreaError"),
+-    "PrintAreaView": lambda: _load_model_attr("PrintAreaView"),
+-    "RenderError": lambda: _load_error_attr("RenderError"),
+-    "SerializationError": lambda: _load_error_attr("SerializationError"),
+-    "StructOptions": lambda: _load_engine_attr("StructOptions"),
+-    "WorkbookData": lambda: _load_model_attr("WorkbookData"),
+-    "CellRow": lambda: _load_model_attr("CellRow"),
+-    "Chart": lambda: _load_model_attr("Chart"),
+-    "ChartSeries": lambda: _load_model_attr("ChartSeries"),
+-    "Shape": lambda: _load_model_attr("Shape"),
+-    "SheetData": lambda: _load_model_attr("SheetData"),
+-    "col_index_to_alpha": lambda: _load_model_attr("col_index_to_alpha"),
+-    "convert_row_keys_to_alpha": lambda: _load_model_attr("convert_row_keys_to_alpha"),
+-    "convert_sheet_keys_to_alpha": lambda: _load_model_attr(
+-        "convert_sheet_keys_to_alpha"
+-    ),
+-    "convert_workbook_keys_to_alpha": lambda: _load_model_attr(
+-        "convert_workbook_keys_to_alpha"
+-    ),
+-    "export_pdf": lambda: _load_render_attr("export_pdf"),
+-    "export_sheet_images": lambda: _load_render_attr("export_sheet_images"),
+-    "extract_workbook": lambda: _load_core_integrate_attr("extract_workbook"),
+-    "serialize_workbook": lambda: _load_io_attr("serialize_workbook"),
+-    "set_table_detection_params": lambda: _load_core_cells_attr(
+-        "set_table_detection_params"
+-    ),
++# Maps public name → (parent module dotted name relative to exstruct, attr name)
++_LAZY_EXPORT_SOURCES: dict[str, tuple[str, str]] = {
++    # engine
++    "ColorsOptions": ("engine", "ColorsOptions"),
++    "DestinationOptions": ("engine", "DestinationOptions"),
++    "ExStructEngine": ("engine", "ExStructEngine"),
++    "FilterOptions": ("engine", "FilterOptions"),
++    "FormatOptions": ("engine", "FormatOptions"),
++    "OutputOptions": ("engine", "OutputOptions"),
++    "StructOptions": ("engine", "StructOptions"),
++    # errors
++    "ConfigError": ("errors", "ConfigError"),
++    "ExstructError": ("errors", "ExstructError"),
++    "MissingDependencyError": ("errors", "MissingDependencyError"),
++    "PrintAreaError": ("errors", "PrintAreaError"),
++    "RenderError": ("errors", "RenderError"),
++    "SerializationError": ("errors", "SerializationError"),
++    # models
++    "CellRow": ("models", "CellRow"),
++    "Chart": ("models", "Chart"),
++    "ChartSeries": ("models", "ChartSeries"),
++    "PrintArea": ("models", "PrintArea"),
++    "PrintAreaView": ("models", "PrintAreaView"),
++    "Shape": ("models", "Shape"),
++    "SheetData": ("models", "SheetData"),
++    "WorkbookData": ("models", "WorkbookData"),
++    "col_index_to_alpha": ("models", "col_index_to_alpha"),
++    "convert_row_keys_to_alpha": ("models", "convert_row_keys_to_alpha"),
++    "convert_sheet_keys_to_alpha": ("models", "convert_sheet_keys_to_alpha"),
++    "convert_workbook_keys_to_alpha": ("models", "convert_workbook_keys_to_alpha"),
++    # render
++    "export_pdf": ("render", "export_pdf"),
++    "export_sheet_images": ("render", "export_sheet_images"),
++    # io
++    "serialize_workbook": ("io", "serialize_workbook"),
++    # core.cells
++    "set_table_detection_params": ("core.cells", "set_table_detection_params"),
++    # core.integrate
++    "extract_workbook": ("core.integrate", "extract_workbook"),
+ }
+ 
+ 
+ def _resolve_lazy_export(name: str) -> object:
+-    value = _LAZY_EXPORTS[name]()
++    from importlib import import_module
++
++    module_path, attr_name = _LAZY_EXPORT_SOURCES[name]
++    module = import_module(f"{__name__}.{module_path}")
++    value = getattr(module, attr_name)
+     globals()[name] = value
+     return value
+ 
+@@ -187,7 +147,7 @@ def _lazy_type(name: str) -> object:
+ 
+ 
+ def __getattr__(name: str) -> object:
+-    if name not in _LAZY_EXPORTS:
++    if name not in _LAZY_EXPORT_SOURCES:
+         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+     return _resolve_lazy_export(name)
+ 
+@@ -563,6 +523,8 @@ def process_excel(
+ 
+ 
+ def _patch_runtime_annotations() -> None:
++    from collections.abc import Callable
++
+     annotations_map: dict[Callable[..., object], dict[str, str]] = {
+         extract: {"return": "_lazy_type('WorkbookData')"},
+         export: {"data": "_lazy_type('WorkbookData')"},
+diff --git a/src/exstruct/engine.py b/src/exstruct/engine.py
+index 84fd0da..172c802 100644
+--- a/src/exstruct/engine.py
++++ b/src/exstruct/engine.py
+@@ -25,7 +25,6 @@ from .io import (
+     serialize_workbook,
+ )
+ from .models import SheetData, WorkbookData, convert_workbook_keys_to_alpha
+-from .render import export_pdf, export_sheet_images
+ 
+ ExtractionMode = Literal["light", "libreoffice", "standard", "verbose"]
+ 
+@@ -711,6 +710,8 @@ class ExStructEngine:
+         )
+ 
+         if pdf or image:
++            from .render import export_pdf, export_sheet_images
++
+             base_target = normalized_output_path or normalized_file_path.with_suffix(
+                 ".yaml"
+                 if chosen_fmt in ("yaml", "yml")

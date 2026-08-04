@@ -1,0 +1,95 @@
+{
+  "arm": "claude-4.8",
+  "arm_base": "claude",
+  "instance_id": "conan-io__conan-19735_interface",
+  "repo": "conan-io/conan",
+  "base_commit": "4a65d65f53d2ab37f4ce0e52dc3f25cd832b2934",
+  "problem_statement_sha256": "3b22c724a5147bee3a2d7f396b0f8c3de0b7218ecd032b5db34301b6189494d4",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-4-8",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-4-8",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "339471c5-c620-407c-9363-bfb201228bf2",
+  "ts": "2026-08-03T23:11:39.042959+00:00",
+  "wall_clock_s": 60.4,
+  "agent_wall_s": 56.0,
+  "num_turns": 9,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 215313,
+  "tokens_out": 3651,
+  "cached_input_tokens": 202966,
+  "cost_usd": 0.28,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.0014
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-4-8",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.2786
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.9,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "test/unittests/util/detect_test.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "conan/internal/api/detect/detect_api.py"
+  ],
+  "test_files_stripped": [
+    "test/unittests/util/detect_test.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1556,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-4.8",
+    "instance_id": "conan-io__conan-19735_interface",
+    "image": "swerebench/sweb.eval.x86_64.conan-io_1776_conan-19735_interface@sha256:564734fbebe544567e2e47bac7362ae68a749ffdaa7401dd273903d3552277fa",
+    "graded_at": "2026-08-03T23:11:39.156474+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 14,
+    "pass_to_pass_declared_count": 14,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 6.8,
+    "log_tail": "i386-x86]\nPASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[i686-x86]\nPASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[i86pc-x86]\nPASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[amd64-x86_64]\nPASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[aarch64-armv8]\nPASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[sun4v-sparc]\nPASSED test/unittests/util/detect_test.py::TestDetect::test_detect_clang_gcc_toolchain\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe (Rev3, Built by MSYS2 project) 14.1.0-14.1.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[g++ (Conan-Build-gcc--binutils-2.42) 14.1.0-14.1.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc.exe (x86_64-posix-seh-rev0, Built by MinGW-Builds project) 15.1.0-15.1.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc.exe (x86_64-posix-seh-rev0, Built by MinGW-Builds project) 15.15.0-15.15.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc (crosstool-NG 1.27.0) 13.3.0-13.3.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc (crosstool-NG 1.27.0) 13.3-13.3]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc (GCC) 4.8.1-4.8.1]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[clang version 18.1.0rc (https://github.com/llvm/llvm-project.git 4612...a09e)-18.1.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe (Rev3, Built by MSYS2 project) 14.0-14.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[clang version 18 (https://github.com/llvm/llvm-project.git 4612...8a09e)-18]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe (Rev3, Built by MSYS2 project) 14-14]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe 14.2-14.2]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc1 14.2-14.2]\nPASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_suncc_compiler-Sun C 5.13-expected_version0]\nPASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_intel_compiler-Intel C++ Compiler 2025.0-expected_version1]\nPASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_emcc_compiler-emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)-expected_version2]\nPASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_emcc_compiler-shared:INFO: (Emscripten: Running sanity checks)\\nemcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)-expected_version3]\n29 passed in 1.20s\nSWEBENCH_TALLY_12302994c67fa3eb: pass_to_pass 29 passed in 1.20s\n[31 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_12302994c67fa3eb: RESOLVED\n"
+  }
+}

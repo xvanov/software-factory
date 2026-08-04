@@ -1,0 +1,75 @@
+{
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "arm": "factory",
+  "audited_at": "2026-08-03T20:10:59.692303+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T20:06:14.619867+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2135100,
+      "tokens_out": 19895,
+      "cached_input_tokens": 1446656,
+      "cost_usd": 1.6378063859999998,
+      "duration_s": 735.766,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:06:28.518723+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 11304,
+      "tokens_out": 1189,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.046095000000000004,
+      "duration_s": 13.174,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:10:50.277829+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 802196,
+      "tokens_out": 11178,
+      "cached_input_tokens": 540416,
+      "cost_usd": 0.6350541160000001,
+      "duration_s": 261.226,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:10:52.983192+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 11991,
+      "tokens_out": 111,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.031642500000000004,
+      "duration_s": 2.017,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.3506,
+  "ledger_tokens_in": 2960591,
+  "ledger_tokens_out": 32373,
+  "result_cost_usd": 2.3506,
+  "prediction_sha256": "c506f89aafe0b2b042b0fcfc561a43c632fbd14c6c401df53c09eb49983a198c",
+  "base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+  "stripped_test_paths": [
+    "tests/test_reasoning_parsers.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

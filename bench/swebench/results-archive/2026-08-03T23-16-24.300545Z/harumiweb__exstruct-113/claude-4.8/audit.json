@@ -1,0 +1,22 @@
+{
+  "instance_id": "harumiweb__exstruct-113",
+  "arm": "claude-4.8",
+  "audited_at": "2026-08-03T23:08:08.597270+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 4.5791,
+  "ledger_tokens_in": 4582498,
+  "ledger_tokens_out": 58864,
+  "result_cost_usd": 4.5791,
+  "prediction_sha256": "27ca2405efdd603423e28637e5c3db16affec6033a733df3c39a4a735944d0ef",
+  "base_commit": "c0c8c52d0a3b507ac13feb4b700e5d858f2a81dc",
+  "stripped_test_paths": [
+    "tests/cli/test_cli_lazy_imports.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

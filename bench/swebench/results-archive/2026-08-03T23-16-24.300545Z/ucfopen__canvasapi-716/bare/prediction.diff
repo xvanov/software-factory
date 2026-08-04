@@ -1,0 +1,44 @@
+diff --git a/canvasapi/util.py b/canvasapi/util.py
+index 21c2a02..86b26b8 100644
+--- a/canvasapi/util.py
++++ b/canvasapi/util.py
+@@ -146,25 +146,20 @@ def obj_or_str(obj, attr, object_types):
+     :type object_types: tuple
+     :rtype: str
+     """
+-    try:
+-        return str(getattr(obj, attr))
+-    except (AttributeError, TypeError):
+-        if not isinstance(attr, str):
+-            raise TypeError(
+-                "Atttibute parameter {} must be of type string".format(attr)
+-            )
+-        for obj_type in object_types:
+-            if isinstance(obj, obj_type):
+-                try:
+-                    return str(getattr(obj, attr))
+-                except AttributeError:
+-                    raise AttributeError("{} object does not have {} attribute").format(
+-                        obj, attr
+-                    )
+-
+-        obj_type_list = ",".join([obj_type.__name__ for obj_type in object_types])
+-        raise TypeError("Parameter {} must be of type {}.".format(obj, obj_type_list))
+-
++    if isinstance(obj, str):
++        return obj
++
++    for obj_type in object_types:
++        if isinstance(obj, obj_type):
++            try:
++                return str(getattr(obj, attr))
++            except AttributeError:
++                raise AttributeError(
++                    "{} object does not have {} attribute".format(obj, attr)
++                )
++
++    obj_type_list = ",".join([obj_type.__name__ for obj_type in object_types])
++    raise TypeError("Parameter {} must be of type {} or str.".format(obj, obj_type_list))
+ 
+ def get_institution_url(base_url):
+     """

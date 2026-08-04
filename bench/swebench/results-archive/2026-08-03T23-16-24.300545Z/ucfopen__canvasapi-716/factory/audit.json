@@ -1,0 +1,49 @@
+{
+  "instance_id": "ucfopen__canvasapi-716",
+  "arm": "factory",
+  "audited_at": "2026-08-03T19:53:53.475116+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T19:53:44.897870+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 544946,
+      "tokens_out": 5321,
+      "cached_input_tokens": 346112,
+      "cost_usd": 0.4598530820000001,
+      "duration_s": 244.31,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T19:53:47.705890+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 4242,
+      "tokens_out": 97,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.0063,
+      "duration_s": 1.737,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.4662,
+  "ledger_tokens_in": 549188,
+  "ledger_tokens_out": 5418,
+  "result_cost_usd": 0.4662,
+  "prediction_sha256": "0c900414aed397274ec3c56b6f72e92cb6883168904c43913176074efe262c38",
+  "base_commit": "77ff5b248603db987e57f11a104767d4b790265a",
+  "stripped_test_paths": [
+    "tests/test_util.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

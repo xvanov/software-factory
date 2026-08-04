@@ -1,0 +1,103 @@
+{
+  "arm": "openhands",
+  "instance_id": "keras-team__keras-22316",
+  "repo": "keras-team/keras",
+  "base_commit": "34e55d4561ba2a61bbc72562e88b3704e0a43081",
+  "problem_statement_sha256": "19ccbc1e05bc8e92e3a4f0adbc94eb3ee098d7ef27b3c37fdc2061a7cbc855f1",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "agent": "openhands-sdk default agent (cli_mode), single conversation",
+  "models_used": [
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.0
+    }
+  ],
+  "model_escalated_calls": 0,
+  "ts": "2026-08-03T21:38:14.130752+00:00",
+  "wall_clock_s": 2054.3,
+  "agent_wall_s": 2034.9,
+  "steps_used": 101,
+  "step_cap": 600,
+  "sdk_events": 210,
+  "termination": "agent-error",
+  "trajectory": "state/events/trajectories/nostory-1.ndjson",
+  "probe_plumbing": false,
+  "tokens_in": 0,
+  "tokens_out": 0,
+  "cached_input_tokens": 0,
+  "cost_usd": 0.0,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 1,
+  "usage_reliable": null,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 4.4,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "keras/src/ops/function_test.py"
+    ],
+    "exit_code": 0
+  },
+  "error": "openhands conversation failed: ConversationRunError: Conversation run failed for id=5ea9956e-5ef7-4b03-96de-7303e0c73b53: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\n\nConversation logs are stored at: /tmp/bench-oh-traj-8md1thtu/5ea9956e5ef74b0396de7303e0c73b53\n\nTo help debug this issue, please file a bug report at:\n  https://github.com/OpenHands/software-agent-sdk/issues/new\nand attach the conversation logs from the directory above.",
+  "factory_says_green": null,
+  "files_changed": [
+    "_debug.py",
+    "_debug2.py",
+    "keras/src/ops/function.py"
+  ],
+  "test_files_stripped": [
+    "keras/src/ops/function_test.py"
+  ],
+  "diff_bytes": 4864,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "openhands",
+    "instance_id": "keras-team__keras-22316",
+    "image": "swerebench/sweb.eval.x86_64.keras-team_1776_keras-22316@sha256:2a85415e1bcc6b0e03d08d36e0d922d9428d4b4fc0b6299dadf4c36d9f6a6520",
+    "graded_at": "2026-08-03T21:38:14.694628+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 8,
+    "pass_to_pass_declared_count": 8,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input: node(s) FAILED/ERROR: ['keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input']",
+      "keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain: node(s) FAILED/ERROR: ['keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain']",
+      "keras/src/ops/function_test.py::FunctionTest::test_define_and_call: node(s) FAILED/ERROR: ['keras/src/ops/function_test.py::FunctionTest::test_define_and_call']",
+      "keras/src/ops/function_test.py::FunctionTest::test_dict_io: node(s) FAILED/ERROR: ['keras/src/ops/function_test.py::FunctionTest::test_dict_io']",
+      "keras/src/ops/function_test.py::FunctionTest::test_dynamic_shape_inference: node(s) FAILED/ERROR: ['keras/src/ops/function_test.py::FunctionTest::test_dynamic_shape_inference']",
+      "keras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs: node(s) FAILED/ERROR: ['keras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs']",
+      "keras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error: node(s) FAILED/ERROR: ['keras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error']",
+      "keras/src/ops/function_test.py::FunctionTest::test_serialization: node(s) FAILED/ERROR: ['keras/src/ops/function_test.py::FunctionTest::test_serialization']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "keras/src/ops/function.py"
+    ],
+    "touched_files": [
+      "_debug.py",
+      "_debug2.py",
+      "keras/src/ops/function.py"
+    ],
+    "gold_files_overlap": [
+      "keras/src/ops/function.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 31.0,
+    "log_tail": " to `inputs`\n\nkeras/src/ops/function.py:221: ValueError\n=========================== short test summary info ============================\nFAILED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input\nFAILED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain\n============================== 2 failed in 0.11s ===============================\nSWEBENCH_TALLY_93f7240ebf4ebf1d: fail_to_pass ============================== 2 failed in 0.11s ===============================\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\n    \n                if any(id(x) not in tensor_dict for x in node.input_tensors):\n                    continue  # Node is not computable, try skipping.\n    \n                args, kwargs = node.arguments.fill_in(tensor_dict)\n                if call_fn is not None:\n                    # Use call_fn if provided (e.g., for symbolic execution)\n                    op = operation_fn(node.operation)\n                    outputs = call_fn(op, *args, **kwargs)\n                else:\n                    # Use NNX operation mapping\n                    operation = self._get_operation_for_node(node)\n                    op = operation_fn(operation)\n                    outputs = op(*args, **kwargs)\n    \n                # Update tensor_dict.\n                for x, y in zip(node.outputs, tree.flatten(outputs)):\n                    tensor_dict[id(x)] = y\n    \n        output_tensors = []\n        for i, x in enumerate(self.outputs):\n            if id(x) not in tensor_dict:\n                path = tree.flatten_with_path(self._outputs_struct)[i][0]\n                path = \".\".join(str(p) for p in path)\n>               raise ValueError(\n                    f\"Output with path `{path}` is not connected to `inputs`\"\n                )\nE               ValueError: Output with path `` is not connected to `inputs`\n\nkeras/src/ops/function.py:221: ValueError\n=========================== short test summary info ============================\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_inputs\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_outputs\nFAILED keras/src/ops/function_test.py::FunctionTest::test_define_and_call - V...\nFAILED keras/src/ops/function_test.py::FunctionTest::test_dict_io - ValueErro...\nFAILED keras/src/ops/function_test.py::FunctionTest::test_dynamic_shape_inference\nFAILED keras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs\nFAILED keras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error\nFAILED keras/src/ops/function_test.py::FunctionTest::test_serialization - Val...\n========================= 6 failed, 2 passed in 0.23s ==========================\nSWEBENCH_TALLY_93f7240ebf4ebf1d: pass_to_pass ========================= 6 failed, 2 passed in 0.23s ==========================\n[10 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_93f7240ebf4ebf1d: UNRESOLVED\n"
+  }
+}

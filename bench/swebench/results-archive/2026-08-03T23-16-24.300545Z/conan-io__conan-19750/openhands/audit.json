@@ -1,0 +1,48 @@
+{
+  "instance_id": "conan-io__conan-19750",
+  "arm": "openhands",
+  "audited_at": "2026-08-03T21:38:05.462615+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory nostory-1.ndjson:30 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:58 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:80 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:91 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:37:58.307689+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1790415,
+      "tokens_out": 14319,
+      "cached_input_tokens": 1001472,
+      "cost_usd": 1.7387387520000006,
+      "duration_s": 863.397,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.7387,
+  "ledger_tokens_in": 1790415,
+  "ledger_tokens_out": 14319,
+  "result_cost_usd": 1.7387,
+  "prediction_sha256": "56f7af75f0a9da04c6e20265feff19e07190f1c3273c630730e9f27ff8feb310",
+  "base_commit": "6c9356b3e5bd75f7d7061a708785e80aaacb3b43",
+  "stripped_test_paths": [
+    "test/integration/graph/test_platform_requires.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: trajectory nostory-1.ndjson:30 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:58 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:80 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:91 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

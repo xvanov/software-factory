@@ -1,0 +1,81 @@
+{
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "arm": "factory",
+  "audited_at": "2026-08-03T20:33:55.156654+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory 1-1.ndjson:134 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:136 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T20:21:59.711145+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2356933,
+      "tokens_out": 22981,
+      "cached_input_tokens": 1914880,
+      "cost_usd": 1.2494752000000002,
+      "duration_s": 651.341,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:22:08.232621+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 6120,
+      "tokens_out": 648,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.01926,
+      "duration_s": 7.849,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:33:41.878492+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1486261,
+      "tokens_out": 17515,
+      "cached_input_tokens": 1176064,
+      "cost_usd": 0.8551089639999999,
+      "duration_s": 693.074,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:33:44.653034+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 7496,
+      "tokens_out": 90,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.01433,
+      "duration_s": 2.096,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.1382,
+  "ledger_tokens_in": 3856810,
+  "ledger_tokens_out": 41234,
+  "result_cost_usd": 2.1382,
+  "prediction_sha256": "6070c682c655b9e02fb10a51e5b03c41040ec9f3e1e7704fa7774c839c39a995",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "stripped_test_paths": [
+    "tests/object_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": [
+    "oracle-probe: trajectory 1-1.ndjson:134 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-1.ndjson:136 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

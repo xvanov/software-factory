@@ -1,0 +1,30 @@
+{
+  "instance_id": "harumiweb__exstruct-113",
+  "arm": "claude-5",
+  "audited_at": "2026-08-03T22:22:12.447456+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: claude-transcript.ndjson:110 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:284 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:289 references the harness's oracle/manifest paths ['gh cli'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 3.6842,
+  "ledger_tokens_in": 3645009,
+  "ledger_tokens_out": 42234,
+  "result_cost_usd": 3.6842,
+  "prediction_sha256": "b668a9617b3c2619966438412cdc7b9330f87f610429f1b9dc16dcafa2de4f7b",
+  "base_commit": "c0c8c52d0a3b507ac13feb4b700e5d858f2a81dc",
+  "stripped_test_paths": [
+    "tests/cli/test_cli_lazy_imports.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: claude-transcript.ndjson:110 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:284 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:289 references the harness's oracle/manifest paths ['gh cli'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

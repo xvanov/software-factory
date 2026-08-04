@@ -1,0 +1,31 @@
+diff --git a/src/openharness/auth/flows.py b/src/openharness/auth/flows.py
+index ca895a4..269e9a2 100644
+--- a/src/openharness/auth/flows.py
++++ b/src/openharness/auth/flows.py
+@@ -76,18 +76,20 @@ class DeviceCodeFlow(AuthFlow):
+     @staticmethod
+     def _try_open_browser(url: str) -> bool:
+         """Attempt to open *url* in the default browser; return True if likely succeeded."""
++        # Only allow http(s) URLs — reject schemes that could execute commands
++        # or access local files (file:, javascript:, bare executable names, etc.)
++        if not url.lower().startswith(("http://", "https://")):
++            return False
++
+         try:
+             plat = platform.system()
+             if plat == "Darwin":
+                 subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                 return True
+             if plat == "Windows":
+-                subprocess.Popen(
+-                    ["start", "", url],
+-                    shell=True,
+-                    stdout=subprocess.DEVNULL,
+-                    stderr=subprocess.DEVNULL,
+-                )
++                import os
++
++                os.startfile(url)
+                 return True
+             # Linux / WSL
+             proc = subprocess.Popen(

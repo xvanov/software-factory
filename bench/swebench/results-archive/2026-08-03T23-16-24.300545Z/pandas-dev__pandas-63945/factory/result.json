@@ -1,0 +1,123 @@
+{
+  "arm": "factory",
+  "instance_id": "pandas-dev__pandas-63945",
+  "repo": "pandas-dev/pandas",
+  "base_commit": "a4523484f6267501ae0bc240c5baf2108c622373",
+  "problem_statement_sha256": "ab43725b946a02996523ecbb67ecb10857ce2234281d236fe2150fdc9cbad4a6",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/deepseek-v4-pro",
+    "azure/gpt-5.3-codex"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.57
+    },
+    {
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "model_tier": "hard",
+      "calls": 2,
+      "cost_usd": 0.7739
+    }
+  ],
+  "model_escalated_calls": 2,
+  "ts": "2026-08-03T20:17:43.407218+00:00",
+  "wall_clock_s": 1278.6,
+  "final_state": "blocked_tests_need_clarification",
+  "dev_retries": 3,
+  "reviewer_cycles": 0,
+  "steps_used": 2,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 2593016,
+  "tokens_out": 33108,
+  "cached_input_tokens": 2281856,
+  "cost_usd": 1.344,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 3.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "pandas/tests/groupby/test_categorical.py",
+      "pandas/tests/test_col.py",
+      "pandas/tests/copy_view/test_constructors.py",
+      "pandas/tests/indexing/test_iloc.py",
+      "pandas/tests/tseries/offsets/test_custom_business_day.py",
+      "pandas/tests/strings/test_extract.py",
+      "pandas/tests/strings/test_find_replace.py",
+      "pandas/tests/strings/test_split_partition.py",
+      "pandas/tests/strings/test_strings.py",
+      "pandas/tests/io/json/test_pandas.py",
+      "pandas/tests/indexes/datetimes/test_setops.py",
+      "pandas/tests/series/test_arithmetic.py",
+      "pandas/tests/arrays/test_array.py",
+      "pandas/tests/arrays/test_datetimelike.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> dev_retry",
+    "dev: dev_retry -> blocked_tests_need_clarification"
+  ],
+  "error": null,
+  "factory_says_green": false,
+  "files_changed": [
+    "pandas/core/col.py",
+    "stories/63945-unary-operators-pd-col.md"
+  ],
+  "test_files_stripped": [
+    "pandas/tests/test_col.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 2540,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "pandas-dev__pandas-63945",
+    "image": "swerebench/sweb.eval.x86_64.pandas-dev_1776_pandas-63945@sha256:d61cfb479844bb4dfdc495dffb55c7806502df21e3a452b7969796490436f93a",
+    "graded_at": "2026-08-03T20:17:44.025357+00:00",
+    "fail_to_pass_count": 16215,
+    "pass_to_pass_count": 14,
+    "pass_to_pass_declared_count": 0,
+    "pass_to_pass_source": "declared_test_targets",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "pandas/tests/test_col.py::test_col_simple: node(s) FAILED/ERROR: [\"pandas/tests/test_col.py::test_col_simple[expr26-expected_values26--(col('a') + 1)]\"]",
+      "pandas/tests/test_col.py: node(s) FAILED/ERROR: [\"pandas/tests/test_col.py::test_col_simple[expr26-expected_values26--(col('a') + 1)]\"]",
+      "pandas/tests/io/json/test_pandas.py: node(s) FAILED/ERROR: ['pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_url']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "doc/source/whatsnew/v3.0.1.rst",
+      "pandas/core/col.py"
+    ],
+    "touched_files": [
+      "pandas/core/col.py",
+      "stories/63945-unary-operators-pd-col.md"
+    ],
+    "gold_files_overlap": [
+      "pandas/core/col.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 185.4,
+    "log_tail": "ndas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val2] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val3] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val4] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val5] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val6] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val7] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val8] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val0] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val1] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val2] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val3] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val4] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val5] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val6] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val7] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val8] - GH#13774 encoding kwarg not supported\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_tuple_labels[split-] - Produces JSON but not in a consistent manner\nXFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_tuple_labels[table-] - Produces JSON but not in a consistent manner\nXFAIL pandas/tests/series/test_arithmetic.py::test_none_comparison[numexpr-empty] - Test doesn't make sense on empty data\nXFAIL pandas/tests/series/test_arithmetic.py::test_none_comparison[python-empty] - Test doesn't make sense on empty data\n1 failed, 16692 passed, 1629 skipped, 54 xfailed, 1 error in 24.50s\nSWEBENCH_TALLY_6148338640a73838: pass_to_pass 1 failed, 16692 passed, 1629 skipped, 54 xfailed, 1 error in 24.50s\n[16925 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_6148338640a73838: UNRESOLVED\n"
+  }
+}

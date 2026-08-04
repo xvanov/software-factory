@@ -1,0 +1,125 @@
+{
+  "arm": "factory",
+  "instance_id": "idaholab__montepy-933_interface",
+  "repo": "idaholab/MontePy",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "problem_statement_sha256": "18f56a6b2c0dd104befdcf7caf0f58fd82cc82d7dc0c96b05a307b064e3b81f1",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/deepseek-v4-pro",
+    "azure/gpt-5.3-codex",
+    "azure/gpt-5.4"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 1.0942
+    },
+    {
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "model_tier": "hard",
+      "calls": 4,
+      "cost_usd": 1.7094
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "model_tier": null,
+      "calls": 2,
+      "cost_usd": 0.0374
+    }
+  ],
+  "model_escalated_calls": 6,
+  "ts": "2026-08-03T20:28:55.542196+00:00",
+  "wall_clock_s": 1667.0,
+  "final_state": "blocked_tests_need_clarification",
+  "dev_retries": 3,
+  "reviewer_cycles": 2,
+  "steps_used": 6,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 5360852,
+  "tokens_out": 61628,
+  "cached_input_tokens": 4690432,
+  "cost_usd": 2.841,
+  "persona_calls": 7,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_universe.py",
+      "tests/test_universe_integration.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> dev_retry",
+    "dev: dev_retry -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> blocked_tests_need_clarification"
+  ],
+  "error": null,
+  "factory_says_green": false,
+  "files_changed": [
+    "montepy/cell.py",
+    "montepy/data_inputs/universe_input.py",
+    "stories/933-interface.md"
+  ],
+  "test_files_stripped": [
+    "tests/test_universe_integration.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 2285,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "idaholab__montepy-933_interface",
+    "image": "swerebench/sweb.eval.x86_64.idaholab_1776_montepy-933_interface@sha256:d79f83f33b0f25749596dd0038adecb80e9b443300200890dca0f6d23488567c",
+    "graded_at": "2026-08-03T20:28:56.108407+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 40,
+    "pass_to_pass_declared_count": 40,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/test_universe_integration.py::test_cell_universe_nullify_with_problem: node(s) FAILED/ERROR: ['tests/test_universe_integration.py::test_cell_universe_nullify_with_problem']",
+      "tests/test_universe_integration.py::test_cell_universe_nullify_adds_zero_universe: node(s) FAILED/ERROR: ['tests/test_universe_integration.py::test_cell_universe_nullify_adds_zero_universe']",
+      "tests/test_universe_integration.py::test_cell_universe_delete_adds_zero_universe: node(s) FAILED/ERROR: ['tests/test_universe_integration.py::test_cell_universe_delete_adds_zero_universe']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "doc/source/changelog.rst",
+      "montepy/cell.py"
+    ],
+    "touched_files": [
+      "montepy/cell.py",
+      "montepy/data_inputs/universe_input.py",
+      "stories/933-interface.md"
+    ],
+    "gold_files_overlap": [
+      "montepy/cell.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 7.2,
+    "log_tail": "rse::test_init\nPASSED tests/test_universe.py::TestUniverse::test_number_setter\nPASSED tests/test_universe.py::TestLattice::test_lattice_init\nPASSED tests/test_universe.py::TestLattice::test_lattice_setter\nPASSED tests/test_universe.py::TestLattice::test_lattice_deleter\nPASSED tests/test_universe.py::TestLattice::test_lattice_merge\nPASSED tests/test_universe.py::TestLattice::test_lattice_cell_format\nPASSED tests/test_universe.py::TestLattice::test_lattice_repr\nPASSED tests/test_universe.py::TestLattice::test_deprecated_lattice\nPASSED tests/test_universe.py::TestFill::test_complex_transform_fill_init\nPASSED tests/test_universe.py::TestFill::test_complicated_lattice_fill_init\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1 0:1 hi-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 hi:1 0:1 hi-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1 0:1 -1-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 1:0 0:1 1 2 3 4 5 6 7 8-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1.5 0:1 1 2 3 4 5 6 7 8-ValueError]\nPASSED tests/test_universe.py::TestFill::test_data_fill_init\nPASSED tests/test_universe.py::TestFill::test_fill_universe_setter\nPASSED tests/test_universe.py::TestFill::test_fill_universes_setter\nPASSED tests/test_universe.py::TestFill::test_fill_str\nPASSED tests/test_universe.py::TestFill::test_fill_merge\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-hi-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-hi-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-value2-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-value3-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-value4-ValueError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-value5-ValueError]\nPASSED tests/test_universe.py::TestFill::test_fill_multi_unis\nPASSED tests/test_universe.py::test_cell_universe_setter_type_error\nPASSED tests/test_universe_integration.py::test_universe_setter\nPASSED tests/test_universe_integration.py::test_fill_setter\nPASSED tests/test_universe_integration.py::test_lattice_setter\nPASSED tests/test_universe_integration.py::test_uni_fill_latt_setter\nPASSED tests/test_universe_integration.py::test_mc_workshop_edge_case\nPASSED tests/test_universe_integration.py::test_no_universe\nPASSED tests/test_universe_integration.py::test_fill_multi_universe_order\nPASSED tests/test_universe_integration.py::test_fill_long_mcnp_str_wrap\n44 passed in 0.79s\nSWEBENCH_TALLY_9fc3348808aab195: pass_to_pass 44 passed in 0.79s\n[46 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_9fc3348808aab195: UNRESOLVED\n"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "instance_id": "zauberzeug__nicegui-5858",
+  "arm": "claude-4.8",
+  "audited_at": "2026-08-03T23:09:42.073131+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: claude-transcript.ndjson:12 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:29 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:31 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.4686,
+  "ledger_tokens_in": 414201,
+  "ledger_tokens_out": 5526,
+  "result_cost_usd": 0.4686,
+  "prediction_sha256": "8b3603177168d8af901f68cd239143c2361485c2df5eb991f6ce132587d1f5d2",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "stripped_test_paths": [
+    "tests/test_xterm.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: claude-transcript.ndjson:12 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:29 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:31 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

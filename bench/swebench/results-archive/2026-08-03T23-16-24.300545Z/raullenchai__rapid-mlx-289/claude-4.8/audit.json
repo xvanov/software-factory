@@ -1,0 +1,22 @@
+{
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "arm": "claude-4.8",
+  "audited_at": "2026-08-03T23:04:34.084526+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 2.6953,
+  "ledger_tokens_in": 2008761,
+  "ledger_tokens_out": 38043,
+  "result_cost_usd": 2.6953,
+  "prediction_sha256": "d7626c40be90b3183e981813fc254978f6027b3ca866997c13fb8fba32c57548",
+  "base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+  "stripped_test_paths": [
+    "tests/test_reasoning_parsers.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

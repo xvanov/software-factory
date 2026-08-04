@@ -1,0 +1,228 @@
+{
+  "arm": "bare",
+  "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+  "repo": "hiero-ledger/hiero-sdk-python",
+  "base_commit": "93eed7c340fb65356c3a06ac78f74402c3a169af",
+  "problem_statement_sha256": "ffd670c2ee16b9cc31ebe5492b19d2624c027ca7b128591bcf2e75128f038cea",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": null,
+      "calls": 40,
+      "cost_usd": 0.8431
+    }
+  ],
+  "model_escalated_calls": 0,
+  "ts": "2026-08-03T22:10:10.816577+00:00",
+  "wall_clock_s": 503.2,
+  "steps_used": 40,
+  "step_cap": 40,
+  "termination": "step-cap",
+  "done_with_empty_diff": false,
+  "done_nudges": 1,
+  "trajectory": "bare-commands.ndjson",
+  "probe_plumbing": false,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.4,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/unit/account_info_test.py"
+    ],
+    "exit_code": 0
+  },
+  "tokens_in": 579670,
+  "tokens_out": 45359,
+  "cost_usd": 0.8428,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 40,
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "src/hiero_sdk_python/account/account_info.py"
+  ],
+  "test_files_stripped": [],
+  "diff_bytes": 32285,
+  "transcript": [
+    {
+      "step": 20,
+      "action": "bash",
+      "command": "docker run --rm -v \"$PWD\":/testbed -w /testbed --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.hiero-ledger_1776_hiero-sdk-python-1914_interface@sha256:7379c707cc7e9f690d07a08c3abfc1f97b9f70fd283bc2084040a052b79af57f -lc 'source /opt",
+      "exit": 127
+    },
+    {
+      "step": 21,
+      "action": "bash",
+      "command": "find src -name \"staking_info.py\" 2>/dev/null\n echo \"---\"\nfind src -name \"StakingInfo\" 2>/dev/null\n echo \"---\"\nfind src -path \"*/staking*\" 2>/dev/null\n echo \"---\"\nfind src -type f -name \"*.py\" | xargs grep -l \"class StakingInfo\" 2>/dev/null\n echo \"done\"\n</think>---\n---\n---\ndone",
+      "exit": 2
+    },
+    {
+      "step": 22,
+      "action": "bash",
+      "command": "cat src/hiero_sdk_python/staking_info.py\n echo \"===\"\nhead -30 src/hiero_sdk_python/account/account_info.py\n echo \"===\"\nls src/hiero_sdk_python/account/\n</think>\"\"\"Staking information wrapper for Hiero SDK.\"\"\"\n\nfrom __future__ import annotations\n\nfrom datetime import datetime\nfrom typing import Optio",
+      "exit": 2
+    },
+    {
+      "step": 23,
+      "action": "invalid",
+      "reply": "The file has been replaced with a different version. Let me check and restore the correct version.</think>BASH\ngit diff src/hiero_sdk_python/staking_info.py | head -50\n echo \"---\"\ngit checkout src/hie"
+    },
+    {
+      "step": 24,
+      "action": "bash",
+      "command": "sed -i \"s/from hiero_sdk_python\\.account\\.staking_info import StakingInfo/from hiero_sdk_python.staking_info import StakingInfo/\" src/hiero_sdk_python/account/account_info.py\n python -c \"print('done')\"\n echo \"Fixed import\"\n echo \"---\"\n head -30 src/hiero_sdk_python/account/account_info.py",
+      "exit": 0
+    },
+    {
+      "step": 25,
+      "action": "bash",
+      "command": "cat src/hiero_sdk_python/account/account_info.py | head -200\n echo \"===\"\ncat src/hiero_sdk_python/account/account_info.py | wc -l\n echo \"===\"\ngrep -n \"def \" src/hiero_sdk_python/account/account_info.py | head -30\n echo \"===\"\ngrep -n \"class \" src/hiero_sdk_python/account/account_info.py\n echo \"===\"\nt",
+      "exit": 0
+    },
+    {
+      "step": 26,
+      "action": "bash",
+      "command": "grep -n \"staked_node_id\" src/hiero_sdk_python/account/account_info.py | head -20\n echo \"===\"\nsed -n '200,270p' src/hiero_sdk_python/account/account_info.py\n echo \"===\"\nsed -n '78,170p' src/hiero_sdk_python/account/account_info.py",
+      "exit": 0
+    },
+    {
+      "step": 27,
+      "action": "invalid",
+      "reply": "The current code looks like it has the deprecated properties, `_apply_deprecated_staking_kwargs`, etc. However, the task says property setters for `staked_account_id` and `staked_node_id` must clear t"
+    },
+    {
+      "step": 28,
+      "action": "bash",
+      "command": "cat src/hiero_sdk_python/account/account_info.py | head -200\n cat src/hiero_sdk_python/account/account_info.py | tail -300",
+      "exit": 0
+    },
+    {
+      "step": 29,
+      "action": "bash",
+      "command": "docker run --rm -v \"$PWD\":/testbed -w /testbed --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.hiero-ledger_1776_hiero-sdk-python-1914_interface@sha256:7379c707cc7e9f690d07a08c3abfc1f97b9f70fd283bc2084040a052b79af57f -lc 'source /opt",
+      "exit": 0
+    },
+    {
+      "step": 30,
+      "action": "bash",
+      "command": "find src/hiero_sdk_python -name \"hbar*\" -type f 2>/dev/null\n echo \"---\"\nfind src/hiero_sdk_python -path \"*/hbar*\" -type d 2>/dev/null\n echo \"---\"\nfind src/hiero_sdk_python -name \"Hbar*\" -type f 2>/dev/null\n echo \"---\"\nfind src -name \"hbar.py\" 2>/dev/null\n echo \"---\"\nfind src -name \"Hbar.py\" 2>/dev/n",
+      "exit": 0
+    },
+    {
+      "step": 31,
+      "action": "bash",
+      "command": "head -20 src/hiero_sdk_python/account/account_info.py | cat\n echo \"===\"\ngrep -n \"from hiero\" src/hiero_sdk_python/account/account_info.py | head -20\n echo \"===\"\ngrep -n \"hbar\" src/hiero_sdk_python/account/account_info.py | head -20\n echo \"===\"",
+      "exit": 0
+    },
+    {
+      "step": 32,
+      "action": "bash",
+      "command": "sed -i 's/from hiero_sdk_python\\.hbar\\.hbar import Hbar/from hiero_sdk_python.hbar import Hbar/' src/hiero_sdk_python/account/account_info.py\n echo \"Fixed Hbar import\"\n echo \"===\"\ngrep -n \"from hiero_sdk_python\\.hbar\\.\" src/hiero_sdk_python/account/account_info.py\n echo \"---\"\ngrep \"hbar\" src/hiero_s",
+      "exit": 0
+    },
+    {
+      "step": 33,
+      "action": "bash",
+      "command": "docker run --rm -v \"$PWD\":/testbed -w /testbed --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.hiero-ledger_1776_hiero-sdk-python-1914_interface@sha256:7379c707cc7e9f690d07a08c3abfc1f97b9f70fd283bc2084040a052b79af57f -lc 'source /opt",
+      "exit": 0
+    },
+    {
+      "step": 34,
+      "action": "bash",
+      "command": "docker run --rm -v \"$PWD\":/testbed -w /testbed --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.hiero-ledger_1776_hiero-sdk-python-1914_interface@sha256:7379c707cc7e9f690d07a08c3abfc1f97b9f70fd283bc2084040a052b79af57f -lc 'source /opt",
+      "exit": 0
+    },
+    {
+      "step": 35,
+      "action": "bash",
+      "command": "find src -name \"key_type*\" 2>/dev/null\n find src -name \"KeyType*\" 2>/dev/null\n find src -name \"key*type*\" 2>/dev/null\n grep -r \"KeyType\" src/hiero_sdk_python --include=\"*.py\" | head -10\n echo \"===\"\ngrep -r \"PublicKey\" src/hiero_sdk_python --include=\"*.py\" | head -10\n echo \"===\"\nfind src -name \"publi",
+      "exit": 0
+    },
+    {
+      "step": 36,
+      "action": "bash",
+      "command": "sed -n '11,18p' src/hiero_sdk_python/account/account_info.py\n echo \"===\"\nsed -i 's/from hiero_sdk_python\\.key_type import KeyType/from hiero_sdk_python.crypto.key_type import KeyType/' src/hiero_sdk_python/account/account_info.py\n sed -i 's/from hiero_sdk_python\\.public_key import PublicKey/from hie",
+      "exit": 0
+    },
+    {
+      "step": 37,
+      "action": "bash",
+      "command": "docker run --rm -v \"$PWD\":/testbed -w /testbed --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.hiero-ledger_1776_hiero-sdk-python-1914_interface@sha256:7379c707cc7e9f690d07a08c3abfc1f97b9f70fd283bc2084040a052b79af57f -lc 'source /opt",
+      "exit": 0
+    },
+    {
+      "step": 38,
+      "action": "bash",
+      "command": "find src -name \"key_type*\" 2>/dev/null\n find src -name \"KeyType*\" 2>/dev/null\n find src/hiero_sdk_python -name \"*.py\" | xargs grep -l \"KeyType\" 2>/dev/null\n echo \"===\"\nfind src/hiero_sdk_python -name \"*.py\" | xargs grep -l \"class KeyType\\|KeyType =\" 2>/dev/null\n echo \"===\"\nls src/hiero_sdk_python/cr",
+      "exit": 0
+    },
+    {
+      "step": 39,
+      "action": "bash",
+      "command": "grep -rn \"class KeyType\" src/ 2>/dev/null\n grep -rn \"KeyType =\" src/ 2>/dev/null\n grep -rn \"KeyType\" src/ 2>/dev/null\n echo \"===\"\ngrep -rn \"KeyType\" src/hiero_sdk_python/ --include=\"*.py\" | head -20\n echo \"DONE\"",
+      "exit": 0
+    }
+  ],
+  "attempt": 1,
+  "budget_exhausted": true,
+  "budget_exhausted_reason": "step-cap (503.2s wall)",
+  "grade": {
+    "arm": "bare",
+    "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+    "image": "swerebench/sweb.eval.x86_64.hiero-ledger_1776_hiero-sdk-python-1914_interface@sha256:7379c707cc7e9f690d07a08c3abfc1f97b9f70fd283bc2084040a052b79af57f",
+    "graded_at": "2026-08-03T22:10:11.217003+00:00",
+    "fail_to_pass_count": 12,
+    "pass_to_pass_count": 9,
+    "pass_to_pass_declared_count": 9,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/unit/account_info_test.py::test_from_proto: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::test_to_proto: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::test_proto_conversion: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::test_proto_conversion_with_staking_info: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_deprecated: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_deprecated: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_deprecated: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_setter: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_setter: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_setter: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_setters_preserve_other_staking_fields: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_constructor_legacy_kwargs_deprecated: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/integration/account_create_transaction_e2e_test.py::test_create_account_with_alias_derived_from_non_ecdsa_key: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/integration/account_create_transaction_e2e_test.py::test_create_account_with_alias_from_seperate_non_ecdsa_key: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::test_account_info_initialization: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::test_account_info_default_initialization: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::test_from_proto_with_token_relationships: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::test_from_proto_none_raises_error: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::test_to_proto_with_none_values: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::test_str_and_repr: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_deprecated_properties_return_none_without_staking_info: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "CHANGELOG.md",
+      "src/hiero_sdk_python/account/account_info.py"
+    ],
+    "touched_files": [
+      "src/hiero_sdk_python/account/account_info.py"
+    ],
+    "gold_files_overlap": [
+      "src/hiero_sdk_python/account/account_info.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 14.4,
+    "log_tail": "Checking patch tests/integration/account_create_transaction_e2e_test.py...\nChecking patch tests/integration/account_update_transaction_e2e_test.py...\nChecking patch tests/unit/account_info_test.py...\n/tmp/test_patch.diff:300: new blank line at EOF.\n+\nApplied patch tests/integration/account_create_transaction_e2e_test.py cleanly.\nApplied patch tests/integration/account_update_transaction_e2e_test.py cleanly.\nApplied patch tests/unit/account_info_test.py cleanly.\nwarning: 1 line adds whitespace errors.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_c5cb6a9415a605a6: OK (red as expected)\n/tmp/prediction.diff:236: trailing whitespace.\n        \n/tmp/prediction.diff:252: trailing whitespace.\n        \n/tmp/prediction.diff:271: trailing whitespace.\n        \n/tmp/prediction.diff:316: trailing whitespace.\n        \n/tmp/prediction.diff:333: trailing whitespace.\n        \nChecking patch src/hiero_sdk_python/account/account_info.py...\nApplied patch src/hiero_sdk_python/account/account_info.py cleanly.\nwarning: squelched 1 whitespace error\nwarning: 6 lines add whitespace errors.\nSWEBENCH_APPLY_c5cb6a9415a605a6: OK\nImportError while loading conftest '/testbed/tests/unit/conftest.py'.\ntests/unit/conftest.py:6: in <module>\n    from hiero_sdk_python.account.account_id import AccountId\nsrc/hiero_sdk_python/__init__.py:9: in <module>\n    from .account.account_info import AccountInfo\nsrc/hiero_sdk_python/account/account_info.py:11: in <module>\n    from hiero_sdk_python.crypto.key_type import KeyType\nE   ModuleNotFoundError: No module named 'hiero_sdk_python.crypto.key_type'\nSWEBENCH_TALLY_c5cb6a9415a605a6: fail_to_pass \n[0 node outcomes for fail_to_pass -> grade-nodes.log]\nImportError while loading conftest '/testbed/tests/unit/conftest.py'.\ntests/unit/conftest.py:6: in <module>\n    from hiero_sdk_python.account.account_id import AccountId\nsrc/hiero_sdk_python/__init__.py:9: in <module>\n    from .account.account_info import AccountInfo\nsrc/hiero_sdk_python/account/account_info.py:11: in <module>\n    from hiero_sdk_python.crypto.key_type import KeyType\nE   ModuleNotFoundError: No module named 'hiero_sdk_python.crypto.key_type'\nSWEBENCH_TALLY_c5cb6a9415a605a6: pass_to_pass \n[0 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_c5cb6a9415a605a6: UNRESOLVED\n"
+  }
+}

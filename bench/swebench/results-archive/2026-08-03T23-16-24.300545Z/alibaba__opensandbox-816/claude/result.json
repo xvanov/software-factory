@@ -1,0 +1,75 @@
+{
+  "arm": "claude",
+  "instance_id": "alibaba__opensandbox-816",
+  "repo": "alibaba/OpenSandbox",
+  "base_commit": "fb78091f947f62ae2c71a372af42425a764aacee",
+  "problem_statement_sha256": "2d0a06e6d3d0277d9bff355f199f869a0558e8daf526044b57417b59abf658cf",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "158820e0-5e31-49f5-8d84-044811401c22",
+  "ts": "2026-08-03T04:18:18.156634+00:00",
+  "wall_clock_s": 375.9,
+  "agent_wall_s": 362.7,
+  "num_turns": 29,
+  "turn_cap": 60,
+  "tokens_in": 1307672,
+  "tokens_out": 25880,
+  "cached_input_tokens": 1241268,
+  "cost_usd": 1.9179,
+  "cost_source": "claude-cli-reported",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.9,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "server/tests/test_docker_service.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "server/configuration.md",
+    "server/opensandbox_server/services/docker.py",
+    "server/opensandbox_server/services/validators.py"
+  ],
+  "test_files_stripped": [
+    "server/tests/test_docker_service.py"
+  ],
+  "diff_bytes": 10596,
+  "grade": {
+    "arm": "claude",
+    "instance_id": "alibaba__opensandbox-816",
+    "image": "swerebench/sweb.eval.x86_64.alibaba_1776_opensandbox-816@sha256:eb2223e2f7957ad3f8bf3a69946fed4ca7b9abc309ec9c14f388786785d02ea0",
+    "graded_at": "2026-08-03T04:18:18.246875+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 108,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "server/opensandbox_server/services/docker.py"
+    ],
+    "touched_files": [
+      "server/configuration.md",
+      "server/opensandbox_server/services/docker.py",
+      "server/opensandbox_server/services/validators.py"
+    ],
+    "gold_files_overlap": [
+      "server/opensandbox_server/services/docker.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 17.0,
+    "log_tail": "dSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class PaginationInfo(BaseModel):\n\nserver/opensandbox_server/api/schema.py:580\n  /testbed/server/opensandbox_server/api/schema.py:580: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class RenewSandboxExpirationRequest(BaseModel):\n\nserver/opensandbox_server/api/schema.py:594\n  /testbed/server/opensandbox_server/api/schema.py:594: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class RenewSandboxExpirationResponse(BaseModel):\n\nserver/opensandbox_server/api/schema.py:612\n  /testbed/server/opensandbox_server/api/schema.py:612: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class Endpoint(BaseModel):\n\nserver/opensandbox_server/api/schema.py:652\n  /testbed/server/opensandbox_server/api/schema.py:652: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class PoolCapacitySpec(BaseModel):\n\nserver/opensandbox_server/api/schema.py:685\n  /testbed/server/opensandbox_server/api/schema.py:685: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class CreatePoolRequest(BaseModel):\n\nserver/opensandbox_server/api/schema.py:715\n  /testbed/server/opensandbox_server/api/schema.py:715: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class UpdatePoolRequest(BaseModel):\n\nserver/opensandbox_server/api/schema.py:742\n  /testbed/server/opensandbox_server/api/schema.py:742: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/\n    class PoolResponse(BaseModel):\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n108 passed, 21 warnings in 0.22s\nSWEBENCH_RESULT_6bca7da389be7ca2: UNRESOLVED\n"
+  }
+}

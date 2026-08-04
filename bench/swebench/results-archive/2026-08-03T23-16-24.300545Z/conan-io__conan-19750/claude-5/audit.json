@@ -1,0 +1,30 @@
+{
+  "instance_id": "conan-io__conan-19750",
+  "arm": "claude-5",
+  "audited_at": "2026-08-03T22:28:45.049720+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: claude-transcript.ndjson:64 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:66 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:67 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.9149,
+  "ledger_tokens_in": 836467,
+  "ledger_tokens_out": 8750,
+  "result_cost_usd": 0.9149,
+  "prediction_sha256": "5180eabcfd84a4decc3749744153d55dfed01b4330558c79f521902fc91904ff",
+  "base_commit": "6c9356b3e5bd75f7d7061a708785e80aaacb3b43",
+  "stripped_test_paths": [
+    "test/integration/graph/test_system_tools.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: claude-transcript.ndjson:64 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:66 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:67 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

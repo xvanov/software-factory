@@ -1,0 +1,139 @@
+{
+  "arm": "openhands",
+  "instance_id": "pandas-dev__pandas-63945",
+  "repo": "pandas-dev/pandas",
+  "base_commit": "a4523484f6267501ae0bc240c5baf2108c622373",
+  "problem_statement_sha256": "ab43725b946a02996523ecbb67ecb10857ce2234281d236fe2150fdc9cbad4a6",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "agent": "openhands-sdk default agent (cli_mode), single conversation",
+  "models_used": [
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.3731
+    }
+  ],
+  "model_escalated_calls": 0,
+  "ts": "2026-08-03T21:16:22.216864+00:00",
+  "wall_clock_s": 385.4,
+  "agent_wall_s": 299.2,
+  "steps_used": 16,
+  "step_cap": 600,
+  "sdk_events": 34,
+  "termination": "agent-finished",
+  "trajectory": "state/events/trajectories/nostory-1.ndjson",
+  "probe_plumbing": false,
+  "tokens_in": 314276,
+  "tokens_out": 4074,
+  "cached_input_tokens": 140800,
+  "cost_usd": 0.3731,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 1,
+  "usage_reliable": true,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 3.9,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "pandas/tests/groupby/test_categorical.py",
+      "pandas/tests/test_col.py",
+      "pandas/tests/copy_view/test_constructors.py",
+      "pandas/tests/indexing/test_iloc.py",
+      "pandas/tests/tseries/offsets/test_custom_business_day.py",
+      "pandas/tests/strings/test_extract.py",
+      "pandas/tests/strings/test_find_replace.py",
+      "pandas/tests/strings/test_split_partition.py",
+      "pandas/tests/strings/test_strings.py",
+      "pandas/tests/io/json/test_pandas.py",
+      "pandas/tests/indexes/datetimes/test_setops.py",
+      "pandas/tests/series/test_arithmetic.py",
+      "pandas/tests/arrays/test_array.py",
+      "pandas/tests/arrays/test_datetimelike.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "pandas/core/col.py"
+  ],
+  "test_files_stripped": [
+    "pandas/tests/test_col.py"
+  ],
+  "diff_bytes": 848,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "openhands",
+    "instance_id": "pandas-dev__pandas-63945",
+    "image": "swerebench/sweb.eval.x86_64.pandas-dev_1776_pandas-63945@sha256:d61cfb479844bb4dfdc495dffb55c7806502df21e3a452b7969796490436f93a",
+    "graded_at": "2026-08-03T21:16:22.783752+00:00",
+    "fail_to_pass_count": 16215,
+    "pass_to_pass_count": 14,
+    "pass_to_pass_declared_count": 0,
+    "pass_to_pass_source": "declared_test_targets",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "pandas/tests/groupby/test_categorical.py::test_apply_use_categorical_name: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_basic: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_basic_single_grouper: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_basic_string: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_basic_monotonic: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_basic_non_monotonic: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_basic_cut_grouping: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_more_basic: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_level_get_group[True]: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_level_get_group[False]: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_sorting_with_different_categoricals: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_apply[True]: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_apply[False]: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_observed[True]: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_observed[False]: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_observed_single_column[True]: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_observed_single_column[False]: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_observed_two_columns[True]: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_observed_two_columns[False]: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py::test_observed_with_as_index[True]: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/groupby/test_categorical.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/test_col.py: node(s) FAILED/ERROR: ['pandas/tests/test_col.py']",
+      "pandas/tests/copy_view/test_constructors.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/indexing/test_iloc.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/tseries/offsets/test_custom_business_day.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/strings/test_extract.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/strings/test_find_replace.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/strings/test_split_partition.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/strings/test_strings.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/io/json/test_pandas.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/indexes/datetimes/test_setops.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/series/test_arithmetic.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/arrays/test_array.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "pandas/tests/arrays/test_datetimelike.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": false,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "doc/source/whatsnew/v3.0.1.rst",
+      "pandas/core/col.py"
+    ],
+    "touched_files": [
+      "pandas/core/col.py"
+    ],
+    "gold_files_overlap": [
+      "pandas/core/col.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 103.4,
+    "log_tail": "\nE   TypeError: bad operand type for abs(): 'Expression'\n=========================== short test summary info ============================\nERROR pandas/tests/test_col.py - TypeError: bad operand type for abs(): 'Expr...\n16918 tests collected, 1 error in 3.06s\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_getitem\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_setitem\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_loc\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_iloc\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_namespaces\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_namespaces\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_namespaces\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_invalid\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_custom_accessor\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_col_logical_ops\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_expression_getitem\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_property\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_cached_property\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_qcut\n\nERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_where\n\n\n==================================== ERRORS ====================================\n__________________ ERROR collecting pandas/tests/test_col.py ___________________\npandas/tests/test_col.py:54: in <module>\n    (abs(pd.col(\"a\")), [1, 2], \"abs(col('a'))\"),\n     ^^^^^^^^^^^^^^^^\nE   TypeError: bad operand type for abs(): 'Expression'\n=========================== short test summary info ============================\nERROR pandas/tests/test_col.py - TypeError: bad operand type for abs(): 'Expr...\n1 error in 3.00s\nSWEBENCH_TALLY_2d37a456231dea08: fail_to_pass 1 error in 3.00s\n[3 node outcomes for fail_to_pass -> grade-nodes.log]\nmeson-python: building pandas: /usr/bin/ninja\n[1/1] Generating write_version_file with a custom command\n\n==================================== ERRORS ====================================\n__________________ ERROR collecting pandas/tests/test_col.py ___________________\npandas/tests/test_col.py:54: in <module>\n    (abs(pd.col(\"a\")), [1, 2], \"abs(col('a'))\"),\n     ^^^^^^^^^^^^^^^^\nE   TypeError: bad operand type for abs(): 'Expression'\n=========================== short test summary info ============================\nERROR pandas/tests/test_col.py - TypeError: bad operand type for abs(): 'Expr...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.83s\nSWEBENCH_TALLY_2d37a456231dea08: pass_to_pass 1 error in 0.83s\n[4 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_2d37a456231dea08: UNRESOLVED\n"
+  }
+}

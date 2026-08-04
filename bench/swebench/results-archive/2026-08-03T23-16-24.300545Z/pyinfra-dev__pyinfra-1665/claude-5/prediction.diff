@@ -1,0 +1,64 @@
+diff --git a/src/pyinfra/connectors/util.py b/src/pyinfra/connectors/util.py
+index ab9d15b..aec1541 100644
+--- a/src/pyinfra/connectors/util.py
++++ b/src/pyinfra/connectors/util.py
+@@ -233,15 +233,34 @@ def write_stdin(stdin, buffer):
+ 
+ 
+ def remove_any_sudo_askpass_file(host) -> None:
+-    sudo_askpass_path = host.connector_data.get("sudo_askpass_path")
+-    if sudo_askpass_path:
+-        host.run_shell_command(StringCommand("rm", "-f", QuoteString(sudo_askpass_path)))
+-        host.connector_data["sudo_askpass_path"] = None
+-
+-    su_askpass_path = host.connector_data.get("su_askpass_path")
+-    if su_askpass_path:
+-        host.run_shell_command(StringCommand("rm", "-f", QuoteString(su_askpass_path)))
+-        host.connector_data["su_askpass_path"] = None
++    for key in ("sudo_askpass_path", "su_askpass_path"):
++        askpass_path = host.connector_data.get(key)
++        if not askpass_path:
++            continue
++
++        # Always forget the path, whether we manage to remove the file or not - if the
++        # remove fails the file is either already gone (eg the host rebooted) or will be
++        # orphaned in a temporary directory, and a new one is uploaded when next needed.
++        host.connector_data[key] = None
++
++        # No connection to remove the file over (eg the host was never connected or has
++        # already been disconnected).
++        if not host.connected:
++            continue
++
++        # The connection may be dead even though we think we're connected, eg after a
++        # reboot operation. Removing the file is best effort clean up, so never let a
++        # failure here bubble up and kill the deploy.
++        try:
++            host.run_shell_command(StringCommand("rm", "-f", QuoteString(askpass_path)))
++        except Exception as e:
++            logger.warning(
++                "{0}Could not remove askpass file {1}: {2}".format(
++                    host.print_prefix,
++                    askpass_path,
++                    e,
++                ),
++            )
+ 
+ 
+ @memoize
+diff --git a/src/pyinfra/operations/server.py b/src/pyinfra/operations/server.py
+index e72dce2..62fd5eb 100644
+--- a/src/pyinfra/operations/server.py
++++ b/src/pyinfra/operations/server.py
+@@ -109,9 +109,10 @@ def reboot(delay=10, interval=1, reboot_timeout=300):
+ 
+     yield FunctionCommand(wait_and_reconnect, (), {})
+ 
+-    # On certain systems sudo files are lost on reboot
++    # On certain systems sudo/su askpass files are lost on reboot
+     def clean_sudo_info(state, host):
+         host.connector_data["sudo_askpass_path"] = None
++        host.connector_data["su_askpass_path"] = None
+ 
+     yield FunctionCommand(clean_sudo_info, (), {})
+ 

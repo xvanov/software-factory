@@ -1,0 +1,22 @@
+diff --git a/conan/internal/api/profile/profile_loader.py b/conan/internal/api/profile/profile_loader.py
+index 61342c2..dcf6dc1 100644
+--- a/conan/internal/api/profile/profile_loader.py
++++ b/conan/internal/api/profile/profile_loader.py
+@@ -248,6 +248,17 @@ class _ProfileValueParser:
+         platform_tool_requires = [RecipeReference.loads(r) for r in doc_platform_tool_requires.splitlines()]
+         platform_requires = [RecipeReference.loads(r) for r in doc_platform_requires.splitlines()]
+ 
++        for r in platform_requires:
++            version = repr(r.version)
++            if version[0] == "[" and version[-1] == "]":
++                raise ConanException(f"[platform_requires] must use exact package references, "
++                                     f"not version ranges. Found '{r}'.")
++        for r in platform_tool_requires:
++            version = repr(r.version)
++            if version[0] == "[" and version[-1] == "]":
++                raise ConanException(f"[platform_tool_requires] must use exact package references, "
++                                     f"not version ranges. Found '{r}'.")
++
+         def load_replace(doc_replace_requires):
+             result = {}
+             for r in doc_replace_requires.splitlines():

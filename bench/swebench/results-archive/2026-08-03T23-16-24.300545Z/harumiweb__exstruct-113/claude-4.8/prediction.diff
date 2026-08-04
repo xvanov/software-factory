@@ -1,0 +1,132 @@
+diff --git a/src/exstruct/engine.py b/src/exstruct/engine.py
+index 84fd0da..11155b7 100644
+--- a/src/exstruct/engine.py
++++ b/src/exstruct/engine.py
+@@ -5,7 +5,9 @@ from __future__ import annotations
+ from collections.abc import Iterator
+ from contextlib import contextmanager
+ from dataclasses import dataclass, field
++from importlib import import_module
+ from pathlib import Path
++import sys
+ from typing import Literal, TextIO, TypedDict, cast
+ 
+ from pydantic import BaseModel, ConfigDict, Field
+@@ -15,17 +17,47 @@ from .constraints import (
+     validate_libreoffice_extraction_request,
+     validate_libreoffice_process_request,
+ )
+-from .core import cells as _cells
+-from .core.cells import set_table_detection_params
+-from .core.integrate import extract_workbook
+-from .io import (
+-    save_auto_page_break_views,
+-    save_print_area_views,
+-    save_sheets,
+-    serialize_workbook,
+-)
+ from .models import SheetData, WorkbookData, convert_workbook_keys_to_alpha
+-from .render import export_pdf, export_sheet_images
++
++# NOTE: Heavy submodules (``core.cells``, ``core.integrate``, ``io`` and
++# ``render``) transitively import optional runtime dependencies such as
++# ``pandas``, ``numpy``, ``openpyxl`` and ``xlwings``. Importing them at module
++# load time would make ``import exstruct.engine`` (and therefore the CLI and
++# Python API paths that resolve it) pull those dependencies eagerly. They are
++# imported lazily inside the methods that need them to keep import cost low.
++#
++# A subset of these symbols (``extract_workbook`` from ``core.integrate`` and
++# ``export_pdf`` / ``export_sheet_images`` from ``render``) are exposed as
++# module-level attributes via PEP 562 ``__getattr__`` so they can still be
++# monkeypatched as ``exstruct.engine.<name>`` and resolved through the module
++# object at call time.
++_LAZY_MODULE_EXPORTS: dict[str, tuple[str, str]] = {
++    "extract_workbook": ("exstruct.core.integrate", "extract_workbook"),
++    "export_pdf": ("exstruct.render", "export_pdf"),
++    "export_sheet_images": ("exstruct.render", "export_sheet_images"),
++}
++
++
++def __getattr__(name: str) -> object:
++    target = _LAZY_MODULE_EXPORTS.get(name)
++    if target is None:
++        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
++    module_name, attr = target
++    value = getattr(import_module(module_name), attr)
++    globals()[name] = value
++    return value
++
++
++def _lazy_module_export(name: str) -> object:
++    """Resolve a lazily-imported export through this module.
++
++    Attribute access on the module honors any monkeypatched override placed in
++    the module namespace and otherwise falls back to ``__getattr__`` above,
++    which performs the deferred import on first use.
++    """
++
++    return getattr(sys.modules[__name__], name)
++
+ 
+ ExtractionMode = Literal["light", "libreoffice", "standard", "verbose"]
+ 
+@@ -230,6 +262,8 @@ class ExStructEngine:
+     def _apply_table_params(self) -> None:
+         """Apply table parameter overrides if configured."""
+         if self.options.table_params:
++            from .core.cells import set_table_detection_params
++
+             set_table_detection_params(**self.options.table_params)
+ 
+     @contextmanager
+@@ -240,6 +274,9 @@ class ExStructEngine:
+         if not self.options.table_params:
+             yield
+             return
++        from .core import cells as _cells
++        from .core.cells import set_table_detection_params
++
+         prev = cast(TableParams, dict(_cells._DETECTION_CONFIG))
+         set_table_detection_params(**self.options.table_params)
+         try:
+@@ -452,6 +489,8 @@ class ExStructEngine:
+     ) -> WorkbookData:
+         """Extract a workbook with already-resolved validation-sensitive options."""
+ 
++        extract_workbook = _lazy_module_export("extract_workbook")
++
+         normalized_file_path = validate_libreoffice_extraction_request(
+             file_path,
+             mode=mode,
+@@ -492,6 +531,8 @@ class ExStructEngine:
+             pretty: Whether to pretty-print JSON output.
+             indent: Indentation to use when pretty-printing JSON.
+         """
++        from .io import serialize_workbook
++
+         filtered = self._filter_workbook(data)
+         use_fmt = fmt or self.output.format.fmt
+         use_pretty = self.output.format.pretty if pretty is None else pretty
+@@ -535,6 +576,12 @@ class ExStructEngine:
+                 environments only).
+             stream: Stream override when output_path is None.
+         """
++        from .io import (
++            save_auto_page_break_views,
++            save_print_area_views,
++            save_sheets,
++        )
++
+         text = self.serialize(data, fmt=fmt, pretty=pretty, indent=indent)
+         target_stream = stream or self.output.destinations.stream
+         chosen_fmt = fmt or self.output.format.fmt
+@@ -711,6 +758,9 @@ class ExStructEngine:
+         )
+ 
+         if pdf or image:
++            export_pdf = _lazy_module_export("export_pdf")
++            export_sheet_images = _lazy_module_export("export_sheet_images")
++
+             base_target = normalized_output_path or normalized_file_path.with_suffix(
+                 ".yaml"
+                 if chosen_fmt in ("yaml", "yml")

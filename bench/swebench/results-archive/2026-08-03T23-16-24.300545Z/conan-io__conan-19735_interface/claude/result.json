@@ -1,0 +1,61 @@
+{
+  "arm": "claude",
+  "instance_id": "conan-io__conan-19735_interface",
+  "repo": "conan-io/conan",
+  "base_commit": "4a65d65f53d2ab37f4ce0e52dc3f25cd832b2934",
+  "problem_statement_sha256": "3b22c724a5147bee3a2d7f396b0f8c3de0b7218ecd032b5db34301b6189494d4",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "8a6909b0-46ac-49b9-af47-3906aa5372de",
+  "ts": "2026-08-03T04:47:12.332948+00:00",
+  "wall_clock_s": 74.3,
+  "agent_wall_s": 66.7,
+  "num_turns": 9,
+  "turn_cap": 60,
+  "tokens_in": 240246,
+  "tokens_out": 4095,
+  "cached_input_tokens": 224784,
+  "cost_usd": 0.3577,
+  "cost_source": "claude-cli-reported",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.6,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "test/unittests/util/detect_test.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "conan/internal/api/detect/detect_api.py"
+  ],
+  "test_files_stripped": [
+    "test/unittests/util/detect_test.py"
+  ],
+  "diff_bytes": 1604,
+  "grade": {
+    "arm": "claude",
+    "instance_id": "conan-io__conan-19735_interface",
+    "image": "swerebench/sweb.eval.x86_64.conan-io_1776_conan-19735_interface@sha256:564734fbebe544567e2e47bac7362ae68a749ffdaa7401dd273903d3552277fa",
+    "graded_at": "2026-08-03T04:47:12.509519+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 14,
+    "empty_patch": false,
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 10.6,
+    "log_tail": "Checking patch test/unittests/util/detect_test.py...\nApplied patch test/unittests/util/detect_test.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_81181927e24d2206: OK (red as expected)\nChecking patch conan/internal/api/detect/detect_api.py...\nApplied patch conan/internal/api/detect/detect_api.py cleanly.\nSWEBENCH_APPLY_81181927e24d2206: OK\n....                                                                     [100%]\n4 passed in 0.22s\n.............................                                            [100%]\n29 passed in 2.06s\nSWEBENCH_RESULT_81181927e24d2206: RESOLVED\n"
+  }
+}
