@@ -18,12 +18,15 @@ caps:
   # daily cap is defined — it was also stated as $200 in CLAUDE.md, which
   # disagreed with the configured value. Confirmed $300, 2026-08-01.
   #
-  # Operator-approved 2026-08-03: raised 40 -> 80 for the five-arm SWE-bench
-  # sweep. At the conservative $3/instance projection a single arm runs
-  # ~$57-60 in its first hour, so a $40/h cap refused work at ONE worker while
-  # the daily budget was barely touched. The hourly cap is a burst limiter;
-  # ``daily_spend_usd: 300`` is the real ceiling.
-  hourly_spend_usd: 80
+  # Operator-approved 2026-08-03: raised 40 -> 80 -> 120 for the five-arm
+  # SWE-bench sweep. At the conservative $3/instance projection a single arm
+  # runs ~$57-60 in its first hour, so a $40/h cap refused work at ONE worker
+  # while the daily budget was barely touched. 80 was still too low: the
+  # factory arm's MEASURED cost on this manifest is $4.55/instance, projecting
+  # $86.48/h for its 19-instance sweep. 120 clears the measured worst arm with
+  # headroom and leaves ``daily_spend_usd: 300`` — the real ceiling — untouched.
+  # The hourly cap is a burst limiter, not the budget.
+  hourly_spend_usd: 120
 queues:
   human_review_max_open_prs: 5
   failing_ci_pause_threshold: 3
