@@ -13,21 +13,64 @@ The thesis under test: **harness quality beats model size.** A well-instrumented
 
 **The thesis is not proven, and the latest measurement runs against it.** Externally graded on SWE-rebench with a hidden oracle (2026-08-04, five arms, n=19, k=1 — [full result](bench/swebench/results.md)):
 
-| arm | harness × model | resolved | rate | 95% CI |
-|---|---|---:|---:|---|
-| Claude Code CLI | × `claude-opus-5` | 15/19 | **79%** | [54%, 94%] |
-| Claude Code CLI | × `claude-opus-4-8` | 14/19 | **74%** | [49%, 91%] |
-| one OpenHands agent, **no chain** | × `azure/deepseek-v4-pro` | 7/16 | **44%** | [20%, 70%] |
-| **this factory's chain** | × deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | **37%** | [16%, 62%] |
-| hand-rolled loop, **no tool calls** | × `azure/deepseek-v4-pro` | 1/18 | **6%** | [0%, 27%] |
+Every arm ran **the same 19 instances**. Every arm produced a patch and got an
+oracle verdict on all 19, so every rate below is out of 19 — no arm gets a
+smaller denominator than another.
 
-- **The chain shows no measurable lift over a single agent on the same model** — 37% vs 44%, McNemar exact p=0.625. The lift comes from using a competent agent loop, not from the chain.
-- **What does produce lift is tooling**, not orchestration: 44% vs 6%, p=0.031.
-- **And the chain costs 2.3× per resolved instance** to get there — $5.13 vs $2.20.
-- Claude Code is roughly twice the factory (p=0.008), but that comparison varies harness *and* model, so it is a reference point rather than a scaffold deficit.
-- n=19, k=1, MDE ≈ ±38 pp. That means "no measurable lift" — **not** "the chain hurts".
+| harness | model(s) | solved | rate | total $ | **$ per solved** |
+|---|---|---:|---:|---:|---:|
+| Claude Code CLI | `claude-opus-5` | 15/19 | **79%** | 34.36 | **2.29** |
+| Claude Code CLI | `claude-opus-4-8` | 14/19 | **74%** | 23.56 | **1.68** |
+| one OpenHands agent, **no chain** | `azure/deepseek-v4-pro` | 9/19 | **47%** | 15.37 | **1.71** |
+| **this factory's chain** | deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | **37%** | 35.94 | **5.13** |
+| hand-rolled loop, **no tool calls** | `azure/deepseek-v4-pro` | 1/19 | **5%** | 7.94 | **7.94** |
 
-The July 2026 campaign that read the other way (7/7 vs 5/7 at $0.65/task) graded against sacrifice's *own* merge gates — tests the factory wrote — and is [superseded](bench/CAMPAIGN-2026-07-17.md).
+Reading it:
+
+- **The chain does not beat a single agent on the same model** — 37% vs 47%. On
+  the 16 instances where both arms have a clean row: both solved 4, both failed
+  8, the single agent won 3 the chain lost, the chain won 1 the agent lost. The
+  entire gap is **2 instances**, which at this sample size is indistinguishable
+  from chance (McNemar exact p=0.625).
+- **The chain is also the most expensive way to solve one** — $5.13, versus
+  $1.71 for the same model with no chain and **$2.29 for Claude Code**, a
+  frontier model. Costing 3× the single agent for fewer solves is the finding.
+- **What produces lift is tooling, not orchestration**: 47% with a real editor
+  and tool-calling versus 5% with neither, p=0.031. That gap is real; the
+  orchestration gap is not.
+- Claude Code roughly doubles the factory (p=0.008), but that comparison changes
+  the harness *and* the model at once, so treat it as a reference point, not a
+  measurement of the chain.
+
+**Cost units are not identical, so don't over-read the last column.** The Azure
+rows are a price-table estimate over provider-reported tokens — real money. The
+Claude rows are what the CLI itself reports at API list prices, billed in
+practice against a flat subscription. Same order of magnitude, not the same
+meter.
+
+**Rows we had to set aside, and why it does not rescue the chain.** Three
+OpenHands rows died on Azure `429` rate limits mid-conversation and one bare row
+was disqualified for fetching upstream source. Under the report's strict
+audited-valid-only convention those come out of the denominator, giving
+openhands 7/16 = 44% and bare 1/18 = 6% — the numbers in
+[`results.md`](bench/swebench/results.md). We publish out-of-19 here because it
+is the honest apples-to-apples view: **two of the three rate-limited OpenHands
+rows had already produced patches the oracle passes.** Every way of counting
+puts the single agent at or above the chain.
+
+**What the ± ranges in `results.md` mean.** 7 solved out of 19 is 37%, but 19
+samples cannot pin down true skill: the 95% confidence interval [16%, 62%] is
+the band of true rates that would not be surprised by this result. The factory's
+band [16%, 62%] and the single agent's [20%, 70%] overlap almost entirely, which
+is the whole point — **at n=19 we cannot tell these two apart.** The smallest
+difference this sample could reliably detect is roughly ±38 points, so the
+finding is "**no measurable lift**", not "the chain hurts". Running each instance
+3+ times is what would sharpen it.
+
+The July 2026 campaign read the other way, but it graded the factory against
+sacrifice's *own* merge gates — tests the factory itself wrote — so it could not
+measure correctness at all. Its numbers are withdrawn, not merely superseded:
+see [the campaign's retraction header](bench/CAMPAIGN-2026-07-17.md).
 
 > **An LLM agent working in this repo?** Read [`CLAUDE.md`](CLAUDE.md) first (or
 > [`AGENTS.md`](AGENTS.md) if you're on a non-Claude tool) — it is the short,
