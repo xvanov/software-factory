@@ -703,8 +703,11 @@ subscription. Estimate was ~$50 Azure — close.
 - [x] **A — integrity hardening.** Every arm's live tree moved under a flat
       `SWEBENCH_WORK_ROOT` keyed by (instance, arm, model), so no arm is a `..`
       away from `oracle.json.z` or a sibling's `grade.log`; only finished
-      artifacts are copied back. Per-node `PASSED` grading (`-rA`, every f2p and
-      p2p id required) replaced exit-code-only grading. `_DIFF_HEADER` fails
+      artifacts are copied back. Per-node `PASSED` grading replaced
+      exit-code-only grading: `-rpfEsxX` (that is `-rA` minus `P`, so
+      arm-authored code cannot echo a forged `PASSED <id>` into the region the
+      parser reads) and every declared `FAIL_TO_PASS` and `PASS_TO_PASS` id must
+      have a `PASSED` node and no `FAILED`/`ERROR` node. `_DIFF_HEADER` fails
       CLOSED. `audit.json` now carries `prediction_sha256`, `base_commit`,
       `stripped_test_paths`, `refused_paths`, `trajectories_scanned`,
       `trails_scanned`. **Result: zero path-based oracle probes in the sweep**,
