@@ -11,6 +11,74 @@ the five tables and the decision rules *before* the data exists, so a run cannot
 be reported in whatever framing happens to flatter the result. `report` emits
 exactly those tables.
 
+## The measured result — 2026-08-04, five arms, n=19, k=1
+
+Full table: [`results.md`](results.md). Evidence:
+`results-archive/2026-08-04T04-18-05.349995Z/`, re-derivable byte-for-byte:
+
+```bash
+uv run python bench/swebench_adapter.py report \
+  --from-archive bench/swebench/results-archive/2026-08-04T04-18-05.349995Z --check
+```
+
+| arm | harness × model(s) the LEDGER says ran | resolved / valid | rate | 95% CI | $ | $ / resolved |
+|---|---|---:|---:|---|---:|---:|
+| claude-5 | Claude Code CLI × `claude-opus-5` (+ its own haiku-4-5 classifier) | 15/19 | **79%** | [54%, 94%] | 34.36 † | 2.29 † |
+| claude-4.8 | the SAME CLI, same flags × `claude-opus-4-8` | 14/19 | **74%** | [49%, 91%] | 23.56 † | 1.68 † |
+| openhands | OpenHands single agent, no chain × `azure/deepseek-v4-pro` (19 calls) | 7/16 | **44%** | [20%, 70%] | 15.37 | **2.20** |
+| factory | the chain on OpenHands × deepseek-v4-pro (33) + gpt-5.3-codex (6) + gpt-5.4 (31) | 7/19 | **37%** | [16%, 62%] | 35.94 | **5.13** |
+| bare | hand-rolled text loop, no tool calls × deepseek-v4-pro (727 calls) | 1/18 | **6%** | [0%, 27%] | 7.94 | 7.94 |
+
+† CLI-reported against a subscription; the Azure rows are price-table estimates.
+Different bases — never summed, and the cross-family `$ / resolved` is indicative
+only. `factory` vs `openhands` is one basis and exact.
+
+Paired McNemar exact, over instances where both arms are audited-valid:
+
+| comparison | isolates | n | only-A / only-B | p |
+|---|---|---:|---:|---:|
+| **factory vs openhands** | **the chain** | 16 | 1 / 3 | **0.625** |
+| **openhands vs bare** | **the tooling** | 15 | 0 / 6 | **0.031** |
+| bare vs factory | both, entangled | 18 | 1 / 7 | 0.070 |
+| claude-5 vs factory | nothing attributable | 19 | 8 / 0 | **0.008** |
+| claude-4.8 vs factory | nothing attributable | 19 | 8 / 1 | 0.039 |
+| **claude-4.8 vs claude-5** | **contamination** | 19 | 1 / 2 | **1.000** |
+
+1. **The chain shows no measurable lift.** 37% vs 44% on identical weights, prompt
+   and tools, p=0.625. `PRE-REGISTRATION-1.6.md` Rule 1 pre-committed the wording:
+   **our lift comes from using a competent agent loop, not from the chain.**
+2. **What produces the lift is TOOLING, not orchestration** — `openhands` 44% vs
+   `bare` 6%, p=0.031, the only significant result among the three DeepSeek arms.
+   The retracted "+58 pp scaffold lift" was measuring the difference between
+   having a usable editor and tool-calling API and not having one.
+3. **Cost makes it worse.** $5.13 per resolved instance for the chain against
+   $2.20 for one agent — **2.3× for no measurable gain** — plus 2.1× the fresh
+   input tokens and 2.8× the median wall clock.
+4. **Claude Code is roughly twice the factory** (p=0.008) but varies harness AND
+   model. Reference point, never a scaffold deficit. That caveat travels with it.
+5. **The contamination probe came back CLEAN** — the most valuable result here.
+   `claude-opus-4-8` (published cutoff Jan 2026) 74% vs `claude-opus-5` (May 2026)
+   79%, same harness, p=1.000, on a manifest where **19/19** instances predate
+   opus-5's cutoff. Memorization is not carrying Claude's score, which
+   *strengthens* the reference arm.
+6. **n=19, k=1, MDE ≈ ±38 pp.** −7 pp is inside noise: "no measurable lift", not
+   "the chain hurts". Nothing here measured harm.
+7. **Two caveats against the factory.** `openhands` lost 3 rows to Azure 429s and
+   2 of those 3 had already produced oracle-RESOLVING patches — counted it is
+   9/19 = 47%, widening the gap. And 7/19 is exactly the "matched-weights ceiling"
+   the 2026-08-03 retraction derived independently from the old 11/19.
+8. **Integrity.** One genuine violation, published invalid and excluded: `bare` on
+   `hiero-ledger__hiero-sdk-python-1914_interface` ran
+   `curl -s https://raw.githubusercontent.com/…/account_info.py`. Zero path-based
+   oracle probes. The repaired `bare` arm now genuinely iterates (727 calls, 16 of
+   18 rows budget-exhausted, vs mean 9.2 steps and no cap hits before) and still
+   reaches 6% — its one pre-committed repaired run is spent.
+
+**Do not read the sweep files for these numbers.** `sweep-<arm>.json`'s aggregate
+counters are in-flight snapshots and contradict their own `results` rows —
+`sweep-factory.json` says `resolved: 2`, its rows say 7, the archive says 7. Only
+`results.md` and `results-archive/` are authoritative. Tracked as `PLAN.md` 1.6 G.
+
 ## Datasets are profiles — SWE-rebench is primary, Pro is FROZEN
 
 The upstream dataset is a **profile** (`PROFILES` in the adapter), selected
@@ -318,7 +386,7 @@ oracle**. Of the 4 excluded, 3 are `fail_to_pass_ids_do_not_collect` and 1 is
 `gold_patch_does_not_resolve`. Broadly consistent with OpenAI's ~30% finding,
 at n=10.
 
-## Results so far (Pro profile, final before the freeze)
+## Historical: Pro profile, final before the freeze
 
 | arm | graded (audited-valid) | resolved | chain-verdict precision | recall |
 |---|---:|---:|---:|---:|
@@ -326,8 +394,8 @@ at n=10.
 | factory | 6 | **1 (17%)** | 1/5 = 20% | 1/1 |
 
 n=6, Pro, from `results-archive/2026-08-02T17-30-31.638850Z`. This says "the
-harness runs end-to-end on both arms". The SWE-rebench pilot replaces Pro as
-the measurement bed.
+harness runs end-to-end on both arms" and nothing else. SWE-rebench replaced Pro
+as the measurement bed; the current result is at the top of this file.
 
 ## SWE-rebench pilot selftest (2026-08-02)
 
@@ -756,8 +824,10 @@ An archive may also carry an operator-written `DISCLAIMER.md`, emitted verbatim
 at the top of any table re-derived from it. That is how a run is marked
 **retracted**: by ADDING a file beside the evidence, never by rewriting rows,
 audits or the original meta. `results-archive/2026-08-03T05-12-08.813897Z/` has
-one — those three-way numbers (factory 58% / bare 0% / claude 89%) are the
-report code's regression corpus, not a result.
+one — its three-way numbers (factory 58% / bare 0% / claude 89%) are
+**RETRACTED** and survive only as the report code's regression corpus. The
+current result is at the top of this file: factory 37%, openhands 44%,
+claude-opus-5 79%. Never quote the 05-12 archive as a measurement.
 
 `report-meta.json` also **persists the refused and foreign row lists** and each
 instance's `created_at`. Those were recomputed from `runs/` at report time, so
