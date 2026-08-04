@@ -1,0 +1,22 @@
+{
+  "instance_id": "pandas-dev__pandas-63945",
+  "arm": "claude-5",
+  "audited_at": "2026-08-04T04:17:20.517941+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.0106,
+  "ledger_tokens_in": 903803,
+  "ledger_tokens_out": 11128,
+  "result_cost_usd": 1.0106,
+  "prediction_sha256": "780c675328a2be2c54a58bac3850020be4a128474fee9922b59d616b47ab7ebc",
+  "base_commit": "a4523484f6267501ae0bc240c5baf2108c622373",
+  "stripped_test_paths": [
+    "pandas/tests/test_col.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

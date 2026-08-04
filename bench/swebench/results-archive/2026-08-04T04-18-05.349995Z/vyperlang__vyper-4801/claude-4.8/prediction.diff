@@ -1,0 +1,19 @@
+diff --git a/vyper/venom/ir_node_to_venom.py b/vyper/venom/ir_node_to_venom.py
+index d7f69ef..3b72d34 100644
+--- a/vyper/venom/ir_node_to_venom.py
++++ b/vyper/venom/ir_node_to_venom.py
+@@ -464,9 +464,12 @@ def _convert_ir_bb(fn, ir, symbols):
+         second = _convert_ir_bb(fn, ir.args[1], symbols)
+         bb = fn.get_basic_block()
+         buf = bb.append_instruction("alloca", 64, get_scratch_alloca_id())
+-        bb.append_instruction("mstore", second, buf)
++        # match the legacy pipeline (see `sha3_64` in ir/compile_ir.py):
++        # the first argument goes into the low 32 bytes and the second
++        # argument into the high 32 bytes, i.e. keccak256(first . second).
++        bb.append_instruction("mstore", first, buf)
+         next_part = bb.append_instruction("gep", buf, 32)
+-        bb.append_instruction("mstore", first, next_part)
++        bb.append_instruction("mstore", second, next_part)
+         return bb.append_instruction("sha3", 64, buf)
+     elif ir.value == "return":
+         fn.get_basic_block().append_instruction(

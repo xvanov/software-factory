@@ -1,0 +1,38 @@
+{
+  "instance_id": "pandas-dev__pandas-63945",
+  "arm": "openhands",
+  "audited_at": "2026-08-04T04:17:20.810271+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:16:22.045958+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 314276,
+      "tokens_out": 4074,
+      "cached_input_tokens": 140800,
+      "cost_usd": 0.3730809,
+      "duration_s": 299.039,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.3731,
+  "ledger_tokens_in": 314276,
+  "ledger_tokens_out": 4074,
+  "result_cost_usd": 0.3731,
+  "prediction_sha256": "acb01239e3e483b277b3ad6d131ecf56b211bd017299dcf87c51f8123c1a0e50",
+  "base_commit": "a4523484f6267501ae0bc240c5baf2108c622373",
+  "stripped_test_paths": [
+    "pandas/tests/test_col.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

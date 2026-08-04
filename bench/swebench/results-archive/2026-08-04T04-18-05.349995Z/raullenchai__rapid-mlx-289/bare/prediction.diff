@@ -1,0 +1,210 @@
+diff --git a/vllm_mlx/reasoning/gemma4_parser.py b/vllm_mlx/reasoning/gemma4_parser.py
+index 311acc0..b55e965 100644
+--- a/vllm_mlx/reasoning/gemma4_parser.py
++++ b/vllm_mlx/reasoning/gemma4_parser.py
+@@ -1,24 +1,18 @@
+ # SPDX-License-Identifier: Apache-2.0
+-"""
+-Gemma 4 reasoning parser.
+-
+-Gemma 4 uses channel tokens for thinking:
+-  <|channel>thought\n...reasoning...<channel|>
+-  <|channel>content\n...answer...<channel|>
+-
+-The parser separates thinking from content by tracking the active channel.
+-"""
++"""Gemma 4 reasoning parser."""
+ 
+ import re
+ 
+ from .base import DeltaMessage, ReasoningParser
++from .think_parser import BaseThinkingReasoningParser
+ 
+-# Match full thought blocks in complete text
+-_THOUGHT_BLOCK = re.compile(r"<\|channel>thought\n[\s\S]*?<channel\|>\s*", re.DOTALL)
+-# Match content channel markers
+-_CONTENT_START = re.compile(r"<\|channel>(?:content|final)\n?")
++# Channel-aware patterns for Gemma 4
++_THOUGHT_BLOCK = re.compile(r"<\|channel\|>thought
++(.*?)<channel\|>", re.DOTALL)
++_CONTENT_START = re.compile(r"<\|channel\|>content
++?")
+ _CHANNEL_END = re.compile(r"<channel\|>")
+-_TURN_END = re.compile(r"<turn\|>")
++_TURN_END = re.compile(r"<\|turn\|>")
+ 
+ 
+ class Gemma4ReasoningParser(ReasoningParser):
+@@ -75,7 +69,92 @@ class Gemma4ReasoningParser(ReasoningParser):
+         if not delta_text:
+             return None
+ 
+-        # Track channel state based on accumulated text
++        # Compute what the state was BEFORE this delta by running the
++        # state-update logic on previous_text (from a clean slate).
++        prev_in_thought, prev_in_content, prev_saw_any = \
++            self._compute_state(previous_text)
++
++        # Update state based on current_text
++        self._update_state(current_text)
++
++        # Check if a state transition occurred during this delta
++        state_changed = (
++            prev_in_thought != self._in_thought
++            or prev_in_content != self._in_content
++            or prev_saw_any != self._saw_any_channel
++        )
++
++        if state_changed:
++            # Find where the transition happens within delta_text
++            pre_marker, post_marker = self._split_at_transition(delta_text)
++
++            reasoning_part = None
++            content_part = None
++
++            # Classify pre-marker part with OLD state
++            if pre_marker is not None:
++                clean = self._clean_markers(pre_marker)
++                if clean:
++                    if prev_in_thought:
++                        reasoning_part = clean
++                    elif prev_in_content:
++                        content_part = clean
++                    elif not prev_saw_any:
++                        content_part = clean
++                    else:
++                        reasoning_part = clean
++
++            # Classify post-marker part with NEW state
++            if post_marker is not None:
++                clean = self._clean_markers(post_marker)
++                if clean:
++                    if self._in_thought:
++                        reasoning_part = clean
++                    elif self._in_content:
++                        content_part = clean
++                    elif not self._saw_any_channel:
++                        content_part = clean
++                    else:
++                        reasoning_part = clean
++
++            if reasoning_part is None and content_part is None:
++                return None
++            return DeltaMessage(reasoning=reasoning_part, content=content_part)
++
++        # No transition inside delta — use simple classification
++        return self._classify_simple(delta_text)
++
++    def _compute_state(self, text: str) -> tuple[bool, bool, bool]:
++        """Compute what the state flags would be after processing `text`
++        from a clean state. Returns (in_thought, in_content, saw_any)."""
++        in_thought = False
++        in_content = False
++        saw_any = False
++
++        if "<|channel>thought" in text:
++            in_thought = True
++            saw_any = True
++
++        if "<|channel>content" in text or "<|channel>final" in text:
++            in_thought = False
++            in_content = True
++
++        # Check if thought ended
++        if in_thought and "<channel|>" in text:
++            thought_starts = text.count("<|channel>thought")
++            channel_ends = text.count("<channel|>")
++            if channel_ends >= thought_starts:
++                in_thought = False
++                if (
++                    "<|channel>content" not in text
++                    and "<|channel>final" not in text
++                ):
++                    in_content = True
++
++        return in_thought, in_content, saw_any
++
++    def _update_state(self, current_text: str) -> None:
++        """Update internal state flags based on accumulated text."""
+         # Check if we just entered thought channel
+         if "<|channel>thought" in current_text and not self._in_content:
+             self._in_thought = True
+@@ -99,8 +178,49 @@ class Gemma4ReasoningParser(ReasoningParser):
+                 ):
+                     self._in_content = True
+ 
+-        # Filter out channel markers from delta
+-        clean = delta_text
++    def _split_at_transition(
++        self, delta_text: str
++    ) -> tuple[str | None, str | None]:
++        """Split delta_text at the point where state transitions.
++
++        Returns (pre_marker_text, post_marker_text) where pre_marker_text is
++        text before the earliest transition marker, and post_marker_text is
++        text after it. Either can be None if empty."""
++        # Find all candidate transition markers in delta_text
++        transitions = []
++
++        # <channel|> closes thought (transition: thought -> content)
++        if "<channel|>" in delta_text:
++            idx = delta_text.find("<channel|>")
++            transitions.append((idx, idx + len("<channel|>")))
++
++        # <|channel>thought opens thought
++        if "<|channel>thought" in delta_text:
++            idx = delta_text.find("<|channel>thought")
++            transitions.append((idx, idx + len("<|channel>thought")))
++
++        # <|channel>content or <|channel>final opens content
++        for marker in ["<|channel>content", "<|channel>final"]:
++            if marker in delta_text:
++                idx = delta_text.find(marker)
++                transitions.append((idx, idx + len(marker)))
++
++        if not transitions:
++            # No marker found in delta — transition spans boundary,
++            # entire delta is post-transition
++            return None, delta_text
++
++        # Sort by position; use the earliest
++        transitions.sort(key=lambda x: x[0])
++        _, split_pos = transitions[0]
++
++        pre = delta_text[:transitions[0][0]]
++        post = delta_text[split_pos:]
++
++        return (pre if pre else None, post if post else None)
++
++    def _clean_markers(self, text: str) -> str:
++        """Remove channel/turn markers from text, keeping content."""
+         for marker in [
+             "<|channel>",
+             "<channel|>",
+@@ -110,20 +230,22 @@ class Gemma4ReasoningParser(ReasoningParser):
+             "content\n",
+             "final\n",
+         ]:
+-            clean = clean.replace(marker, "")
++            text = text.replace(marker, "")
++        return text
+ 
++    def _classify_simple(self, delta_text: str) -> DeltaMessage | None:
++        """Classify the whole delta by current state."""
++        clean = self._clean_markers(delta_text)
+         if not clean:
+-            return None  # pure marker token, skip
++            return None
+ 
+         if self._in_thought:
+             return DeltaMessage(reasoning=clean)
+         elif self._in_content:
+             return DeltaMessage(content=clean)
+         elif not self._saw_any_channel:
+-            # No channel tokens seen — plain content (no thinking)
+             return DeltaMessage(content=clean)
+         else:
+-            # Between channels — treat as reasoning
+             return DeltaMessage(reasoning=clean)
+ 
+     def finalize_streaming(self, accumulated_text: str) -> DeltaMessage | None:

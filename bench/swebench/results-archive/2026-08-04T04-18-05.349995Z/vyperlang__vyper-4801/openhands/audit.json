@@ -1,0 +1,36 @@
+{
+  "instance_id": "vyperlang__vyper-4801",
+  "arm": "openhands",
+  "audited_at": "2026-08-04T04:17:25.080976+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:45:33.438233+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1319793,
+      "tokens_out": 14536,
+      "cached_input_tokens": 792064,
+      "cost_usd": 1.201712154,
+      "duration_s": 547.725,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.2017,
+  "ledger_tokens_in": 1319793,
+  "ledger_tokens_out": 14536,
+  "result_cost_usd": 1.2017,
+  "prediction_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "base_commit": "7d53bab7f8cce2a5fb037052663d85596d7eb2d1",
+  "stripped_test_paths": [],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

@@ -1,0 +1,22 @@
+{
+  "instance_id": "ucfopen__canvasapi-716",
+  "arm": "claude-5",
+  "audited_at": "2026-08-04T04:17:23.913053+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.6491,
+  "ledger_tokens_in": 434524,
+  "ledger_tokens_out": 7749,
+  "result_cost_usd": 0.6491,
+  "prediction_sha256": "75b39d40977fc1841479c1fef218399c97617bae78970b2678be48a4f65c0eb8",
+  "base_commit": "77ff5b248603db987e57f11a104767d4b790265a",
+  "stripped_test_paths": [
+    "tests/test_util.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

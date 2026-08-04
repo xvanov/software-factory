@@ -1,0 +1,22 @@
+{
+  "instance_id": "keras-team__keras-22316",
+  "arm": "claude-4.8",
+  "audited_at": "2026-08-04T04:17:17.913936+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.6306,
+  "ledger_tokens_in": 1040376,
+  "ledger_tokens_out": 27846,
+  "result_cost_usd": 1.6306,
+  "prediction_sha256": "da57ad2bab10fb815a43e6a8f47acc767eb652208abb730bca6a67afd04f3053",
+  "base_commit": "34e55d4561ba2a61bbc72562e88b3704e0a43081",
+  "stripped_test_paths": [
+    "keras/src/ops/function_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

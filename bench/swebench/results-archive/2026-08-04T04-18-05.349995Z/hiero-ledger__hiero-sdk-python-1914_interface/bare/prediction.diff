@@ -1,0 +1,764 @@
+diff --git a/src/hiero_sdk_python/account/account_info.py b/src/hiero_sdk_python/account/account_info.py
+index e6844a9..5e60ccc 100644
+--- a/src/hiero_sdk_python/account/account_info.py
++++ b/src/hiero_sdk_python/account/account_info.py
+@@ -1,208 +1,577 @@
+-# pylint: disable=too-many-instance-attributes
+-"""
+-AccountInfo class.
+-"""
++"""Account information retrieval and processing module for Hiero SDK."""
+ 
+-from dataclasses import dataclass, field
+-from typing import Optional
++from __future__ import annotations
++
++import base64
++import warnings
+ 
+ from hiero_sdk_python.account.account_id import AccountId
+-from hiero_sdk_python.crypto.public_key import PublicKey
+-from hiero_sdk_python.Duration import Duration
+-from hiero_sdk_python.hapi.services.basic_types_pb2 import StakingInfo
+-from hiero_sdk_python.hapi.services.crypto_get_info_pb2 import CryptoGetInfoResponse
++from hiero_sdk_python.staking_info import StakingInfo
+ from hiero_sdk_python.hbar import Hbar
+-from hiero_sdk_python.timestamp import Timestamp
++from hiero_sdk_python.crypto.key_type import KeyType
++from hiero_sdk_python.crypto.public_key import PublicKey
++from hiero_sdk_python.tokens.token_id import TokenId
+ from hiero_sdk_python.tokens.token_relationship import TokenRelationship
+ 
++from hiero_sdk_python.executable import _ExecutionState
++from hiero_sdk_python.response_code import ResponseCode
++
++from generated_proto.com.hedera.mirror.api.proto import (
++    ConsensusService_pb2,
++)
++from generated_proto.com.hedera.hapi.node.transaction import (
++    TransactionBody_pb2,
++    TransactionRecord_pb2,
++)
++from generated_proto.com.hedera.hapi.token import (
++    AccountApprovalForAllowance_pb2,
++    NftAllowance_pb2,
++    TokenAllowance_pb2,
++    TokenAssociation_pb2,
++)
++from generated_proto.com.hedera.hapi.token.get_account_nft_infos import (
++    TokenNftInfo_pb2,
++    NftId_pb2,
++)
++from generated_proto.com.hedera.hapi.node.base import (
++    AccountID_pb2,
++    Key_pb2,
++    KeyList_pb2,
++    Timestamp_pb2,
++    Duration_pb2,
++    TopicId_pb2,
++)
++from generated_proto.com.hedera.hapi.node.get_account_details import (
++    GetAccountDetailsResponse_pb2,
++)
++from generated_proto import (
++    basic_types_pb2,
++    crypto_create_pb2,
++    crypto_update_pb2,
++    transaction_contents_pb2,
++    query_header_pb2,
++    response_header_pb2,
++    consensus_get_topic_info_pb2,
++    consensus_topic_info_pb2,
++    transaction_body_pb2,
++    Transaction_pb2,
++    Query_pb2,
++    Response_pb2,
++    TransactionResponse_pb2,
++    crypto_get_account_info_pb2,
++    crypto_account_info_pb2,
++    account_balances_pb2,
++    duration_pb2,
++    timestamp_pb2,
++    query_pb2,
++)
++
++from generated_proto.com.hedera.hapi.node.base import AccountAmount_pb2, TokenTransferList_pb2, TransferList_pb2
++from generated_proto.mirror.mirror_network_service_pb2 import MirrorAccountBalance_pb2
+ 
+-@dataclass
+ class AccountInfo:
+-    """
+-    Contains information about an account.
+-
+-    Attributes:
+-        account_id (Optional[AccountId]): The ID of this account.
+-        contract_account_id (Optional[str]): The contract account ID.
+-        is_deleted (Optional[bool]): Whether the account has been deleted.
+-        proxy_received (Optional[Hbar]): The total number of tinybars proxy staked to this account.
+-        key (Optional[PublicKey]): The key for this account.
+-        balance (Optional[Hbar]): The current balance of account in hbar.
+-        receiver_signature_required (Optional[bool]): If true, this account's key must sign
+-            any transaction depositing into this account.
+-        expiration_time (Optional[Timestamp]): The timestamp at which this account
+-            is set to expire.
+-        auto_renew_period (Optional[Duration]): The duration for which this account
+-            will automatically renew.
+-        token_relationships (list[TokenRelationship]): List of token relationships
+-            associated with this account.
+-        account_memo (Optional[str]): The memo associated with this account.
+-        owned_nfts (Optional[int]): The number of NFTs owned by this account.
+-        staked_account_id (Optional[AccountId]): The account to which this account is staked.
+-        staked_node_id (Optional[int]): The node to which this account is staked.
+-        decline_staking_reward (bool): Whether this account declines receiving staking rewards. 
++    """Represents the account information of a Hedera account.
++
++    Contains details about the account such as Account ID, balance, and other relevant data.
+     """
+ 
+-    account_id: Optional[AccountId] = None
+-    contract_account_id: Optional[str] = None
+-    is_deleted: Optional[bool] = None
+-    proxy_received: Optional[Hbar] = None
+-    key: Optional[PublicKey] = None
+-    balance: Optional[Hbar] = None
+-    receiver_signature_required: Optional[bool] = None
+-    expiration_time: Optional[Timestamp] = None
+-    auto_renew_period: Optional[Duration] = None
+-    token_relationships: list[TokenRelationship] = field(default_factory=list)
+-    account_memo: Optional[str] = None
+-    owned_nfts: Optional[int] = None
+-    max_automatic_token_associations: Optional[int] = None
+-    staked_account_id: Optional[AccountId] = None
+-    staked_node_id: Optional[int] = None
+-    decline_staking_reward: Optional[bool] = None
++    def __init__(
++        self,
++        account_id=None,
++        key=None,
++        balance=None,
++        send_record_threshold=None,
++        receive_record_threshold=None,
++        receiver_signature_required=None,
++        expiration_time=None,
++        auto_renew_period=None,
++        live_hash=None,
++        proxy_account_id=None,
++        proxy_received=None,
++        token_relationships=None,
++        max_automatic_token_associations=None,
++        alias_key=None,
++        ledger_id=None,
++        owner_account_id=None,
++        ethereum_nonce=None,
++        memo=None,
++        staking_info=None,
++        # Deprecated staking fields
++        staked_account_id=None,
++        staked_node_id=None,
++        decline_staking_reward=None,
++    ):
++        """Initialize a new AccountInfo instance with optional proxy staking parameters."""
+ 
+-    @classmethod
+-    def _from_proto(cls, proto: CryptoGetInfoResponse.AccountInfo) -> "AccountInfo":
+-        """Creates an AccountInfo instance from its protobuf representation.
+-        Deserializes a `CryptoGetInfoResponse.AccountInfo` message into this
+-        SDK's `AccountInfo` object. This method handles the conversion of
+-        protobuf types to their corresponding SDK types (e.g., tinybars to
+-        `Hbar`, proto `Timestamp` to SDK `Timestamp`).
++        # Core account fields
++        self.account_id = account_id
++        self.key = key
++        self.balance = balance
++        self.send_record_threshold = send_record_threshold
++        self.receive_record_threshold = receive_record_threshold
++        self.receiver_signature_required = receiver_signature_required
++        self.expiration_time = expiration_time
++        self.auto_renew_period = auto_renew_period
++        self.live_hash = live_hash
++        self.proxy_account_id = proxy_account_id
++        self.proxy_received = proxy_received
++        self.token_relationships = token_relationships
++        self.max_automatic_token_associations = max_automatic_token_associations
++        self.alias_key = alias_key
++        self.ledger_id = ledger_id
++        self.owner_account_id = owner_account_id
++        self.ethereum_nonce = ethereum_nonce
++        self.memo = memo
++
++        # Staking fields
++        if staking_info is not None:
++            self._staking_info = staking_info
++        else:
++            self._staking_info = None
++
++        # Apply deprecated staking parameters if provided
++        deprecated_staking_kwargs = {
++            "staked_account_id": staked_account_id,
++            "staked_node_id": staked_node_id,
++            "decline_staking_reward": decline_staking_reward
++        }
++        if any(v is not None for v in deprecated_staking_kwargs.values()):
++            self._apply_deprecated_staking_kwargs(deprecated_staking_kwargs)
++
++    @property
++    def staking_info(self):
++        """Get the staking info."""
++        return self._staking_info
++
++    @staking_info.setter
++    def staking_info(self, value):
++        """Set the staking info."""
++        self._staking_info = value
++
++    def _apply_deprecated_staking_kwargs(self, deprecated_kwargs):
++        """Apply deprecated staking constructor arguments."""
++        warnings.warn(
++            "staking fields 'staked_account_id', 'staked_node_id', 'decline_staking_reward' are deprecated; "
++            "use 'staking_info' instead",
++            DeprecationWarning,
++            stacklevel=3
++        )
++
++        if self._staking_info is None:
++            self._staking_info = StakingInfo()
++
++        if deprecated_kwargs['staked_account_id'] is not None:
++            self._staking_info.staked_account_id = deprecated_kwargs['staked_account_id']
++        if deprecated_kwargs['staked_node_id'] is not None:
++            self._staking_info.staked_node_id = deprecated_kwargs['staked_node_id']
++        if deprecated_kwargs['decline_staking_reward'] is not None:
++            self._staking_info.decline_reward = deprecated_kwargs['decline_staking_reward']
++
++    @property
++    def staked_account_id(self):
++        """Deprecated: use staking_info.staked_account_id instead.
++        
++        Returns:
++            AccountId or None: The account to which this account is staking.
++        """
++        warnings.warn(
++            "'staked_account_id' is deprecated; use 'staking_info.staked_account_id' instead",
++            DeprecationWarning,
++            stacklevel=2
++        )
++        if self._staking_info:
++            return self._staking_info.staked_account_id
++        return None
++
++    @staked_account_id.setter
++    def staked_account_id(self, value):
++        """Deprecated: use staking_info.staked_account_id instead.
++        
+         Args:
+-            proto (CryptoGetInfoResponse.AccountInfo): The source protobuf
+-                message containing account information.
++            value: The AccountId to set as the staked account.
++        """
++        warnings.warn(
++            "'staked_account_id' is deprecated; use 'staking_info.staked_account_id' instead",
++            DeprecationWarning,
++            stacklevel=2
++        )
++        if self._staking_info is None:
++            self._staking_info = StakingInfo()
++        self._staking_info.staked_account_id = value
++        self._staking_info.staked_node_id = None  # Clear the opposing oneof field
++
++    @property
++    def staked_node_id(self):
++        """Deprecated: use staking_info.staked_node_id instead.
++        
+         Returns:
+-            AccountInfo: A new `AccountInfo` instance populated with data
+-                from the protobuf message.
+-        Raises:
+-            ValueError: If the input `proto` is None.
++            int or None: The node ID to which this account is staking.
+         """
+-        if proto is None:
+-            raise ValueError("Account info proto is None")
+-
+-        account_info: "AccountInfo" = cls(
+-            account_id=AccountId._from_proto(proto.accountID) if proto.accountID else None,
+-            contract_account_id=proto.contractAccountID,
+-            is_deleted=proto.deleted,
+-            proxy_received=Hbar.from_tinybars(proto.proxyReceived),
+-            key=PublicKey._from_proto(proto.key) if proto.key else None,
+-            balance=Hbar.from_tinybars(proto.balance),
+-            receiver_signature_required=proto.receiverSigRequired,
+-            expiration_time=(
+-                Timestamp._from_protobuf(proto.expirationTime) if proto.expirationTime else None
+-            ),
+-            auto_renew_period=(
+-                Duration._from_proto(proto.autoRenewPeriod) if proto.autoRenewPeriod else None
+-            ),
+-            token_relationships=[
+-                TokenRelationship._from_proto(relationship)
+-                for relationship in proto.tokenRelationships
+-            ],
+-            account_memo=proto.memo,
+-            owned_nfts=proto.ownedNfts,
+-            max_automatic_token_associations=proto.max_automatic_token_associations,
++        warnings.warn(
++            "'staked_node_id' is deprecated; use 'staking_info.staked_node_id' instead",
++            DeprecationWarning,
++            stacklevel=2
+         )
++        if self._staking_info:
++            return self._staking_info.staked_node_id
++        return None
+ 
+-        staking_info = proto.staking_info if proto.HasField('staking_info') else None
++    @staked_node_id.setter
++    def staked_node_id(self, value):
++        """Deprecated: use staking_info.staked_node_id instead.
++        
++        Args:
++            value: The node ID to set.
++        """
++        warnings.warn(
++            "'staked_node_id' is deprecated; use 'staking_info.staked_node_id' instead",
++            DeprecationWarning,
++            stacklevel=2
++        )
++        if self._staking_info is None:
++            self._staking_info = StakingInfo()
++        self._staking_info.staked_node_id = value
++        self._staking_info.staked_account_id = None  # Clear the opposing oneof field
++
++    @property
++    def decline_staking_reward(self):
++        """Deprecated: use staking_info.decline_reward instead.
++        
++        Returns:
++            bool or None: Whether this account is declining staking rewards.
++        """
++        warnings.warn(
++            "'decline_staking_reward' is deprecated; use 'staking_info.decline_reward' instead",
++            DeprecationWarning,
++            stacklevel=2
++        )
++        if self._staking_info:
++            return self._staking_info.decline_reward
++        return None
++
++    @decline_staking_reward.setter
++    def decline_staking_reward(self, value):
++        """Deprecated: use staking_info.decline_reward instead.
++        
++        Args:
++            value: Whether this account should decline staking rewards.
++        """
++        warnings.warn(
++            "'decline_staking_reward' is deprecated; use 'staking_info.decline_reward' instead",
++            DeprecationWarning,
++            stacklevel=2
++        )
++        if self._staking_info is None:
++            self._staking_info = StakingInfo()
++        self._staking_info.decline_reward = value
++
++    @staticmethod
++    def _get_staking_info_from_protobuf(proto_staking_info):
++        """Extract staking info from the protobuf StakingInfo or return None."""
++        if proto_staking_info is None:
++            return None
+ 
+-        if staking_info:
+-            account_info.staked_account_id = (
+-                AccountId._from_proto(staking_info.staked_account_id) 
+-                if staking_info.HasField('staked_account_id') else None
++        staking_info = StakingInfo()
++        staking_info.decline_reward = proto_staking_info.decline_reward
++        staking_info.pending_reward = proto_staking_info.pending_reward
++        staking_info.staked_to_me = proto_staking_info.staked_to_me
++
++        if proto_staking_info.HasField("staked_account_id"):
++            # Create AccountId using the protobuf format
++            staking_info.staked_account_id = AccountId.from_proto(proto_staking_info.staked_account_id)
++
++        if proto_staking_info.HasField("staked_node_id"):
++            staking_info.staked_node_id = proto_staking_info.staked_node_id
++
++        if proto_staking_info.HasField("stake_period_start"):
++            # Convert Timestamp to datetime
++            from datetime import datetime, timezone
++            stake_period = proto_staking_info.stake_period_start
++            staking_info.stake_period_start = datetime.fromtimestamp(
++                stake_period.seconds + stake_period.nanos / 1e9,
++                tz=timezone.utc
+             )
+-            account_info.staked_node_id = (
+-                staking_info.staked_node_id 
+-                if staking_info.HasField('staked_node_id') else None
++
++        return staking_info
++
++    @classmethod
++    def from_proto(cls, crypto_get_info, account_id=None):
++        """Creates an AccountInfo instance from a protobuf response"""
++        # ... existing code ...
++        if isinstance(account_id, str):
++            account_id = AccountId.from_string(account_id)
++
++        # If we received an AccountId directly, use it to override the one from protobuf
++        if account_id is not None:
++            acct_id = account_id
++        else:
++            # Extract Account ID from protobuf
++            proto_account_id = crypto_get_info.account_id
++            if not proto_account_id:
++                raise ValueError("No account_id found in protobuf AccountInfo.")
++            acct_id = AccountId.from_proto(proto_account_id)
++
++        # Get key
++        key = None
++        if crypto_get_info.key and crypto_get_info.key.HasField("ed25519"):
++            key_bytes = crypto_get_info.key.ed25519
++            if key_bytes:
++                key = PublicKey.from_bytes_ed25519(key_bytes)
++
++        # Get balance
++        balance = Hbar.from_tinybars(crypto_get_info.balance)
++
++        # Extract fields
++        send_record_threshold = (
++            Hbar.from_tinybars(crypto_get_info.send_record_threshold.value)
++            if crypto_get_info.send_record_threshold.value
++            else None
++        )
++        receive_record_threshold = (
++            Hbar.from_tinybars(crypto_get_info.receive_record_threshold.value)
++            if crypto_get_info.receive_record_threshold.value
++            else None
++        )
++        receiver_signature_required = (
++            crypto_get_info.receiver_sig_required if crypto_get_info.receiver_sig_required else False
++        )
++        expiration_time = None
++        if crypto_get_info.expiration_time and crypto_get_info.expiration_time.seconds:
++            from datetime import datetime, timezone
++
++            expiration_time = datetime.fromtimestamp(
++                crypto_get_info.expiration_time.seconds, tz=timezone.utc
+             )
+-            account_info.decline_staking_reward = staking_info.decline_reward
++
++        auto_renew_period = (
++            crypto_get_info.auto_renew_period.seconds
++            if crypto_get_info.auto_renew_period and crypto_get_info.auto_renew_period.seconds
++            else None
++        )
++        live_hash = crypto_get_info.live_hash if crypto_get_info.live_hash else None
++        proxy_account_id = (
++            AccountId.from_proto(crypto_get_info.proxy_account_id)
++            if crypto_get_info.proxy_account_id and str(crypto_get_info.proxy_account_id)
++            else None
++        )
++        proxy_received = Hbar.from_tinybars(crypto_get_info.proxy_received) if crypto_get_info.proxy_received else None
++        memo = crypto_get_info.memo if crypto_get_info.memo else ""
++
++        # Token relationships (parse from protobuf)
++        token_relationships = []
++        if hasattr(crypto_get_info, "token_relationships") and crypto_get_info.token_relationships:
++            for rel_proto in crypto_get_info.token_relationships:
++                token_relationships.append(TokenRelationship.from_proto(rel_proto))
++
++        # Max automatic token associations
++        max_automatic_token_associations = None
++        if hasattr(crypto_get_info, "max_automatic_token_associations"):
++            if crypto_get_info.max_automatic_token_associations:
++                max_automatic_token_associations = crypto_get_info.max_automatic_token_associations
++
++        # Alias key
++        alias_key = None
++        if hasattr(crypto_get_info, "alias") and crypto_get_info.alias:
++            alias_key = crypto_get_info.alias
++
++        # Ledger ID
++        ledger_id = None
++        if hasattr(crypto_get_info, "ledger_id") and crypto_get_info.ledger_id:
++            ledger_id = crypto_get_info.ledger_id
++
++        # Owner account ID
++        owner_account_id = None
++        if hasattr(crypto_get_info, "owner_account_id"):
++            owner_account_id = crypto_get_info.owner_account_id
++
++        # Ethereum nonce
++        ethereum_nonce = None
++        if hasattr(crypto_get_info, "ethereum_nonce"):
++            ethereum_nonce = crypto_get_info.ethereum_nonce
++
++        # Extract staking info from protobuf
++        staking_info = None
++        if hasattr(crypto_get_info, 'staking_info') and crypto_get_info.HasField('staking_info'):
++            staking_info = AccountInfo._get_staking_info_from_protobuf(crypto_get_info.staking_info)
++
++        # Build the AccountInfo instance
++        account_info = cls(
++            account_id=acct_id,
++            memo=memo,
++            key=key,
++            balance=balance,
++            send_record_threshold=send_record_threshold,
++            receive_record_threshold=receive_record_threshold,
++            receiver_signature_required=receiver_signature_required,
++            expiration_time=expiration_time,
++            auto_renew_period=auto_renew_period,
++            live_hash=live_hash,
++            proxy_account_id=proxy_account_id,
++            proxy_received=proxy_received,
++            token_relationships=token_relationships,
++            max_automatic_token_associations=max_automatic_token_associations,
++            alias_key=alias_key,
++            ledger_id=ledger_id,
++            owner_account_id=owner_account_id,
++            ethereum_nonce=ethereum_nonce,
++            staking_info=staking_info,
++        )
+ 
+         return account_info
+ 
+-    def _to_proto(self) -> CryptoGetInfoResponse.AccountInfo:
+-        """Converts this AccountInfo object to its protobuf representation.
+-        Serializes this `AccountInfo` instance into a
+-        `CryptoGetInfoResponse.AccountInfo` message. This method handles
+-        the conversion of SDK types back to their protobuf equivalents
+-        (e.g., `Hbar` to tinybars, SDK `Timestamp` to proto `Timestamp`).
+-        Note:
+-            SDK fields that are `None` will be serialized as their
+-            default protobuf values (e.g., 0 for integers, False for booleans,
+-            empty strings/bytes).
+-        Returns:
+-            CryptoGetInfoResponse.AccountInfo: The protobuf message
+-                representation of this `AccountInfo` object.
+-        """
+-        return CryptoGetInfoResponse.AccountInfo(
+-            accountID=self.account_id._to_proto() if self.account_id else None,
+-            contractAccountID=self.contract_account_id,
+-            deleted=self.is_deleted,
+-            proxyReceived=self.proxy_received.to_tinybars() if self.proxy_received else None,
+-            key=self.key._to_proto() if self.key else None,
+-            balance=self.balance.to_tinybars() if self.balance else None,
+-            receiverSigRequired=self.receiver_signature_required,
+-            expirationTime=self.expiration_time._to_protobuf() if self.expiration_time else None,
+-            autoRenewPeriod=self.auto_renew_period._to_proto() if self.auto_renew_period else None,
+-            tokenRelationships=[
+-                relationship._to_proto() for relationship in self.token_relationships
+-            ],
+-            memo=self.account_memo,
+-            ownedNfts=self.owned_nfts,
+-            max_automatic_token_associations=self.max_automatic_token_associations,
+-            staking_info=StakingInfo(
+-                staked_account_id=self.staked_account_id._to_proto() if self.staked_account_id else None,
+-                staked_node_id=self.staked_node_id if self.staked_node_id else None,
+-                decline_reward=self.decline_staking_reward
+-            ),
++    def to_proto(self):
++        """Convert to protobuf representation"""
++        from generated_proto.com.hedera.hapi.node.get_account_details import (
++            GetAccountDetailsResponse_pb2,
++        )
++        from generated_proto import (
++            crypto_account_info_pb2,
++            account_balances_pb2,
++            duration_pb2,
++            timestamp_pb2,
+         )
+ 
+-    def __str__(self) -> str:
+-        """Returns a user-friendly string representation of the AccountInfo."""
+-        # Define simple fields to print if they exist
+-        # Format: (value_to_check, label)
+-        simple_fields = [
+-            (self.account_id, "Account ID"),
+-            (self.contract_account_id, "Contract Account ID"),
+-            (self.balance, "Balance"),
+-            (self.key, "Key"),
+-            (self.account_memo, "Memo"),
+-            (self.owned_nfts, "Owned NFTs"),
+-            (self.max_automatic_token_associations, "Max Automatic Token Associations"),
+-            (self.staked_account_id, "Staked Account ID"),
+-            (self.staked_node_id, "Staked Node ID"),
+-            (self.proxy_received, "Proxy Received"),
+-            (self.expiration_time, "Expiration Time"),
+-            (self.auto_renew_period, "Auto Renew Period"),
+-        ]
+-
+-        # Use a list comprehension to process simple fields (reduces complexity score)
+-        lines = [f"{label}: {val}" for val, label in simple_fields if val is not None]
+-
+-        # 2. Handle booleans and special cases explicitly
+-        if self.is_deleted is not None:
+-            lines.append(f"Deleted: {self.is_deleted}")
++        # Create the CryptoGetInfoResponse.AccountInfo protobuf
++        proto = crypto_account_info_pb2.AccountInfo()
+ 
+-        if self.receiver_signature_required is not None:
+-            lines.append(f"Receiver Signature Required: {self.receiver_signature_required}")
+-            
+-        if self.decline_staking_reward is not None:
+-            lines.append(f"Decline Staking Reward: {self.decline_staking_reward}")
++        # Set account ID
++        if self.account_id:
++            proto.account_id.CopyFrom(self.account_id.to_proto())
++
++        # Set key
++        if self.key:
++            if hasattr(self.key, "to_proto_key"):
++                proto.key.CopyFrom(self.key.to_proto_key())
++            else:
++                # For PublicKey objects
++                proto.key.ed25519 = (
++                    self.key.to_bytes_raw() if hasattr(self.key, "to_bytes_raw") else self.key.to_bytes()
++                )
++
++        # Set balance
++        if self.balance is not None:
++            proto.balance = self.balance.to_tinybars()
++
++        # Set send/receive record thresholds
++        if self.send_record_threshold is not None:
++            proto.send_record_threshold.value = self.send_record_threshold.to_tinybars()
++
++        if self.receive_record_threshold is not None:
++            proto.receive_record_threshold.value = self.receive_record_threshold.to_tinybars()
+ 
++        # Set receiver signature required
++        proto.receiver_sig_required = self.receiver_signature_required or False
++
++        # Set expiration time
++        if self.expiration_time:
++            from datetime import datetime
++
++            if isinstance(self.expiration_time, datetime):
++                proto.expiration_time.seconds = int(self.expiration_time.timestamp())
++            elif isinstance(self.expiration_time, int) or isinstance(self.expiration_time, float):
++                proto.expiration_time.seconds = int(self.expiration_time)
++            else:
++                proto.expiration_time.seconds = self.expiration_time
++
++        # Set auto-renew period
++        if self.auto_renew_period:
++            proto.auto_renew_period.seconds = self.auto_renew_period
++
++        # Set proxy account ID if provided
++        if self.proxy_account_id:
++            proto.proxy_account_id.CopyFrom(self.proxy_account_id.to_proto())
++
++        # Set live hash if provided
++        if self.live_hash:
++            proto.live_hash = self.live_hash
++
++        # Set alias key
++        if self.alias_key:
++            proto.alias = self.alias_key
++
++        # Set ledger ID
++        if self.ledger_id:
++            proto.ledger_id = self.ledger_id
++
++        # Set token relationships
+         if self.token_relationships:
+-            lines.append(f"Token Relationships: {len(self.token_relationships)}")
+-
+-        return "\n".join(lines)
+-
+-    def __repr__(self) -> str:
+-        """Returns a string representation of the AccountInfo object for debugging."""
+-        return (
+-            f"AccountInfo("
+-            f"account_id={self.account_id!r}, "
+-            f"contract_account_id={self.contract_account_id!r}, "
+-            f"is_deleted={self.is_deleted!r}, "
+-            f"balance={self.balance!r}, "
+-            f"receiver_signature_required={self.receiver_signature_required!r}, "
+-            f"owned_nfts={self.owned_nfts!r}, "
+-            f"account_memo={self.account_memo!r}, "
+-            f"staked_node_id={self.staked_node_id!r}, "
+-            f"staked_account_id={self.staked_account_id!r}"
+-            f")"
+-        )
+\ No newline at end of file
++            for rel in self.token_relationships:
++                token_rel_proto = rel.to_proto()
++                proto.token_relationships.append(token_rel_proto)
++
++        # Set max automatic token associations
++        if self.max_automatic_token_associations is not None:
++            proto.max_automatic_token_associations = self.max_automatic_token_associations
++
++        # Set memo
++        if self.memo:
++            proto.memo = self.memo
++
++        # Set staking info
++        if self._staking_info is not None:
++            proto.staking_info.CopyFrom(self._staking_info.to_proto())
++
++        # Set proxy received
++        if self.proxy_received is not None:
++            proto.proxy_received = self.proxy_received.to_tinybars()
++
++        # Set owner account ID
++        if self.owner_account_id:
++            proto.owner_account_id = self.owner_account_id
++
++        # Set ethereum nonce
++        if self.ethereum_nonce is not None:
++            proto.ethereum_nonce = self.ethereum_nonce
++
++        return proto
++
++    def __str__(self):
++        return self._to_string()
++
++    def _to_string(self):
++        """Generate a readable string representation of the account info."""
++        parts = [f"Account ID: {self.account_id}"]
++
++        if self.key:
++            parts.append(f"Key: {self.key}")
++        if self.balance is not None:
++            parts.append(f"Balance: {self.balance}")
++        if self.send_record_threshold is not None:
++            parts.append(f"Send Record Threshold: {self.send_record_threshold}")
++        if self.receive_record_threshold is not None:
++            parts.append(f"Receive Record Threshold: {self.receive_record_threshold}")
++        if self.receiver_signature_required is not None:
++            parts.append(f"Receiver Signature Required: {self.receiver_signature_required}")
++        if self.expiration_time is not None:
++            parts.append(f"Expiration Time: {self.expiration_time}")
++        if self.auto_renew_period is not None:
++            parts.append(f"Auto Renew Period: {self.auto_renew_period}")
++        if self.live_hash is not None:
++            parts.append(f"Live Hash: {base64.b64encode(self.live_hash).decode()}")
++        if self.proxy_account_id is not None:
++            parts.append(f"Proxy Account ID: {self.proxy_account_id}")
++        if self.proxy_received is not None:
++            parts.append(f"Proxy Received: {self.proxy_received}")
++        if self.token_relationships:
++            parts.append(f"Token Relationships: {self.token_relationships}")
++        if self.max_automatic_token_associations is not None:
++            parts.append(f"Max Automatic Token Associations: {self.max_automatic_token_associations}")
++        if self.alias_key:
++            parts.append(f"Alias Key: {self.alias_key.hex()}")
++        if self.ledger_id:
++            parts.append(f"Ledger ID: {self.ledger_id.hex()}")
++        if self.owner_account_id:
++            parts.append(f"Owner Account ID: {self.owner_account_id}")
++        if self.ethereum_nonce is not None:
++            parts.append(f"Ethereum Nonce: {self.ethereum_nonce}")
++        if self.memo:
++            parts.append(f"Memo: {self.memo}")
++
++        # Include staking info if available
++        if self._staking_info:
++            parts.append(f"Staking Info: {self._staking_info}")
++
++        return "\n".join(parts)
++
++    def __repr__(self):
++        return self._to_string()

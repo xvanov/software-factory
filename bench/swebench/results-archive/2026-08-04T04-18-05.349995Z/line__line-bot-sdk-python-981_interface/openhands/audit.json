@@ -1,0 +1,38 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "openhands",
+  "audited_at": "2026-08-04T04:17:19.980621+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:45:37.195245+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 855960,
+      "tokens_out": 12520,
+      "cached_input_tokens": 546048,
+      "cost_usd": 0.7339954879999999,
+      "duration_s": 313.311,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.734,
+  "ledger_tokens_in": 855960,
+  "ledger_tokens_out": 12520,
+  "result_cost_usd": 0.734,
+  "prediction_sha256": "0992ffcd51ceda7fabd367486ed8dfaf85594b277b8af562b20347c4491a7c66",
+  "base_commit": "f0d222be1a25553005bff35c2ace82424a683fd9",
+  "stripped_test_paths": [
+    "tests/v3/oauth/test_issue_stateless_channel_token_wrappers.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

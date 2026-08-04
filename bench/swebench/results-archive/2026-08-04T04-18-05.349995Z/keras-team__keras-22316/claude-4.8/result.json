@@ -1,0 +1,95 @@
+{
+  "arm": "claude-4.8",
+  "arm_base": "claude",
+  "instance_id": "keras-team__keras-22316",
+  "repo": "keras-team/keras",
+  "base_commit": "34e55d4561ba2a61bbc72562e88b3704e0a43081",
+  "problem_statement_sha256": "19ccbc1e05bc8e92e3a4f0adbc94eb3ee098d7ef27b3c37fdc2061a7cbc855f1",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-4-8",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-4-8",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "3829408e-5c56-4ab0-9f85-512072085124",
+  "ts": "2026-08-03T23:01:28.732424+00:00",
+  "wall_clock_s": 451.5,
+  "agent_wall_s": 434.9,
+  "num_turns": 23,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 1040376,
+  "tokens_out": 27846,
+  "cached_input_tokens": 992877,
+  "cost_usd": 1.6306,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.0016
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-4-8",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 1.629
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 4.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "keras/src/ops/function_test.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "keras/src/ops/function.py"
+  ],
+  "test_files_stripped": [
+    "keras/src/ops/function_test.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 3895,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-4.8",
+    "instance_id": "keras-team__keras-22316",
+    "image": "swerebench/sweb.eval.x86_64.keras-team_1776_keras-22316@sha256:2a85415e1bcc6b0e03d08d36e0d922d9428d4b4fc0b6299dadf4c36d9f6a6520",
+    "graded_at": "2026-08-03T23:01:28.832545+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 8,
+    "pass_to_pass_declared_count": 8,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 27.2,
+    "log_tail": "9.0.3, pluggy-1.6.0 -- /opt/conda/envs/testbed/bin/python\ncachedir: .pytest_cache\nrootdir: /testbed\nconfigfile: pyproject.toml\nplugins: jaxtyping-0.3.9, cov-7.1.0\ncollecting ... collected 2 items\n\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input PASSED [ 50%]\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain PASSED [100%]\n\n=========================== short test summary info ============================\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain\n============================== 2 passed in 0.03s ===============================\nSWEBENCH_TALLY_c8ab0543c649d3db: fail_to_pass ============================== 2 passed in 0.03s ===============================\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\n============================= test session starts ==============================\nplatform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- /opt/conda/envs/testbed/bin/python\ncachedir: .pytest_cache\nrootdir: /testbed\nconfigfile: pyproject.toml\nplugins: jaxtyping-0.3.9, cov-7.1.0\ncollecting ... collected 8 items\n\nkeras/src/ops/function_test.py::FunctionTest::test_define_and_call PASSED [ 12%]\nkeras/src/ops/function_test.py::FunctionTest::test_dict_io PASSED        [ 25%]\nkeras/src/ops/function_test.py::FunctionTest::test_dynamic_shape_inference PASSED [ 37%]\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_empty_inputs PASSED [ 50%]\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_empty_outputs PASSED [ 62%]\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs PASSED [ 75%]\nkeras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error PASSED [ 87%]\nkeras/src/ops/function_test.py::FunctionTest::test_serialization PASSED  [100%]\n\n=========================== short test summary info ============================\nPASSED keras/src/ops/function_test.py::FunctionTest::test_define_and_call\nPASSED keras/src/ops/function_test.py::FunctionTest::test_dict_io\nPASSED keras/src/ops/function_test.py::FunctionTest::test_dynamic_shape_inference\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_inputs\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_outputs\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs\nPASSED keras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error\nPASSED keras/src/ops/function_test.py::FunctionTest::test_serialization\n============================== 8 passed in 0.08s ===============================\nSWEBENCH_TALLY_c8ab0543c649d3db: pass_to_pass ============================== 8 passed in 0.08s ===============================\n[10 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_c8ab0543c649d3db: RESOLVED\n"
+  }
+}

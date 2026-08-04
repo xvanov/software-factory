@@ -1,0 +1,95 @@
+{
+  "arm": "factory",
+  "instance_id": "hkuds__openharness-217",
+  "repo": "HKUDS/OpenHarness",
+  "base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+  "problem_statement_sha256": "5a1163602919f92cffa9aa885f04b1db190c3071b17eff2cf2fc439225841f5a",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/deepseek-v4-pro",
+    "azure/gpt-5.4"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 2,
+      "cost_usd": 2.6697
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "model_tier": null,
+      "calls": 2,
+      "cost_usd": 0.0338
+    }
+  ],
+  "model_escalated_calls": 2,
+  "ts": "2026-08-03T19:56:18.134259+00:00",
+  "wall_clock_s": 1404.7,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 1,
+  "steps_used": 4,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 2198566,
+  "tokens_out": 26147,
+  "cached_input_tokens": 935168,
+  "cost_usd": 2.7035,
+  "persona_calls": 4,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.1,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/test_auth"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "src/openharness/auth/flows.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_auth/test_flows.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1525,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "hkuds__openharness-217",
+    "image": "swerebench/sweb.eval.x86_64.hkuds_1776_openharness-217@sha256:ad0997cf2e90f0a31f3e6f8fd5cba18ced7f364ae3a62bd59f4c9e1d88b7678d",
+    "graded_at": "2026-08-03T19:56:18.720889+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 2,
+    "pass_to_pass_declared_count": 2,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 5.8,
+    "log_tail": "Checking patch tests/test_auth/test_flows.py...\nApplied patch tests/test_auth/test_flows.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_cf1e39b0bef546f1: OK (red as expected)\nChecking patch src/openharness/auth/flows.py...\nApplied patch src/openharness/auth/flows.py cleanly.\nSWEBENCH_APPLY_cf1e39b0bef546f1: OK\n......                                                                   [100%]\n=========================== short test summary info ============================\nPASSED tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell\nPASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]\nPASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]\nPASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]\nPASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]\nPASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]\n6 passed in 0.01s\nSWEBENCH_TALLY_cf1e39b0bef546f1: fail_to_pass 6 passed in 0.01s\n[8 node outcomes for fail_to_pass -> grade-nodes.log]\n..                                                                       [100%]\n=========================== short test summary info ============================\nPASSED tests/test_auth/test_flows.py::test_open_browser_macos_uses_open_argv\nPASSED tests/test_auth/test_flows.py::test_open_browser_linux_uses_xdg_open_argv\n2 passed in 0.01s\nSWEBENCH_TALLY_cf1e39b0bef546f1: pass_to_pass 2 passed in 0.01s\n[4 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_cf1e39b0bef546f1: RESOLVED\n"
+  }
+}

@@ -1,0 +1,219 @@
+{
+  "meta_version": "1.6",
+  "generated_at": "2026-08-04T04:18:05.349995+00:00",
+  "source": "/home/k/software-factory/.claude/worktrees/agent-aa86c4b178fc6ab5c/bench/swebench/runs",
+  "rows": 95,
+  "arms": [
+    "bare",
+    "claude-4.8",
+    "claude-5",
+    "factory",
+    "openhands"
+  ],
+  "profile": "swe-rebench",
+  "manifest_sha256": "923aef05add32124",
+  "refused": [],
+  "foreign": [
+    {
+      "row": "instance_ansible__ansible-34db57a47f875d11c4068567b9ec7ace174ec4cf-v1055803c3a812189a1133297f7f5468579283f86/bare",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    },
+    {
+      "row": "instance_ansible__ansible-34db57a47f875d11c4068567b9ec7ace174ec4cf-v1055803c3a812189a1133297f7f5468579283f86/factory",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    },
+    {
+      "row": "instance_ansible__ansible-9a21e247786ebd294dafafca1105fcd770ff46c6-v67cdaa49f89b34e42b69d5b7830b3c3ad3d8803f/bare",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    },
+    {
+      "row": "instance_ansible__ansible-9a21e247786ebd294dafafca1105fcd770ff46c6-v67cdaa49f89b34e42b69d5b7830b3c3ad3d8803f/factory",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    },
+    {
+      "row": "instance_ansible__ansible-e22e103cdf8edc56ff7d9b848a58f94f1471a263-v1055803c3a812189a1133297f7f5468579283f86/bare",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    },
+    {
+      "row": "instance_ansible__ansible-e22e103cdf8edc56ff7d9b848a58f94f1471a263-v1055803c3a812189a1133297f7f5468579283f86/factory",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    },
+    {
+      "row": "instance_internetarchive__openlibrary-3aeec6afed9198d734b7ee1293f03ca94ff970e1-v13642507b4fc1f8d234172bf8129942da2c2ca26/bare",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    },
+    {
+      "row": "instance_internetarchive__openlibrary-3aeec6afed9198d734b7ee1293f03ca94ff970e1-v13642507b4fc1f8d234172bf8129942da2c2ca26/factory",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    },
+    {
+      "row": "instance_internetarchive__openlibrary-798055d1a19b8fa0983153b709f460be97e33064-v13642507b4fc1f8d234172bf8129942da2c2ca26/bare",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    },
+    {
+      "row": "instance_internetarchive__openlibrary-798055d1a19b8fa0983153b709f460be97e33064-v13642507b4fc1f8d234172bf8129942da2c2ca26/factory",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    },
+    {
+      "row": "instance_qutebrowser__qutebrowser-0833b5f6f140d04200ec91605f88704dd18e2970-v059c6fdc75567943479b23ebca7c07b5e9a7f34c/bare",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    },
+    {
+      "row": "instance_qutebrowser__qutebrowser-0833b5f6f140d04200ec91605f88704dd18e2970-v059c6fdc75567943479b23ebca7c07b5e9a7f34c/factory",
+      "sha": "0255c86da946722f",
+      "why": "ran under manifest 0255c86da946722f, report is pinned to 923aef05add32124"
+    }
+  ],
+  "superseded": [
+    {
+      "row": "alibaba__opensandbox-816/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "conan-io__conan-19735_interface/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "conan-io__conan-19750/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "harumiweb__exstruct-113/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "hiero-ledger__hiero-sdk-python-1914_interface/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "hkuds__openharness-217/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "jsonpickle__jsonpickle-588/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "keras-team__keras-22316/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "keras-team__keras-22642/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "line__line-bot-sdk-python-981_interface/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "pandas-dev__pandas-63945/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "raullenchai__rapid-mlx-289/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "tox-dev__tox-3931/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "ucfopen__canvasapi-716/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "vyperlang__vyper-4801/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/claude",
+      "why": "run key 'claude' was superseded by 'claude-5' \u2014 the same harness and model, re-measured under a later harness; reporting both would double-count one arm and mix pre- and post-fix evidence"
+    }
+  ],
+  "instances": {
+    "alibaba__opensandbox-816": {
+      "created_at": "2026-04-29 07:35:36"
+    },
+    "conan-io__conan-19735_interface": {
+      "created_at": "2026-03-10 10:33:02"
+    },
+    "conan-io__conan-19750": {
+      "created_at": "2026-03-13 10:20:23"
+    },
+    "getmoto__moto-9841": {
+      "created_at": "2026-03-09 23:11:49"
+    },
+    "harumiweb__exstruct-113": {
+      "created_at": "2026-03-21 08:53:23"
+    },
+    "hiero-ledger__hiero-sdk-python-1914_interface": {
+      "created_at": "2026-03-06 14:12:44"
+    },
+    "hkuds__openharness-217": {
+      "created_at": "2026-04-30 00:28:27"
+    },
+    "idaholab__montepy-933_interface": {
+      "created_at": "2026-03-20 15:47:06"
+    },
+    "jsonpickle__jsonpickle-588": {
+      "created_at": "2026-01-12 16:20:27"
+    },
+    "keras-team__keras-22316": {
+      "created_at": "2026-03-01 00:54:12"
+    },
+    "keras-team__keras-22642": {
+      "created_at": "2026-04-06 21:57:28"
+    },
+    "line__line-bot-sdk-python-981_interface": {
+      "created_at": "2026-04-01 07:44:57"
+    },
+    "pandas-dev__pandas-63945": {
+      "created_at": "2026-01-30 04:30:20"
+    },
+    "pyinfra-dev__pyinfra-1665": {
+      "created_at": "2026-04-14 07:06:21"
+    },
+    "raullenchai__rapid-mlx-289": {
+      "created_at": "2026-05-07 19:33:12"
+    },
+    "tox-dev__tox-3931": {
+      "created_at": "2026-05-01 15:37:40"
+    },
+    "ucfopen__canvasapi-716": {
+      "created_at": "2026-03-31 19:11:13"
+    },
+    "vyperlang__vyper-4801": {
+      "created_at": "2026-01-03 21:33:22"
+    },
+    "zauberzeug__nicegui-5858": {
+      "created_at": "2026-03-09 16:34:24"
+    }
+  },
+  "sweeps": [
+    "sweep-bare.json",
+    "sweep-factory.json"
+  ],
+  "extras": [
+    "selftest.json"
+  ],
+  "log_files": 0
+}

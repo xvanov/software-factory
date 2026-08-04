@@ -1,0 +1,24 @@
+diff --git a/conan/internal/api/detect/detect_api.py b/conan/internal/api/detect/detect_api.py
+index 6148d9c..258331b 100644
+--- a/conan/internal/api/detect/detect_api.py
++++ b/conan/internal/api/detect/detect_api.py
+@@ -620,11 +620,16 @@ def detect_emcc_compiler(compiler_exe="emcc"):
+         ret, out = detect_runner(f'"{compiler_exe}" --version')
+         if ret != 0:
+             return None, None, None
+-        first_line = out.splitlines()[0]
+-        if "Emscripten" not in first_line:
++        lines = out.splitlines()
++        emscripten_line = None
++        for line in lines:
++            if "Emscripten" in line:
++                emscripten_line = line
++                break
++        if not emscripten_line:
+             return None, None, None
+         compiler = "emcc"
+-        version_match = re.search(r"[0-9]+\.[0-9]+\.[0-9]+", first_line)
++        version_match = re.search(r"[0-9]+\.[0-9]+\.[0-9]+", emscripten_line)
+         if version_match:
+             version = version_match.group()
+             ConanOutput(scope="detect_api").info("Found %s %s" % (compiler, version))

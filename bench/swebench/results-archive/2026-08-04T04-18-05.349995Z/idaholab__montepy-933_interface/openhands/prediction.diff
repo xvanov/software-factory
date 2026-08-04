@@ -1,0 +1,51 @@
+diff --git a/montepy/cell.py b/montepy/cell.py
+index 18b4f9f..5c7e0c6 100644
+--- a/montepy/cell.py
++++ b/montepy/cell.py
+@@ -255,10 +255,14 @@ class Cell(Numbered_MCNP_Object):
+ 
+     @universe.setter
+     def universe(self, value):
+-        if not isinstance(value, Universe):
++        if not isinstance(value, (Universe, type(None))):
+             raise TypeError("universe must be set to a Universe")
+         self._universe.universe = value
+ 
++    @universe.deleter
++    def universe(self):
++        self._universe.universe = None
++
+     @property
+     def fill(self):
+         """the Fill object representing how this cell is filled.
+@@ -304,7 +308,7 @@ class Cell(Numbered_MCNP_Object):
+             True if this cell has been marked as not being truncated by
+             the parent filled cell.
+         """
+-        if self.universe.number == 0:
++        if self.universe is not None and self.universe.number == 0:
+             return False
+         return self._universe.not_truncated
+ 
+@@ -312,7 +316,7 @@ class Cell(Numbered_MCNP_Object):
+     def not_truncated(self, value):
+         if not isinstance(value, bool):
+             raise TypeError("not_truncated_by_parent must be a bool")
+-        if self.universe.number == 0 and value:
++        if self.universe is not None and self.universe.number == 0 and value:
+             raise ValueError("can't specify if cell is truncated for universe 0")
+         self._universe._not_truncated = value
+ 
+diff --git a/montepy/data_inputs/universe_input.py b/montepy/data_inputs/universe_input.py
+index 4146039..8aa690a 100644
+--- a/montepy/data_inputs/universe_input.py
++++ b/montepy/data_inputs/universe_input.py
+@@ -103,7 +103,7 @@ class UniverseInput(CellModifierInput):
+         if self.in_cell_block:
+             return self.universe is not None and self.universe.number != 0
+ 
+-    @make_prop_pointer("_universe", Universe)
++    @make_prop_pointer("_universe", (Universe, type(None)), deletable=True)
+     def universe(self):
+         if self.in_cell_block:
+             return self._universe
