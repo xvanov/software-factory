@@ -1,0 +1,37 @@
+diff --git a/src/pyinfra/connectors/util.py b/src/pyinfra/connectors/util.py
+index ab9d15b..86fbcd8 100644
+--- a/src/pyinfra/connectors/util.py
++++ b/src/pyinfra/connectors/util.py
+@@ -235,15 +235,30 @@ def write_stdin(stdin, buffer):
+ def remove_any_sudo_askpass_file(host) -> None:
+     sudo_askpass_path = host.connector_data.get("sudo_askpass_path")
+     if sudo_askpass_path:
+-        host.run_shell_command(StringCommand("rm", "-f", QuoteString(sudo_askpass_path)))
++        _try_remove_askpass_file(host, sudo_askpass_path)
+         host.connector_data["sudo_askpass_path"] = None
+ 
+     su_askpass_path = host.connector_data.get("su_askpass_path")
+     if su_askpass_path:
+-        host.run_shell_command(StringCommand("rm", "-f", QuoteString(su_askpass_path)))
++        _try_remove_askpass_file(host, su_askpass_path)
+         host.connector_data["su_askpass_path"] = None
+ 
+ 
++def _try_remove_askpass_file(host, askpass_path) -> None:
++    # The host may already be disconnected (e.g. it is rebooting), in which case
++    # running a shell command will fail. The askpass file lives in a temporary
++    # directory and will be cleaned up by the reboot anyway, so swallow any error
++    # and let the stored path be cleared regardless.
++    try:
++        host.run_shell_command(StringCommand("rm", "-f", QuoteString(askpass_path)))
++    except Exception as e:  # noqa: BLE001
++        logger.warning(
++            "Could not remove askpass file %s: %s",
++            askpass_path,
++            e,
++        )
++
++
+ @memoize
+ def _show_use_su_login_warning() -> None:
+     logger.warning(

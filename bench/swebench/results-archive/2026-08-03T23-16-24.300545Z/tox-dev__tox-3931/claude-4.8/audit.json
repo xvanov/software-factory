@@ -1,0 +1,32 @@
+{
+  "instance_id": "tox-dev__tox-3931",
+  "arm": "claude-4.8",
+  "audited_at": "2026-08-03T22:54:11.639751+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: claude-transcript.ndjson:11 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:34 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:37 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:39 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.7353,
+  "ledger_tokens_in": 462717,
+  "ledger_tokens_out": 5430,
+  "result_cost_usd": 0.7353,
+  "prediction_sha256": "fa9e74f9dbee7212a30c74bff66913ab30dfb68aed515f89a8cdc011f6818775",
+  "base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+  "stripped_test_paths": [
+    "tests/session/cmd/test_schema.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: claude-transcript.ndjson:11 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:34 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:37 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:39 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

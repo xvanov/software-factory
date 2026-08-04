@@ -1,0 +1,77 @@
+diff --git a/src/tox/tox.schema.json b/src/tox/tox.schema.json
+index e2b5b38..c06da7d 100644
+--- a/src/tox/tox.schema.json
++++ b/src/tox/tox.schema.json
+@@ -400,8 +400,15 @@
+           "deprecated": true
+         },
+         "deps": {
+-          "type": "string",
+-          "description": "python dependencies with optional version specifiers, as specified by PEP-440"
++          "type": [
++            "string",
++            "array"
++          ],
++          "description": "python dependencies with optional version specifiers, as specified by PEP-440, or a requirements file path",
++          "items": {
++            "type": "string"
++          },
++          "minItems": 1
+         },
+         "dependency_groups": {
+           "type": "array",
+@@ -553,7 +560,9 @@
+               "type": "boolean"
+             }
+           },
+-          "required": ["replace"],
++          "required": [
++            "replace"
++          ],
+           "additionalProperties": false
+         },
+         {
+@@ -585,14 +594,19 @@
+               "type": "boolean"
+             }
+           },
+-          "required": ["replace", "of"],
++          "required": [
++            "replace",
++            "of"
++          ],
+           "additionalProperties": false
+         }
+       ]
+     },
+     "factor_range_dict": {
+       "type": "object",
+-      "required": ["prefix"],
++      "required": [
++        "prefix"
++      ],
+       "properties": {
+         "prefix": {
+           "type": "string"
+@@ -612,7 +626,9 @@
+       "minProperties": 1,
+       "maxProperties": 1,
+       "not": {
+-        "required": ["prefix"]
++        "required": [
++          "prefix"
++        ]
+       },
+       "additionalProperties": {
+         "type": "array",
+@@ -645,7 +661,9 @@
+         },
+         {
+           "type": "object",
+-          "required": ["product"],
++          "required": [
++            "product"
++          ],
+           "properties": {
+             "product": {
+               "type": "array",

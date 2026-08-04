@@ -1,0 +1,26 @@
+{
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "arm": "claude-4.8",
+  "audited_at": "2026-08-03T22:53:57.124155+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: claude-transcript.ndjson:44 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.4338,
+  "ledger_tokens_in": 330462,
+  "ledger_tokens_out": 4626,
+  "result_cost_usd": 0.4338,
+  "prediction_sha256": "e46c90b8ff8cf499109c38003a91209ce7b0660d65f3ffd49a982ec7392ecf75",
+  "base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+  "stripped_test_paths": [
+    "tests/test_connectors/test_util.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: claude-transcript.ndjson:44 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

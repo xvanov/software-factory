@@ -1,0 +1,131 @@
+diff --git a/CHANGES.rst b/CHANGES.rst
+index de3c24c..bceee2a 100644
+--- a/CHANGES.rst
++++ b/CHANGES.rst
+@@ -21,6 +21,10 @@ v5.0.0
+     * Fix bug with ``numpy`` ufuncs not being roundtripped properly. (#584) (+585)
+     * Fix bug where classes with ``__slots__`` or a ``__getstate__`` method using
+       ``__slots__`` wouldn't respect the ``_jsonpickle_exclude`` attribute. (#586) (+587)
++    * **Breaking Change**: The ``collections.defaultdict`` factory is now encoded under
++      the ``py/default_factory`` tag instead of a plain ``default_factory`` entry, which
++      silently overwrote dict entries and attributes of the same name. Pickles written by
++      older versions of jsonpickle continue to decode as before. (#588)
+ 
+ v4.1.1
+ ======
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..0746c09 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -837,12 +837,17 @@ class Pickler:
+                 flatten(k, v, data)
+ 
+         # the collections.defaultdict protocol
+-        if hasattr(obj, "default_factory") and callable(obj.default_factory):
++        if hasattr(obj, "default_factory"):
+             factory = obj.default_factory
+-            if util._is_type(factory):
++            if not callable(factory):
++                # e.g. collections.defaultdict() has a "default_factory" of
++                # None.  Record its absence so that the unpickler does not
++                # mistake a dict entry named "default_factory" for the factory.
++                value: Optional[Dict[str, Any]] = None
++            elif util._is_type(factory):
+                 # Reference the class/type
+                 # in this case it's Dict[str, str]
+-                value: Dict[str, str] = _mktyperef(factory)
++                value: Dict[str, str] = _mktyperef(factory)  # type: ignore[no-redef]
+             else:
+                 # The factory is not a type and could reference e.g. functions
+                 # or even the object instance itself, which creates a cycle.
+@@ -856,7 +861,15 @@ class Pickler:
+                     # Break the cycle by emitting a reference.
+                     # in this case it's Dict[str, int]
+                     value: Dict[str, int] = self._getref(factory)  # type: ignore[no-redef]
+-            data["default_factory"] = value
++            if self.unpicklable:
++                # The factory is stored under a reserved tag so that dict
++                # entries named "default_factory" are not overwritten.
++                data[tags.DEFAULT_FACTORY] = value
++            elif value is not None and "default_factory" not in data:
++                # When we are not producing picklable output we cannot use
++                # reserved tags, so the factory is only reported when it does
++                # not clobber an entry of the same name.
++                data["default_factory"] = value
+ 
+         # Sub-classes of dict
+         if hasattr(obj, "__dict__") and self.unpicklable and obj != obj.__dict__:
+diff --git a/jsonpickle/tags.py b/jsonpickle/tags.py
+index 537aae4..447f3b1 100644
+--- a/jsonpickle/tags.py
++++ b/jsonpickle/tags.py
+@@ -10,6 +10,7 @@ that need to be specially handled.
+ BYTES: str = "py/bytes"
+ B64: str = "py/b64"
+ B85: str = "py/b85"
++DEFAULT_FACTORY: str = "py/default_factory"
+ FUNCTION: str = "py/function"
+ ID: str = "py/id"
+ INITARGS: str = "py/initargs"
+@@ -33,6 +34,7 @@ TYPE: str = "py/type"
+ # All reserved tag names
+ RESERVED: set[str] = {
+     BYTES,
++    DEFAULT_FACTORY,
+     FUNCTION,
+     ID,
+     INITARGS,
+diff --git a/jsonpickle/unpickler.py b/jsonpickle/unpickler.py
+index 7a6f2ba..f1421d9 100644
+--- a/jsonpickle/unpickler.py
++++ b/jsonpickle/unpickler.py
+@@ -219,6 +219,29 @@ def has_tag(obj: Any, tag: str) -> bool:
+     return type(obj) is dict and tag in obj
+ 
+ 
++#: Tags used by the pickler when it encodes a collections.defaultdict factory.
++_FACTORY_TAGS: tuple[str, ...] = (
++    tags.TYPE,
++    tags.OBJECT,
++    tags.ID,
++    tags.FUNCTION,
++    tags.REF,
++    tags.REPR,
++)
++
++
++def _is_factory(obj: Any) -> bool:
++    """Was this value encoded from a callable, e.g. a "default_factory"?
++
++    >>> _is_factory({'py/type': 'builtins.int'})
++    True
++    >>> _is_factory(42)
++    False
++
++    """
++    return type(obj) is dict and any(tag in obj for tag in _FACTORY_TAGS)
++
++
+ def getargs(obj: Dict[str, Any], classes: Optional[Dict[str, Type[Any]]] = None) -> Any:
+     """Return arguments suitable for __new__()"""
+     # Let saved newargs take precedence over everything
+@@ -612,10 +635,19 @@ class Unpickler:
+         return self._mkref(obj)
+ 
+     def _loadfactory(self, obj: Dict[str, Any]) -> Optional[Any]:
++        if tags.DEFAULT_FACTORY in obj:
++            return self._restore(obj.pop(tags.DEFAULT_FACTORY))
++        # Backwards compatibility with jsonpickle < 5.0.0, which stored the
++        # collections.defaultdict factory under a plain "default_factory" entry.
++        # That name is ambiguous, so only values that were encoded from a
++        # callable are treated as a factory. Anything else is a regular
++        # dict entry, or attribute, that must be preserved. (#588)
+         try:
+             default_factory = obj["default_factory"]
+         except KeyError:
+             return None
++        if not _is_factory(default_factory):
++            return None
+         del obj["default_factory"]
+         return self._restore(default_factory)
+ 

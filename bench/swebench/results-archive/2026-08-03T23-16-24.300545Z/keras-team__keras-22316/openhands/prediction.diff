@@ -1,0 +1,123 @@
+diff --git a/_debug.py b/_debug.py
+new file mode 100644
+index 0000000..cb3dff3
+--- /dev/null
++++ b/_debug.py
+@@ -0,0 +1,28 @@
++import keras.src.ops.function as fmod
++from keras.src.backend.common import keras_tensor
++from keras.src.ops import numpy as knp
++
++# Monkey-patch to add debugging
++orig = fmod._build_map_helper
++def debug_helper(tensor, inputs, finished_nodes, nodes_in_progress, nodes_in_decreasing_depth, operation_indices):
++    name = getattr(tensor, 'name', str(tensor))
++    inp = [n.operation.name for n in nodes_in_progress]
++    fin = len(finished_nodes)
++    print(f'ENTER: tensor={name}, in_progress={inp}, finished={fin}')
++    result = orig(tensor, inputs, finished_nodes, nodes_in_progress, nodes_in_decreasing_depth, operation_indices)
++    node_names = [n.operation.name for n in nodes_in_decreasing_depth]
++    print(f'EXIT: tensor={name}, nodes={node_names}')
++    return result
++fmod._build_map_helper = debug_helper
++
++x1 = keras_tensor.KerasTensor((2, 3))
++x2 = keras_tensor.KerasTensor((2, 3))
++x = knp.add(x1, x2)
++y1 = x * 3
++y2 = x**2
++
++try:
++    nodes, indices = fmod._build_map([x1, x2], [y1, y2])
++    print('Final nodes:', [n.operation.name for n in nodes])
++except Exception as e:
++    print('Error:', e)
+\ No newline at end of file
+diff --git a/_debug2.py b/_debug2.py
+new file mode 100644
+index 0000000..3f9e858
+--- /dev/null
++++ b/_debug2.py
+@@ -0,0 +1,41 @@
++import keras.src.ops.function as fmod
++from keras.src.backend.common import keras_tensor
++from keras.src.ops import numpy as knp
++import tree
++
++# Monkey-patch to add debugging
++orig = fmod._build_map_helper
++def debug_helper(tensor, inputs, finished_nodes, nodes_in_progress, nodes_in_decreasing_depth, operation_indices):
++    t_name = repr(tensor)[:80]
++    i_name = repr(inputs)[:80]
++    inp = [n.operation.name for n in nodes_in_progress]
++    fin = list(finished_nodes)
++    fin_names = [n.operation.name if hasattr(n, 'operation') else str(n) for n in fin]
++    print(f'ENTER: tensor({type(tensor).__name__})={t_name}')
++    print(f'       inputs({type(inputs).__name__})={i_name}')
++    print(f'       in_progress={inp}, finished={fin_names}')
++    result = orig(tensor, inputs, finished_nodes, nodes_in_progress, nodes_in_decreasing_depth, operation_indices)
++    node_names = [n.operation.name for n in nodes_in_decreasing_depth]
++    print(f'EXIT:  nodes={node_names}')
++    return result
++fmod._build_map_helper = debug_helper
++
++x1 = keras_tensor.KerasTensor((2, 3))
++x2 = keras_tensor.KerasTensor((2, 3))
++x = knp.add(x1, x2)
++y1 = x * 3
++y2 = x**2
++
++print("x1 history:", getattr(x1, '_keras_history', None))
++print("x2 history:", getattr(x2, '_keras_history', None))
++print("x history:", getattr(x, '_keras_history', None))
++print()
++
++try:
++    nodes, indices = fmod._build_map([x1, x2], [y1, y2])
++    print('Final nodes:', [n.operation.name for n in nodes])
++    print('Indices:', indices)
++except Exception as e:
++    print('Error:', e)
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file
+diff --git a/keras/src/ops/function.py b/keras/src/ops/function.py
+index 8d3c524..98fe18b 100644
+--- a/keras/src/ops/function.py
++++ b/keras/src/ops/function.py
+@@ -301,6 +301,11 @@ def map_graph(inputs, outputs):
+         # The "depth" of a node is the max of the depths
+         # of all nodes it is connected to + 1.
+         for node_dep in node.parent_nodes:
++            if make_node_key(
++                node_dep.operation,
++                node_dep.operation._inbound_nodes.index(node_dep),
++            ) not in network_nodes:
++                continue
+             previous_depth = nodes_depths.get(node_dep, 0)
+             nodes_depths[node_dep] = max(depth + 1, previous_depth)
+ 
+@@ -310,10 +315,12 @@ def map_graph(inputs, outputs):
+     for input_t in inputs:
+         input_operation = input_t._keras_history[0]
+         if input_operation and input_operation not in operations_depths:
+-            operations_depths[input_operation] = 0
+-            operation_indices[input_operation] = -1
+-            nodes_depths[input_operation._inbound_nodes[0]] = 0
+-            network_nodes.add(make_node_key(input_operation, 0))
++            node = input_operation._inbound_nodes[0]
++            if node.is_input:
++                operations_depths[input_operation] = 0
++                operation_indices[input_operation] = -1
++                nodes_depths[node] = 0
++                network_nodes.add(make_node_key(input_operation, 0))
+ 
+     # Build a dict {depth: list of nodes with this depth}
+     nodes_by_depth = collections.defaultdict(list)
+@@ -465,4 +472,5 @@ def _build_map_helper(
+ 
+     finished_nodes.add(node)
+     nodes_in_progress.remove(node)
+-    nodes_in_decreasing_depth.append(node)
++    if node.is_input or tensor not in tree.flatten(inputs):
++        nodes_in_decreasing_depth.append(node)

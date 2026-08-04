@@ -76,10 +76,15 @@ Opus 26 min. At any nonzero engineer-attention cost, cheap-and-slow loses.
 **1. The runtime smoke gate.** Nothing merges on green unit tests alone; `smoke-green`
 boots the PR's own code on an isolated port and drives the core journey. The 2026 canon
 converges on exactly this ("a feature is done when it runs live") but few systems
-implement it as a merge blocker. Our own benchmark shows why it matters: Claude Code
-failed t3 and t5 by declaring done with its own new tests red (rubric 0.88–0.93, gates
-FAIL). Our chain structurally cannot do that. **This is the single most valuable thing
-in the repo.**
+implement it as a merge blocker. It has caught real green-but-unbootable output, which
+is why it exists.
+
+**Correction 2026-08-04.** This section used to justify the gate with "Claude Code
+failed t3 and t5 by declaring done with its own new tests red". **That claim is
+falsified** — the recovered CLI transcripts show t3 ending on three consecutive
+`460 passed` runs and t5 on `446 passed`. See `bench/CAMPAIGN-2026-07-17.md`'s
+superseded-by header. Keep the gate on its own merits; do not justify it with a
+Claude failure that did not happen.
 
 **2. Parallel-agent conflict handling.** A study of 33,596 agent PRs across 2,807 repos
 found **79.4% opened concurrently with another agent PR**, replayed conflict rates of
@@ -126,11 +131,20 @@ insight. We got there first.
   nouns. Sources here are cited by **URL**, not by rendered title, for that reason.
 - Model names post-dating May 2026 (Claude Mythos 5, GPT-5.6 Sol, Kimi K3, Muse Spark,
   Inkling) are reported as sourced, not independently confirmed.
-- Our own benchmark's caveat stands and matters: **one-shot `claude -p` is the weakest
-  reasonable Claude arm.** The cost advantage measured in `bench/CAMPAIGN-2026-07-17.md`
-  is against a thin harness, not against a well-harnessed frontier agent. A subagent
-  planner/coder/verifier arm is still untested, and the Claw-SWE-Bench data above
-  implies it would close much of the gap.
+- **The "we beat Claude Code cheaply" caveat is now moot — it has been measured, and we
+  do not.** `bench/CAMPAIGN-2026-07-17.md` is superseded. Externally graded on
+  SWE-rebench with a hidden oracle (2026-08-04, n=19, k=1): Claude Code on
+  `claude-opus-5` resolves **79%** [54%, 94%], the factory chain **37%** [16%, 62%],
+  paired McNemar exact **p=0.008**. Worse for the thesis, a single OpenHands agent on
+  the factory's *own* model resolves **44%** [20%, 70%] — the chain shows **no
+  measurable lift** over it (p=0.625) at 2.3× the cost per resolved instance. What
+  produced the apparent lift was tooling, not orchestration (44% vs 6% for a no-tools
+  loop, p=0.031). Full result: `bench/swebench/results.md`.
+- **Contamination is not the explanation for Claude's lead.** `claude-opus-4-8`
+  (published cutoff Jan 2026) scores 74% against `claude-opus-5`'s 79% on the same
+  harness, p=1.000, even though all 19 instances predate opus-5's cutoff. The relevant
+  caveat is the opposite one: `factory` vs any `claude-*` varies harness **and** model,
+  so it is a reference point, not a scaffold deficit.
 
 ## What the field says is unsolved — i.e. don't expect to fix these
 

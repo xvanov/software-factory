@@ -1,0 +1,13 @@
+{
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:34:24.917238+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 4.9412,
+  "ledger_tokens_in": 4461461,
+  "ledger_tokens_out": 62922,
+  "result_cost_usd": 4.9412
+}

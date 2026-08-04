@@ -1,0 +1,60 @@
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..a12b1eb 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -856,7 +856,7 @@ class Pickler:
+                     # Break the cycle by emitting a reference.
+                     # in this case it's Dict[str, int]
+                     value: Dict[str, int] = self._getref(factory)  # type: ignore[no-redef]
+-            data["default_factory"] = value
++            data[tags.DEFAULT_FACTORY] = value
+ 
+         # Sub-classes of dict
+         if hasattr(obj, "__dict__") and self.unpicklable and obj != obj.__dict__:
+diff --git a/jsonpickle/tags.py b/jsonpickle/tags.py
+index 537aae4..ae4ba72 100644
+--- a/jsonpickle/tags.py
++++ b/jsonpickle/tags.py
+@@ -10,6 +10,7 @@ that need to be specially handled.
+ BYTES: str = "py/bytes"
+ B64: str = "py/b64"
+ B85: str = "py/b85"
++DEFAULT_FACTORY: str = "py/dft_factory"
+ FUNCTION: str = "py/function"
+ ID: str = "py/id"
+ INITARGS: str = "py/initargs"
+@@ -33,6 +34,7 @@ TYPE: str = "py/type"
+ # All reserved tag names
+ RESERVED: set[str] = {
+     BYTES,
++    DEFAULT_FACTORY,
+     FUNCTION,
+     ID,
+     INITARGS,
+diff --git a/jsonpickle/unpickler.py b/jsonpickle/unpickler.py
+index 7a6f2ba..efc610c 100644
+--- a/jsonpickle/unpickler.py
++++ b/jsonpickle/unpickler.py
+@@ -612,12 +612,16 @@ class Unpickler:
+         return self._mkref(obj)
+ 
+     def _loadfactory(self, obj: Dict[str, Any]) -> Optional[Any]:
+-        try:
+-            default_factory = obj["default_factory"]
+-        except KeyError:
+-            return None
+-        del obj["default_factory"]
+-        return self._restore(default_factory)
++        # Check for the new reserved key first, then fall back to the
++        # legacy key name for backward compatibility with older encodings.
++        for key in (tags.DEFAULT_FACTORY, "default_factory"):
++            try:
++                default_factory = obj[key]
++            except KeyError:
++                continue
++            del obj[key]
++            return self._restore(default_factory)
++        return None
+ 
+     def _process_missing(self, class_name: str) -> None:
+         # most common case comes first

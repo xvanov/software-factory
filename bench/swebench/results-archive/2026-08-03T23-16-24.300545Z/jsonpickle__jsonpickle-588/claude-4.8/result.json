@@ -1,0 +1,95 @@
+{
+  "arm": "claude-4.8",
+  "arm_base": "claude",
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "repo": "jsonpickle/jsonpickle",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "problem_statement_sha256": "e7d6a3edc32ba6f4ef4ebc10a28b9b9118eda5058b8cc3450bb5e4940970d124",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-4-8",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-4-8",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "04f694bb-1fee-4b48-91a0-76b96513d6f2",
+  "ts": "2026-08-03T23:11:55.305443+00:00",
+  "wall_clock_s": 599.0,
+  "agent_wall_s": 591.6,
+  "num_turns": 61,
+  "turn_cap": 60,
+  "termination": "turn-cap",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 3349911,
+  "tokens_out": 39300,
+  "cached_input_tokens": 3274528,
+  "cost_usd": 3.1008,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.003
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-4-8",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 3.0978
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.2,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/object_test.py"
+    ],
+    "exit_code": 0
+  },
+  "error": "claude CLI reported is_error (error_max_turns)",
+  "factory_says_green": null,
+  "files_changed": [
+    "jsonpickle/pickler.py"
+  ],
+  "test_files_stripped": [
+    "tests/object_test.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 3542,
+  "attempt": 1,
+  "budget_exhausted": true,
+  "budget_exhausted_reason": "turn-cap (599.0s wall); recorded error: claude CLI reported is_error (error_max_turns)",
+  "grade": {
+    "arm": "claude-4.8",
+    "instance_id": "jsonpickle__jsonpickle-588",
+    "image": "swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588@sha256:0eae843824198c5cfb0b6bb25b5c9b50c1b415ea7295867a314a3a8ce65c7fb4",
+    "graded_at": "2026-08-03T23:11:55.410340+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 82,
+    "pass_to_pass_declared_count": 82,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 9.7,
+    "log_tail": "t_test.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_8e7fb55fe9edff3f: OK (red as expected)\nChecking patch jsonpickle/pickler.py...\nApplied patch jsonpickle/pickler.py cleanly.\nSWEBENCH_APPLY_8e7fb55fe9edff3f: OK\n.                                                                        [100%]\n=========================== short test summary info ============================\nPASSED tests/object_test.py::test_defaultdict_preserves_default_factory_key\n1 passed in 0.04s\nSWEBENCH_TALLY_8e7fb55fe9edff3f: fail_to_pass 1 passed in 0.04s\n[3 node outcomes for fail_to_pass -> grade-nodes.log]\nPASSED tests/object_test.py::test_defaultdict_subclass_with_class_as_default_factory\nPASSED tests/object_test.py::test_posix_stat_result\nPASSED tests/object_test.py::test_repr_using_jsonpickle\nPASSED tests/object_test.py::test_broken_repr_dict_key\nPASSED tests/object_test.py::test_ordered_dict_python3\nPASSED tests/object_test.py::test_ordered_dict\nPASSED tests/object_test.py::test_ordered_dict_unpicklable\nPASSED tests/object_test.py::test_ordered_dict_reduces\nPASSED tests/object_test.py::test_int_keys_in_object_with_getstate_only\nPASSED tests/object_test.py::test_ordered_dict_int_keys\nPASSED tests/object_test.py::test_ordered_dict_nested\nPASSED tests/object_test.py::test_deque_roundtrip\nPASSED tests/object_test.py::test_namedtuple_roundtrip\nPASSED tests/object_test.py::test_counter_roundtrip\nPASSED tests/object_test.py::test_counter_roundtrip_with_keys\nPASSED tests/object_test.py::test_list_with_fd\nPASSED tests/object_test.py::test_thing_with_fd\nPASSED tests/object_test.py::test_dict_with_fd\nPASSED tests/object_test.py::test_thing_with_lamda\nPASSED tests/object_test.py::test_newstyleslots\nPASSED tests/object_test.py::test_newstyleslots_inherited\nPASSED tests/object_test.py::test_newstyleslots_inherited_deleted_attr\nPASSED tests/object_test.py::test_newstyleslots_with_children\nPASSED tests/object_test.py::test_newstyleslots_with_children_inherited\nPASSED tests/object_test.py::test_newstyleslots_iterable\nPASSED tests/object_test.py::test_newstyleslots_string_slot\nPASSED tests/object_test.py::test_enum34_nested\nPASSED tests/object_test.py::test_enum_references\nPASSED tests/object_test.py::test_enum_unpicklable\nPASSED tests/object_test.py::test_enum_int_key_and_value\nPASSED tests/object_test.py::test_enum_string_key_and_value\nPASSED tests/object_test.py::test_int_enum_with_auto_value\nPASSED tests/object_test.py::test_multiple_string_enums_when_make_refs_is_false\nPASSED tests/object_test.py::test_unicode_mixin\nPASSED tests/object_test.py::test_datetime_with_tz_copies_refs\nPASSED tests/object_test.py::test_with_exclude\nPASSED tests/object_test.py::test_contained_exclusion\nPASSED tests/object_test.py::test_exclude_slots\nPASSED tests/object_test.py::test_exclude_getstate_from_slots\n82 passed in 0.11s\nSWEBENCH_TALLY_8e7fb55fe9edff3f: pass_to_pass 82 passed in 0.11s\n[84 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_8e7fb55fe9edff3f: RESOLVED\n"
+  }
+}

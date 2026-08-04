@@ -1,0 +1,35 @@
+diff --git a/vyper/venom/passes/sccp/eval.py b/vyper/venom/passes/sccp/eval.py
+index 808ca41..2f2d8a3 100644
+--- a/vyper/venom/passes/sccp/eval.py
++++ b/vyper/venom/passes/sccp/eval.py
+@@ -146,6 +146,7 @@ ARITHMETIC_OPS: dict[str, Callable[[list[IRLiteral]], int]] = {
+     "add": _wrap_binop(operator.add),
+     "sub": _wrap_binop(operator.sub),
+     "mul": _wrap_binop(operator.mul),
++    "smul": _wrap_binop(operator.mul),
+     "div": _wrap_binop(evm_div),
+     "sdiv": _wrap_signed_binop(evm_div),
+     "mod": _wrap_binop(evm_mod),
+diff --git a/vyper/venom/venom_to_assembly.py b/vyper/venom/venom_to_assembly.py
+index dde3d40..db75157 100644
+--- a/vyper/venom/venom_to_assembly.py
++++ b/vyper/venom/venom_to_assembly.py
+@@ -78,7 +78,6 @@ _ONE_TO_ONE_INSTRUCTIONS = frozenset(
+         "sub",
+         "mul",
+         "div",
+-        "smul",
+         "sdiv",
+         "mod",
+         "smod",
+@@ -624,6 +623,10 @@ class VenomCompiler:
+             pass
+         elif opcode == "sha3":
+             assembly.append("SHA3")
++        elif opcode == "smul":
++            # smul (signed mul) maps to MUL since signed and unsigned
++            # multiplication are the same operation in EVM.
++            assembly.append("MUL")
+         elif opcode == "assert":
+             assembly.extend(["ISZERO", PUSHLABEL(Label("revert")), "JUMPI"])
+         elif opcode == "assert_unreachable":

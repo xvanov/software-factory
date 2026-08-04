@@ -1,0 +1,64 @@
+{
+  "instance_id": "alibaba__opensandbox-816",
+  "arm": "factory",
+  "audited_at": "2026-08-03T19:46:52.566644+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 2 call(s) but only 1 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T19:38:58.234944+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 349.867,
+      "success": 0,
+      "error": "sandbox run raised: ConversationRunError('Conversation run failed for id=88d2cb8d-a7de-443f-b958-cb66afcfe6c6: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\\n\\nConversation logs are stored at: /tmp/factory-oh-traj-[REDACTED]\\n\\nTo help debug this issue, please file a bug report at:\\n  https://github.com/OpenHands/software-agent-sdk/issues/new\\nand attach the conversation logs from the directory above.')"
+    },
+    {
+      "ts": "2026-08-03T19:46:33.766945+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1398788,
+      "tokens_out": 10391,
+      "cached_input_tokens": 791296,
+      "cost_usd": 1.3396557459999998,
+      "duration_s": 455.191,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T19:46:36.673459+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5629,
+      "tokens_out": 110,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.009962500000000001,
+      "duration_s": 2.174,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.3496,
+  "ledger_tokens_in": 1404417,
+  "ledger_tokens_out": 10501,
+  "result_cost_usd": 1.3496,
+  "prediction_sha256": "aa80d68a621acc95015e65ff678b87f8eeb2c14662dd51ac7033fbc753f3da29",
+  "base_commit": "fb78091f947f62ae2c71a372af42425a764aacee",
+  "stripped_test_paths": [
+    "server/tests/test_validators.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

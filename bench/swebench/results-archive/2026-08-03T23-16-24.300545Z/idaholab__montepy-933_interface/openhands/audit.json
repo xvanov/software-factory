@@ -1,0 +1,38 @@
+{
+  "instance_id": "idaholab__montepy-933_interface",
+  "arm": "openhands",
+  "audited_at": "2026-08-03T21:23:28.211975+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:23:19.440180+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 1049959,
+      "tokens_out": 9624,
+      "cached_input_tokens": 727296,
+      "cost_usd": 0.776694166,
+      "duration_s": 335.304,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.7767,
+  "ledger_tokens_in": 1049959,
+  "ledger_tokens_out": 9624,
+  "result_cost_usd": 0.7767,
+  "prediction_sha256": "9fa5028926a9f3551700de57f0f115426926087dbafa5e78f1cdad5526f06c18",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "stripped_test_paths": [
+    "tests/test_universe_integration.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

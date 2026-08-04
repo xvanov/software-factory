@@ -1,0 +1,124 @@
+{
+  "instance_id": "idaholab__montepy-933_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-03T20:29:03.582707+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory 1-2.ndjson:25 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-4.ndjson:36 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-4.ndjson:38 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-4.ndjson:42 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T20:11:43.447910+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1364715,
+      "tokens_out": 9351,
+      "cached_input_tokens": 890624,
+      "cost_usd": 1.0942004240000003,
+      "duration_s": 628.451,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-03T20:17:07.236063+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 768093,
+      "tokens_out": 11099,
+      "cached_input_tokens": 730880,
+      "cost_usd": 0.34841274999999994,
+      "duration_s": 323.436,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:17:18.711037+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5176,
+      "tokens_out": 901,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.020695,
+      "duration_s": 10.768,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:23:29.368517+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 1763334,
+      "tokens_out": 18746,
+      "cached_input_tokens": 1682560,
+      "cost_usd": 0.6982465,
+      "duration_s": 370.156,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-03T20:27:08.151721+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 882505,
+      "tokens_out": 12720,
+      "cached_input_tokens": 846592,
+      "cost_usd": 0.38908135,
+      "duration_s": 218.461,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:27:14.291083+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 6019,
+      "tokens_out": 492,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.016667500000000002,
+      "duration_s": 5.4,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:28:55.140827+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 571010,
+      "tokens_out": 8319,
+      "cached_input_tokens": 534656,
+      "cost_usd": 0.2736503,
+      "duration_s": 100.364,
+      "success": 0,
+      "error": "tests not green after run"
+    }
+  ],
+  "ledger_cost_usd": 2.841,
+  "ledger_tokens_in": 5360852,
+  "ledger_tokens_out": 61628,
+  "result_cost_usd": 2.841,
+  "prediction_sha256": "fc82ba30c4ffbab6a1ebb8d619b0e2346d78e33457421ec81d1117d0b0bdde40",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "stripped_test_paths": [
+    "tests/test_universe_integration.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 5,
+  "trails_scanned": 5,
+  "oracle_probe_failures": [
+    "oracle-probe: trajectory 1-2.ndjson:25 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-4.ndjson:36 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-4.ndjson:38 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory 1-4.ndjson:42 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "instance_id": "tox-dev__tox-3931",
+  "arm": "claude-5",
+  "audited_at": "2026-08-03T22:13:34.273081+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: claude-transcript.ndjson:7 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:38 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:45 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:59 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:70 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:72 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.0587,
+  "ledger_tokens_in": 747256,
+  "ledger_tokens_out": 9604,
+  "result_cost_usd": 1.0587,
+  "prediction_sha256": "a358488baa108939c0287df1dd592a109c0dfb8d0d693da5edd0cf8b432b9218",
+  "base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+  "stripped_test_paths": [
+    "tests/session/cmd/test_schema.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: claude-transcript.ndjson:7 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:38 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:45 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:59 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:70 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:72 references the harness's oracle/manifest paths ['github api/raw'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

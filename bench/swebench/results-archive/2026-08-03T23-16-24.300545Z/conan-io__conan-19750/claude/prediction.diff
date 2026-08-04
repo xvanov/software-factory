@@ -1,0 +1,30 @@
+diff --git a/conan/internal/api/profile/profile_loader.py b/conan/internal/api/profile/profile_loader.py
+index 61342c2..b3b6659 100644
+--- a/conan/internal/api/profile/profile_loader.py
++++ b/conan/internal/api/profile/profile_loader.py
+@@ -245,8 +245,23 @@ class _ProfileValueParser:
+         if doc.system_tools:
+             ConanOutput().warning("Profile [system_tools] is deprecated,"
+                                   " please use [platform_tool_requires]")
+-        platform_tool_requires = [RecipeReference.loads(r) for r in doc_platform_tool_requires.splitlines()]
+-        platform_requires = [RecipeReference.loads(r) for r in doc_platform_requires.splitlines()]
++        def load_platform_requires(doc_requires, section):
++            result = []
++            for r in doc_requires.splitlines():
++                ref = RecipeReference.loads(r)
++                version = repr(ref.version)
++                if version.startswith("[") and version.endswith("]"):
++                    raise ConanException(f"Profile [{section}] cannot contain version ranges, "
++                                         f"but '{r.strip()}' was defined. Please use an exact "
++                                         f"version, as platform requires are not resolved.")
++                result.append(ref)
++            return result
++
++        platform_tool_requires = load_platform_requires(
++            doc_platform_tool_requires,
++            "system_tools" if not doc.platform_tool_requires and doc.system_tools
++            else "platform_tool_requires")
++        platform_requires = load_platform_requires(doc_platform_requires, "platform_requires")
+ 
+         def load_replace(doc_replace_requires):
+             result = {}

@@ -9,6 +9,12 @@ An autonomous software factory: LLM personas turn markdown work orders
 ("directions") into reviewed, tested, merged pull requests, unattended, on
 cheap non-Anthropic models (Azure gpt-5.x + DeepSeek).
 
+**It ships, and the chain is not proven.** Externally graded 2026-08-04 (n=19,
+k=1): the chain resolves 37% where a *single* OpenHands agent on the same model
+resolves 44% — no measurable lift (p=0.625), at 2.3× the cost per resolved
+instance. Claude Code resolves 79%. Do not write docs or directions that assume
+the chain's value is established; see `STATUS.md`.
+
 ```
 direction.md  →  PM (triage/split)  →  SM (story files)  →  Dev (OpenHands sandbox:
 code + tests, run-until-green)  →  Reviewer (different model, concrete FIND/REPLACE
@@ -181,7 +187,7 @@ Keep prose for rationale. Optimize for clear, easy-to-diff docs.
 | external SOTA literature | `SOTA-RESEARCH-2026-07.md` |
 | generated subsystem deep-dives | `apps/factory/context/modules/*.md` |
 | how to write a direction | `.claude/skills/new-direction/` |
-| factory-vs-Claude-Code benchmark | `bench/README.md` |
-| externally-graded SWE-bench harness | `bench/swebench/README.md` |
+| **the measured five-arm result** (the chain shows no lift — read before claiming otherwise) | `bench/swebench/results.md`, `bench/swebench/README.md` |
+| convergence harness on the app's own gates (not evidence about correctness) | `bench/README.md` |
 
 New app template (web + mobile boilerplate): `../template` — see its `CLAUDE.md`.

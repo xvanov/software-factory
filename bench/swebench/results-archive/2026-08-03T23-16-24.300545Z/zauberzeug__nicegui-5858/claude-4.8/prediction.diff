@@ -1,0 +1,88 @@
+diff --git a/examples/xterm/main.py b/examples/xterm/main.py
+index 99e4622..562b8d0 100755
+--- a/examples/xterm/main.py
++++ b/examples/xterm/main.py
+@@ -3,9 +3,12 @@
+ 
+ WARNING: This example gives the clients full access to the server through Bash. Use with caution!
+ """
++import fcntl
+ import os
+ import pty
+ import signal
++import struct
++import termios
+ from functools import partial
+ 
+ from nicegui import core, events, ui
+@@ -37,6 +40,11 @@ def _page():
+         except OSError:
+             pass  # error writing to the pty; probably bash was exited
+ 
++    @terminal.on_resize
++    def resize_pty(event: events.XtermResizeEventArguments):
++        winsize = struct.pack('HHHH', event.rows, event.cols, 0, 0)
++        fcntl.ioctl(pty_fd, termios.TIOCSWINSZ, winsize)  # keep the pty in sync with the terminal size
++
+     @ui.context.client.on_delete
+     def kill_bash():
+         os.close(pty_fd)
+diff --git a/nicegui/elements/xterm/xterm.py b/nicegui/elements/xterm/xterm.py
+index a350f1f..16bb46c 100644
+--- a/nicegui/elements/xterm/xterm.py
++++ b/nicegui/elements/xterm/xterm.py
+@@ -5,7 +5,14 @@ from typing_extensions import Self
+ from ...awaitable_response import AwaitableResponse
+ from ...defaults import DEFAULT_PROP, resolve_defaults
+ from ...element import Element
+-from ...events import GenericEventArguments, Handler, XtermBellEventArguments, XtermDataEventArguments, handle_event
++from ...events import (
++    GenericEventArguments,
++    Handler,
++    XtermBellEventArguments,
++    XtermDataEventArguments,
++    XtermResizeEventArguments,
++    handle_event,
++)
+ 
+ 
+ class Xterm(Element, component='xterm.js', esm={'nicegui-xterm': 'dist'}):
+@@ -60,6 +67,21 @@ class Xterm(Element, component='xterm.js', esm={'nicegui-xterm': 'dist'}):
+         self.on('data', handle_data)
+         return self
+ 
++    def on_resize(self, callback: Handler[XtermResizeEventArguments]) -> Self:
++        """Add a callback to be invoked when the terminal is resized (e.g. after calling ``fit``).
++
++        In a typical setup, the new size should be communicated to the backing pty.
++        """
++        def handle_resize(e: GenericEventArguments) -> None:
++            handle_event(callback, XtermResizeEventArguments(
++                sender=self,
++                client=self.client,
++                cols=int(e.args['cols']),
++                rows=int(e.args['rows']),
++            ))
++        self.on('resize', handle_resize)
++        return self
++
+     def input(self, data: str, *, was_user_input: bool = True) -> AwaitableResponse:
+         """Input data to application side.
+ 
+diff --git a/nicegui/events.py b/nicegui/events.py
+index 3bbce0a..99936c4 100644
+--- a/nicegui/events.py
++++ b/nicegui/events.py
+@@ -420,6 +420,12 @@ class XtermDataEventArguments(UiEventArguments):
+     data: str
+ 
+ 
++@dataclass(kw_only=True, slots=True)
++class XtermResizeEventArguments(UiEventArguments):
++    cols: int
++    rows: int
++
++
+ EventT = TypeVar('EventT', bound=EventArguments)
+ Handler: TypeAlias = Callable[[EventT], Any] | Callable[[], Any]
+ 

@@ -1,0 +1,112 @@
+{
+  "arm": "claude-4.8",
+  "arm_base": "claude",
+  "instance_id": "hkuds__openharness-217",
+  "repo": "HKUDS/OpenHarness",
+  "base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+  "problem_statement_sha256": "5a1163602919f92cffa9aa885f04b1db190c3071b17eff2cf2fc439225841f5a",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-4-8",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-4-8",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "160ba6eb-bea2-44a4-b109-fadbed640a45",
+  "ts": "2026-08-03T22:53:34.988815+00:00",
+  "wall_clock_s": 60.0,
+  "agent_wall_s": 53.6,
+  "num_turns": 8,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 200003,
+  "tokens_out": 3981,
+  "cached_input_tokens": 170014,
+  "cost_usd": 0.4652,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.0022
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-4-8",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.463
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.2,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/test_auth"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "src/openharness/auth/flows.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_auth/test_open_browser.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 2041,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-4.8",
+    "instance_id": "hkuds__openharness-217",
+    "image": "swerebench/sweb.eval.x86_64.hkuds_1776_openharness-217@sha256:ad0997cf2e90f0a31f3e6f8fd5cba18ced7f364ae3a62bd59f4c9e1d88b7678d",
+    "graded_at": "2026-08-03T22:53:35.092362+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 2,
+    "pass_to_pass_declared_count": 2,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell']",
+      "tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]']",
+      "tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]']",
+      "tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]']",
+      "tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]']",
+      "tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "src/openharness/auth/flows.py"
+    ],
+    "touched_files": [
+      "src/openharness/auth/flows.py"
+    ],
+    "gold_files_overlap": [
+      "src/openharness/auth/flows.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 4.9,
+    "log_tail": "Checking patch tests/test_auth/test_flows.py...\nApplied patch tests/test_auth/test_flows.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_9c8f0235e6d98970: OK (red as expected)\nChecking patch src/openharness/auth/flows.py...\nApplied patch src/openharness/auth/flows.py cleanly.\nSWEBENCH_APPLY_9c8f0235e6d98970: OK\n             ^^^^^^^^^^^^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nname = 'openharness.auth.flows.os'\n\n    def resolve(name: str) -> object:\n        # Simplified from zope.dottedname.\n        parts = name.split(\".\")\n    \n        used = parts.pop(0)\n        found: object = __import__(used)\n        for part in parts:\n            used += \".\" + part\n            try:\n                found = getattr(found, part)\n            except AttributeError:\n                pass\n            else:\n                continue\n            # We use explicit un-nesting of the handling block in order\n            # to avoid nested exceptions.\n            try:\n                __import__(used)\n            except ImportError as ex:\n                expected = str(ex).split()[-1]\n                if expected == used:\n                    raise\n                else:\n>                   raise ImportError(f\"import error in {used}: {ex}\") from ex\nE                   ImportError: import error in openharness.auth.flows.os: No module named 'openharness.auth.flows.os'; 'openharness.auth.flows' is not a package\n\n/opt/conda/envs/testbed/lib/python3.13/site-packages/_pytest/monkeypatch.py:85: ImportError\n=========================== short test summary info ============================\nERROR tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]\n6 errors in 0.06s\nSWEBENCH_TALLY_9c8f0235e6d98970: fail_to_pass 6 errors in 0.06s\n[8 node outcomes for fail_to_pass -> grade-nodes.log]\n..                                                                       [100%]\n=========================== short test summary info ============================\nPASSED tests/test_auth/test_flows.py::test_open_browser_macos_uses_open_argv\nPASSED tests/test_auth/test_flows.py::test_open_browser_linux_uses_xdg_open_argv\n2 passed in 0.01s\nSWEBENCH_TALLY_9c8f0235e6d98970: pass_to_pass 2 passed in 0.01s\n[4 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_9c8f0235e6d98970: UNRESOLVED\n"
+  }
+}

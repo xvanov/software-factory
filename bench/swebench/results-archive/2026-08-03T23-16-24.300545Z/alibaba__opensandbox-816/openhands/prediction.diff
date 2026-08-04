@@ -1,0 +1,52 @@
+diff --git a/server/opensandbox_server/services/validators.py b/server/opensandbox_server/services/validators.py
+index 4b37b57..b38a5d5 100644
+--- a/server/opensandbox_server/services/validators.py
++++ b/server/opensandbox_server/services/validators.py
+@@ -21,6 +21,7 @@ enforce the same preconditions before performing runtime-specific work.
+ 
+ from __future__ import annotations
+ 
++import os
+ from datetime import datetime, timedelta, timezone
+ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+ 
+@@ -450,6 +451,39 @@ def ensure_valid_host_path(
+             },
+         )
+ 
++    # Reject paths that contain symbolic links.  Realpath resolution detects
++    # symlinks anywhere in the path (leaf or intermediate components) and
++    # catches attacks where a symlink inside a whitelisted directory points
++    # to a forbidden location (e.g. /etc -> /).  This aligns with the PVC
++    # volume validation path which also uses os.path.realpath(strict=True).
++    #
++    # Only perform this check for Unix-style paths (server runs on Linux
++    # and symlinks are a Unix filesystem feature).  Windows drive-letter
++    # paths are skipped — they are validated lexically above and the
++    # Docker backend on Windows handles mount security independently.
++    if not _windows_drive_match:
++        try:
++            real_path = os.path.realpath(path)
++        except OSError:
++            # If realpath fails (e.g. path doesn't exist), no symlink
++            # resolution was possible — fall through to allow the path.
++            pass
++        else:
++            # os.path.realpath returns OS-native separators, so normalize
++            # before comparing with normpath (which also uses OS-native).
++            norm_path = os.path.normpath(path)
++            if real_path != norm_path:
++                raise HTTPException(
++                    status_code=status.HTTP_400_BAD_REQUEST,
++                    detail={
++                        "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                        "message": (
++                            f"Host path '{path}' traverses a symbolic link. "
++                            "Symbolic links are not permitted for host paths."
++                        ),
++                    },
++                )
++
+     # Check against allowed prefixes if provided
+     if allowed_prefixes is not None:
+         # Normalize separators for cross-platform prefix checks so Windows-style

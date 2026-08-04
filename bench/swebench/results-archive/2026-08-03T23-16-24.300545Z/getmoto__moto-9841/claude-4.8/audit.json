@@ -1,0 +1,22 @@
+{
+  "instance_id": "getmoto__moto-9841",
+  "arm": "claude-4.8",
+  "audited_at": "2026-08-03T23:10:38.522379+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.5635,
+  "ledger_tokens_in": 487680,
+  "ledger_tokens_out": 6396,
+  "result_cost_usd": 0.5635,
+  "prediction_sha256": "78a65afc1bdd3900812ad821121c82649e0966be20c972c7e5bc60fbf7378e90",
+  "base_commit": "830a798c567bcdded2447efb7e98ca6d89b6a8c5",
+  "stripped_test_paths": [
+    "tests/test_kms/test_kms.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

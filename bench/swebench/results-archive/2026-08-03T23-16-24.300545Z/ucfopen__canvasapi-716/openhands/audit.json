@@ -1,0 +1,38 @@
+{
+  "instance_id": "ucfopen__canvasapi-716",
+  "arm": "openhands",
+  "audited_at": "2026-08-03T21:09:56.686699+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:09:50.818725+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 441171,
+      "tokens_out": 5158,
+      "cached_input_tokens": 314624,
+      "cost_usd": 0.31464531400000006,
+      "duration_s": 172.63,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.3146,
+  "ledger_tokens_in": 441171,
+  "ledger_tokens_out": 5158,
+  "result_cost_usd": 0.3146,
+  "prediction_sha256": "5e7d6914431a5f1714e8eac90321821e685408571ae86c136b5e857899798c43",
+  "base_commit": "77ff5b248603db987e57f11a104767d4b790265a",
+  "stripped_test_paths": [
+    "tests/test_util.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

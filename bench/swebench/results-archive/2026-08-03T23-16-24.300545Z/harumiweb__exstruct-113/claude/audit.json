@@ -1,0 +1,13 @@
+{
+  "instance_id": "harumiweb__exstruct-113",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:23:15.541533+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 4.8648,
+  "ledger_tokens_in": 5503836,
+  "ledger_tokens_out": 43109,
+  "result_cost_usd": 4.8648
+}

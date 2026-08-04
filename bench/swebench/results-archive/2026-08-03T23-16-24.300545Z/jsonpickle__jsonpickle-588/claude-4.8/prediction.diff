@@ -1,0 +1,83 @@
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..ba88917 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -4,6 +4,7 @@
+ #
+ # This software is licensed as described in the file COPYING, which
+ # you should have received as part of this distribution.
++import collections
+ import decimal
+ import inspect
+ import itertools
+@@ -708,6 +709,14 @@ class Pickler:
+                 data = str(obj)  # type: ignore[assignment]
+             return data
+ 
++        if type(obj) is collections.defaultdict:
++            # Serialize collections.defaultdict via its __reduce__ protocol so
++            # that its items and its default_factory stay separate. The old
++            # dict-based encoding stored the factory under the literal key
++            # "default_factory", which silently clobbered any dictionary key
++            # with that same name.
++            return self._flatten_defaultdict(obj, data)
++
+         if util._is_dictionary_subclass(obj):
+             self._flatten_dict_obj(obj, data, exclude=exclude)
+             return data
+@@ -808,6 +817,55 @@ class Pickler:
+         data[k] = self._flatten(v)
+         return data
+ 
++    def _flatten_defaultdict(
++        self, obj: "collections.defaultdict[Any, Any]", data: Dict[str, Any]
++    ) -> Dict[str, Any]:
++        """Serialize a collections.defaultdict as a py/reduce structure.
++
++        Using the __reduce__ protocol keeps the dictionary items and the
++        ``default_factory`` in separate slots so that a key literally named
++        "default_factory" is preserved instead of being overwritten by the
++        factory attribute.
++        """
++        factory = obj.default_factory
++        if factory is None:
++            factory_args: List[Any] = []
++        elif util._is_type(factory):
++            # Reference the class/type directly, e.g. builtins.int.
++            factory_args = [_mktyperef(factory)]
++        else:
++            # The factory is not a type and may not be picklable (e.g. a lambda)
++            # or could reference the object itself and create a cycle. Mirror
++            # the historical behavior by wrapping an exemplar in a CloneFactory,
++            # and break cycles by emitting a reference when the factory has
++            # already been seen. The CloneFactory is flattened in-place (without
++            # its own reference id) so that reference ordering matches what the
++            # unpickler produces while restoring the reduce arguments.
++            if self._mkref(factory):
++                factory_args = [
++                    self._flatten_obj_instance(handlers.CloneFactory(factory()))
++                ]
++            else:
++                factory_args = [self._getref(factory)]
++
++        reduce_val: List[Any] = [
++            _mktyperef(obj.__class__),
++            {tags.TUPLE: factory_args},
++            None,
++            None,
++            self._flatten(tuple(obj.items())),
++        ]
++        # Strip trailing None entries, keeping at least the callable and args.
++        last_index = len(reduce_val) - 1
++        while last_index >= 2 and reduce_val[last_index] is None:
++            last_index -= 1
++        # The "py/object" tag would otherwise take precedence over "py/reduce"
++        # during unpickling, so remove it and let the reduce protocol restore
++        # the object.
++        data.pop(tags.OBJECT, None)
++        data[tags.REDUCE] = reduce_val[: last_index + 1]
++        return data
++
+     def _flatten_dict_obj(
+         self,
+         obj: dict[Any, Any],

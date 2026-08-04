@@ -1,0 +1,44 @@
+{
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "arm": "openhands",
+  "audited_at": "2026-08-03T21:02:38.376196+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory nostory-1.ndjson:17 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:38 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:02:31.798809+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 603489,
+      "tokens_out": 5773,
+      "cached_input_tokens": 348416,
+      "cost_usd": 0.5704964560000001,
+      "duration_s": 138.059,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.5705,
+  "ledger_tokens_in": 603489,
+  "ledger_tokens_out": 5773,
+  "result_cost_usd": 0.5705,
+  "prediction_sha256": "a344b42b1fef0579be0cb8b309b3469cafe40516fa41e487088061f161db1733",
+  "base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+  "stripped_test_paths": [
+    "tests/test_connectors/test_util.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: trajectory nostory-1.ndjson:17 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: trajectory nostory-1.ndjson:38 (ObservationEvent) references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

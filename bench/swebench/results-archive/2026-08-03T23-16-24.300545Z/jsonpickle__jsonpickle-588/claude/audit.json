@@ -1,0 +1,13 @@
+{
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "arm": "claude",
+  "audited_at": "2026-08-03T04:43:45.450509+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 4.2566,
+  "ledger_tokens_in": 4080731,
+  "ledger_tokens_out": 51944,
+  "result_cost_usd": 4.2566
+}

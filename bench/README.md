@@ -1,7 +1,36 @@
-# Factory vs Claude Code — long-horizon benchmark
+# `bench/bench.py` — the convergence harness (NOT the graded benchmark)
 
-Answers: **does the improved factory (open models, no Anthropic) match plain
-Claude Code on real backlog tasks, at a fraction of the cost?**
+> **This harness does not answer "is the factory as good as Claude Code".**
+> It grades the factory on **sacrifice's own gates** — tests the factory wrote —
+> so it measures convergence, not correctness. For the externally graded answer
+> read **[`swebench/README.md`](swebench/README.md)** and
+> **[`swebench/results.md`](swebench/results.md)**.
+
+**The measured answer, 2026-08-04, five arms, SWE-rebench n=19, k=1** (full table
+and caveats in `swebench/results.md`):
+
+| arm | harness × model | resolved / valid | rate | 95% CI |
+|---|---|---:|---:|---|
+| claude-5 | Claude Code CLI × `claude-opus-5` | 15/19 | 79% | [54%, 94%] |
+| claude-4.8 | the SAME CLI × `claude-opus-4-8` | 14/19 | 74% | [49%, 91%] |
+| openhands | OpenHands single agent, no chain × `azure/deepseek-v4-pro` | 7/16 | 44% | [20%, 70%] |
+| factory | the chain on OpenHands × deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | 37% | [16%, 62%] |
+| bare | hand-rolled text loop, no tool calls × deepseek-v4-pro | 1/18 | 6% | [0%, 27%] |
+
+- **The chain shows no measurable lift**: 37% vs 44% against a single OpenHands
+  agent on the same model, prompt and tools — McNemar exact **p=0.625**, n=16. Our
+  lift comes from using a competent agent loop, not from the chain.
+- **The lift is tooling**: `openhands` 44% vs `bare` 6%, **p=0.031**.
+- **Cost moves the wrong way**: $5.13 per resolved instance for the chain vs
+  $2.20 for one agent — 2.3× for no measurable gain.
+- Claude Code is ~2× the factory (p=0.008), but that pair varies harness **and**
+  model, so it is a reference point, not a scaffold deficit.
+- n=19, k=1, MDE ≈ ±38 pp. "No measurable lift" — not "the chain hurts".
+
+## What this harness is still good for
+
+Convergence and cost-per-attempt on real backlog tasks at a frozen base commit:
+does the chain drive a story to gates-green unattended, and what does that cost?
 
 Historical baseline (the "before" picture, from `state/factory.db`): ~0.68
 merged stories/day, mean $17/shipped story, median ~17 calendar days/story.
@@ -17,6 +46,9 @@ Both arms get the same frozen `base_sha`, the same prompt (the real
 direction/story markdown), and the same done-oracle: sacrifice's own gate
 commands run via the factory's `_isolated_test_env`, plus a blind LLM-judge
 rubric (judge never sees which arm made the diff).
+
+**There is no `openhands` arm here, so no comparison in this file can attribute a
+result to the chain.** That is why the graded harness exists.
 
 ## Tokens are the metric; dollars are a view
 
@@ -72,11 +104,18 @@ In `summary.md`, `?` means **not reported**. It is not zero.
 - Claude subscription authed on this machine (`claude -p` works).
 - Don't run two arms of the same task concurrently (they share uv/docker).
 
-## Success definition
+## Success definition — and why it is not evidence
 
 Parity: factory gates-pass rate ≥ claude on t1–t7 at ≤ 1/5 the token cost.
 t8 (epic) measures the remaining long-horizon ceiling gap and is expected
 to favor Claude Code.
+
+**That bar was met in July 2026 and it did not mean what it looked like.** The
+gate is the factory's own tests, so "gates-pass" is close to a tautology for the
+arm that wrote them. Against a hidden oracle the same chain resolves 37% and
+Claude Code resolves 79%. Treat a gates-pass rate from this harness as a
+convergence measurement and nothing more — see `CAMPAIGN-2026-07-17.md`'s
+superseded-by header.
 
 ## Known confounds (accepted + why)
 
@@ -88,12 +127,16 @@ to favor Claude Code.
   neither arm and free of family bias in some direction.
 - **Shared db container**: smoke runs of both arms use the sacrifice-db
   container with throwaway rows; journeys are register-fresh each run.
-- **Missing third arm**: `factory` vs `claude` confounds *scaffold* with
-  *model*. An absolute factory score measures the models in `routes.yaml`,
-  which are a config value that gets swapped as cheaper models ship. The number
-  that measures the PRODUCT is scaffold lift — the factory versus the same
-  weights bare. See `PLAN.md` 1.4 / 2.2 arm B. Never report a factory number
-  without the matched bare-model number beside it.
+- **Missing matched arm (invalidating for any product claim)**: `factory` vs
+  `claude` confounds *scaffold* with *model*. An absolute factory score measures
+  the models in `routes.yaml`, which are a config value that gets swapped as
+  cheaper models ship. The number that measures the PRODUCT is
+  **`factory` − `openhands`**: one OpenHands agent on the same deployment, same
+  prompt, same tools, no chain. **Not `factory` − bare** — that varies the chain
+  and the tool interface at once, which is exactly how the retracted "+58 pp
+  scaffold lift" happened. Measured 2026-08-04: `factory` − `openhands` = −7 pp,
+  p=0.625, while `openhands` − `bare` = +38 pp, p=0.031. See `PLAN.md` 2.2. Never
+  report a factory number without the matched `openhands` number beside it.
 - **Contaminated task pool**: the six directions behind t1–t6 (`023`–`028`) are
   now `closed` — the factory has since shipped them, so they can no longer be
   used as held-out tasks. See `PLAN.md` 2.1.

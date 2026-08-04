@@ -1,0 +1,28 @@
+{
+  "instance_id": "hkuds__openharness-217",
+  "arm": "claude-5",
+  "audited_at": "2026-08-03T22:11:59.254808+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: claude-transcript.ndjson:25 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:26 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.5712,
+  "ledger_tokens_in": 227931,
+  "ledger_tokens_out": 6120,
+  "result_cost_usd": 0.5712,
+  "prediction_sha256": "7b721e7e75e688fae4373cc488a5c423d829b13cf162af6012464c7ff23922fe",
+  "base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+  "stripped_test_paths": [
+    "tests/test_auth/test_browser_launch.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": [
+    "oracle-probe: claude-transcript.ndjson:25 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid",
+    "oracle-probe: claude-transcript.ndjson:26 references the harness's oracle/manifest paths ['github.com retrieval'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

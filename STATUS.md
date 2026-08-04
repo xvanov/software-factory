@@ -1,9 +1,16 @@
-# STATUS — measured 2026-08-02 (Phase 0 + Phase 1.1–1.3 landed)
+# STATUS — measured 2026-08-04 (Phase 0–1.6 landed)
 
 Point-in-time facts. Verify before you rely on them. The commands are in
 `CLAUDE.md`. The work queue is `PLAN.md`.
 
 All systemd units are deliberately **stopped**. Run `factory on` to start.
+
+**Read this first.** The clean five-arm benchmark is in. **The chain shows no
+measurable lift over a single OpenHands agent on the same model** — 37% vs 44%,
+McNemar exact p=0.625 — and it costs 2.3× per resolved instance to get there.
+What produces the lift is *tooling*, not orchestration. Details, CIs and
+caveats: "The benchmark" below. Nothing in this file supports "the chain is
+proven".
 
 ## What works
 
@@ -18,8 +25,9 @@ All systemd units are deliberately **stopped**. Run `factory on` to start.
 | GitHub loop | 1 open issue, 0 open PRs, 0 blocked stories |
 | Spend control | $200/day cap, hourly cap, per-story budget |
 | Test suite | 2,368 tests, ~5 min |
-| SWE-bench measurement pipeline | Oracle is sha256-pinned upstream `FAIL_TO_PASS`/`PASS_TO_PASS`; test-edit stripping is asserted in code at all three arms and fired on 36/57 rows; grading is a fresh `--rm` container with `--network none`; manifest frozen and committed *before* the first run; gold-patch control 19/20 and red-baseline verified 18/19. Adversarially audited 2026-08-03 — see "Audited and retracted" below |
-| Claude-arm provenance | Really executed locally: `claude` CLI 2.1.220, `--model claude-opus-5` pinned, `--depth 1` clone (1 commit, no future refs), WebFetch/WebSearch removed and proved absent from the CLI's own init event, **0 of 321 recorded shell commands attempted any network retrieval** |
+| SWE-bench measurement pipeline | Five arms, one sweep, no re-rolls, pre-registered tables. Oracle is sha256-pinned upstream `FAIL_TO_PASS`/`PASS_TO_PASS`; test-edit stripping is asserted in code on **every** arm and stripped 96 test files across the 95 published rows; grading is a fresh `--rm` container with `--network none`; manifest frozen and committed *before* the first run; gold-patch control 19/20. `report --check` re-derives the published table byte-for-byte from the committed archive and exits non-zero on drift |
+| Integrity gate has teeth | It rejected a row in this very sweep: `bare` on `hiero-ledger__hiero-sdk-python-1914_interface` ran `curl -s https://raw.githubusercontent.com/…/account_info.py` — the upstream source of the exact file under test. That row is published as **invalid and excluded**, not re-rolled |
+| Claude-arm provenance | Really executed locally: `claude` CLI 2.1.220, `--model` pinned per arm (`claude-opus-5`, `claude-opus-4-8`), `--depth 1` clone (1 commit, no future refs), MCP disabled, WebFetch/WebSearch removed and proved absent from the CLI's own init event, and **0 network-retrieval actions** in either arm's 38 transcripts |
 
 Do not "fix" anything in this table without a measurement that shows it broke.
 
@@ -27,96 +35,157 @@ Do not "fix" anything in this table without a measurement that shows it broke.
 
 | Problem | Evidence | Fix |
 |---|---|---|
+| **The chain shows no measurable lift over a single agent** | Measured 2026-08-04, n=19, k=1: `factory` 7/19 = 37% [16%, 62%] vs `openhands` 7/16 = 44% [20%, 70%] on the same weights, same prompt, same tools. Paired McNemar exact **p=0.625** (n=16, only-A/only-B = 1/3). Directionally −7 pp, which is well inside the ±38 pp MDE — this is "no measurable lift", **not** "the chain hurts" | `PLAN.md` Phase 2 — k≥3 at larger n is the only thing that can resolve it |
+| **The chain costs 2.3× per resolved instance for that non-gain** | `factory` $35.94 / 7 = **$5.13 per resolved**; `openhands` $15.37 / 7 = **$2.20**. Same price-table basis, so directly comparable. The factory also burns 2.1× the fresh input tokens (14.3 M vs 6.8 M) | `PLAN.md` Phase 4 |
+| The chain's own green verdict is barely better than a coin flip | Chain-verdict precision 6/15 = **40%** [16%, 68%] — the chain said green and the hidden oracle failed it 9 times out of 15. Recall 6/7 = 86% [42%, 100%] | `PLAN.md` Phase 2 |
 | FMS **L4 apply** tier is dead | 163 attempts, 0 PRs, nothing since 2026-07-23 | `PLAN.md` Phase 4 |
 | Manager cost is unjustified | ~52% of all LLM spend | `PLAN.md` Phase 4 |
 | `factory_improver` does not land | 196 proposals, 1 commit. 179 apply failures | `PLAN.md` 3.1 |
 | L3 re-diagnoses known faults | 165 proposals span 37 distinct classes | `PLAN.md` 3.3 |
-| The old (`bench.py`) benchmark is retracted | Tasks t1–t6 are shipped, so the pool is contaminated; the 20 reported rows still have no raw artifacts. SWE-bench Pro (below) replaces it for external grading | `PLAN.md` Phase 2 |
-| Merge-gate precision is unknown | The SWE-bench harness runs dev+review only, so 1.3 measured **chain-verdict** precision (1/5), not the merge gate | `PLAN.md` Phase 2 |
-| The bare arm measures its own bugs, not the model | Bare is *forbidden* to write tests while factory/claude are *instructed* to; its DONE gate targets tests that pass at base commit; no empty-diff guard; roleless prompt echoes fabricated tool output back as real. External anchor for the same deployment is 40.2% — P(0/19 \| p=.402) = 5.7e-5 | `PLAN.md` 1.6 |
-| No arm isolates "no chain" from "no tools" | The bare loop lacks both, so an unknown share of the measured lift is OpenHands' tooling rather than the chain | `PLAN.md` 1.6 — OpenHands single-agent arm |
-| No arm's absolute rate is contamination-clean | Measured 2026-08-03: `gpt-5.4`/`gpt-5.3-codex` cutoff 2025-08-31 (published), `deepseek-v4-pro` **unpublished** (release-date bound 2026-04-24), `claude-opus-5` May 2026. Margins on the pinned 19: 0/19 negative vs the OpenAI models, **15/19** vs deepseek, **19/19** vs opus-5. The freshest public SWE-rebench instance anywhere is 2026-05-12, so no positive-margin manifest for opus-5 exists today | `PLAN.md` 1.6 F + 2.1 |
+| The old (`bench.py`) benchmark is retracted | Tasks t1–t6 are shipped, so the pool is contaminated; the 20 reported rows still have no raw artifacts. Its July "7/7 vs 5/7, $0.65 vs $8.19" campaign is **superseded** — see `bench/CAMPAIGN-2026-07-17.md`'s header | `PLAN.md` Phase 2 |
+| Merge-gate precision is unknown | The SWE-bench harness runs dev+review only, so what is measured is **chain-verdict** precision (6/15 = 40%), not the merge gate | `PLAN.md` Phase 2 |
+| A 4-worker sweep silently loses runs to provider 429s | `openhands` lost 3 of 19 rows to Azure `DeepSeek-V4-Pro` `RateLimitError`. There is **no retry on a provider 429** and the lost row records `cost_usd: 0.0`, so it reads as free rather than as missing | `PLAN.md` 1.6 G |
+| The sweep's own aggregate counters disagree with their own rows | `sweep-<arm>.json` reports `resolved` / `audited_valid` / `audit_failed` from in-flight state (pre-#227 detector, pre-grade), so e.g. `sweep-factory.json` says `resolved: 2, audit_failed: 13` while its own `results` rows say 7 resolved and the archived `audit.json` files say 19 ok / 0 invalid. Only `results.md` and the archive are authoritative | `PLAN.md` 1.6 G |
+| n=19, k=1 cannot resolve the comparison that matters | MDE ≈ **±38 pp**. `factory` − `openhands` is −7 pp. Every arm's CI is ~45 pp wide | `PLAN.md` 2.1 + 2.3 — k≥3, larger n |
+| Absolute rates on the DeepSeek arms are not contamination-clean | `deepseek-v4-pro` publishes **no** cutoff, so its only defensible bound is its release date 2026-04-24, and **15 of 19** instances sit inside it. (For the Claude arms the question is now *answered* — see conclusion 5 below.) The freshest public SWE-rebench instance anywhere is 2026-05-12 | `PLAN.md` 2.1 |
 | `SWE-bench-Live` is abandoned | Last modified 2025-09-18, newest instance 2025-09-02, 0 rows after 2025-10-01. PLAN 2.1's 30-instance control was not executable | `PLAN.md` 2.1 — replaced by a two-stratum design |
-| The agent's shell can reach the oracle store | `oracle.json.z` sits six `..` above the dev's cwd; arms can read each other's run dirs. **This fired: 4 factory runs were audit-invalidated for oracle-probing and silently re-rolled** | `PLAN.md` 1.6 |
 | State has no backup | The twin guards source only | `PLAN.md` 3.4 |
 
-## The benchmark, as of 2026-08-03 (Phase 1 complete)
+## The benchmark — measured 2026-08-04, five arms, n=19
 
-Suite: SWE-rebench (Nebius), pinned manifest `923aef05` — 20 post-2026-01-01
-python instances, 19 with a working oracle under the same mounted-clone
-topology the arms run in (selftest is the control; SWE-bench Pro is frozen
-after OpenAI's ~30%-broken audit; Pro archives remain readable).
+Suite: SWE-rebench (Nebius), pinned manifest `923aef05add32124` — 20
+post-2026-01-01 python instances, **19 with a working oracle**. One sweep, five
+arms, **n=19, k=1, no re-rolls**. Tables and decision rules were fixed in
+`bench/swebench/PRE-REGISTRATION-1.6.md` *before* the data existed.
 
-| Arm | Models | Resolved | 95% CP CI | Status |
-|---|---|---|---|---|
-| factory | dev `azure/deepseek-v4-pro` **+ 7 escalations to `azure/gpt-5.3-codex`**, reviewer `azure/gpt-5.4` | 11/19 = 58% | [33.5, 79.7] | **provisional** — 4 of 19 rows are second attempts (below) |
-| bare | `azure/deepseek-v4-pro`, minimal loop, 40 steps | 0/19 | [0.0, 17.6] | **VOID** — arm defective, see below |
-| openhands | `azure/deepseek-v4-pro`, single agent, no chain | not yet run | — | the arm that actually isolates the chain |
-| claude | Claude Code CLI, `claude-opus-5`, hermetic (no MCP/web), 60 turns | 17/19 = 89% | [66.9, 98.7] | provenance verified; **model+scaffold swap, not a scaffold measurement** |
+Evidence: `bench/swebench/results.md`, backed row-for-row by
+`bench/swebench/results-archive/2026-08-04T04-18-05.349995Z/`. Re-derive it:
 
-### Audited and retracted 2026-08-03
+```bash
+uv run python bench/swebench_adapter.py report \
+  --from-archive bench/swebench/results-archive/2026-08-04T04-18-05.349995Z --check
+```
 
-Four independent adversarial audits attacked this result. The **measurement
-pipeline held**; the **headline did not**. Retracted, do not cite:
+**An arm is a (harness, model set) pair.** Never quote half of one.
 
-- **"+58 pp scaffold lift at matched weights."** Two independent defects. (a) The
-  bare arm is broken in eight ways — most decisively, its system prompt forbids
-  writing tests while the factory's and Claude's *instruct* it, so the arm
-  anchoring the lift is prompt-blocked from building the run-until-green loop the
-  factory's whole thesis rests on; and its DONE gate targets FAIL_TO_PASS *files
-  at base commit*, where in 16 of 19 instances zero such tests exist (one row
-  printed "28 passed" against an empty diff and stopped at step 6; another
-  reverted its own correct fix because the pre-existing tests asserted the old
-  behaviour). 6 of 19 rows shipped a 0-byte diff with no empty-diff guard, and no
-  run came near its 40-step cap (mean 9.2). (b) Weights were not matched: the
-  factory escalated 7 dev calls to `azure/gpt-5.3-codex` and **4 of its 11
-  resolves used that tier**, which bare can never reach — matched-weights factory
-  ceiling is 7/19 = 37%.
-- **"The remaining gap to frontier is 31 pp."** McNemar exact on the 18 paired
-  instances: **p = 0.0625** — not significant. And the arm swaps model *and*
-  scaffold, so the gap is not attributable to the harness at all; `results.md`'s
-  own rule ("a number without the matched-weights number measures the MODEL")
-  was applied to bare and not to Claude. Also every instance (`created_at`
-  2026-01-03 → 05-07) predates `claude-opus-5`'s knowledge cutoff, so that arm
-  additionally carries a contamination confound the other two may not.
-- **"Every row audit-valid."** True of the published rows and materially
-  incomplete: the superseded `results-archive/2026-08-03T02-21-23Z` snapshot
-  records the first factory sweep at `audit failed: 4`, all four the harness's
-  most serious verdict (*"the arm went looking for the answer; the run is
-  invalid"* — oracle-probe). Those four were re-run 30 min later under
-  byte-identical code, passed, and the second attempt is what is published; 2 of
-  them are among the 11 passes. Outcomes were identical in all 4 pairs, so 11/19
-  holds — but selecting on the integrity gate is not disclosed anywhere, and the
-  root cause (each arm can read its siblings' oracle-bearing files) is unfixed.
-- **"Every number is re-derivable."** False for the `audit` column: the archive
-  copies `result.json`/`audit.json`/`prediction.diff` but no trajectories, so the
-  audit verdict is *attested*, not re-derivable. And `report --from-archive`
-  **overwrites the file it is verifying** and silently drops the excluded-rows
-  disclosure — that bug produced an undetected 20-line deletion of committed
-  evidence.
-- **`~$34/sweep`** — the archive of record sums to **$29.19**; $33.58 belongs to
-  the superseded archive; actual factory burn across both sweeps was **$38.66**.
+| arm | harness | model(s) the LEDGER says ran | resolved / valid | rate | 95% CI | $ | $ / resolved |
+|---|---|---|---:|---:|---|---:|---:|
+| claude-5 | Claude Code CLI 2.1.220 | `claude-opus-5` + the CLI's own `claude-haiku-4-5` classifier | 15/19 | **79%** | [54%, 94%] | 34.36 † | 2.29 † |
+| claude-4.8 | the SAME CLI, same flags | `claude-opus-4-8` + haiku-4-5 | 14/19 | **74%** | [49%, 91%] | 23.56 † | 1.68 † |
+| openhands | OpenHands single agent, **no chain** | `azure/deepseek-v4-pro` (19 calls) | 7/16 | **44%** | [20%, 70%] | 15.37 | **2.20** |
+| factory | software-factory chain on OpenHands | `azure/deepseek-v4-pro` (33 calls) + `azure/gpt-5.3-codex` (6) + `azure/gpt-5.4` (31) | 7/19 | **37%** | [16%, 62%] | 35.94 | **5.13** |
+| bare | hand-rolled text loop, **no tool calls** | `azure/deepseek-v4-pro` (727 calls) | 1/18 | **6%** | [0%, 27%] | 7.94 | 7.94 |
 
-What the evidence does support, stated honestly: **the factory solved nothing
-Claude Code missed — its 11 passes are a strict subset of Claude's 16.** That
-needs no significance test and is the more useful framing than any pp gap.
+† The Claude dollars are the CLI's own report against a **subscription**; the
+Azure dollars are a price-table estimate over measured tokens. The two are
+different accounting bases — never sum them, and treat the cross-family
+`$ / resolved` comparison as indicative only. The `factory` vs `openhands`
+comparison is on one basis and is exact.
 
-Newly quantified variance: the archives already contain 10 same-condition
-factory replications nobody reported. 0/10 oracle flips (95% upper bound on
-per-instance flip probability 25.9% ⇒ ±3 instances at n=19), 1/10 chain-verdict
-flips, and cost varying up to 2.6× on the same instance. k≥3 is required before
-any delta means anything.
+Paired McNemar exact, over instances where **both** arms have an audited-valid
+row:
 
-Also unexploited but live, all fail-open: grading is exit-code based so a
-module-level `SkipTest` in production code would score RESOLVED; the test-strip
-path logic keeps `pyproject.toml`/`pytest.ini`/`sitecustomize.py`/plugin
-channels; `_DIFF_HEADER` is fail-open on git-quoted paths, merging an
-unparseable test hunk into a kept block past both the stripper and the assert;
-`audit.json` never hashes the graded patch; 2 instances have an empty
-`PASS_TO_PASS`. Verified not exploited in this run (all 28 PASS rows have real
-passed counts; 0 of 57 graded diffs touch a config path; 0 unparsed headers).
+| comparison | what it isolates | paired n | only-A / only-B | p |
+|---|---|---:|---:|---:|
+| **factory vs openhands** | **the chain** | 16 | 1 / 3 | **0.625** |
+| **openhands vs bare** | **the tooling** | 15 | 0 / 6 | **0.031** |
+| factory vs bare | chain + tooling, entangled | 18 | 7 / 1 ‡ | 0.070 |
+| claude-5 vs factory | nothing attributable — reference only | 19 | 8 / 0 | **0.008** |
+| claude-4.8 vs factory | nothing attributable — reference only | 19 | 8 / 1 | 0.039 |
+| **claude-4.8 vs claude-5** | **contamination** (same harness, older cutoff) | 19 | 1 / 2 | **1.000** |
 
-Fixes are in flight as operator PRs; `PLAN.md` 1.6 is the gate on any re-publish.
+‡ `results.md` prints this pair as `bare vs factory`, only-A/only-B = 1/7.
+
+### What this measures
+
+1. **The chain shows no measurable lift.** 37% vs 44%, p=0.625, on the same
+   weights, the same prompt and the same tools — the only pair here that holds
+   the model fixed and varies the harness. `PRE-REGISTRATION-1.6.md` Rule 1
+   pre-committed the wording for exactly this outcome, so it is published in
+   exactly those words: **our lift comes from using a competent agent loop, not
+   from the chain.**
+2. **What produces the lift is TOOLING, not orchestration.** `openhands` 44% vs
+   `bare` 6%, p=0.031 — the one significant result among the DeepSeek arms. The
+   retracted "+58 pp scaffold lift" was measuring the difference between having
+   a usable editor and tool-calling API and not having one. Separating that from
+   the chain is precisely what the missing `openhands` arm was needed for.
+3. **Cost makes it worse, not better.** $5.13 per resolved instance for the
+   chain against $2.20 for a single agent — **2.3× for no measurable gain**, on
+   the same price-table basis, plus 2.1× the fresh input tokens (14.3 M vs
+   6.8 M) and 2.8× the median wall clock (995 s vs 357 s).
+4. **Claude Code is roughly twice the factory** — 79% vs 37%, p=0.008 — but that
+   arm varies **harness AND model** at once. It is a reference point, not a
+   scaffold deficit, and that caveat travels with the number everywhere.
+5. **The contamination probe came back CLEAN, and it is the most valuable result
+   in the sweep.** `claude-opus-4-8` (published cutoff **Jan 2026**) scores 74%
+   against `claude-opus-5`'s 79% (cutoff **May 2026**) on the same harness, same
+   flags, p=1.000 — even though **all 19** instances predate opus-5's cutoff.
+   Memorization is not carrying Claude's score. This *strengthens* the Claude
+   reference rather than undermining it, and it retires the doubt PLAN 2.1
+   recorded about publishing an absolute rate for the Claude arms.
+6. **n=19, k=1. MDE ≈ ±38 pp.** So the honest phrasing for #1 is "no measurable
+   lift", **not** "the chain hurts". −7 pp is well inside noise. Nothing here
+   measured harm, and no reader should take it that way.
+7. **The subset relation still holds, and needs no significance test.** The
+   factory's 7 passes are a **strict subset** of `claude-opus-5`'s 15 — only-B = 0
+   in that pair, i.e. the factory solved nothing Claude Code missed. Against
+   `claude-opus-4-8` it wins exactly one instance, `hkuds__openharness-217`.
+
+### Two caveats that cut against the factory — stated, not buried
+
+- **`openhands` is under-counted.** It lost 3 of 19 rows to Azure
+  `DeepSeek-V4-Pro` 429 rate limits, and **2 of those 3 had already produced
+  patches the oracle RESOLVES** (`jsonpickle-588`, `rapid-mlx-289`). Counted,
+  `openhands` is **9/19 = 47%** and the gap to the chain widens. There is no
+  retry on a provider 429, and the lost row records `cost_usd: 0.0`.
+- **7/19 is exactly the "matched-weights ceiling" the previous retraction
+  predicted independently.** The 2026-08-03 audit derived 7/19 = 37% by
+  subtracting the hard-tier-assisted resolves from the retracted 11/19. This
+  sweep measured 7/19 = 37% directly. Two separate routes agree on the number.
+
+### Integrity
+
+- The retrieval detector caught **one genuine violation**: `bare` on
+  `hiero-ledger__hiero-sdk-python-1914_interface` ran
+  `curl -s https://raw.githubusercontent.com/…/src/hiero_sdk_python/account/account_info.py`
+  — the upstream source of the exact file under test. Published **invalid and
+  excluded**, per the no-re-rolls rule.
+- **Zero path-based oracle probes anywhere.** The work root is now flat, so no
+  arm sits a `..` away from `oracle.json.z` or another arm's logs. The 46
+  in-flight audit failures the sweep logged were the pre-#227 detector matching
+  hostnames the arms merely *read*; all 95 rows were re-audited under the fixed
+  detector before publication, uniformly, with no arm re-run.
+- **The repaired `bare` arm genuinely iterates now** — 727 model calls and 16 of
+  18 valid rows budget-exhausted, against a mean of 9.2 steps and zero cap hits
+  before — and still reaches only 6%. Per `PRE-REGISTRATION-1.6.md`'s
+  pre-committed cap, **bare has now had its ONE repaired run.** Whether it stays
+  in the suite is an operator decision; it anchors no headline either way.
+- The review loop is no longer inert: reviewer cycles were `0×7, 1×9, 2×2, 3×1`
+  across the 19 factory rows, versus 0 on every row in the n=6 sweeps. It
+  engages and still does not lift the resolve rate.
+
+### The fail-open paths from the retracted run are now closed
+
+Each of these was live on 2026-08-03 and is fixed in this harness:
+
+- Grading is **per-node**, not exit-code. `-rpfEsxX` (that is `-rA` minus `P`, so
+  arm-authored code cannot echo a forged `PASSED <id>` into the region the parser
+  reads) and every declared `FAIL_TO_PASS` and `PASS_TO_PASS` id must have a
+  `PASSED` node and no `FAILED`/`ERROR` node. A module-level `SkipTest` in
+  production code no longer scores RESOLVED.
+- A prediction touching a pytest-collection or auto-import channel
+  (`pyproject.toml`, `pytest.ini`, `tox.ini`, `setup.cfg`, `noxfile.py`,
+  `conftest.py`, `sitecustomize.py`, `*.pth`) is **refused**, and `audit.json`
+  records `refused_paths`.
+- `_DIFF_HEADER` fails CLOSED on any header it cannot classify.
+- `audit.json` hashes the graded patch (`prediction_sha256`) and records
+  `base_commit`, `stripped_test_paths`, `trajectories_scanned`, `trails_scanned`.
+- **No row in this manifest has an empty `PASS_TO_PASS`** — Table 4 reports 0 for
+  every arm, so every grade has a regression half.
+
+What remains open is reporting, not measurement: `PLAN.md` 1.6 G.
+
+`PLAN.md` Phase 2 is the gate on turning any of this into a defensible number.
 
 ## Fixed 2026-08-02 (Phase 1.1–1.3 + the three bugs that invalidated 2026-08-01)
 
@@ -159,10 +228,15 @@ chain-verdict precision 1/5, recall 1/1, $3.33.
 > are committed in #211. The 14:01Z table ($3.33, precision 1/5) stays
 > retracted — its artifacts were destroyed before archival existed. The
 > **currently backed** numbers (archives `17-30-31Z` and `17-45-30Z`):
-> factory 1/6 = bare 1/6 resolved (same qutebrowser instance; scaffold lift
-> 0 pp at ~30× tokens), and the post-#210 sweep holds 1/6 with the review
-> loop now engaging (`reviewer_cycles` on 2/6 vs 0/6 before). Per-instance
-> autopsies live in the memory file `swebench_failure_synthesis_2026_08_02`.
+> factory 1/6 = bare 1/6 resolved (same qutebrowser instance, at ~30× tokens),
+> and the post-#210 sweep holds 1/6 with the review loop now engaging
+> (`reviewer_cycles` on 2/6 vs 0/6 before). Per-instance autopsies live in the
+> memory file `swebench_failure_synthesis_2026_08_02`.
+>
+> **Superseded 2026-08-04** by the five-arm n=19 result at the top of this file.
+> That n=6 pair is `factory` vs `bare`, which entangles the chain with the
+> tooling; it is not a chain measurement and "scaffold lift" is no longer the
+> metric. Keep it only as a Pro-profile plumbing record.
 
 ## Fixed 2026-08-01 (Phase 0)
 
@@ -217,13 +291,23 @@ improve itself. Cross-check any yield claim against GitHub before asserting it.
 
 ## Benchmark harness
 
-Pinned as of `PLAN.md` 0.3/0.4: `base_sha` is a literal SHA and an empty one is
-refused, the Claude arm pins `--model`, `clean()` no longer deletes
-`bench/runs/`, and every `result.json` records tokens plus its
-base/routes/price-table provenance. Tokens are the reported metric; dollars are
-derived from a hashed price table and can be re-derived after a price
-correction. This fixes the HARNESS. The July results stay retracted: their raw
-artifacts are still gone and their task pool is still contaminated.
+Two harnesses, do not confuse them.
+
+- **`bench/swebench_adapter.py` — the one that counts.** Externally graded
+  against a hidden oracle, five arms, pre-registered tables, archived evidence,
+  `report --check`. Everything in "The benchmark" above comes from it. Read
+  `bench/swebench/README.md`.
+- **`bench/bench.py` — retired for grading.** It scores the factory on
+  sacrifice's own gates, i.e. on tests the factory wrote. Its July campaign is
+  superseded (`bench/CAMPAIGN-2026-07-17.md`), its raw artifacts are gone and
+  its task pool is contaminated. Pinned as of `PLAN.md` 0.3/0.4 — `base_sha` is a
+  literal SHA and an empty one is refused, the Claude arm pins `--model`,
+  `clean()` no longer deletes `bench/runs/`, every `result.json` records its
+  base/routes/price-table provenance — so it is usable as a *convergence*
+  harness. It is not evidence about correctness.
+
+Tokens are the reported metric in both; dollars are derived from a hashed price
+table and can be re-derived after a price correction.
 
 ## Known gaps in the twin
 

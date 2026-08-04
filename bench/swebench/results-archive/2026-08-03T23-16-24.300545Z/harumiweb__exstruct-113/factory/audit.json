@@ -1,0 +1,90 @@
+{
+  "instance_id": "harumiweb__exstruct-113",
+  "arm": "factory",
+  "audited_at": "2026-08-03T20:11:09.874250+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 3 call(s) but only 2 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T19:54:39.656679+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 708.26,
+      "success": 0,
+      "error": "sandbox run raised: ConversationRunError('Conversation run failed for id=f6b00122-4898-4447-a352-abc846091bb9: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\\n\\nConversation logs are stored at: /tmp/factory-oh-traj-[REDACTED]\\n\\nTo help debug this issue, please file a bug report at:\\n  https://github.com/OpenHands/software-agent-sdk/issues/new\\nand attach the conversation logs from the directory above.')"
+    },
+    {
+      "ts": "2026-08-03T20:08:40.669331+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2146408,
+      "tokens_out": 19346,
+      "cached_input_tokens": 1218304,
+      "cost_usd": 2.061482844,
+      "duration_s": 840.701,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:08:49.599758+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 9135,
+      "tokens_out": 698,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.027547500000000003,
+      "duration_s": 8.22,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:11:05.348864+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 391519,
+      "tokens_out": 4249,
+      "cached_input_tokens": 246272,
+      "cost_usd": 0.33625017200000007,
+      "duration_s": 135.208,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:11:08.745196+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 9607,
+      "tokens_out": 103,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.019802500000000004,
+      "duration_s": 2.612,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.4451,
+  "ledger_tokens_in": 2556669,
+  "ledger_tokens_out": 24396,
+  "result_cost_usd": 2.4451,
+  "prediction_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "base_commit": "c0c8c52d0a3b507ac13feb4b700e5d858f2a81dc",
+  "stripped_test_paths": [
+    "tests/cli/test_cli_lazy_imports.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 3,
+  "trails_scanned": 3,
+  "oracle_probe_failures": []
+}

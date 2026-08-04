@@ -1,0 +1,95 @@
+{
+  "arm": "claude-4.8",
+  "arm_base": "claude",
+  "instance_id": "keras-team__keras-22642",
+  "repo": "keras-team/keras",
+  "base_commit": "2b176bc33233762863fa5f3d60e060de3be934e5",
+  "problem_statement_sha256": "e780ff834139a00d5a3d6026010d78819f3b7308869e57168d5222748829c759",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-4-8",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-4-8",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "dd65a9f4-781f-4843-9d64-e551ed2d337b",
+  "ts": "2026-08-03T23:06:39.035448+00:00",
+  "wall_clock_s": 124.8,
+  "agent_wall_s": 108.3,
+  "num_turns": 16,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 574428,
+  "tokens_out": 6588,
+  "cached_input_tokens": 546836,
+  "cost_usd": 0.6207,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.0018
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-4-8",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.6189
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 4.8,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "keras/src/layers/attention/grouped_query_attention_test.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "keras/src/layers/attention/grouped_query_attention.py"
+  ],
+  "test_files_stripped": [
+    "keras/src/layers/attention/grouped_query_attention_test.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1713,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-4.8",
+    "instance_id": "keras-team__keras-22642",
+    "image": "swerebench/sweb.eval.x86_64.keras-team_1776_keras-22642@sha256:6441ecaa2a206b685e32f0e0ef592147d70494b9a8f2d30a08eb1ba97cac2604",
+    "graded_at": "2026-08-03T23:06:39.158875+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 16,
+    "pass_to_pass_declared_count": 16,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 29.8,
+    "log_tail": "ry_mask_propagation PASSED [ 81%]\nkeras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_key_value_dim_mismatch PASSED [ 87%]\nkeras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_query_value_dim_mismatch PASSED [ 93%]\nkeras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_symbolic_shape_without_return_attention_scores PASSED [100%]\n\n=========================== short test summary info ============================\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_basics\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_proj_gqa\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_proj_mha\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_value_proj_mqa\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_proj_gqa\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_proj_mha\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_value_proj_mqa\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_correctness_disable_flash_attention\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_correctness_enable_flash_attention\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_initializer\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_masking_causal\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_masking_not_causal\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_query_mask_propagation\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_key_value_dim_mismatch\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_query_value_dim_mismatch\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_symbolic_shape_without_return_attention_scores\n============================== 16 passed in 0.93s ==============================\nSWEBENCH_TALLY_b338c6a8baa9e194: pass_to_pass ============================== 16 passed in 0.93s ==============================\n[18 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_b338c6a8baa9e194: RESOLVED\n"
+  }
+}

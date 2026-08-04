@@ -1,0 +1,74 @@
+diff --git a/keras/src/layers/attention/grouped_query_attention.py b/keras/src/layers/attention/grouped_query_attention.py
+index 308ee53..d3b7378 100644
+--- a/keras/src/layers/attention/grouped_query_attention.py
++++ b/keras/src/layers/attention/grouped_query_attention.py
+@@ -1,5 +1,6 @@
+ import math
+ 
++from keras.src import backend
+ from keras.src import constraints
+ from keras.src import initializers
+ from keras.src import ops
+@@ -476,8 +477,8 @@ class GroupedQueryAttention(Layer):
+         value_shape,
+         key_shape=None,
+     ):
+-        if key_shape is None:
+-            key_shape = value_shape
++        query_shape = tuple(query_shape)
++        value_shape = tuple(value_shape)
+ 
+         if query_shape[-1] != value_shape[-1]:
+             raise ValueError(
+@@ -487,6 +488,8 @@ class GroupedQueryAttention(Layer):
+                 f"value_shape={value_shape}"
+             )
+ 
++        key_shape = value_shape if key_shape is None else tuple(key_shape)
++
+         if value_shape[1:-1] != key_shape[1:-1]:
+             raise ValueError(
+                 "All dimensions of `value` and `key`, except the last one, "
+@@ -496,6 +499,42 @@ class GroupedQueryAttention(Layer):
+ 
+         return query_shape
+ 
++    def compute_output_spec(
++        self,
++        query,
++        value,
++        key=None,
++        query_mask=None,
++        value_mask=None,
++        key_mask=None,
++        attention_mask=None,
++        return_attention_scores=False,
++        training=None,
++        use_causal_mask=False,
++    ):
++        if key is not None:
++            key_shape = key.shape
++        else:
++            key_shape = None
++        output_shape = self.compute_output_shape(
++            query.shape, value.shape, key_shape
++        )
++        output_spec = backend.KerasTensor(
++            output_shape, dtype=self.compute_dtype
++        )
++        if return_attention_scores:
++            # (batch_dim, query_heads, target_seq_len, source_seq_len)
++            attention_shape = (
++                query.shape[0],
++                self.num_query_heads,
++                query.shape[1],
++                value.shape[1],
++            )
++            return output_spec, backend.KerasTensor(
++                attention_shape, dtype=self.compute_dtype
++            )
++        return output_spec
++
+     def get_config(self):
+         config = {
+             "head_dim": self.head_dim,
