@@ -144,6 +144,19 @@ opens an operator-facing GitHub issue.
   is `True` only once `_pr_is_merged_on_github` confirms it — otherwise
   `auto_merge_enabled=True` and reconcile picks the merge up later.
 
+- **`tests-meaningful` is the static slop detector and nothing else** (2026-08-05,
+  A.5). It carried a second, opt-in layer — real ablation/mutation testing behind
+  `gates.mutation_testing` — that never ran in any app while the gate itself is
+  in `LOOP4_REQUIRED_GATE_LABELS`: one flag stood between four verified defects
+  (symbols the diff never touched, fail-open on a timeout or an already-red
+  suite, mutation of the live `state/worktrees/` checkout, `passed=False` in
+  dry-run) and every merge. The branch was deleted, not re-wired. The repaired
+  measurement is `factory/chain/mutation.py`, reachable only from
+  `factory mutation-score`; no gate imports it, and a test in
+  `tests/test_mutation.py` keeps it that way. `gates.mutation_testing` is now an
+  inert config field. Scores land in `state/mutation/<app>/<head_sha>.json`,
+  which is also the per-`(head_sha, symbol)` cache.
+
 - **Two bounded recovery loops inside auto-merge.** Real CI `"failure"` runs
   `_handle_ci_failure()` before the merge decision: re-dispatch to
   `REVIEWER_REQUESTED_CHANGES` with the CI log fed in as a reviewer finding,

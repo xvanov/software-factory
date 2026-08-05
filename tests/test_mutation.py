@@ -11,6 +11,7 @@ silently.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import time
@@ -509,6 +510,21 @@ def test_a_non_green_baseline_never_populates_the_cache(tmp_path: Path) -> None:
     assert not cache_path(tmp_path / "factory-root", "toy", head).exists()
 
 
+def test_a_changed_test_command_invalidates_the_cache(tmp_path: Path) -> None:
+    """An outcome is a fact about ``(tree, symbol, test command)``. Keying the
+    cache on the SHA alone would let a ``test_command`` change re-publish
+    outcomes the new command never produced."""
+    repo, head = _repo(tmp_path)
+    first = _measure(repo, head, tmp_path)
+    assert first.score == 1.0
+
+    # Same SHA, different command — and a command that cannot measure anything.
+    second = _measure(repo, head, tmp_path, test_command="exit 5")
+    assert second.cache_hits == 0
+    assert second.status == STATUS_BASELINE_INFRA
+    assert second.score is None
+
+
 def test_no_cache_forces_a_re_measurement(tmp_path: Path) -> None:
     repo, head = _repo(tmp_path)
     _measure(repo, head, tmp_path)
@@ -561,3 +577,151 @@ def test_skipped_statuses_never_carry_a_score(status: str) -> None:
     report = mutation.MutationReport(status=status, reason="x")
     assert report.score is None
     assert not report.measured
+
+
+# --------------------------------------------------------------------------- #
+# What the adversarial pass found
+# --------------------------------------------------------------------------- #
+
+
+def test_a_stale_sentinel_cannot_manufacture_a_kill(tmp_path: Path) -> None:
+    """The sentinel is the evidence that a red run is attributable to the
+    mutation. A leftover file with that name must not be usable as evidence, so
+    each run clears it first."""
+    repo, head = _repo(tmp_path, exercised=False)
+    sentinels = tmp_path / "sentinels"
+    sentinels.mkdir()
+    sym = mutation.Symbol(path="z_last.py", qualname="target", lineno=1, touched_lines=1)
+    import hashlib
+
+    stale = sentinels / f"FACTORY_ABLATION-{hashlib.sha1(sym.key.encode()).hexdigest()[:12]}"
+    stale.write_text("stale", encoding="utf-8")
+
+    outcome, _dirty = mutation._ablate_one(repo, sym, PYTEST_CMD, sentinels, 120)
+    # The symbol is never called, so the suite stays green: "survived", and the
+    # detail must say it was never invoked despite the pre-existing file.
+    assert outcome["outcome"] == "survived"
+    assert outcome["detail"] == "never invoked by the suite"
+
+
+def test_attribution_requires_the_symbol_name_not_just_the_marker(tmp_path: Path) -> None:
+    """Measuring this repo puts this module's own source — which contains the
+    literal marker — inside the tree under test. Attribution therefore matches
+    the full ``FACTORY_ABLATION <qualname>`` message, so a traceback that merely
+    quotes the marker cannot buy a kill."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "z_last.py").write_text(_Z_LAST_NEW, encoding="utf-8")
+    sentinels = tmp_path / "s"
+    sentinels.mkdir()
+    sym = mutation.Symbol(path="z_last.py", qualname="target", lineno=1, touched_lines=1)
+    # A "suite" that fails while printing the bare marker and never running the
+    # mutated code.
+    cmd = f"{PY} -c \"print('FACTORY_ABLATION appears in our own source'); raise SystemExit(1)\""
+    outcome, _dirty = mutation._ablate_one(repo, sym, cmd, sentinels, 120)
+    assert outcome["outcome"] == "skipped"
+    assert "not attributable" in outcome["detail"]
+
+
+def test_a_duplicate_definition_is_measured_once(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init(repo)
+    (repo / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "base")
+    _git(repo, "checkout", "-qb", "story")
+    (repo / "m.py").write_text(
+        "def f():\n    return 2\n\n\ndef f():\n    return 3\n", encoding="utf-8"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "head")
+    head = _git(repo, "rev-parse", "HEAD").strip()
+
+    selection = select_symbols(repo, "main", head)
+    assert selection is not None
+    sample, candidates, notes = selection
+    assert [s.key for s in sample] == ["m.py::f"]
+    assert candidates == 1
+    assert any("duplicate definition" in n for n in notes)
+
+
+def test_the_callers_virtualenv_is_unreachable_from_the_scratch_tree(tmp_path: Path) -> None:
+    """The first real run of this tool ran
+    ``<caller>/.venv/bin/python <caller>/.venv/bin/pytest`` with cwd inside the
+    scratch tree, because ``uv run`` fell back to PATH for a runner its fresh
+    project env did not have. That interpreter imports the CALLER's source, so
+    the mutation is invisible and every mutant "survives"."""
+    env = mutation._mutant_env(tmp_path)
+    assert "VIRTUAL_ENV" not in env
+    assert "PYTHONPATH" not in env
+    outside_venv_bins = [
+        entry
+        for entry in env["PATH"].split(":")
+        if any(part in {".venv", "venv", "virtualenv", "site-packages"} for part in Path(entry).parts)
+        and not entry.startswith(str(tmp_path.resolve()))
+    ]
+    assert outside_venv_bins == [], outside_venv_bins
+    # ...and the command an app actually declares can still find its driver.
+    assert shutil.which("uv", path=env["PATH"]) is not None
+
+
+def test_a_survived_verdict_is_withdrawn_when_the_suite_reads_another_tree(
+    tmp_path: Path,
+) -> None:
+    """The ambiguity the provenance probe exists to remove: a suite that does not
+    import the mutated file is green for every mutant, which is
+    indistinguishable from tests that simply never assert on it."""
+    repo, head = _repo(tmp_path, exercised=False)
+    # A "suite" that passes without ever reading the repo it runs in.
+    report = _measure(repo, head, tmp_path, test_command="exit 0")
+    assert report.status == STATUS_MEASURED
+    assert report.baseline == GREEN
+    assert report.survived == [], "a survived verdict was published for an unread tree"
+    assert report.score is None
+    assert any("provenance probe stayed green" in s["why"] for s in report.skipped)
+    assert any("provenance failed" in n for n in report.notes)
+
+
+def test_provenance_is_not_probed_when_something_was_killed(tmp_path: Path) -> None:
+    """A kill already proves the suite reads the tree, so the extra suite run is
+    not spent."""
+    repo, head = _repo(tmp_path, exercised=True)
+    report = _measure(repo, head, tmp_path)
+    assert report.killed == ["z_last.py::target"]
+    assert not any("provenance" in n for n in report.notes)
+
+
+def test_a_genuine_unexercised_symbol_survives_the_probe(tmp_path: Path) -> None:
+    """The probe must not swallow real findings: here the suite DOES import the
+    file (it imports the symbol without calling it), so the ``survived`` verdict
+    stands."""
+    repo, head = _repo(tmp_path, exercised=False)
+    report = _measure(repo, head, tmp_path)
+    assert report.survived == ["z_last.py::target"]
+    assert report.score == 0.0
+    assert any("provenance ok" in n for n in report.notes)
+    stored = json.loads(cache_path(tmp_path / "factory-root", "toy", head).read_text())
+    assert stored["provenance"] == {"z_last.py": "ok"}
+
+
+def test_changed_lines_outside_any_symbol_are_reported(tmp_path: Path) -> None:
+    """Module-level code is not ablatable this way; the score must not read as
+    "the whole diff is covered"."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init(repo)
+    (repo / "m.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "base")
+    _git(repo, "checkout", "-qb", "story")
+    (repo / "m.py").write_text("VALUE = 2\nOTHER = 3\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "head")
+    head = _git(repo, "rev-parse", "HEAD").strip()
+
+    selection = select_symbols(repo, "main", head)
+    assert selection is not None
+    sample, _candidates, notes = selection
+    assert sample == []
+    assert any("outside any ablatable symbol" in n for n in notes)

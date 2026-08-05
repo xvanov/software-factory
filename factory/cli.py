@@ -2520,6 +2520,15 @@ def mutation_score_cmd(
     ),
     base: str = typer.Option("main", "--base", help="Base branch the diff is against"),
     head: str = typer.Option("", "--head", help="Head SHA (default: the checkout's HEAD)"),
+    test_command: str = typer.Option(
+        "",
+        "--test-command",
+        help=(
+            "Override the app's test_command. Needed when the app's command is "
+            "not self-sufficient in a fresh checkout — the factory's own "
+            "`uv run pytest -q` is not, because pytest is a dev extra."
+        ),
+    ),
     max_symbols: int = typer.Option(5, "--max-symbols", help="Cap on ablations per run"),
     budget_seconds: int = typer.Option(1800, "--budget-seconds", help="Wall-clock budget"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Ignore cached per-symbol results"),
@@ -2548,7 +2557,7 @@ def mutation_score_cmd(
         repo_root=repo_root,
         head_sha=head,
         base_branch=base,
-        test_command=app_config.gates.test_command,
+        test_command=test_command or app_config.gates.test_command,
         app=app_name,
         software_factory_root=_FACTORY_ROOT,
         max_symbols=max_symbols,

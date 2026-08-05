@@ -58,6 +58,24 @@ How each defect is fixed here
 * **Mutation is a line splice**, not an ``ast.unparse`` round-trip: every byte
   outside the target body — comments included — survives.
 
+Two defences the FIRST REAL RUN of this tool made necessary
+==========================================================
+Measuring the factory on its own diff found a way for the whole thing to be
+green and meaningless, which the toy fixtures could not surface:
+
+* **The caller's virtualenv leaked into the scratch tree.** ``uv run pytest -q``
+  in a fresh clone installs only base dependencies (``pytest`` is a dev EXTRA),
+  so ``uv`` resolved ``pytest`` from ``PATH`` — the calling process's venv — and
+  ran that interpreter, whose editable install points at the CALLER's source.
+  The mutation would have been invisible and every mutant would have "survived".
+  ``_mutant_env`` now makes the caller's venv unreachable, so a command that
+  cannot find its runner reports ``skipped`` instead.
+* **A surviving mutant is ambiguous.** "The tests never assert on this" and "the
+  suite is not importing the tree we mutated" both look like a green mutant.
+  ``_provenance_probe`` breaks the file's syntax and re-runs: a suite that stays
+  green is not reading the file, and every ``survived`` verdict for that file is
+  withdrawn. It only runs where nothing was killed — a kill already proves it.
+
 Cost and the cache
 ==================
 One suite run per symbol plus one baseline. The factory's own suite is ~5m36s
@@ -73,6 +91,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -243,6 +262,12 @@ def _touched_lines(repo_root: Path, base_ref: str, head_ref: str) -> dict[str, s
         "diff",
         "--no-color",
         "--no-ext-diff",
+        # Pin the prefixes: a user/repo ``diff.noprefix=true`` would emit
+        # ``+++ path`` instead of ``+++ b/path`` and every path here would be
+        # parsed two characters short — a silent-substrate failure that would
+        # quietly select nothing.
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
         "-U0",
         f"{base_ref}...{head_ref}",
     )
@@ -253,10 +278,10 @@ def _touched_lines(repo_root: Path, base_ref: str, head_ref: str) -> dict[str, s
     for line in out.splitlines():
         if line.startswith("+++ "):
             target = line[4:].strip()
-            if target == "/dev/null":
+            if target == "/dev/null" or not target.startswith("b/"):
                 current = None
             else:
-                current = target[2:] if target.startswith("b/") else target
+                current = target[2:]
                 touched.setdefault(current, set())
             continue
         if current is None:
@@ -372,6 +397,8 @@ def select_symbols(
 
     notes: list[str] = []
     candidates: list[Symbol] = []
+    seen: set[str] = set()
+    unmapped = 0
     for path in sorted(touched):
         lines = touched[path]
         if not lines or not path.endswith(".py"):
@@ -388,18 +415,34 @@ def select_symbols(
         except (SyntaxError, ValueError):
             notes.append(f"{path}: unparseable at {head_ref}")
             continue
+        covered: set[int] = set()
         for qualname, node in _walk_functions(tree.body):
             start, end = _span(node)
             hits = sum(1 for line in lines if start <= line <= end)
             if not hits:
                 continue
+            covered.update(line for line in lines if start <= line <= end)
             if _is_trivial_body(node):
                 notes.append(f"{path}::{qualname}: body is already a no-op (equivalent mutant)")
                 continue
+            key = f"{path}::{qualname}"
+            if key in seen:
+                # A module-level redefinition of the same name. Ablating it
+                # twice would reuse one attribution sentinel and could score the
+                # second run off the first run's evidence.
+                notes.append(f"{key}: duplicate definition, measured once")
+                continue
+            seen.add(key)
             candidates.append(
                 Symbol(path=path, qualname=qualname, lineno=start, touched_lines=hits)
             )
+        unmapped += len(lines - covered)
 
+    if unmapped:
+        # Module-level code — imports, constants, class bodies — is changed by
+        # plenty of real diffs and is NOT ablatable this way. Saying so keeps
+        # the score from reading as "the whole diff is covered".
+        notes.append(f"{unmapped} changed line(s) sit outside any ablatable symbol")
     ranked = sorted(candidates, key=lambda s: (-s.touched_lines, s.path, s.lineno))
     sample = sorted(ranked[:max_symbols], key=lambda s: (s.path, s.lineno))
     return sample, len(candidates), notes
@@ -472,6 +515,54 @@ def mutate_source(source: str, qualname: str, *, sentinel: Path) -> str | None:
 
 GREEN, RED, INFRA = "green", "red", "infra"
 
+# PATH entries under one of these directory names belong to a virtualenv.
+_VENV_DIR_NAMES = {".venv", "venv", "virtualenv", "site-packages"}
+
+
+def _mutant_env(tree_dir: Path) -> dict[str, str]:
+    """The test-run environment, with the CALLER's virtualenv made unreachable.
+
+    MEASURED on the first real run of this tool against the factory itself: the
+    factory's own ``test_command`` is ``uv run pytest -q``, ``pytest`` is a dev
+    EXTRA, and ``uv run`` in a fresh clone installs only the base dependencies.
+    ``uv`` then resolved the ``pytest`` executable from ``PATH`` — finding the
+    calling process's venv — and ran
+    ``<caller>/.venv/bin/python <caller>/.venv/bin/pytest`` with cwd inside the
+    scratch tree. That interpreter's editable install points at the CALLER's
+    source, so the mutation would have been invisible: every mutant survives and
+    the tool reports "your tests exercise nothing" having measured nothing.
+
+    So the caller's venv is stripped out (``VIRTUAL_ENV``, ``PYTHONPATH``,
+    ``PYTHONHOME``, ``UV_PROJECT_ENVIRONMENT``, and any venv ``bin`` on ``PATH``
+    that is not inside the scratch tree). A test command that then cannot find
+    its runner fails as INFRA — which reports ``skipped``, the honest answer —
+    instead of silently measuring the wrong tree. ``uv``'s own directory is put
+    back afterwards so an app whose command starts with ``uv`` still resolves it.
+    """
+    from factory.runner import _isolated_test_env
+
+    env = _isolated_test_env()
+    for var in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "UV_PROJECT_ENVIRONMENT"):
+        env.pop(var, None)
+
+    tree = str(tree_dir.resolve())
+    kept: list[str] = []
+    for entry in env.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        if any(part in _VENV_DIR_NAMES for part in Path(entry).parts) and not entry.startswith(
+            tree
+        ):
+            continue
+        kept.append(entry)
+    uv_path = shutil.which("uv", path=os.pathsep.join(kept))
+    if uv_path is None:
+        original_uv = shutil.which("uv", path=env.get("PATH", ""))
+        if original_uv is not None:
+            kept.append(str(Path(original_uv).parent))
+    env["PATH"] = os.pathsep.join(kept)
+    return env
+
 
 def _run_suite(cwd: Path, test_command: str, timeout_s: int) -> tuple[str, str]:
     """Return ``(GREEN|RED|INFRA, output tail)``.
@@ -484,8 +575,6 @@ def _run_suite(cwd: Path, test_command: str, timeout_s: int) -> tuple[str, str]:
     Anything that is not a clean pass or a genuine test failure is INFRA, which
     can never mean "good".
     """
-    from factory.runner import _isolated_test_env
-
     try:
         proc = subprocess.run(
             test_command,
@@ -496,7 +585,7 @@ def _run_suite(cwd: Path, test_command: str, timeout_s: int) -> tuple[str, str]:
             errors="replace",
             check=False,
             timeout=timeout_s,
-            env=_isolated_test_env(),
+            env=_mutant_env(cwd),
         )
     except subprocess.TimeoutExpired:
         return INFRA, f"test command timed out after {timeout_s}s: {test_command}"
@@ -598,10 +687,25 @@ def cache_path(software_factory_root: Path | None, app: str, head_sha: str) -> P
     return _events_dir(software_factory_root).parent / "mutation" / safe_app / f"{safe_sha}.json"
 
 
-def _load_cache(path: Path) -> dict[str, dict[str, str]]:
+def _command_fingerprint(test_command: str) -> str:
+    return hashlib.sha256(test_command.encode("utf-8")).hexdigest()[:16]  # noqa: S324
+
+
+def _load_cache(path: Path, *, fingerprint: str) -> dict[str, dict[str, str]]:
+    """Cached outcomes for this SHA — but only if they were measured with the
+    SAME test command.
+
+    An outcome is a fact about ``(tree at head_sha, symbol, test command)``.
+    Keying the file on the SHA alone would let a config change to
+    ``test_command`` silently re-publish outcomes the new command never
+    produced: a stale "killed" reported as a fresh measurement. Mismatched
+    fingerprint ⇒ measure again.
+    """
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return {}
+    if raw.get("command_fingerprint") != fingerprint:
         return {}
     symbols = raw.get("symbols")
     if not isinstance(symbols, dict):
@@ -616,23 +720,52 @@ def _load_cache(path: Path) -> dict[str, dict[str, str]]:
     return out
 
 
+def _load_provenance(path: Path, *, fingerprint: str) -> dict[str, str]:
+    """Per-file "is the suite reading this tree" verdicts from a previous run."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if raw.get("command_fingerprint") != fingerprint:
+        return {}
+    stored = raw.get("provenance")
+    if not isinstance(stored, dict):
+        return {}
+    return {
+        key: str(val)
+        for key, val in stored.items()
+        if isinstance(key, str) and val in {"ok", "failed"}
+    }
+
+
 def _save_cache(
-    path: Path, *, app: str, head_sha: str, symbols: dict[str, dict[str, str]], report: MutationReport
+    path: Path,
+    *,
+    app: str,
+    head_sha: str,
+    fingerprint: str,
+    symbols: dict[str, dict[str, str]],
+    provenance: dict[str, str],
+    report: MutationReport,
 ) -> None:
     """Persist determinate per-symbol outcomes plus the rolled-up score.
 
     Only ``killed``/``survived`` are stored: a ``skipped`` symbol was not
-    measured, and caching it would freeze a non-measurement in place.
+    measured, and caching it would freeze a non-measurement in place. This file
+    is also the durable RECORD of the measurement — the number an operator reads
+    when deciding whether this signal is worth gating on.
     """
     payload = {
         "app": app,
         "head_sha": head_sha,
+        "command_fingerprint": fingerprint,
         "updated": datetime.now(UTC).isoformat(),
         "mutation_score": report.score,
         "candidates": report.candidates,
         "truncated": report.truncated,
         "baseline": report.baseline,
         "symbols": symbols,
+        "provenance": provenance,
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -713,8 +846,13 @@ def measure(
         report.elapsed_s = time.monotonic() - started
         return report
 
+    fingerprint = _command_fingerprint(test_command)
     cache_file = cache_path(software_factory_root, app, head_sha)
-    cached = _load_cache(cache_file) if use_cache else {}
+    cached = _load_cache(cache_file, fingerprint=fingerprint) if use_cache else {}
+    cached_provenance = (
+        _load_provenance(cache_file, fingerprint=fingerprint) if use_cache else {}
+    )
+    provenance: dict[str, str] = dict(cached_provenance)
     outcomes: dict[str, dict[str, str]] = {}
     pending: list[Symbol] = []
     for sym in sample:
@@ -732,8 +870,15 @@ def measure(
         return report
 
     _reap_stale_trees()
-    tree = Path(tempfile.mkdtemp(prefix=_TREE_PREFIX))
-    sentinels = Path(tempfile.mkdtemp(prefix=_SENTINEL_PREFIX))
+    try:
+        tree = Path(tempfile.mkdtemp(prefix=_TREE_PREFIX))
+        sentinels = Path(tempfile.mkdtemp(prefix=_SENTINEL_PREFIX))
+    except OSError as exc:
+        # No scratch space ⇒ no measurement. Never a score.
+        report.status = STATUS_NO_TREE
+        report.reason = f"could not create scratch space: {exc}"
+        _finish(report, outcomes, started, save=None, allow_score=False)
+        return report
     tree_dir = tree / "repo"
     try:
         source_label = _materialize_tree(repo_root, head_ref, tree_dir)
@@ -761,32 +906,114 @@ def measure(
             _finish(report, outcomes, started, save=None, allow_score=False)
             return report
 
+        dirty = False
         for sym in pending:
+            if dirty:
+                # A failed restore would make the NEXT symbol's run judge a
+                # composed mutant: red for the previous symbol's reason, which
+                # could be scored as this symbol's kill. Stop instead of
+                # guessing generously.
+                report.skipped.append({"symbol": sym.key, "why": "scratch tree left dirty"})
+                continue
             if time.monotonic() - started > budget_s:
                 report.budget_exhausted = True
                 report.skipped.append({"symbol": sym.key, "why": "budget_exhausted"})
                 continue
-            outcome = _ablate_one(
+            outcome, dirty = _ablate_one(
                 tree_dir, sym, test_command, sentinels, per_run_timeout_s
             )
             if outcome["outcome"] in {"killed", "survived"}:
                 outcomes[sym.key] = outcome
             else:
                 report.skipped.append({"symbol": sym.key, "why": outcome["detail"]})
+
+        _verify_provenance(
+            report,
+            outcomes,
+            tree_dir=tree_dir,
+            test_command=test_command,
+            per_run_timeout_s=per_run_timeout_s,
+            budget_s=budget_s,
+            started=started,
+            cached_provenance=cached_provenance,
+            provenance=provenance,
+            dirty=dirty,
+        )
     finally:
         shutil.rmtree(tree, ignore_errors=True)
         shutil.rmtree(sentinels, ignore_errors=True)
 
-    _finish(report, outcomes, started, save=(cache_file, app))
+    _finish(report, outcomes, started, save=(cache_file, app, fingerprint), provenance=provenance)
     return report
+
+
+def _verify_provenance(
+    report: MutationReport,
+    outcomes: dict[str, dict[str, str]],
+    *,
+    tree_dir: Path,
+    test_command: str,
+    per_run_timeout_s: int,
+    budget_s: int,
+    started: float,
+    cached_provenance: dict[str, str],
+    provenance: dict[str, str],
+    dirty: bool,
+) -> None:
+    """Withdraw every ``survived`` verdict whose file the suite does not read.
+
+    A file with a KILL in it is already proven. For any other file carrying a
+    ``survived``, run the syntax-break probe once. Unproven ⇒ those outcomes are
+    demoted to ``skipped``, because "the tests do not exercise this" and "we
+    measured the wrong tree" are indistinguishable from a green mutant, and
+    publishing the first when it might be the second is a false accusation
+    dressed as a measurement.
+    """
+    killed_files = {k.split("::", 1)[0] for k, v in outcomes.items() if v["outcome"] == "killed"}
+    suspect_files = {
+        k.split("::", 1)[0]
+        for k, v in outcomes.items()
+        if v["outcome"] == "survived" and k.split("::", 1)[0] not in killed_files
+    }
+    for rel_path in sorted(suspect_files):
+        verdict = provenance.get(rel_path)
+        if verdict is None:
+            if dirty or time.monotonic() - started > budget_s:
+                verdict = "unverified"
+            else:
+                verdict = _provenance_probe(
+                    tree_dir, rel_path, test_command, per_run_timeout_s
+                )
+                provenance[rel_path] = verdict
+        # Recorded either way: "this survived verdict was checked" is part of the
+        # evidence, not just the failures.
+        report.notes.append(f"{rel_path}: provenance {verdict}")
+        if verdict == "ok":
+            continue
+        for key in [k for k in list(outcomes) if k.split("::", 1)[0] == rel_path]:
+            if outcomes[key]["outcome"] != "survived":
+                continue
+            del outcomes[key]
+            report.skipped.append(
+                {
+                    "symbol": key,
+                    "why": (
+                        "the suite does not read the mutated tree for this file "
+                        "(provenance probe stayed green)"
+                        if verdict == "failed"
+                        else "provenance for this file could not be verified"
+                    ),
+                }
+            )
 
 
 def _finish(
     report: MutationReport,
     outcomes: dict[str, dict[str, str]],
     started: float,
-    save: tuple[Path, str] | None = None,
+    save: tuple[Path, str, str] | None = None,
     allow_score: bool = True,
+    provenance: dict[str, str] | None = None,
 ) -> None:
     report.killed = sorted(k for k, v in outcomes.items() if v["outcome"] == "killed")
     report.survived = sorted(k for k, v in outcomes.items() if v["outcome"] == "survived")
@@ -807,14 +1034,57 @@ def _finish(
                 f", {len(report.skipped)} skipped, {report.candidates} candidates)"
             )
     if save is not None and outcomes:
-        cache_file, app = save
+        cache_file, app, fingerprint = save
         _save_cache(
             cache_file,
             app=app,
             head_sha=report.head_sha,
+            fingerprint=fingerprint,
             symbols=outcomes,
+            provenance=provenance or {},
             report=report,
         )
+
+
+def _provenance_probe(
+    tree_dir: Path, rel_path: str, test_command: str, per_run_timeout_s: int
+) -> str:
+    """Is the suite actually reading THIS file in THIS tree? ``"ok"``/``"failed"``.
+
+    A surviving mutant is ambiguous: either the tests never assert on the
+    symbol, or the suite is not importing the tree we mutated at all (a leaked
+    outer virtualenv, a stale installed copy of the package, a monorepo test
+    command rooted in a different directory). Both produce "green with the body
+    gutted", and only one of them is a finding about the tests.
+
+    The probe removes the ambiguity without needing to know anything about the
+    project: make the file syntactically INVALID and re-run. Any suite that
+    imports it must now fail. If it stays green, the file is not in the suite's
+    import path and nothing about it was measured.
+
+    A KILLED mutant already proves provenance, so this only runs for a file
+    where nothing was killed — the exact case where the score would otherwise be
+    an unfalsifiable zero.
+    """
+    target = tree_dir / rel_path
+    try:
+        original = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return "failed"
+    try:
+        target.write_text(original + "\nthis is (not valid python\n", encoding="utf-8")
+        outcome, _output = _run_suite(tree_dir, test_command, per_run_timeout_s)
+    except OSError:
+        return "failed"
+    finally:
+        try:
+            target.write_text(original, encoding="utf-8")
+        except OSError:
+            pass
+    # Green with a syntactically broken file ⇒ the suite never reads it.
+    # Anything else ⇒ it does. A timeout would also read as "ok" here, which
+    # only risks KEEPING a survived finding, never manufacturing a kill.
+    return "failed" if outcome == GREEN else "ok"
 
 
 def _ablate_one(
@@ -823,8 +1093,10 @@ def _ablate_one(
     test_command: str,
     sentinels: Path,
     per_run_timeout_s: int,
-) -> dict[str, str]:
+) -> tuple[dict[str, str], bool]:
     """Mutate one symbol in the scratch tree, run the suite, classify.
+
+    Returns ``(outcome, tree_left_dirty)``.
 
     * green ⇒ **survived** — the tests do not notice the symbol's body being
       replaced by a raise. Whether the symbol was even reached is recorded
@@ -835,43 +1107,62 @@ def _ablate_one(
       the mutation, and guessing in the generous direction is how the old code
       certified coverage it never measured.
     * infra ⇒ skipped.
+
+    KNOWN LIMIT, stated here because it is the one remaining way this can be
+    optimistic: a suite that flakes red on a run where the mutant WAS invoked is
+    scored as a kill. The green baseline immediately before, in the same tree,
+    narrows it; only re-runs would close it. It inflates a score; it cannot pass
+    a merge, because nothing on the merge path reads this.
     """
     target = tree_dir / sym.path
     try:
         original = target.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        return {"outcome": "skipped", "detail": f"unreadable: {exc}"}
+        return {"outcome": "skipped", "detail": f"unreadable: {exc}"}, False
 
     digest = hashlib.sha1(sym.key.encode("utf-8")).hexdigest()[:12]  # noqa: S324 — not security
     sentinel = sentinels / f"{_MARKER}-{digest}"
+    # A leftover sentinel would be read as "this mutant ran". Start from absent.
+    try:
+        sentinel.unlink(missing_ok=True)
+    except OSError:
+        return {"outcome": "skipped", "detail": "could not clear the attribution sentinel"}, False
+
     mutated = mutate_source(original, sym.qualname, sentinel=sentinel)
     if mutated is None:
-        return {"outcome": "skipped", "detail": "symbol could not be mutated"}
+        return {"outcome": "skipped", "detail": "symbol could not be mutated"}, False
 
     try:
         target.write_text(mutated, encoding="utf-8")
         outcome, output = _run_suite(tree_dir, test_command, per_run_timeout_s)
     except OSError as exc:
-        return {"outcome": "skipped", "detail": f"mutation write failed: {exc}"}
+        return {"outcome": "skipped", "detail": f"mutation write failed: {exc}"}, True
     finally:
-        # The tree is scratch, so this restore is hygiene (mutants must not
-        # compose), not a correctness dependency.
+        # The tree is scratch, so this restore protects the NEXT symbol's
+        # measurement, not the source checkout. The caller stops if it fails.
         try:
             target.write_text(original, encoding="utf-8")
         except OSError:
             pass
+    dirty = target.read_text(encoding="utf-8", errors="replace") != original
 
     ran = sentinel.exists()
     if outcome == GREEN:
         return {
             "outcome": "survived",
             "detail": "invoked but not asserted on" if ran else "never invoked by the suite",
-        }
-    if outcome == RED and (ran or _MARKER in output):
-        return {"outcome": "killed", "detail": "suite went red on the ablated body"}
+        }, dirty
+    # The fallback matches the FULL message, symbol name included. Matching the
+    # bare marker would false-attribute when the tree under test contains this
+    # module's own source (measuring the factory on itself does).
+    if outcome == RED and (ran or f"{_MARKER} {sym.qualname}" in output):
+        return {"outcome": "killed", "detail": "suite went red on the ablated body"}, dirty
     if outcome == RED:
         return {
             "outcome": "skipped",
             "detail": "suite red but the failure is not attributable to the mutation",
-        }
-    return {"outcome": "skipped", "detail": f"infrastructure failure: {output.strip()[:200]}"}
+        }, dirty
+    return {
+        "outcome": "skipped",
+        "detail": f"infrastructure failure: {output.strip()[:200]}",
+    }, dirty
