@@ -76,6 +76,20 @@ green and meaningless, which the toy fixtures could not surface:
   green is not reading the file, and every ``survived`` verdict for that file is
   withdrawn. It only runs where nothing was killed — a kill already proves it.
 
+Interaction with the acceptance oracle's transient file
+======================================================
+``gates/acceptance_verified`` copies a hidden, spec-authored oracle test INTO the
+dev's checkout to run it, then sweeps it out — which is why it must stay last in
+``evaluate_all_gates``'s tuple (now asserted by
+``tests/test_gates_evaluation.py::test_H8_acceptance_gate_is_last_in_the_evaluator_tuple``).
+Nothing here can see that window, for two independent reasons:
+
+1. no gate imports this module, so none of this runs during a gate evaluation;
+2. when it does run, it operates on a ``git clone`` at a COMMITTED sha, and
+   selection reads file content through ``git show <ref>:<path>`` rather than off
+   the working tree. An uncommitted file that appears and disappears in the source
+   checkout cannot enter the clone, the symbol selection, or the score.
+
 Cost and the cache
 ==================
 One suite run per symbol plus one baseline. The factory's own suite is ~5m36s
@@ -1070,6 +1084,62 @@ def _finish(
             provenance=provenance or {},
             report=report,
         )
+
+
+def check_can_fail(
+    *,
+    repo_root: Path,
+    head_ref: str,
+    target_path: str,
+    qualname: str,
+    check_command: str,
+    timeout_s: int = _PER_RUN_TIMEOUT_S,
+) -> tuple[bool, str]:
+    """Can ``check_command`` FAIL when ``target_path::qualname`` stops working?
+
+    Returns ``(proven, detail)``. ``True`` only when the check was observed going
+    red on a mutation we can attribute to ourselves. Every other outcome —
+    green, an unattributable red, a timeout, a tree we could not materialize — is
+    ``False`` with the reason, because "we could not prove it" is not "it can".
+
+    This is the general shape of the question a required gate has to be able to
+    answer about its own green: *does this check carry information?* The mutation
+    machinery above answers it for a whole test suite; this answers it for ONE
+    check, which is the cheap case — a single oracle file runs in seconds where
+    the factory's suite takes ~380 s.
+
+    It exists as a seam, with no caller yet. The concrete case it was written for:
+    an acceptance oracle of ``def test_x(): assert True`` is stored, runs, reports
+    "1 passed", and yields an authoritative green against an implementation that
+    violates the criterion. Ablate the symbol the criterion is about, require the
+    oracle to go red, and that green means something. **A caller on the merge path
+    must treat ``False`` as blocking, not as a pass** — this function deliberately
+    does not decide that for you, but a "cannot prove" that waves the check
+    through is the fail-open bug this whole module exists to correct.
+
+    Like ``measure``, it never writes to ``repo_root``: the mutation happens in a
+    throwaway ``git clone`` at ``head_ref``.
+    """
+    _reap_stale_trees()
+    try:
+        scratch = Path(tempfile.mkdtemp(prefix=_TREE_PREFIX))
+        sentinels = Path(tempfile.mkdtemp(prefix=_SENTINEL_PREFIX))
+    except OSError as exc:
+        return False, f"could not create scratch space: {exc}"
+    tree_dir = scratch / "repo"
+    try:
+        if _materialize_tree(repo_root, head_ref, tree_dir) is None:
+            return False, "could not materialize a scratch checkout to mutate"
+        sym = Symbol(path=target_path, qualname=qualname, lineno=0, touched_lines=0)
+        outcome, _dirty = _ablate_one(tree_dir, sym, check_command, sentinels, timeout_s)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+        shutil.rmtree(sentinels, ignore_errors=True)
+    if outcome["outcome"] == "killed":
+        return True, f"{target_path}::{qualname} ablated → the check went red"
+    if outcome["outcome"] == "survived":
+        return False, f"the check stayed green with {target_path}::{qualname} gutted"
+    return False, outcome["detail"]
 
 
 def _provenance_probe(

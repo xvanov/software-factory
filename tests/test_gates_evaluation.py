@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -25,6 +26,7 @@ from factory.chain.gates import (
 from factory.chain.gates.evaluator import (
     ALL_GATE_LABELS,
     LOOP4_REQUIRED_GATE_LABELS,
+    GateResult,
     PRContext,
     evaluate_all_gates,
     gate_label_for,
@@ -693,6 +695,72 @@ def test_evaluate_all_gates_returns_every_label(
     # All gates pass for this happy-path fixture under dry-run.
     failed = [(k, v.reason) for k, v in results.items() if not v.passed]
     assert not failed, f"unexpected gate failures: {failed!r}"
+
+
+def test_H8_acceptance_gate_is_last_in_the_evaluator_tuple(
+    tmp_path: Path, app_cfg_with_commands: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``acceptance_verified`` must run LAST, and that must be a test.
+
+    The acceptance gate briefly copies the hidden, spec-authored oracle test into
+    the dev's checkout to run it, then sweeps it out. Any gate that reads the tree
+    while that copy exists sees a file the dev never wrote: ``tests-meaningful``
+    would scan it as one of the dev's tests, ``production-tree-changed`` reads the
+    tree too. ``evaluate_all_gates`` carries a comment saying so and, until now,
+    nothing enforced it — exactly the kind of silent guarantee a concurrent
+    refactor breaks without any test going red.
+
+    Asserted on OBSERVED call order, not on the source text, so a restructure
+    that keeps the comment but changes the behaviour still fails.
+    """
+    from factory.chain.gates import (
+        acceptance_verified,
+        canonical_paths_only,
+        docs_current,
+        production_tree_changed,
+        smoke_green,
+        tests_green,
+        tests_meaningful,
+    )
+
+    order: list[str] = []
+    for mod in (
+        tests_green,
+        tests_meaningful,
+        production_tree_changed,
+        docs_current,
+        canonical_paths_only,
+        smoke_green,
+        acceptance_verified,
+    ):
+        label = gate_label_for(mod.__name__.rsplit(".", 1)[-1])
+        real = mod.evaluate
+
+        def _spy(
+            pr_ctx: PRContext,
+            cfg: AppConfig,
+            _label: str = label,
+            _real: Any = real,
+        ) -> GateResult:
+            order.append(_label)
+            return _real(pr_ctx, cfg)
+
+        monkeypatch.setattr(mod, "evaluate", _spy)
+
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        story=_story(),
+        repo_root=tmp_path,
+        files_changed=["src/foo.py"],
+        dry_run=True,
+    )
+    evaluate_all_gates(pr, app_cfg_with_commands)
+    assert order[-1] == "acceptance-verified", f"call order was {order}"
+    # And the two gates that read the tree must both precede it.
+    assert order.index("tests-meaningful") < order.index("acceptance-verified")
+    assert order.index("production-tree-changed") < order.index("acceptance-verified")
 
 
 # --- smoke_green (D002 runtime verifier) --------------------------------- #

@@ -720,6 +720,90 @@ def test_a_genuine_unexercised_symbol_survives_the_probe(tmp_path: Path) -> None
     assert stored["provenance"] == {"z_last.py": "ok"}
 
 
+# --------------------------------------------------------------------------- #
+# check_can_fail — the "does this check carry information" seam
+# --------------------------------------------------------------------------- #
+
+
+def test_check_can_fail_proves_a_real_check(tmp_path: Path) -> None:
+    repo, head = _repo(tmp_path, exercised=True)
+    proven, detail = mutation.check_can_fail(
+        repo_root=repo,
+        head_ref=head,
+        target_path="z_last.py",
+        qualname="target",
+        check_command=f"{PY} -m pytest -q tests/test_all.py::test_target",
+        timeout_s=120,
+    )
+    assert proven, detail
+    assert "went red" in detail
+
+
+def test_check_can_fail_rejects_a_check_that_cannot_fail(tmp_path: Path) -> None:
+    """The acceptance-oracle hole in one assertion: a check of
+    ``def test_x(): assert True`` passes, reports "1 passed", and proves
+    nothing."""
+    repo, head = _repo(tmp_path, exercised=True)
+    (repo / "tests" / "test_vacuous.py").write_text(
+        "def test_x():\n    assert True\n", encoding="utf-8"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "vacuous oracle")
+    head = _git(repo, "rev-parse", "HEAD").strip()
+
+    proven, detail = mutation.check_can_fail(
+        repo_root=repo,
+        head_ref=head,
+        target_path="z_last.py",
+        qualname="target",
+        check_command=f"{PY} -m pytest -q tests/test_vacuous.py",
+        timeout_s=120,
+    )
+    assert not proven
+    assert "stayed green" in detail
+
+
+def test_check_can_fail_never_returns_true_on_infrastructure_failure(tmp_path: Path) -> None:
+    """"Could not prove it" must never read as "it can". A caller on the merge
+    path has to be able to treat False as blocking."""
+    repo, head = _repo(tmp_path)
+    proven, detail = mutation.check_can_fail(
+        repo_root=repo,
+        head_ref=head,
+        target_path="z_last.py",
+        qualname="target",
+        check_command="definitely-not-a-command-xyz",
+        timeout_s=60,
+    )
+    assert not proven
+    assert "infrastructure failure" in detail
+
+    proven2, detail2 = mutation.check_can_fail(
+        repo_root=repo,
+        head_ref=head,
+        target_path="z_last.py",
+        qualname="no_such_symbol",
+        check_command=f"{PY} -m pytest -q",
+        timeout_s=60,
+    )
+    assert not proven2
+    assert "could not be mutated" in detail2
+
+
+def test_check_can_fail_never_writes_to_the_source_checkout(tmp_path: Path) -> None:
+    repo, head = _repo(tmp_path)
+    before = _snapshot(repo)
+    mutation.check_can_fail(
+        repo_root=repo,
+        head_ref=head,
+        target_path="z_last.py",
+        qualname="target",
+        check_command=f"{PY} -m pytest -q",
+        timeout_s=120,
+    )
+    assert _snapshot(repo) == before
+
+
 def test_changed_lines_outside_any_symbol_are_reported(tmp_path: Path) -> None:
     """Module-level code is not ablatable this way; the score must not read as
     "the whole diff is covered"."""
