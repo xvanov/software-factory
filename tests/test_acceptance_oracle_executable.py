@@ -777,3 +777,73 @@ def test_harness_hint_is_handed_to_the_author(tmp_path: Path) -> None:
 def test_no_harness_section_without_a_hint(tmp_path: Path) -> None:
     prompt = build_spec_prompt(_story(), _direction(tmp_path, ["ac"]), harness_hint=None)
     assert "Harness" not in prompt
+
+
+# --------------------------------------------------------------------------- #
+# the real spawn path writes both artifacts (the thing that had never happened)
+# --------------------------------------------------------------------------- #
+
+
+def test_real_spawn_path_writes_the_oracle_and_the_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``handle_stories_spawned`` — the actual pm-sync entry point — must leave a
+    persisted ``acceptance_expected`` AND a readable oracle outside the app repo.
+    In production both were empty for all 165 stories; this pins the path that was
+    supposed to fill them. Only the LLM call is faked."""
+    from factory.app_config import load_app_config
+    from factory.chain.handlers import handle_stories_spawned
+    from factory.directions.parser import parse_direction_dir
+
+    root = tmp_path
+    (root / "state").mkdir(parents=True, exist_ok=True)
+    (root / "apps" / "sacrifice").mkdir(parents=True, exist_ok=True)
+    (root / "apps" / "sacrifice" / "config.yaml").write_text(
+        "name: sacrifice\nrepo: o/r\ngates:\n  acceptance_oracle: true\n"
+        "  acceptance_harness_hint: 'The app object is `app` in `app.main`.'\n",
+        encoding="utf-8",
+    )
+    _write_direction_dir(root, acceptance=["the email is lowercased before storing"])
+    direction = parse_direction_dir(
+        "sacrifice",
+        root / "apps" / "sacrifice" / "directions" / "002-emails",
+        software_factory_root=root,
+    )
+    app_config = load_app_config("sacrifice", root)
+
+    seen: dict[str, object] = {}
+
+    def _fake_llm(spec_prompt: str, story: StoryRecord, **kwargs: object) -> str:
+        seen["spec"] = spec_prompt
+        seen["root"] = kwargs.get("software_factory_root")
+        return _GOOD_ORACLE
+
+    monkeypatch.setattr("factory.chain.acceptance._llm_author", _fake_llm)
+
+    db = root / "state" / "factory.db"
+    stories = handle_stories_spawned(
+        direction,
+        {"child_stories": [{"title": "Lowercase the email", "scope": "backend"}],
+         "confidence": 0.9},
+        app_config,
+        root,
+        dry_run=False,
+        db_path=db,
+        github_client=None,
+    )
+    assert len(stories) == 1
+
+    from factory.chain.handlers import get_story
+
+    row = get_story(stories[0].id, db)
+    assert row is not None
+    assert row.acceptance_expected is True
+    assert row.acceptance_test_ref == f"state/acceptance/sacrifice/{row.id}/test_acceptance.py"
+    assert (root / row.acceptance_test_ref).read_text(encoding="utf-8") == _GOOD_ORACLE
+    # Independence: stored under state/acceptance, never under state/worktrees.
+    assert "worktrees" not in row.acceptance_test_ref
+    # The spec-only prompt carried the ACs and the app's harness facts, no code.
+    assert "the email is lowercased before storing" in str(seen["spec"])
+    assert "app.main" in str(seen["spec"])
+    # ...and the call was attributed to this factory root, not to the process cwd.
+    assert Path(str(seen["root"])) == root
