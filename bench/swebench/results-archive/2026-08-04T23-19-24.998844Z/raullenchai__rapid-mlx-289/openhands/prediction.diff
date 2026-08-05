@@ -1,0 +1,102 @@
+diff --git a/vllm_mlx/reasoning/gemma4_parser.py b/vllm_mlx/reasoning/gemma4_parser.py
+index 311acc0..dff0397 100644
+--- a/vllm_mlx/reasoning/gemma4_parser.py
++++ b/vllm_mlx/reasoning/gemma4_parser.py
+@@ -75,7 +75,11 @@ class Gemma4ReasoningParser(ReasoningParser):
+         if not delta_text:
+             return None
+ 
+-        # Track channel state based on accumulated text
++        # Track channel state based on accumulated text.
++        # Save pre-delta state so we can detect transitions within the delta.
++        was_in_thought = self._in_thought
++        was_in_content = self._in_content
++
+         # Check if we just entered thought channel
+         if "<|channel>thought" in current_text and not self._in_content:
+             self._in_thought = True
+@@ -99,19 +103,49 @@ class Gemma4ReasoningParser(ReasoningParser):
+                 ):
+                     self._in_content = True
+ 
+-        # Filter out channel markers from delta
+-        clean = delta_text
+-        for marker in [
+-            "<|channel>",
+-            "<channel|>",
+-            "<|turn>",
+-            "<turn|>",
+-            "thought\n",
+-            "content\n",
+-            "final\n",
+-        ]:
+-            clean = clean.replace(marker, "")
+-
++        # Detect if the delta itself contains a thought-to-content transition.
++        # This happens when stream_interval > 1 and the delta straddles a
++        # channel marker. In that case we must split the delta and emit both
++        # reasoning (pre-marker) and content (post-marker) in correct channels.
++        transitioned = was_in_thought and not self._in_thought
++        transitioned_to_content = transitioned and self._in_content
++
++        if transitioned_to_content and was_in_thought:
++            # Find the transition point within delta_text.
++            # The marker that flips state is either:
++            #   (a) "<|channel>content" / "<|channel>final"
++            #   (b) "<channel|>" (close-thought marker)
++            split_pos = -1
++            split_marker = ""
++
++            for marker in ["<|channel>content\n", "<|channel>content",
++                           "<|channel>final\n", "<|channel>final",
++                           "<channel|>"]:
++                if marker in delta_text:
++                    split_pos = delta_text.index(marker)
++                    split_marker = marker
++                    break
++
++            if split_pos >= 0:
++                # Split: before marker = reasoning, after = content
++                pre = delta_text[:split_pos]
++                post = delta_text[split_pos + len(split_marker):]
++
++                # Clean the pre/post parts individually
++                clean_pre = self._clean_delta(pre)
++                clean_post = self._clean_delta(post)
++
++                if clean_pre and clean_post:
++                    return DeltaMessage(reasoning=clean_pre, content=clean_post)
++                elif clean_pre:
++                    return DeltaMessage(reasoning=clean_pre)
++                elif clean_post:
++                    return DeltaMessage(content=clean_post)
++                else:
++                    return None
++
++        # Standard classification: whole delta belongs to current state
++        clean = self._clean_delta(delta_text)
+         if not clean:
+             return None  # pure marker token, skip
+ 
+@@ -126,6 +160,21 @@ class Gemma4ReasoningParser(ReasoningParser):
+             # Between channels — treat as reasoning
+             return DeltaMessage(reasoning=clean)
+ 
++    @staticmethod
++    def _clean_delta(text: str) -> str:
++        """Remove channel markers from text."""
++        for marker in [
++            "<|channel>",
++            "<channel|>",
++            "<|turn>",
++            "<turn|>",
++            "thought\n",
++            "content\n",
++            "final\n",
++        ]:
++            text = text.replace(marker, "")
++        return text
++
+     def finalize_streaming(self, accumulated_text: str) -> DeltaMessage | None:
+         """Handle end of stream — emit any remaining content."""
+         return None

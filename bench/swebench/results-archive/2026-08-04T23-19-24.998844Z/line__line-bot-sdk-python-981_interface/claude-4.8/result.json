@@ -1,0 +1,96 @@
+{
+  "arm": "claude-4.8",
+  "arm_base": "claude",
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "repo": "line/line-bot-sdk-python",
+  "base_commit": "f0d222be1a25553005bff35c2ace82424a683fd9",
+  "problem_statement_sha256": "ae01809b0f7a08ab816b8aec1d499276a97ea8870462a049af24228ac3261551",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-4-8",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-4-8",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "9b08f778-c0da-43e7-ae87-3302c3ec316b",
+  "ts": "2026-08-03T23:13:17.754549+00:00",
+  "wall_clock_s": 215.6,
+  "agent_wall_s": 208.7,
+  "num_turns": 15,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 895431,
+  "tokens_out": 19292,
+  "cached_input_tokens": 831402,
+  "cost_usd": 1.3086,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.0019
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-4-8",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 1.3067
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.9,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/api"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "linebot/v3/oauth/api/async_channel_access_token.py",
+    "linebot/v3/oauth/api/channel_access_token.py"
+  ],
+  "test_files_stripped": [
+    "tests/api/test_issue_stateless_channel_token_convenience.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 34793,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-4.8",
+    "instance_id": "line__line-bot-sdk-python-981_interface",
+    "image": "swerebench/sweb.eval.x86_64.line_1776_line-bot-sdk-python-981_interface@sha256:11b622466b7f8734ef20f3e5d595b533a8eb11d01f033a7e929c4e1269b4b1d4",
+    "graded_at": "2026-08-03T23:13:17.862970+00:00",
+    "fail_to_pass_count": 4,
+    "pass_to_pass_count": 1,
+    "pass_to_pass_declared_count": 0,
+    "pass_to_pass_source": "declared_test_targets",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 10.8,
+    "log_tail": "s/api/test_issue_stateless_channel_token.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_048917b51452f96a: OK (red as expected)\nChecking patch linebot/v3/oauth/api/async_channel_access_token.py...\nChecking patch linebot/v3/oauth/api/channel_access_token.py...\nApplied patch linebot/v3/oauth/api/async_channel_access_token.py cleanly.\nApplied patch linebot/v3/oauth/api/channel_access_token.py cleanly.\nSWEBENCH_APPLY_048917b51452f96a: OK\n/opt/conda/envs/testbed/lib/python3.13/site-packages/pytest_pep8.py:91: SyntaxWarning: invalid escape sequence '\\d'\n  def __init__(self, ignorelines, coderex=re.compile(\"[EW]\\d\\d\\d\")):\n/opt/conda/envs/testbed/lib/python3.13/site-packages/pep8.py:110: FutureWarning: Possible nested set at position 1\n  EXTRANEOUS_WHITESPACE_REGEX = re.compile(r'[[({] | []}),;:]')\n....                                                                     [100%]\n=========================== short test summary info ============================\nPASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_client_secret\nPASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_jwt_assertion\nPASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_client_secret\nPASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_jwt_assertion\n4 passed in 0.19s\nSWEBENCH_TALLY_048917b51452f96a: fail_to_pass 4 passed in 0.19s\n[6 node outcomes for fail_to_pass -> grade-nodes.log]\n/opt/conda/envs/testbed/lib/python3.13/site-packages/pytest_pep8.py:91: SyntaxWarning: invalid escape sequence '\\d'\n  def __init__(self, ignorelines, coderex=re.compile(\"[EW]\\d\\d\\d\")):\n/opt/conda/envs/testbed/lib/python3.13/site-packages/pep8.py:110: FutureWarning: Possible nested set at position 1\n  EXTRANEOUS_WHITESPACE_REGEX = re.compile(r'[[({] | []}),;:]')\n....                                                                     [100%]\n=========================== short test summary info ============================\nPASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_client_secret\nPASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_jwt_assertion\nPASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_client_secret\nPASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_jwt_assertion\n4 passed in 0.20s\nSWEBENCH_TALLY_048917b51452f96a: pass_to_pass 4 passed in 0.20s\n[6 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_048917b51452f96a: RESOLVED\n"
+  }
+}

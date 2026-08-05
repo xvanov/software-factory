@@ -1,0 +1,107 @@
+{
+  "arm": "factory",
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "repo": "raullenchai/Rapid-MLX",
+  "base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+  "problem_statement_sha256": "3ae27ef5d79a458199fe77579d9c2737af36949b5eba763d0b1ef7f02c8a8edf",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/deepseek-v4-pro",
+    "azure/gpt-5.4"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 2,
+      "cost_usd": 2.2729
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "model_tier": null,
+      "calls": 2,
+      "cost_usd": 0.0777
+    }
+  ],
+  "model_escalated_calls": 2,
+  "ts": "2026-08-03T20:10:53.258915+00:00",
+  "wall_clock_s": 1019.7,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 1,
+  "steps_used": 4,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 2960591,
+  "tokens_out": 32373,
+  "cached_input_tokens": 1987072,
+  "cost_usd": 2.3506,
+  "persona_calls": 4,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_reasoning_parsers.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "files_changed": [
+    "vllm_mlx/reasoning/gemma4_parser.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_reasoning_parsers.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 8341,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "raullenchai__rapid-mlx-289",
+    "image": "swerebench/sweb.eval.x86_64.raullenchai_1776_rapid-mlx-289@sha256:c518273fc729729206db46632ff3ae99052e00d2279aad795302692b4a6e02b0",
+    "graded_at": "2026-08-03T20:10:53.837103+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 122,
+    "pass_to_pass_declared_count": 122,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/test_reasoning_parsers.py::TestGemma4Streaming::test_delta_straddles_thought_close_then_content_open: node(s) FAILED/ERROR: ['tests/test_reasoning_parsers.py::TestGemma4Streaming::test_delta_straddles_thought_close_then_content_open']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "vllm_mlx/reasoning/gemma4_parser.py"
+    ],
+    "touched_files": [
+      "vllm_mlx/reasoning/gemma4_parser.py"
+    ],
+    "gold_files_overlap": [
+      "vllm_mlx/reasoning/gemma4_parser.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 5.6,
+    "log_tail": "e\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_direct_content_detected_early\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_content_phase_passthrough\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_undecided\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_undecided_empty\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_content_phase\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_reasoning_reclassifies\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_full_format\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_analysis_only\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_final_only\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_no_channels\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_multiple_analysis_blocks\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_reset_state\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_analysis_channel_switch\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_final_channel_switch\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_commentary_channel_switch\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_message_start_skipped\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_analysis_content_emitted\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_final_content_emitted\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_end_token_stops_message\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_return_token_stops_message\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_commentary_passed_through\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_control_tokens_skipped\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_full_streaming_simulation\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_empty_delta_returns_none\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_no_channel_seen_defaults_to_content\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_thought_open_then_text_routes_to_reasoning\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_delta_with_no_marker_routes_whole_to_current_channel\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_finished_content_phase_routes_to_content\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_reset_state\n============================= 122 passed in 0.09s ==============================\nSWEBENCH_TALLY_03a02840664535a0: pass_to_pass ============================= 122 passed in 0.09s ==============================\n[124 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_03a02840664535a0: UNRESOLVED\n"
+  }
+}

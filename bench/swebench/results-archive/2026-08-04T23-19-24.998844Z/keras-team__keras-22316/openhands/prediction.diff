@@ -1,0 +1,96 @@
+diff --git a/keras/src/models/functional.py b/keras/src/models/functional.py
+index db3e1a9..6c36ebe 100644
+--- a/keras/src/models/functional.py
++++ b/keras/src/models/functional.py
+@@ -135,6 +135,28 @@ class Functional(Function, Model):
+ 
+         Function.__init__(self, inputs, outputs, name=name)
+ 
++        # Add InputLayer operations to the graph, since Function.__init__
++        # does not include operations that produce the inputs.
++        input_operations = []
++        for input_t in self._inputs:
++            input_operation = input_t._keras_history[0]
++            if input_operation and input_operation not in self._operations:
++                input_operations.append(input_operation)
++
++        if input_operations:
++            max_depth = (
++                max(self._operations_by_depth.keys())
++                if self._operations_by_depth
++                else -1
++            )
++            input_depth = max_depth + 1
++            self._operations = input_operations + self._operations
++            self._operations_by_depth[input_depth] = input_operations
++            for input_operation in input_operations:
++                node = input_operation._inbound_nodes[0]
++                self._nodes.add(make_node_key(input_operation, 0))
++                self._nodes_by_depth[input_depth].append(node)
++
+         if trainable is not None:
+             self.trainable = trainable
+ 
+diff --git a/keras/src/ops/function.py b/keras/src/ops/function.py
+index 8d3c524..bcb3e4e 100644
+--- a/keras/src/ops/function.py
++++ b/keras/src/ops/function.py
+@@ -304,16 +304,27 @@ def map_graph(inputs, outputs):
+             previous_depth = nodes_depths.get(node_dep, 0)
+             nodes_depths[node_dep] = max(depth + 1, previous_depth)
+ 
+-    # Handle inputs that are not connected to outputs.
+-    # We do not error out here because the inputs may be used to compute losses
+-    # and metrics.
+-    for input_t in inputs:
+-        input_operation = input_t._keras_history[0]
+-        if input_operation and input_operation not in operations_depths:
+-            operations_depths[input_operation] = 0
+-            operation_indices[input_operation] = -1
+-            nodes_depths[input_operation._inbound_nodes[0]] = 0
+-            network_nodes.add(make_node_key(input_operation, 0))
++    # Filter out nodes and operations that produce only input tensors.
++    # These are not part of the computation graph.
++    input_ids = {id(x) for x in inputs}
++    nodes_depths = {
++        node: depth
++        for node, depth in nodes_depths.items()
++        if not all(
++            id(out) in input_ids for out in tree.flatten(node.output_tensors)
++        )
++    }
++    operations_depths = {
++        operation: depth
++        for operation, depth in operations_depths.items()
++        if not all(
++            id(out) in input_ids for out in tree.flatten(operation.output)
++        )
++    }
++    network_nodes = {
++        make_node_key(node.operation, node.operation._inbound_nodes.index(node))
++        for node in nodes_depths
++    }
+ 
+     # Build a dict {depth: list of nodes with this depth}
+     nodes_by_depth = collections.defaultdict(list)
+@@ -439,6 +450,11 @@ def _build_map_helper(
+     if node in finished_nodes:
+         return
+ 
++    # Stop at input tensors. Operations that produce the inputs
++    # are not part of this graph.
++    if tensor in tree.flatten(inputs):
++        return
++
+     # Prevent cycles.
+     if node in nodes_in_progress:
+         raise ValueError(
+@@ -452,7 +468,7 @@ def _build_map_helper(
+ 
+     # Propagate to all previous tensors connected to this node.
+     nodes_in_progress.add(node)
+-    if not node.is_input and tensor not in tree.flatten(inputs):
++    if not node.is_input:
+         for tensor in node.input_tensors:
+             _build_map_helper(
+                 inputs,

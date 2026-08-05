@@ -197,7 +197,33 @@ Stated before seeing the data, so they cannot be chosen afterwards.
 4. **A budget-exhausted run is a counted attempt for every arm.** Last run
    excluded a Claude row that hit its turn cap *and passed the oracle*, which
    silently improved its denominator. One rule, all arms.
-5. **No re-rolls.** An audit-invalid row is published as invalid.
+5. **No re-rolls of an OUTCOME. Repairing an INFRASTRUCTURE loss is allowed,
+   once, and must be disclosed.** *(Amended 2026-08-04, after the fact — see the
+   honesty note below.)* The distinction:
+   - **Audit-invalid** (integrity: oracle-probe, retrieval, refused paths) →
+     published as invalid, **never re-run**. Re-running it would be selecting on
+     the integrity gate, which is what the 2026-08-03 retraction was about.
+   - **Budget-exhausted** (turn cap, wall cap) → a completed attempt. Counted,
+     flagged, **never re-run**.
+   - **Infrastructure loss** (provider 429, sandbox crash, harness defect — the
+     run produced no metered result through no fault of the arm) → **may be
+     re-run once.** Both attempts must be recorded, the re-run must be flagged in
+     the table, and **if the outcome differs between attempts, both outcomes must
+     be published** with the re-run's used as the headline and the first stated
+     beside it. One repair per row, ever; a second infrastructure loss on the
+     same row is published as lost.
+
+   **Honesty note, because this rule was amended after it was applied.** On
+   2026-08-04 three `openhands` rows died on Azure 429s recording zero cost and
+   zero tokens. They were re-run under the reasoning above — which was sound but
+   was not written down first, so the generated report ended up counting three
+   `attempt: 2` rows while its own "Discarded runs" section called `attempt > 1`
+   "a protocol violation, not a data point". That contradiction is the reason this
+   rule now exists in this form. Outcomes: `jsonpickle-588` resolved twice,
+   `rapid-mlx-289` resolved twice, **`keras-22316` flipped wrong-fix → resolved on
+   the second draw.** Conservative reading 9/19 = 47%; re-run reading
+   10/19 = 53%. Both are published. A rule invented after seeing the data is worth
+   less than one fixed in advance, and this one is recorded as such.
 6. **Report the subset relation.** Last run's most useful finding needed no test:
    the factory's 11 passes were a strict subset of Claude's 16.
 

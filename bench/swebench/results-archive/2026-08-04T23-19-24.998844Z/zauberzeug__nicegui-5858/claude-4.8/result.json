@@ -1,0 +1,97 @@
+{
+  "arm": "claude-4.8",
+  "arm_base": "claude",
+  "instance_id": "zauberzeug__nicegui-5858",
+  "repo": "zauberzeug/nicegui",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "problem_statement_sha256": "7037ab70402ac64e588642695f9bf3a52c1ed002b4de2bb884d4b96cc69263d7",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-4-8",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-4-8",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "a5346c47-fc59-4416-ac3d-3da854f6c2ff",
+  "ts": "2026-08-03T23:08:52.378727+00:00",
+  "wall_clock_s": 103.2,
+  "agent_wall_s": 87.5,
+  "num_turns": 16,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 414201,
+  "tokens_out": 5526,
+  "cached_input_tokens": 394459,
+  "cost_usd": 0.4686,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.0021
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-4-8",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.4665
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.5,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_xterm.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "examples/xterm/main.py",
+    "nicegui/elements/xterm/xterm.py",
+    "nicegui/events.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_xterm.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 3045,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-4.8",
+    "instance_id": "zauberzeug__nicegui-5858",
+    "image": "swerebench/sweb.eval.x86_64.zauberzeug_1776_nicegui-5858@sha256:0774c1c1d9caf26fc590c840482c262c82a76ccc5150c9dd58501114371bc2d2",
+    "graded_at": "2026-08-03T23:08:52.475855+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 3,
+    "pass_to_pass_declared_count": 3,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 49.4,
+    "log_tail": "Checking patch tests/test_xterm.py...\nApplied patch tests/test_xterm.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_570fef879b2b4144: OK (red as expected)\nChecking patch examples/xterm/main.py...\nChecking patch nicegui/elements/xterm/xterm.py...\nChecking patch nicegui/events.py...\nApplied patch examples/xterm/main.py cleanly.\nApplied patch nicegui/elements/xterm/xterm.py cleanly.\nApplied patch nicegui/events.py cleanly.\nSWEBENCH_APPLY_570fef879b2b4144: OK\n..                                                                       [100%]\n=========================== short test summary info ============================\nPASSED tests/test_xterm.py::test_bell_and_data_events\nPASSED tests/test_xterm.py::test_fit_and_resize_event\n2 passed in 8.00s\nSWEBENCH_TALLY_570fef879b2b4144: fail_to_pass 2 passed in 8.00s\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\n...                                                                      [100%]\n=========================== short test summary info ============================\nPASSED tests/test_xterm.py::test_init\nPASSED tests/test_xterm.py::test_write\nPASSED tests/test_xterm.py::test_run_terminal_method\n3 passed in 8.00s\nSWEBENCH_TALLY_570fef879b2b4144: pass_to_pass 3 passed in 8.00s\n[5 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_570fef879b2b4144: RESOLVED\n"
+  }
+}

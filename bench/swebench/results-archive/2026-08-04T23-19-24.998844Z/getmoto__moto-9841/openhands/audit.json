@@ -1,0 +1,38 @@
+{
+  "instance_id": "getmoto__moto-9841",
+  "arm": "openhands",
+  "audited_at": "2026-08-04T04:17:10.637771+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T21:44:56.941127+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 965162,
+      "tokens_out": 10863,
+      "cached_input_tokens": 626432,
+      "cost_usd": 0.7962097419999999,
+      "duration_s": 360.752,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.7962,
+  "ledger_tokens_in": 965162,
+  "ledger_tokens_out": 10863,
+  "result_cost_usd": 0.7962,
+  "prediction_sha256": "36aa94bf790c27cef61baa50cf37842f71138473ea0eb2057ea342f11a6b3596",
+  "base_commit": "830a798c567bcdded2447efb7e98ca6d89b6a8c5",
+  "stripped_test_paths": [
+    "tests/test_kms/test_kms.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

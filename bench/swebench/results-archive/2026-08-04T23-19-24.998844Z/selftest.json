@@ -1,0 +1,125 @@
+{
+  "checked_at": "2026-08-02T23:18:05.949009+00:00",
+  "results": [
+    {
+      "instance_id": "tox-dev__tox-3931",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "hkuds__openharness-217",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "pyinfra-dev__pyinfra-1665",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "alibaba__opensandbox-816",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "google__flax-5171",
+      "gold_resolves": false,
+      "note": "fail_to_pass_ids_do_not_collect",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "harumiweb__exstruct-113",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "keras-team__keras-22316",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "ucfopen__canvasapi-716",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "raullenchai__rapid-mlx-289",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "pandas-dev__pandas-63945",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "idaholab__montepy-933_interface",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "jsonpickle__jsonpickle-588",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "conan-io__conan-19750",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "keras-team__keras-22642",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "vyperlang__vyper-4801",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "zauberzeug__nicegui-5858",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "getmoto__moto-9841",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "line__line-bot-sdk-python-981_interface",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "conan-io__conan-19735_interface",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    },
+    {
+      "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+      "gold_resolves": true,
+      "note": "ok",
+      "stripped_from_gold": []
+    }
+  ]
+}

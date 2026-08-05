@@ -1,0 +1,98 @@
+diff --git a/keras/src/ops/function.py b/keras/src/ops/function.py
+index 8d3c524..c3069c0 100644
+--- a/keras/src/ops/function.py
++++ b/keras/src/ops/function.py
+@@ -279,6 +279,10 @@ def map_graph(inputs, outputs):
+         make_node_key(node.operation, node.operation._inbound_nodes.index(node))
+         for node in nodes_in_decreasing_depth
+     }
++    # The set of the nodes that are part of the graph. Any other node, for
++    # instance a node that produced one of the `inputs`, is not part of the
++    # graph and must be ignored.
++    graph_nodes = set(nodes_in_decreasing_depth)
+ 
+     nodes_depths = {}  # dict {node: depth value}
+     operations_depths = {}  # dict {operation: depth value}
+@@ -301,6 +305,10 @@ def map_graph(inputs, outputs):
+         # The "depth" of a node is the max of the depths
+         # of all nodes it is connected to + 1.
+         for node_dep in node.parent_nodes:
++            if node_dep not in graph_nodes:
++                # This node produced one of the `inputs`, it is not part of the
++                # graph.
++                continue
+             previous_depth = nodes_depths.get(node_dep, 0)
+             nodes_depths[node_dep] = max(depth + 1, previous_depth)
+ 
+@@ -308,12 +316,18 @@ def map_graph(inputs, outputs):
+     # We do not error out here because the inputs may be used to compute losses
+     # and metrics.
+     for input_t in inputs:
+-        input_operation = input_t._keras_history[0]
+-        if input_operation and input_operation not in operations_depths:
+-            operations_depths[input_operation] = 0
+-            operation_indices[input_operation] = -1
+-            nodes_depths[input_operation._inbound_nodes[0]] = 0
+-            network_nodes.add(make_node_key(input_operation, 0))
++        input_operation, node_index, _ = input_t._keras_history
++        if not input_operation or input_operation in operations_depths:
++            continue
++        input_node = input_operation._inbound_nodes[node_index]
++        if not input_node.is_input:
++            # `input_t` is an intermediate tensor, the operation that produced
++            # it is not part of the graph.
++            continue
++        operations_depths[input_operation] = 0
++        operation_indices[input_operation] = -1
++        nodes_depths[input_node] = 0
++        network_nodes.add(make_node_key(input_operation, node_index))
+ 
+     # Build a dict {depth: list of nodes with this depth}
+     nodes_by_depth = collections.defaultdict(list)
+@@ -404,9 +418,10 @@ def _build_map(inputs, outputs):
+     nodes_in_progress = set()
+     nodes_in_decreasing_depth = []  # nodes from inputs -> outputs.
+     operation_indices = {}  # operation -> in traversal order.
++    input_ids = {id(x) for x in tree.flatten(inputs)}
+     for output in tree.flatten(outputs):
+         _build_map_helper(
+-            inputs,
++            input_ids,
+             output,
+             finished_nodes,
+             nodes_in_progress,
+@@ -417,7 +432,7 @@ def _build_map(inputs, outputs):
+ 
+ 
+ def _build_map_helper(
+-    inputs,
++    input_ids,
+     tensor,
+     finished_nodes,
+     nodes_in_progress,
+@@ -435,6 +450,12 @@ def _build_map_helper(
+ 
+     node = operation._inbound_nodes[node_index]
+ 
++    # `tensor` is one of the inputs of the graph, therefore the operation that
++    # produced it is not part of the graph. The exception is input operations
++    # (e.g. `InputLayer`), which are the entry points of the graph.
++    if id(tensor) in input_ids and not node.is_input:
++        return
++
+     # Don't repeat work for shared subgraphs
+     if node in finished_nodes:
+         return
+@@ -452,10 +473,10 @@ def _build_map_helper(
+ 
+     # Propagate to all previous tensors connected to this node.
+     nodes_in_progress.add(node)
+-    if not node.is_input and tensor not in tree.flatten(inputs):
++    if not node.is_input:
+         for tensor in node.input_tensors:
+             _build_map_helper(
+-                inputs,
++                input_ids,
+                 tensor,
+                 finished_nodes,
+                 nodes_in_progress,

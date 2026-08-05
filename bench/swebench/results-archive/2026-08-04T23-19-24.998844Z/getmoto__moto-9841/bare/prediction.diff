@@ -1,0 +1,27 @@
+diff --git a/moto/kms/models.py b/moto/kms/models.py
+index d773be1..f4e139b 100644
+--- a/moto/kms/models.py
++++ b/moto/kms/models.py
+@@ -510,15 +510,19 @@ class KmsBackend(BaseBackend):
+         )
+         return key.aliases[alias_name]
+ 
++    def _get_key_id(self, target_key_id: str) -> str:
++        # Support both full ARN and plain key ID
++        return target_key_id.split("/")[-1] if "/" in target_key_id else target_key_id
++
+     def update_alias(self, target_key_id: str, alias_name: str) -> Alias:
+         for key in self.keys.values():
+-            if alias_name in key.aliases and target_key_id != key.id:
++            if alias_name in key.aliases and self._get_key_id(target_key_id) != key.id:
+                 # Updating the Key that this is an alias of
+                 alias = key.aliases.pop(alias_name)
+-                self.keys[target_key_id].aliases[alias_name] = alias
++                self.keys[self._get_key_id(target_key_id)].aliases[alias_name] = alias
+                 return alias
+         # TargetKeyId hasn't changed - nothing to update
+-        return self.keys[target_key_id].aliases[alias_name]
++        return self.keys[self._get_key_id(target_key_id)].aliases[alias_name]
+ 
+     def delete_alias(self, alias_name: str) -> None:
+         """Delete the alias."""

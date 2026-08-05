@@ -1,0 +1,39 @@
+diff --git a/src/openharness/auth/flows.py b/src/openharness/auth/flows.py
+index ca895a4..18a4ff8 100644
+--- a/src/openharness/auth/flows.py
++++ b/src/openharness/auth/flows.py
+@@ -7,6 +7,7 @@ performs the interactive authentication and returns the obtained credential.
+ from __future__ import annotations
+ 
+ import logging
++import os
+ import platform
+ import subprocess
+ import sys
+@@ -76,18 +77,20 @@ class DeviceCodeFlow(AuthFlow):
+     @staticmethod
+     def _try_open_browser(url: str) -> bool:
+         """Attempt to open *url* in the default browser; return True if likely succeeded."""
++        from urllib.parse import urlparse
++
++        # Only allow http(s) URLs so that file:, javascript:, and bare
++        # executable names cannot reach the platform launcher.
++        if urlparse(url).scheme not in ("http", "https"):
++            return False
++
+         try:
+             plat = platform.system()
+             if plat == "Darwin":
+                 subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                 return True
+             if plat == "Windows":
+-                subprocess.Popen(
+-                    ["start", "", url],
+-                    shell=True,
+-                    stdout=subprocess.DEVNULL,
+-                    stderr=subprocess.DEVNULL,
+-                )
++                os.startfile(url)  # noqa: PWN-110 — ShellExecuteW, no shell interpolation
+                 return True
+             # Linux / WSL
+             proc = subprocess.Popen(

@@ -1,0 +1,81 @@
+diff --git a/server/opensandbox_server/services/validators.py b/server/opensandbox_server/services/validators.py
+index 4b37b57..e464a15 100644
+--- a/server/opensandbox_server/services/validators.py
++++ b/server/opensandbox_server/services/validators.py
+@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
+ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+ 
+ from fastapi import HTTPException, status
++import os
+ import re
+ 
+ from opensandbox_server.services.constants import RESERVED_LABEL_PREFIX, SandboxErrorCodes
+@@ -388,6 +389,33 @@ def ensure_valid_sub_path(sub_path: Optional[str]) -> None:
+             )
+ 
+ 
++def _first_symlink_component(path: str) -> Optional[str]:
++    """
++    Return the first ancestor (or the path itself) that is a symbolic link.
++
++    Walks every existing intermediate component of ``path`` from the leaf up
++    to the filesystem root and returns the first one that is a symlink, or
++    ``None`` when no component along the path is a symlink.
++
++    Non-existent components (for example a subPath directory that will be
++    auto-created later) are simply not symlinks, so they are skipped.  Paths
++    that do not exist on this host (such as Windows-style paths validated on a
++    Unix server) therefore return ``None``.
++    """
++    current = path
++    visited: set[str] = set()
++    while current and current not in visited:
++        visited.add(current)
++        if os.path.islink(current):
++            return current
++        parent = os.path.dirname(current)
++        if parent == current:
++            # Reached the filesystem root (or a drive root); stop walking.
++            break
++        current = parent
++    return None
++
++
+ def ensure_valid_host_path(
+     path: str,
+     allowed_prefixes: Optional[List[str]] = None,
+@@ -450,6 +478,34 @@ def ensure_valid_host_path(
+             },
+         )
+ 
++    # Reject paths that traverse a symbolic link.
++    #
++    # Lexical checks (normpath / prefix startswith) are not enough: an
++    # attacker who can create a symlink *inside* a whitelisted directory can
++    # point it at any host path (e.g. datasets -> /).  The lexical validation
++    # passes because the path still begins with the whitelisted prefix, but
++    # Docker resolves the symlink when performing the bind mount, so the
++    # actual mounted path escapes the allowlist entirely.
++    #
++    # Mirror the stricter standard already enforced for PVC volumes
++    # (os.path.realpath(strict=True)): walk every intermediate component of
++    # the path and reject if any of them is a symbolic link.  This runs
++    # regardless of whether an allowlist is configured, since a symlink can
++    # subvert path validation in either case.
++    _symlink_component = _first_symlink_component(path)
++    if _symlink_component is not None:
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail={
++                "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                "message": (
++                    f"Host path '{path}' traverses a symbolic link at "
++                    f"'{_symlink_component}'. Symbolic links are not allowed "
++                    "because they can bypass the host path allowlist."
++                ),
++            },
++        )
++
+     # Check against allowed prefixes if provided
+     if allowed_prefixes is not None:
+         # Normalize separators for cross-platform prefix checks so Windows-style

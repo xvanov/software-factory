@@ -1,0 +1,81 @@
+{
+  "arm": "openhands",
+  "instance_id": "zauberzeug__nicegui-5858",
+  "repo": "zauberzeug/nicegui",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "problem_statement_sha256": "7037ab70402ac64e588642695f9bf3a52c1ed002b4de2bb884d4b96cc69263d7",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "agent": "openhands-sdk default agent (cli_mode), single conversation",
+  "models_used": [
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.5271
+    }
+  ],
+  "model_escalated_calls": 0,
+  "ts": "2026-08-03T21:41:50.202763+00:00",
+  "wall_clock_s": 224.6,
+  "agent_wall_s": 206.9,
+  "steps_used": 24,
+  "step_cap": 600,
+  "sdk_events": 50,
+  "termination": "agent-finished",
+  "trajectory": "state/events/trajectories/nostory-1.ndjson",
+  "probe_plumbing": false,
+  "tokens_in": 556491,
+  "tokens_out": 4988,
+  "cached_input_tokens": 320000,
+  "cost_usd": 0.5271,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 1,
+  "usage_reliable": true,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.6,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_xterm.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "nicegui/elements/xterm/xterm.py",
+    "nicegui/events.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_xterm.py"
+  ],
+  "diff_bytes": 2089,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "openhands",
+    "instance_id": "zauberzeug__nicegui-5858",
+    "image": "swerebench/sweb.eval.x86_64.zauberzeug_1776_nicegui-5858@sha256:0774c1c1d9caf26fc590c840482c262c82a76ccc5150c9dd58501114371bc2d2",
+    "graded_at": "2026-08-03T21:41:50.737251+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 3,
+    "pass_to_pass_declared_count": 3,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 48.2,
+    "log_tail": "Checking patch tests/test_xterm.py...\nApplied patch tests/test_xterm.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_2167478a8f59070d: OK (red as expected)\nChecking patch nicegui/elements/xterm/xterm.py...\nChecking patch nicegui/events.py...\nApplied patch nicegui/elements/xterm/xterm.py cleanly.\nApplied patch nicegui/events.py cleanly.\nSWEBENCH_APPLY_2167478a8f59070d: OK\n..                                                                       [100%]\n=========================== short test summary info ============================\nPASSED tests/test_xterm.py::test_bell_and_data_events\nPASSED tests/test_xterm.py::test_fit_and_resize_event\n2 passed in 7.68s\nSWEBENCH_TALLY_2167478a8f59070d: fail_to_pass 2 passed in 7.68s\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\n...                                                                      [100%]\n=========================== short test summary info ============================\nPASSED tests/test_xterm.py::test_init\nPASSED tests/test_xterm.py::test_write\nPASSED tests/test_xterm.py::test_run_terminal_method\n3 passed in 7.66s\nSWEBENCH_TALLY_2167478a8f59070d: pass_to_pass 3 passed in 7.66s\n[5 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_2167478a8f59070d: RESOLVED\n"
+  }
+}

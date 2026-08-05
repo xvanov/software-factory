@@ -1,0 +1,77 @@
+{
+  "instance_id": "conan-io__conan-19750",
+  "arm": "factory",
+  "audited_at": "2026-08-04T04:17:09.752996+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T20:18:33.585803+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1716527,
+      "tokens_out": 11845,
+      "cached_input_tokens": 1432320,
+      "cost_usd": 0.8244893800000003,
+      "duration_s": 438.47,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:18:38.902165+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 6083,
+      "tokens_out": 370,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.0149975,
+      "duration_s": 4.337,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:23:29.515028+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1297803,
+      "tokens_out": 7239,
+      "cached_input_tokens": 1046016,
+      "cost_usd": 0.6820828560000001,
+      "duration_s": 289.972,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:23:32.128924+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 6811,
+      "tokens_out": 98,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.012737500000000002,
+      "duration_s": 1.892,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.5343,
+  "ledger_tokens_in": 3027224,
+  "ledger_tokens_out": 19552,
+  "result_cost_usd": 1.5343,
+  "prediction_sha256": "41db6e527d61b31890d9c7e87f76036b60c7d8e6e54e6fb1bfed5ca41715cee1",
+  "base_commit": "6c9356b3e5bd75f7d7061a708785e80aaacb3b43",
+  "stripped_test_paths": [
+    "test/integration/graph/test_platform_requires.py",
+    "test/integration/graph/test_system_tools.py",
+    "test/unittests/client/profile_loader/profile_loader_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

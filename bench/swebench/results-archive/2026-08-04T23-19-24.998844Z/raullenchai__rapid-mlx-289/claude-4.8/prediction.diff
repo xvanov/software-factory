@@ -1,0 +1,268 @@
+diff --git a/vllm_mlx/reasoning/gemma4_parser.py b/vllm_mlx/reasoning/gemma4_parser.py
+index 311acc0..8203248 100644
+--- a/vllm_mlx/reasoning/gemma4_parser.py
++++ b/vllm_mlx/reasoning/gemma4_parser.py
+@@ -20,6 +20,27 @@ _CONTENT_START = re.compile(r"<\|channel>(?:content|final)\n?")
+ _CHANNEL_END = re.compile(r"<channel\|>")
+ _TURN_END = re.compile(r"<turn\|>")
+ 
++# Channel markers recognised while streaming, longest / most-specific first so
++# that a position matching both a specific marker (``<|channel>thought``) and a
++# generic one (``<|channel>``) is consumed as the specific marker.
++#   kind:
++#     "thought"        -> open the thought (reasoning) channel
++#     "content"        -> open the content channel
++#     "close"          -> close the current channel
++#     "bare"/"turn"    -> structural markers with no channel semantics
++_STREAM_MARKERS: tuple[tuple[str, str], ...] = (
++    ("<|channel>thought", "thought"),
++    ("<|channel>content", "content"),
++    ("<|channel>final", "content"),
++    ("<|channel>", "bare"),
++    ("<channel|>", "close"),
++    ("<|turn>", "turn"),
++    ("<turn|>", "turn"),
++)
++
++# Markers whose trailing newline is part of the marker (e.g. ``thought\n``).
++_NEWLINE_MARKER_KINDS = frozenset({"thought", "content", "bare"})
++
+ 
+ class Gemma4ReasoningParser(ReasoningParser):
+     """Parser for Gemma 4's channel-based thinking format."""
+@@ -29,12 +50,20 @@ class Gemma4ReasoningParser(ReasoningParser):
+         self._in_thought = False
+         self._in_content = False
+         self._saw_any_channel = False
++        # Length of reasoning / content already emitted for this request. The
++        # streaming logic re-segments the whole accumulated text on every delta
++        # and only emits the newly-grown suffix, which makes it robust to a
++        # single delta straddling a channel marker.
++        self._emitted_reasoning_len = 0
++        self._emitted_content_len = 0
+ 
+     def reset_state(self):
+         super().reset_state()
+         self._in_thought = False
+         self._in_content = False
+         self._saw_any_channel = False
++        self._emitted_reasoning_len = 0
++        self._emitted_content_len = 0
+ 
+     def extract_reasoning(self, model_output: str) -> tuple[str | None, str | None]:
+         """Extract reasoning from complete output."""
+@@ -68,64 +97,161 @@ class Gemma4ReasoningParser(ReasoningParser):
+ 
+         return reasoning or None, content or None
+ 
++    def _segment(self, text: str) -> tuple[str, str]:
++        """Split ``text`` into (reasoning, content) by walking channel markers.
++
++        Markers are stripped. Text is routed left-to-right according to the
++        active channel, so a segment that straddles a marker is split at the
++        marker boundary rather than being classified wholesale by the state at
++        the end of the text. The routing mirrors :meth:`extract_reasoning`:
++        thought text is reasoning, post-thought / content-channel text is
++        content, and text before any channel marker is plain content.
++        """
++        reasoning_parts: list[str] = []
++        content_parts: list[str] = []
++        in_thought = False
++        in_content = False
++        saw_channel = False
++
++        def emit(segment: str) -> None:
++            if not segment:
++                return
++            if in_thought:
++                reasoning_parts.append(segment)
++            elif in_content:
++                content_parts.append(segment)
++            elif saw_channel:
++                # Between channels (thought closed, content not yet opened).
++                reasoning_parts.append(segment)
++            else:
++                # No channel seen yet — plain content (no thinking).
++                content_parts.append(segment)
++
++        i = 0
++        n = len(text)
++        while i < n:
++            # Find the earliest marker at or after i (specific markers win ties
++            # because they appear first in _STREAM_MARKERS).
++            next_pos = n
++            next_marker: tuple[str, str] | None = None
++            for marker, kind in _STREAM_MARKERS:
++                p = text.find(marker, i)
++                if p != -1 and p < next_pos:
++                    next_pos = p
++                    next_marker = (marker, kind)
++
++            emit(text[i:next_pos])
++
++            if next_marker is None:
++                break
++
++            marker, kind = next_marker
++            i = next_pos + len(marker)
++            # Consume a newline that is part of a channel-open marker.
++            if kind in _NEWLINE_MARKER_KINDS and i < n and text[i] == "\n":
++                i += 1
++
++            if kind == "thought":
++                saw_channel = True
++                if not in_content:
++                    in_thought = True
++            elif kind == "content":
++                saw_channel = True
++                in_thought = False
++                in_content = True
++            elif kind == "close":
++                saw_channel = True
++                if in_thought:
++                    # Thought closed with no explicit content channel — the
++                    # rest of the turn is content.
++                    in_thought = False
++                    in_content = True
++                elif in_content:
++                    in_content = False
++            elif kind == "bare":
++                saw_channel = True
++            # "turn" markers carry no channel semantics.
++
++        return "".join(reasoning_parts), "".join(content_parts)
++
++    def _partial_marker_suffix_len(self, text: str) -> int:
++        """Length of the trailing run of ``text`` that could begin a marker.
++
++        Returns the longest suffix that is a proper prefix of some channel
++        marker (or a complete generic marker that could still extend into a
++        more specific one). Those bytes are held back from emission until the
++        next delta disambiguates them, preventing a partial marker from leaking
++        into the output.
++        """
++        best = 0
++        for marker, _kind in _STREAM_MARKERS:
++            # Longest proper prefix of `marker` that is a suffix of `text`.
++            limit = min(len(marker) - 1, len(text))
++            for length in range(limit, best, -1):
++                if text.endswith(marker[:length]):
++                    best = length
++                    break
++        return best
++
+     def extract_reasoning_streaming(
+         self, previous_text: str, current_text: str, delta_text: str
+     ) -> DeltaMessage | None:
+-        """Extract reasoning from streaming delta."""
++        """Extract reasoning from streaming delta.
++
++        Re-segments the full accumulated text on every call and emits only the
++        newly-grown reasoning/content. This correctly handles a delta that
++        straddles the thought-to-content channel marker: the bytes before the
++        marker are routed to reasoning and the bytes after to content, each in
++        their own field of the returned :class:`DeltaMessage`.
++        """
+         if not delta_text:
+             return None
+ 
+-        # Track channel state based on accumulated text
+-        # Check if we just entered thought channel
+-        if "<|channel>thought" in current_text and not self._in_content:
+-            self._in_thought = True
+-            self._saw_any_channel = True
+-
+-        # Check if we just entered content channel
+-        if "<|channel>content" in current_text or "<|channel>final" in current_text:
+-            self._in_thought = False
+-            self._in_content = True
+-
+-        # Check if thought ended (first <channel|> after thought start)
+-        if self._in_thought and "<channel|>" in current_text:
+-            thought_starts = current_text.count("<|channel>thought")
+-            channel_ends = current_text.count("<channel|>")
+-            if channel_ends >= thought_starts:
+-                self._in_thought = False
+-                # If no explicit content channel follows, switch to content mode
+-                if (
+-                    "<|channel>content" not in current_text
+-                    and "<|channel>final" not in current_text
+-                ):
+-                    self._in_content = True
+-
+-        # Filter out channel markers from delta
+-        clean = delta_text
+-        for marker in [
+-            "<|channel>",
+-            "<channel|>",
+-            "<|turn>",
+-            "<turn|>",
+-            "thought\n",
+-            "content\n",
+-            "final\n",
+-        ]:
+-            clean = clean.replace(marker, "")
+-
+-        if not clean:
+-            return None  # pure marker token, skip
+-
+-        if self._in_thought:
+-            return DeltaMessage(reasoning=clean)
+-        elif self._in_content:
+-            return DeltaMessage(content=clean)
+-        elif not self._saw_any_channel:
+-            # No channel tokens seen — plain content (no thinking)
+-            return DeltaMessage(content=clean)
+-        else:
+-            # Between channels — treat as reasoning
+-            return DeltaMessage(reasoning=clean)
++        # Segment both the previous and current accumulated text (holding back
++        # any trailing partial marker) and emit only what grew. Diffing against
++        # previous_text — rather than instance counters — keeps a single call
++        # correct even when previous_text already carries streamed reasoning.
++        prev_reasoning, prev_content = self._segment(self._stable(previous_text))
++        cur_reasoning, cur_content = self._segment(self._stable(current_text))
++
++        new_reasoning = cur_reasoning[len(prev_reasoning) :]
++        new_content = cur_content[len(prev_content) :]
++        self._emitted_reasoning_len = len(cur_reasoning)
++        self._emitted_content_len = len(cur_content)
++
++        # Keep the legacy state flags roughly in sync for any external readers.
++        self._saw_any_channel = self._saw_any_channel or "<|channel>" in current_text
++        self._in_content = bool(cur_content)
++        self._in_thought = bool(cur_reasoning) and not cur_content
++
++        if not new_reasoning and not new_content:
++            return None
++
++        return DeltaMessage(
++            reasoning=new_reasoning or None,
++            content=new_content or None,
++        )
++
++    def _stable(self, text: str) -> str:
++        """Drop a trailing partial marker so it is never emitted as text."""
++        return text[: len(text) - self._partial_marker_suffix_len(text)]
+ 
+     def finalize_streaming(self, accumulated_text: str) -> DeltaMessage | None:
+-        """Handle end of stream — emit any remaining content."""
+-        return None
++        """Flush any reasoning/content held back during streaming.
++
++        The per-delta path holds back trailing bytes that could still be the
++        start of a channel marker. At end of stream those bytes are final, so
++        segment the complete text and emit whatever has not been emitted yet.
++        """
++        reasoning_full, content_full = self._segment(accumulated_text)
++        new_reasoning = reasoning_full[self._emitted_reasoning_len :]
++        new_content = content_full[self._emitted_content_len :]
++        self._emitted_reasoning_len = len(reasoning_full)
++        self._emitted_content_len = len(content_full)
++
++        if not new_reasoning and not new_content:
++            return None
++        return DeltaMessage(
++            reasoning=new_reasoning or None,
++            content=new_content or None,
++        )

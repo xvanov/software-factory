@@ -1,0 +1,25 @@
+diff --git a/pandas/core/col.py b/pandas/core/col.py
+index 7d21ce0..cef35c5 100644
+--- a/pandas/core/col.py
++++ b/pandas/core/col.py
+@@ -223,6 +223,20 @@ class Expression:
+         self_repr, other_repr = self._maybe_wrap_parentheses(other)
+         return self._with_op("__rxor__", other, f"{other_repr} ^ {self_repr}")
+ 
++    def __neg__(self) -> Expression:
++        return Expression(
++            lambda df: -self._eval_expression(df),
++            f"-{self._repr_str}",
++            needs_parenthese=True,
++        )
++
++    def __pos__(self) -> Expression:
++        return Expression(
++            lambda df: +self._eval_expression(df),
++            f"+{self._repr_str}",
++            needs_parenthese=True,
++        )
++
+     def __invert__(self) -> Expression:
+         return Expression(
+             lambda df: ~self._eval_expression(df),

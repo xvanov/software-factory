@@ -1,0 +1,45 @@
+diff --git a/moto/kms/models.py b/moto/kms/models.py
+index d773be1..daa3232 100644
+--- a/moto/kms/models.py
++++ b/moto/kms/models.py
+@@ -110,8 +110,13 @@ class Alias(CloudFormationModel):
+         kms_backend: KmsBackend = kms_backends[account_id][region_name]
+         properties = cloudformation_json["Properties"]
+ 
++        alias_name = properties["AliasName"]
++        if original_resource.alias_name != alias_name:
++            # Changing the AliasName requires a replacement
++            kms_backend.delete_alias(original_resource.alias_name)
++
+         return kms_backend.update_alias(
+-            alias_name=properties["AliasName"], target_key_id=properties["TargetKeyId"]
++            alias_name=alias_name, target_key_id=properties["TargetKeyId"]
+         )
+ 
+     @classmethod
+@@ -511,14 +516,21 @@ class KmsBackend(BaseBackend):
+         return key.aliases[alias_name]
+ 
+     def update_alias(self, target_key_id: str, alias_name: str) -> Alias:
++        # The TargetKeyId can be a raw Key ID, or a full Key ARN
++        raw_key_id = self.get_key_id(target_key_id)
++        alias_name = self.get_alias_name(alias_name)
+         for key in self.keys.values():
+-            if alias_name in key.aliases and target_key_id != key.id:
++            if alias_name in key.aliases:
++                if key.id == raw_key_id:
++                    # TargetKeyId hasn't changed - nothing to update
++                    return key.aliases[alias_name]
+                 # Updating the Key that this is an alias of
+                 alias = key.aliases.pop(alias_name)
+-                self.keys[target_key_id].aliases[alias_name] = alias
++                alias.target_key_id = raw_key_id
++                self.keys[raw_key_id].aliases[alias_name] = alias
+                 return alias
+-        # TargetKeyId hasn't changed - nothing to update
+-        return self.keys[target_key_id].aliases[alias_name]
++        # The alias does not exist yet - create it
++        return self.create_alias(target_key_id=raw_key_id, alias_name=alias_name)
+ 
+     def delete_alias(self, alias_name: str) -> None:
+         """Delete the alias."""
