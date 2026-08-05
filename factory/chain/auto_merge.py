@@ -959,6 +959,18 @@ def _evaluate_one_pr(
                     "pr_number": fixture.pr_number,
                     "head_sha": fixture.head_sha,
                     "failed": gates_failed,
+                    # This write is NOT suppressed in dry-run, so mark it. A
+                    # preview's gate evaluation is real but its verdict is
+                    # provisional (dry-run gates read recorded flags instead of
+                    # shelling out), and ``factory auto-merge`` defaults to
+                    # --dry-run. An unlabelled record is indistinguishable from
+                    # a real merge-time failure by ``factory trace`` or by any
+                    # future consumer. Suppressing it outright is the more
+                    # correct "dry-run is a pure preview" behaviour but needs
+                    # the real-run coverage in
+                    # tests/test_auto_merge_failed_gate_diagnostics.py rebuilt
+                    # against a non-dry-run tick, which is out of scope here.
+                    "dry_run": dry_run,
                 },
                 software_factory_root=software_factory_root,
                 slug_hint=story.slug,

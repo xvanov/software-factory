@@ -1,0 +1,877 @@
+"""Diff-scoped mutation scoring — a MEASUREMENT, deliberately not a merge gate.
+
+What this answers
+=================
+"Do the tests in this diff actually catch a change to the code in this diff?"
+For each symbol the diff *touched*, replace its body with a raise, re-run the
+suite, and see whether the suite notices. Suite goes red ⇒ the mutant is
+**killed** (the tests exercise and assert on the symbol). Suite stays green ⇒
+the mutant **survived** (the "coverage" is illusory). The score is
+``killed / (killed + survived)``.
+
+Why it lives here and not in a gate
+===================================
+This code is the rewrite of the ablation branch that used to live inside the
+REQUIRED ``tests-meaningful`` merge gate (``gates/tests_meaningful.py``), behind
+``gates.mutation_testing``. That flag was the only thing between four defects
+and every merge in the factory:
+
+1. it ablated symbols the diff never touched (whole-file symbol enumeration,
+   capped at 5, sorted by path — i.e. the top five of the alphabetically-first
+   changed file);
+2. it was fail-OPEN — a 600 s timeout, a missing command or an already-red
+   suite all produced "suite did not stay green", which it read as
+   "exercised → good", with no green baseline to rule any of that out;
+3. it mutated the live ``state/worktrees/`` checkout the chain pushes from, via
+   a whole-file ``ast.unparse`` round-trip (comments stripped), restoring in a
+   ``finally`` that a SIGKILL does not run;
+4. it returned ``passed=False`` in dry-run, which is the default.
+
+The branch was deleted rather than re-wired: an advisory branch inside a
+required gate is still one edit away from blocking merges, and there is no
+measured case for gating on this number yet. Nothing in ``factory/chain/gates/``
+imports this module, so **no merge decision can reach this code**. That
+structural fact — not a boolean — is what keeps it advisory. See
+``factory mutation-score`` for the operator entry point.
+
+How each defect is fixed here
+=============================
+* **Diff-scoped selection** (``select_symbols``): ``git diff -U0 base...head``
+  hunks are mapped to the functions/methods whose source span contains them.
+  Production-vs-test classification is delegated to ``factory.diff_paths`` —
+  the one shared classifier — never re-defined here.
+* **Green baseline** (``measure``): the suite must be GREEN in the throwaway
+  tree before anything is mutated. Not green ⇒ ``skipped_baseline_red`` /
+  ``skipped_baseline_infra``, with the output tail recorded. There is no path
+  from a non-green baseline to a score.
+* **Tri-state runs** (``_run_suite``): green / red / infra are distinct. Infra
+  (timeout, command-not-found, pytest exit 2-5) is never read as "exercised".
+* **Kill attribution**: the injected body touches a per-symbol sentinel file
+  before raising, so "red" only counts as a kill when the mutation demonstrably
+  ran. A red we cannot attribute to the mutation (a flake, an unrelated
+  failure) is recorded as skipped, never as a kill.
+* **Throwaway tree** (``_materialize_tree``): a ``git clone --local`` of the
+  repo checked out at the graded SHA. The source checkout is never written to;
+  correctness does not depend on the cleanup ``finally`` running, because the
+  only thing the ``finally`` deletes is scratch. Stale trees from a killed
+  process are reaped by age on the next run.
+* **Mutation is a line splice**, not an ``ast.unparse`` round-trip: every byte
+  outside the target body — comments included — survives.
+
+Cost and the cache
+==================
+One suite run per symbol plus one baseline. The factory's own suite is ~5m36s
+warm, so five symbols is ~34 min uncached. Results are therefore cached per
+``(head_sha, symbol)`` under ``state/mutation/<app>/<head_sha>.json``: a
+re-measurement of the same SHA does no work and materializes no tree. A
+wall-clock budget stops a run early rather than blocking for an hour, and
+because the cache is per-symbol the next run resumes where it stopped.
+"""
+
+from __future__ import annotations
+
+import ast
+import hashlib
+import json
+import re
+import shutil
+import subprocess
+import tempfile
+import time
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from factory.diff_paths import is_production_path
+
+# Ablation is O(symbols) full test runs. Symbols beyond the cap are reported as
+# truncated, never silently dropped.
+_MAX_SYMBOLS = 5
+# Per suite run. Longer than the chain's usual 600 s because the first run in a
+# fresh tree may also have to build a venv.
+_PER_RUN_TIMEOUT_S = 900
+# Whole-measurement wall clock. Hitting it truncates the sample (recorded);
+# the per-symbol cache means the next run continues rather than restarting.
+_TOTAL_BUDGET_S = 1800
+_TREE_PREFIX = "factory-mutation-tree-"
+_SENTINEL_PREFIX = "factory-mutation-sentinel-"
+_STALE_TREE_AGE_S = 6 * 3600
+
+# Appears in the injected body and in the sentinel filename, so a traceback OR
+# a filesystem check can attribute a red run to the mutation.
+_MARKER = "FACTORY_ABLATION"
+
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+# ``measure`` never raises for an expected condition; it returns one of these.
+STATUS_MEASURED = "measured"
+STATUS_NO_SYMBOLS = "no_symbols"
+STATUS_NO_REPO = "skipped_no_repo_root"
+STATUS_NO_TEST_COMMAND = "skipped_no_test_command"
+STATUS_NO_DIFF_BASE = "skipped_no_diff_base"
+STATUS_NO_DIFF = "skipped_diff_unavailable"
+STATUS_NO_TREE = "skipped_tree_unavailable"
+STATUS_BASELINE_RED = "skipped_baseline_red"
+STATUS_BASELINE_INFRA = "skipped_baseline_infra"
+
+
+# --------------------------------------------------------------------------- #
+# Types
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class Symbol:
+    """One ablation candidate: a function/method the diff actually touched."""
+
+    path: str
+    qualname: str
+    lineno: int
+    touched_lines: int
+
+    @property
+    def key(self) -> str:
+        return f"{self.path}::{self.qualname}"
+
+
+@dataclass
+class MutationReport:
+    """The outcome of one measurement. ``status`` is the only field a caller
+    may branch on: anything other than ``measured`` means no score exists."""
+
+    status: str
+    reason: str
+    head_sha: str = ""
+    base_ref: str = ""
+    score: float | None = None
+    killed: list[str] = field(default_factory=list)
+    survived: list[str] = field(default_factory=list)
+    skipped: list[dict[str, str]] = field(default_factory=list)
+    sampled: list[str] = field(default_factory=list)
+    candidates: int = 0
+    truncated: bool = False
+    budget_exhausted: bool = False
+    baseline: str = "unrun"
+    baseline_output: str = ""
+    tree_source: str = "none"
+    cache_hits: int = 0
+    elapsed_s: float = 0.0
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def measured(self) -> bool:
+        return self.status == STATUS_MEASURED
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "mutation_status": self.status,
+            "reason": self.reason,
+            "head_sha": self.head_sha,
+            "base_ref": self.base_ref,
+            "mutation_score": self.score,
+            "killed": list(self.killed),
+            "survived": list(self.survived),
+            "skipped": list(self.skipped),
+            "sampled": list(self.sampled),
+            "candidates": self.candidates,
+            "truncated": self.truncated,
+            "budget_exhausted": self.budget_exhausted,
+            "baseline": self.baseline,
+            "tree_source": self.tree_source,
+            "cache_hits": self.cache_hits,
+            "elapsed_s": round(self.elapsed_s, 2),
+            "notes": list(self.notes),
+            # Only when the precondition failed — that is when an operator needs
+            # to see WHY, and it keeps a green report small.
+            "baseline_output": "" if self.baseline in {GREEN, "cached"} else self.baseline_output[-1000:],
+        }
+
+
+# --------------------------------------------------------------------------- #
+# git helpers
+# --------------------------------------------------------------------------- #
+
+
+def _git(repo: Path, *args: str, timeout: int = 120) -> tuple[int, str, str]:
+    """Run git in ``repo``. Returns ``(rc, stdout, stderr)``; rc 128 for a
+    failure to invoke git at all (never raises)."""
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError) as exc:
+        return 128, "", f"git {' '.join(args)}: {exc}"
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _resolve_base_ref(repo_root: Path, base_branch: str) -> str | None:
+    """``origin/<base>`` then local ``<base>``, or None.
+
+    Deliberately delegated to the chain's single implementation rather than
+    grown as a second copy — the review path, the docs enforcer and this
+    measurement must agree on what "the base" is. The import is intentionally
+    NOT defensive: a rename must fail loudly in CI (``tests/test_mutation.py``
+    pins it) rather than degrade this tool to a silent ``skipped``.
+    """
+    from factory.chain.handlers import _resolve_diff_base
+
+    return _resolve_diff_base(repo_root, base_branch)
+
+
+def _resolve_head_ref(repo_root: Path, head_sha: str) -> tuple[str, list[str]]:
+    """Prefer the graded SHA; fall back to HEAD, saying so."""
+    if head_sha:
+        rc, _out, _err = _git(repo_root, "rev-parse", "--verify", "--quiet", f"{head_sha}^{{commit}}")
+        if rc == 0:
+            return head_sha, []
+    return "HEAD", [f"head_sha {head_sha!r} does not resolve in the checkout; used HEAD"]
+
+
+def _touched_lines(repo_root: Path, base_ref: str, head_ref: str) -> dict[str, set[int]] | None:
+    """``{path: {new-file line numbers the diff touched}}``, or None if the
+    diff itself could not be computed (never an empty-dict stand-in for it)."""
+    rc, out, _err = _git(
+        repo_root,
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "-U0",
+        f"{base_ref}...{head_ref}",
+    )
+    if rc != 0:
+        return None
+    touched: dict[str, set[int]] = {}
+    current: str | None = None
+    for line in out.splitlines():
+        if line.startswith("+++ "):
+            target = line[4:].strip()
+            if target == "/dev/null":
+                current = None
+            else:
+                current = target[2:] if target.startswith("b/") else target
+                touched.setdefault(current, set())
+            continue
+        if current is None:
+            continue
+        match = _HUNK_RE.match(line)
+        if match is None:
+            continue
+        start = int(match.group(1))
+        count = 1 if match.group(2) is None else int(match.group(2))
+        if count == 0:
+            # A pure deletion: nothing on the new side. The removal happened
+            # between ``start`` and ``start + 1``, so both bracket the change
+            # and either can put us inside the enclosing symbol.
+            touched[current].update({max(1, start), max(1, start + 1)})
+        else:
+            touched[current].update(range(start, start + count))
+    return touched
+
+
+def _file_at(repo_root: Path, ref: str, path: str) -> str | None:
+    rc, out, _err = _git(repo_root, "show", f"{ref}:{path}")
+    if rc != 0:
+        return None
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Symbol selection — diff-scoped
+# --------------------------------------------------------------------------- #
+
+
+def _walk_functions(
+    body: list[ast.stmt], prefix: str = ""
+) -> Iterator[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
+    """Yield ``(qualname, node)`` for module-level functions and methods of
+    (possibly nested) classes. Functions nested inside functions are NOT
+    yielded: their enclosing function already covers those lines, and the
+    mutator addresses symbols by this same dotted path."""
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield prefix + node.name, node
+        elif isinstance(node, ast.ClassDef):
+            yield from _walk_functions(node.body, prefix + node.name + ".")
+
+
+def _span(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[int, int]:
+    """First-to-last source line, decorators included (a decorator change
+    changes the symbol's behaviour)."""
+    start = node.lineno
+    for dec in node.decorator_list:
+        start = min(start, dec.lineno)
+    return start, (node.end_lineno or node.lineno)
+
+
+def _is_trivial_body(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True when the body is already equivalent to the mutant we would inject.
+
+    ``...``, ``pass``, a bare docstring and ``raise NotImplementedError`` are
+    all no-ops to ablate: the mutant is indistinguishable from the original, so
+    the suite CANNOT go red and the symbol would be reported "survived" on a
+    measurement that never happened. Overload stubs and abstract methods are
+    the common real cases.
+    """
+    body = list(node.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    if not body:
+        return True
+    if len(body) != 1:
+        return False
+    stmt = body[0]
+    if isinstance(stmt, ast.Pass):
+        return True
+    if (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Constant)
+        and stmt.value.value is Ellipsis
+    ):
+        return True
+    if isinstance(stmt, ast.Raise):
+        exc = stmt.exc
+        name: str | None = None
+        if isinstance(exc, ast.Name):
+            name = exc.id
+        elif isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
+            name = exc.func.id
+        return name in {"NotImplementedError", "NotImplemented"}
+    return False
+
+
+def select_symbols(
+    repo_root: Path,
+    base_ref: str,
+    head_ref: str,
+    *,
+    max_symbols: int = _MAX_SYMBOLS,
+) -> tuple[list[Symbol], int, list[str]] | None:
+    """The symbols the diff TOUCHED, capped.
+
+    Returns ``(sample, candidate_count, notes)``, or None when the diff could
+    not be computed. Candidates are ranked by how much of the symbol the diff
+    changed (most-changed first) and the returned sample is re-sorted by
+    ``(path, lineno)`` so the report reads in file order.
+    """
+    touched = _touched_lines(repo_root, base_ref, head_ref)
+    if touched is None:
+        return None
+
+    notes: list[str] = []
+    candidates: list[Symbol] = []
+    for path in sorted(touched):
+        lines = touched[path]
+        if not lines or not path.endswith(".py"):
+            continue
+        # ONE definition of production-vs-test, shared with the bench harness
+        # and the production-tree-changed gate. Never re-implemented here.
+        if not is_production_path(path):
+            continue
+        source = _file_at(repo_root, head_ref, path)
+        if source is None:
+            continue  # deleted at head — nothing to ablate
+        try:
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError):
+            notes.append(f"{path}: unparseable at {head_ref}")
+            continue
+        for qualname, node in _walk_functions(tree.body):
+            start, end = _span(node)
+            hits = sum(1 for line in lines if start <= line <= end)
+            if not hits:
+                continue
+            if _is_trivial_body(node):
+                notes.append(f"{path}::{qualname}: body is already a no-op (equivalent mutant)")
+                continue
+            candidates.append(
+                Symbol(path=path, qualname=qualname, lineno=start, touched_lines=hits)
+            )
+
+    ranked = sorted(candidates, key=lambda s: (-s.touched_lines, s.path, s.lineno))
+    sample = sorted(ranked[:max_symbols], key=lambda s: (s.path, s.lineno))
+    return sample, len(candidates), notes
+
+
+# --------------------------------------------------------------------------- #
+# Mutation — a line splice, not a round-trip
+# --------------------------------------------------------------------------- #
+
+
+def _find_function(
+    tree: ast.Module, qualname: str
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    for name, node in _walk_functions(tree.body):
+        if name == qualname:
+            return node
+    return None
+
+
+def mutate_source(source: str, qualname: str, *, sentinel: Path) -> str | None:
+    """``source`` with ``qualname``'s body replaced, or None if it cannot be.
+
+    Only the body's line range is rewritten, so every other byte of the file —
+    comments, formatting, the rest of the module — is preserved exactly. The
+    injected body touches ``sentinel`` and then RAISES: the raise makes any
+    real invocation fail loudly (so a suite that stays green proves the tests
+    never assert on this symbol), and the sentinel proves the injected body ran
+    at all, which is what lets a red run be attributed to the mutation instead
+    of to a flake.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return None
+    node = _find_function(tree, qualname)
+    if node is None or not node.body:
+        return None
+
+    first = node.body[0]
+    start_line, start_col = first.lineno, first.col_offset
+    end_line = node.end_lineno or start_line
+    lines = source.splitlines(keepends=True)
+    if start_line < 1 or end_line > len(lines) or start_line > end_line:
+        return None
+
+    raw = lines[start_line - 1]
+    # ``col_offset`` is a UTF-8 byte offset. For the normal case this is just
+    # the indentation; for a one-line ``def f(): ...`` it keeps the signature.
+    prefix = raw.encode("utf-8")[:start_col].decode("utf-8", "replace")
+    message = f"{_MARKER} {qualname}"
+    injected = (
+        f'__import__("pathlib").Path({str(sentinel)!r}).write_text("1"); '
+        f"raise NotImplementedError({message!r})"
+    )
+    mutated = (
+        "".join(lines[: start_line - 1]) + prefix + injected + "\n" + "".join(lines[end_line:])
+    )
+    if mutated == source:
+        return None
+    try:
+        ast.parse(mutated)
+    except (SyntaxError, ValueError):
+        return None
+    return mutated
+
+
+# --------------------------------------------------------------------------- #
+# Running the suite — green / red / infra are three different things
+# --------------------------------------------------------------------------- #
+
+GREEN, RED, INFRA = "green", "red", "infra"
+
+
+def _run_suite(cwd: Path, test_command: str, timeout_s: int) -> tuple[str, str]:
+    """Return ``(GREEN|RED|INFRA, output tail)``.
+
+    The old code collapsed all three into a bool and read "not green" as
+    "exercised", so a timeout, a missing interpreter or a broken venv all
+    certified coverage that was never measured. Exit-code mapping follows
+    pytest: 0 green, 1 tests failed, 2 interrupted, 3 internal error, 4 usage
+    error, 5 no tests collected — and 127 command-not-found from the shell.
+    Anything that is not a clean pass or a genuine test failure is INFRA, which
+    can never mean "good".
+    """
+    from factory.runner import _isolated_test_env
+
+    try:
+        proc = subprocess.run(
+            test_command,
+            shell=True,  # noqa: S602 — the command comes from trusted app config
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+            timeout=timeout_s,
+            env=_isolated_test_env(),
+        )
+    except subprocess.TimeoutExpired:
+        return INFRA, f"test command timed out after {timeout_s}s: {test_command}"
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        return INFRA, f"test command could not be invoked: {exc}"
+    output = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode == 0:
+        return GREEN, output
+    if proc.returncode == 1:
+        return RED, output
+    return INFRA, f"exit={proc.returncode} (not a test failure)\n{output}"
+
+
+# --------------------------------------------------------------------------- #
+# The throwaway tree
+# --------------------------------------------------------------------------- #
+
+_COPY_IGNORE = shutil.ignore_patterns(
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "state",
+)
+
+
+def _reap_stale_trees() -> None:
+    """Delete mutation scratch older than ``_STALE_TREE_AGE_S``.
+
+    Cleanup runs in a ``finally``, which a SIGKILL does not honour, and the
+    tick unit has ``TimeoutStartSec=3h``. Nothing in the live checkout depends
+    on that ``finally`` any more, but the disk does, so age-reap as well.
+    """
+    cutoff = time.time() - _STALE_TREE_AGE_S
+    root = Path(tempfile.gettempdir())
+    for prefix in (_TREE_PREFIX, _SENTINEL_PREFIX):
+        try:
+            for path in root.glob(f"{prefix}*"):
+                try:
+                    if path.is_dir() and path.stat().st_mtime < cutoff:
+                        shutil.rmtree(path, ignore_errors=True)
+                except OSError:
+                    continue
+        except OSError:
+            continue
+
+
+def _materialize_tree(repo_root: Path, head_ref: str, dest: Path) -> str | None:
+    """Build a scratch checkout at ``head_ref``. Returns a source label.
+
+    ``git clone --local`` hardlinks the (immutable) object store and writes
+    NOTHING into ``repo_root`` — not even worktree metadata, which is why this
+    is preferred over ``git worktree add`` against the checkout the chain
+    pushes from. The clone is at the graded commit, so it is also a more
+    faithful subject than a possibly-dirty working tree.
+    """
+    rc, _out, err = _git(repo_root, "clone", "--local", "--quiet", "--no-checkout", ".", str(dest))
+    if rc == 0:
+        rc2, _o2, err2 = _git(dest, "checkout", "--quiet", "--detach", head_ref)
+        if rc2 == 0:
+            return "git-clone"
+        # The clone has every local ref; a PR head that is not among them can
+        # still be fetched directly from the source repo.
+        rc3, _o3, _e3 = _git(dest, "fetch", "--quiet", str(repo_root), head_ref)
+        if rc3 == 0 and _git(dest, "checkout", "--quiet", "--detach", "FETCH_HEAD")[0] == 0:
+            return "git-clone+fetch"
+        shutil.rmtree(dest, ignore_errors=True)
+        err = err2
+    # Not a git repo (or git unusable): copy the working tree. Recorded, because
+    # a copy without ``.git`` can turn a git-dependent suite red — which shows
+    # up as a non-green baseline, i.e. ``skipped``, not as a score.
+    try:
+        shutil.copytree(repo_root, dest, ignore=_COPY_IGNORE, symlinks=True)
+    except (OSError, shutil.Error):
+        return None
+    return f"worktree-copy ({err.strip()[:120]})" if err.strip() else "worktree-copy"
+
+
+# --------------------------------------------------------------------------- #
+# Cache
+# --------------------------------------------------------------------------- #
+
+
+def cache_path(software_factory_root: Path | None, app: str, head_sha: str) -> Path:
+    """``state/mutation/<app>/<head_sha>.json``.
+
+    Root resolution is the one every other state writer uses (explicit arg →
+    ``FACTORY_STATE_ROOT`` → cwd), reused rather than reimplemented so a test
+    run can never write into production state.
+    """
+    from factory.manager.signals import _events_dir
+
+    safe_app = (app or "unknown").replace("/", "-")
+    safe_sha = (head_sha or "unknown").replace("/", "-")[:64]
+    return _events_dir(software_factory_root).parent / "mutation" / safe_app / f"{safe_sha}.json"
+
+
+def _load_cache(path: Path) -> dict[str, dict[str, str]]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    symbols = raw.get("symbols")
+    if not isinstance(symbols, dict):
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for key, val in symbols.items():
+        if not isinstance(key, str) or not isinstance(val, dict):
+            continue
+        if val.get("outcome") not in {"killed", "survived"}:
+            continue
+        out[key] = {"outcome": str(val["outcome"]), "detail": str(val.get("detail", ""))}
+    return out
+
+
+def _save_cache(
+    path: Path, *, app: str, head_sha: str, symbols: dict[str, dict[str, str]], report: MutationReport
+) -> None:
+    """Persist determinate per-symbol outcomes plus the rolled-up score.
+
+    Only ``killed``/``survived`` are stored: a ``skipped`` symbol was not
+    measured, and caching it would freeze a non-measurement in place.
+    """
+    payload = {
+        "app": app,
+        "head_sha": head_sha,
+        "updated": datetime.now(UTC).isoformat(),
+        "mutation_score": report.score,
+        "candidates": report.candidates,
+        "truncated": report.truncated,
+        "baseline": report.baseline,
+        "symbols": symbols,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+# --------------------------------------------------------------------------- #
+# The measurement
+# --------------------------------------------------------------------------- #
+
+
+def measure(
+    *,
+    repo_root: Path | None,
+    head_sha: str,
+    base_branch: str,
+    test_command: str | None,
+    app: str = "unknown",
+    software_factory_root: Path | None = None,
+    max_symbols: int = _MAX_SYMBOLS,
+    per_run_timeout_s: int = _PER_RUN_TIMEOUT_S,
+    budget_s: int = _TOTAL_BUDGET_S,
+    use_cache: bool = True,
+) -> MutationReport:
+    """Measure the diff-scoped mutation score. Never raises for an expected
+    condition; a condition we cannot measure under comes back as a
+    ``skipped_*`` status with no score attached."""
+    started = time.monotonic()
+
+    if repo_root is None or not Path(repo_root).is_dir():
+        return MutationReport(
+            status=STATUS_NO_REPO, reason="no local checkout to measure", head_sha=head_sha
+        )
+    repo_root = Path(repo_root)
+    if not test_command:
+        return MutationReport(
+            status=STATUS_NO_TEST_COMMAND,
+            reason="no test_command configured",
+            head_sha=head_sha,
+        )
+
+    base_ref = _resolve_base_ref(repo_root, base_branch)
+    if base_ref is None:
+        return MutationReport(
+            status=STATUS_NO_DIFF_BASE,
+            reason=f"neither origin/{base_branch} nor {base_branch} resolves in the checkout",
+            head_sha=head_sha,
+        )
+    head_ref, notes = _resolve_head_ref(repo_root, head_sha)
+
+    selection = select_symbols(repo_root, base_ref, head_ref, max_symbols=max_symbols)
+    if selection is None:
+        return MutationReport(
+            status=STATUS_NO_DIFF,
+            reason=f"git diff {base_ref}...{head_ref} failed",
+            head_sha=head_sha,
+            base_ref=base_ref,
+            notes=notes,
+        )
+    sample, candidates, sel_notes = selection
+    notes.extend(sel_notes)
+
+    report = MutationReport(
+        status=STATUS_MEASURED,
+        reason="",
+        head_sha=head_sha,
+        base_ref=base_ref,
+        sampled=[s.key for s in sample],
+        candidates=candidates,
+        truncated=candidates > len(sample),
+        notes=notes,
+    )
+    if not sample:
+        report.status = STATUS_NO_SYMBOLS
+        report.reason = "the diff touched no ablatable production symbol"
+        report.elapsed_s = time.monotonic() - started
+        return report
+
+    cache_file = cache_path(software_factory_root, app, head_sha)
+    cached = _load_cache(cache_file) if use_cache else {}
+    outcomes: dict[str, dict[str, str]] = {}
+    pending: list[Symbol] = []
+    for sym in sample:
+        hit = cached.get(sym.key)
+        if hit is not None:
+            outcomes[sym.key] = hit
+            report.cache_hits += 1
+        else:
+            pending.append(sym)
+
+    if not pending:
+        report.tree_source = "cache"
+        report.baseline = "cached"
+        _finish(report, outcomes, started)
+        return report
+
+    _reap_stale_trees()
+    tree = Path(tempfile.mkdtemp(prefix=_TREE_PREFIX))
+    sentinels = Path(tempfile.mkdtemp(prefix=_SENTINEL_PREFIX))
+    tree_dir = tree / "repo"
+    try:
+        source_label = _materialize_tree(repo_root, head_ref, tree_dir)
+        if source_label is None:
+            report.status = STATUS_NO_TREE
+            report.reason = "could not materialize a scratch checkout to mutate"
+            _finish(report, outcomes, started)
+            return report
+        report.tree_source = source_label
+
+        # THE PRECONDITION. Nothing is mutated until the suite is green here.
+        baseline, baseline_out = _run_suite(tree_dir, test_command, per_run_timeout_s)
+        report.baseline = baseline
+        report.baseline_output = baseline_out[-4000:]
+        if baseline != GREEN:
+            report.status = (
+                STATUS_BASELINE_RED if baseline == RED else STATUS_BASELINE_INFRA
+            )
+            report.reason = (
+                f"baseline suite is {baseline} at {head_ref} before any mutation — "
+                "no coverage claim can be derived"
+            )
+            # No path from a non-green baseline to a score, not even via the
+            # cache: this run measured nothing, so it publishes nothing.
+            _finish(report, outcomes, started, save=None, allow_score=False)
+            return report
+
+        for sym in pending:
+            if time.monotonic() - started > budget_s:
+                report.budget_exhausted = True
+                report.skipped.append({"symbol": sym.key, "why": "budget_exhausted"})
+                continue
+            outcome = _ablate_one(
+                tree_dir, sym, test_command, sentinels, per_run_timeout_s
+            )
+            if outcome["outcome"] in {"killed", "survived"}:
+                outcomes[sym.key] = outcome
+            else:
+                report.skipped.append({"symbol": sym.key, "why": outcome["detail"]})
+    finally:
+        shutil.rmtree(tree, ignore_errors=True)
+        shutil.rmtree(sentinels, ignore_errors=True)
+
+    _finish(report, outcomes, started, save=(cache_file, app))
+    return report
+
+
+def _finish(
+    report: MutationReport,
+    outcomes: dict[str, dict[str, str]],
+    started: float,
+    save: tuple[Path, str] | None = None,
+    allow_score: bool = True,
+) -> None:
+    report.killed = sorted(k for k, v in outcomes.items() if v["outcome"] == "killed")
+    report.survived = sorted(k for k, v in outcomes.items() if v["outcome"] == "survived")
+    denom = len(report.killed) + len(report.survived)
+    if allow_score:
+        report.score = (len(report.killed) / denom) if denom else None
+    else:
+        report.score = None
+        report.notes.append("score withheld: the precondition for measuring did not hold")
+    report.elapsed_s = time.monotonic() - started
+    if not report.reason:
+        if report.score is None:
+            report.reason = "no symbol could be measured"
+        else:
+            report.reason = (
+                f"mutation score {report.score:.2f} "
+                f"({len(report.killed)} killed / {denom} measured"
+                f", {len(report.skipped)} skipped, {report.candidates} candidates)"
+            )
+    if save is not None and outcomes:
+        cache_file, app = save
+        _save_cache(
+            cache_file,
+            app=app,
+            head_sha=report.head_sha,
+            symbols=outcomes,
+            report=report,
+        )
+
+
+def _ablate_one(
+    tree_dir: Path,
+    sym: Symbol,
+    test_command: str,
+    sentinels: Path,
+    per_run_timeout_s: int,
+) -> dict[str, str]:
+    """Mutate one symbol in the scratch tree, run the suite, classify.
+
+    * green ⇒ **survived** — the tests do not notice the symbol's body being
+      replaced by a raise. Whether the symbol was even reached is recorded
+      (the sentinel), because "never called" and "called but not asserted on"
+      are different kinds of illusory coverage.
+    * red + evidence the mutant ran ⇒ **killed**.
+    * red WITHOUT that evidence ⇒ skipped. We cannot attribute the failure to
+      the mutation, and guessing in the generous direction is how the old code
+      certified coverage it never measured.
+    * infra ⇒ skipped.
+    """
+    target = tree_dir / sym.path
+    try:
+        original = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return {"outcome": "skipped", "detail": f"unreadable: {exc}"}
+
+    digest = hashlib.sha1(sym.key.encode("utf-8")).hexdigest()[:12]  # noqa: S324 — not security
+    sentinel = sentinels / f"{_MARKER}-{digest}"
+    mutated = mutate_source(original, sym.qualname, sentinel=sentinel)
+    if mutated is None:
+        return {"outcome": "skipped", "detail": "symbol could not be mutated"}
+
+    try:
+        target.write_text(mutated, encoding="utf-8")
+        outcome, output = _run_suite(tree_dir, test_command, per_run_timeout_s)
+    except OSError as exc:
+        return {"outcome": "skipped", "detail": f"mutation write failed: {exc}"}
+    finally:
+        # The tree is scratch, so this restore is hygiene (mutants must not
+        # compose), not a correctness dependency.
+        try:
+            target.write_text(original, encoding="utf-8")
+        except OSError:
+            pass
+
+    ran = sentinel.exists()
+    if outcome == GREEN:
+        return {
+            "outcome": "survived",
+            "detail": "invoked but not asserted on" if ran else "never invoked by the suite",
+        }
+    if outcome == RED and (ran or _MARKER in output):
+        return {"outcome": "killed", "detail": "suite went red on the ablated body"}
+    if outcome == RED:
+        return {
+            "outcome": "skipped",
+            "detail": "suite red but the failure is not attributable to the mutation",
+        }
+    return {"outcome": "skipped", "detail": f"infrastructure failure: {output.strip()[:200]}"}
