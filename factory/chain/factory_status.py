@@ -56,6 +56,8 @@ _TERMINAL_STATES = {
     "blocked_tests_need_clarification",
     "blocked_deploy_failed",
     "blocked_review_nonconvergent",
+    # Dev-declared underspecification — terminal, awaiting a human.
+    "blocked_underspecified",
     # Dual-draft loser sink — terminal (abandoned), never in-flight.
     "superseded_by_sibling",
     # Operator-closed sink — terminal, never in-flight.
@@ -66,6 +68,7 @@ _BLOCKED_STATES = {
     "blocked_tests_need_clarification",
     "blocked_deploy_failed",
     "blocked_review_nonconvergent",
+    "blocked_underspecified",
     "reviewer_requested_changes",
 }
 

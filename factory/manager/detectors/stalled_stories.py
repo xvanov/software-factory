@@ -41,6 +41,10 @@ _TERMINAL_STATES = frozenset(
         "blocked_tests_need_clarification",
         "blocked_deploy_failed",
         "blocked_review_nonconvergent",
+        # Dev-declared underspecification is a terminal, human-pending sink by
+        # design — aging in it is the intended behaviour, not a stall to
+        # escalate (same rationale as the four sinks around it).
+        "blocked_underspecified",
         # A dual-draft loser is an intentional terminal sink (its winning
         # sibling shipped) — aging here is expected, never a stall to escalate.
         "superseded_by_sibling",

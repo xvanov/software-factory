@@ -33,6 +33,7 @@ from factory.chain.state_machine import (
     EVENT_DEV_STARTED,
     EVENT_DEV_TESTS_GREEN,
     EVENT_DEV_TESTS_RED,
+    EVENT_DEV_UNDERSPECIFIED,
     EVENT_DOCS_ENFORCER_CHECK,
     EVENT_DOCS_ENFORCER_FAIL,
     EVENT_DOCS_ENFORCER_PASS,
@@ -1258,6 +1259,110 @@ _MAX_DEV_RETRIES = 3
 # silently collapsing two deliberately layered guards into one.
 _MAX_DEV_SAME_SIGNATURE = 2
 
+# ImpossibleBench escape hatch (arXiv 2510.20270, ICLR 2026). The marker the
+# dev persona emits to declare a story unsatisfiable AS WRITTEN instead of
+# guessing or making its own tests agree with whatever it built. Measured
+# effect of offering the option at all: test-exploitation 54% -> 9% (GPT-5),
+# 49% -> 12% (o3).
+#
+# Line-anchored and upper-case so a discussion OF the mechanism ("I considered
+# declaring it underspecified but...") cannot trip it — the same
+# contract-literal collision that produced a structural non-convergence on
+# story 14 (see the persona_prompt_contract_collision memory). The persona
+# prompt must therefore never illustrate the marker at the start of a line.
+_UNDERSPECIFIED_MARKER = "UNDERSPECIFIED:"
+_UNDERSPECIFIED_REASON_CAP = 600
+
+
+def parse_underspecified_declaration(text: str) -> str | None:
+    """Return the dev's declared reason, or ``None`` if it did not declare.
+
+    Accepts the marker only at the START of a line (leading whitespace is
+    tolerated for indented final messages) and requires a non-empty reason: a
+    bare ``UNDERSPECIFIED:`` with nothing after it is not a declaration, it is
+    an unfinished sentence, and a blocked story with no reason is exactly the
+    useless escalation this repo has been burned by before.
+    """
+    if not text:
+        return None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line.startswith(_UNDERSPECIFIED_MARKER):
+            continue
+        reason = line[len(_UNDERSPECIFIED_MARKER) :].strip()
+        if reason:
+            return reason[:_UNDERSPECIFIED_REASON_CAP]
+    return None
+
+
+def declared_underspecified(run_res: Any) -> str | None:
+    """The declared reason from a dev sandbox result, or ``None``.
+
+    Reads the three places the dev's own words can land: its parsed
+    ``SELF_SUMMARY:`` block, its final assistant message, and the run summary.
+    ``_extract_self_summary`` already prefers the ``finish`` tool's message
+    over a plain trailing message, so a dev that declares via ``finish`` is
+    covered too.
+    """
+    for field_name in ("self_summary", "last_assistant_message", "summary"):
+        reason = parse_underspecified_declaration(str(getattr(run_res, field_name, "") or ""))
+        if reason is not None:
+            return reason
+    return None
+
+
+def _block_underspecified(
+    story: StoryRecord,
+    reason: str,
+    *,
+    db: Path,
+    software_factory_root: Path,
+    tests_green: bool,
+    files_changed: list[str],
+) -> HandlerResult:
+    """Park ``story`` in the terminal BLOCKED_UNDERSPECIFIED sink.
+
+    ``story.dev_retries`` is deliberately NOT incremented: a declaration is not
+    a failed attempt, and charging a retry for it would price honesty the same
+    as failure — the opposite of what ImpossibleBench measured.
+
+    The declaration wins even when the run ended GREEN. A green run on a story
+    the dev itself calls unsatisfiable is the exact shape of the false-green
+    this closes (under Loop-4 the dev owns the tests that went green), so it
+    goes to a human rather than to the reviewer. ``tests_green`` is recorded so
+    the operator can see which case they are looking at.
+    """
+    story.state = advance(story, EVENT_DEV_UNDERSPECIFIED).value
+    story.error = f"dev declared the story underspecified: {reason}"
+    persist_story(story, db)
+    log_story_event(
+        story.id,
+        "dev_declared_underspecified",
+        {
+            "reason": reason,
+            "tests_green_at_declaration": tests_green,
+            "files_changed": files_changed[:20],
+            # Proof the escape hatch is free: the operator can check that this
+            # is the same count the story carried before the declaration.
+            "dev_retries": story.dev_retries,
+        },
+        software_factory_root=software_factory_root,
+        slug_hint=story.slug,
+    )
+    return HandlerResult(
+        next_state=StoryState(story.state),
+        payload={
+            "test_run_passed": tests_green,
+            "underspecified": reason,
+            "files_changed": files_changed,
+            "summary": (
+                "Dev declared the story underspecified rather than guessing: "
+                f"{reason}. Terminal, awaiting a human; no dev retry consumed."
+            ),
+        },
+        error=story.error,
+    )
+
 
 def _consecutive_same_dev_signature(prior_attempts: list[Any], current_sig: str) -> int:
     """Count trailing dev attempts sharing ``current_sig`` (newest-first).
@@ -1892,6 +1997,20 @@ def _handle_dev_once(
             "test_run_passed": tests_green,
             "summary": run_res.summary[-2000:],
         }
+
+        # ImpossibleBench escape hatch, checked BEFORE the green/red split and
+        # BEFORE any retry bookkeeping. See BLOCKED_UNDERSPECIFIED in
+        # state_machine.py for the measurement this implements.
+        declared = declared_underspecified(run_res)
+        if declared is not None:
+            return _block_underspecified(
+                story,
+                declared,
+                db=db,
+                software_factory_root=software_factory_root,
+                tests_green=tests_green,
+                files_changed=list(run_res.files_changed or []),
+            )
 
         # Loop-4: a dev run that ends red — including one that made no code
         # changes — is just a failed attempt and consumes a retry below. There

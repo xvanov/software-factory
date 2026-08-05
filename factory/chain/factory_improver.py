@@ -188,6 +188,9 @@ def _terminally_blocked_stories(
         StoryState.BLOCKED_REVIEW_NONCONVERGENT.value,
         StoryState.BLOCKED_CI_UNRESOLVED.value,
         StoryState.BLOCKED_DEPENDENCY_UNMET.value,
+        # A dev-declared underspecified story IS a factory-visible defect
+        # signal: the story text could not be satisfied as written.
+        StoryState.BLOCKED_UNDERSPECIFIED.value,
     )
     with Session(eng) as session:
         query = select(StoryRecord).where(
