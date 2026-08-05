@@ -30,6 +30,18 @@ caller can observe, not from how you imagine it was built.
   (`pytest`, and the app's declared client, e.g. `TestClient`/`httpx`). No
   network to third parties, no reliance on wall-clock timing beyond what the
   spec states, no ordering dependence between tests.
+* **Obey the Harness section, and never guess an import path.** When the input
+  carries a `## Harness` section, it states exactly where the app lives, how to
+  import it, which client drives it and which directory your file runs in — it
+  is authoritative, so import precisely as it says. A test that cannot import
+  the app fails for a reason that has nothing to do with the story, and that
+  failure is charged to the developer. If the harness facts are missing and the
+  spec does not name a module either, prefer the outermost surface the spec DOES
+  name (an HTTP path, a CLI command) over inventing a python import, and never
+  wrap a `try/except ImportError` around several candidate module names.
+* **Every test must be able to fail.** Assert the spec's values directly. Do not
+  compare a response to itself (`body == {"x": body["x"]}` asserts nothing), do
+  not assert `True`, and do not swallow the assertion in a `try/except`.
 * **Do not weaken to make it pass.** You are not trying to be green against any
   particular implementation — you are encoding the spec. A correct
   implementation passes; an implementation that violates a criterion fails,

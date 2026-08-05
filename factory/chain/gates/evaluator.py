@@ -78,25 +78,25 @@ def required_gate_labels(
     satisfy it). ``smoke-green`` becomes required exactly when the app has a
     working, declared smoke harness.
 
-    ``acceptance-verified`` (WS1.2) becomes required when the app opts in
-    (``gates.acceptance_oracle``) AND the story is EXPECTED to have an oracle
-    (``story.acceptance_expected`` — set at spawn to "opted in AND the direction
-    carried ACs", INDEPENDENT of whether authoring succeeded). Keying off
-    ``acceptance_expected`` — NOT ``acceptance_test_ref`` — is the false-green
-    fix: a story whose author flaked (expected, no stored file) is STILL
-    required to pass, so it blocks (and self-heals) rather than silently
-    shipping un-gated. Legacy stories (``acceptance_expected`` default False)
-    with a stored ref are still required via the ref fallback. No-AC stories and
-    apps that haven't opted in are never blocked; without a ``story`` (app-level
-    query) it stays out of the required set.
+    ``acceptance-verified`` (WS1.2) becomes required as soon as the app opts in
+    (``gates.acceptance_oracle``) — for EVERY story, and with no ``story`` at all.
+    Applicability is the GATE's decision, not the required set's: the gate passes
+    a story whose direction genuinely carries no acceptance criteria, and blocks
+    when it cannot establish that (see ``gates.acceptance_verified``).
+
+    This deliberately does NOT read ``story.acceptance_expected``. That flag is
+    written by a best-effort DB write which swallows its own errors, so a lost
+    write dropped the story out of the required set entirely — and a failing gate
+    that is not required is filtered straight out of the merge decision
+    (``auto_merge`` computes ``missing_labels`` only over this function), so the PR
+    merged un-gated. A required-ness decision that depends on a write succeeding
+    is a fail-open; app opt-in is a config fact that cannot be lost at runtime.
     """
     labels = list(LOOP4_REQUIRED_GATE_LABELS)
     gates = app_config.gates
     if gates.smoke_harness_ready and gates.smoke_command:
         labels.append("smoke-green")
-    if gates.acceptance_oracle and story is not None and (
-        story.acceptance_expected or story.acceptance_test_ref
-    ):
+    if gates.acceptance_oracle:
         labels.append("acceptance-verified")
     return labels
 

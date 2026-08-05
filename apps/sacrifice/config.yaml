@@ -87,4 +87,48 @@ gates:
   # fresh worktree green with a decoy occupying :8000. Requires the
   # sacrifice-db container to be startable (`make up-db`).
   smoke_harness_ready: true
+
+  # ── WS1.2 independent acceptance oracle ────────────────────────────────────
+  # ALL FOUR SETTINGS BELOW ARE INERT until ``acceptance_oracle: true`` is set
+  # (deliberately absent — flipping it is an operator decision, and it makes
+  # ``acceptance-verified`` a REQUIRED merge gate for every AC-carrying story in
+  # this app). They are configured first because with the defaults the gate
+  # false-blocks 100% of the time: measured 2026-08-05, an oracle placed at the
+  # repo root and run with the factory's own interpreter cannot import sacrifice
+  # at all (``No module named 'app'``).
+  #
+  # Where the oracle file is placed. ``backend/tests`` — not the repo root —
+  # because sacrifice's hermetic test env (DATABASE_URL, JWT_SECRET, forced
+  # STRIPE_LIVE_MODE=false, …) lives in ``backend/tests/conftest.py``, and pytest
+  # only loads that conftest for files underneath it.
+  acceptance_test_dir: "backend/tests"
+  # Where the command runs. ``backend`` is where sacrifice's pyproject/pytest
+  # config lives and what puts the ``app`` package on sys.path.
+  acceptance_test_cwd: "backend"
+  # The app's own env, via the same wrapper the dev-loop test gate uses, so the
+  # oracle runs against sacrifice's declared deps rather than the factory's.
+  # NOTE: this env has no ``hypothesis``; add it to the backend's dev extra
+  # before writing EARS-form acceptance criteria for this app, or property-mode
+  # oracles will fail collection.
+  # Requires the ``sacrifice-db`` container to be up (same prerequisite as the
+  # smoke gate) — the backend conftest creates tables against localhost:5433.
+  acceptance_test_command: "uv run --extra dev pytest {test_file} -q"
+  # Repo-layout facts for the (dev-blind) acceptance author. Without these the
+  # author guesses module paths; the first real run produced a test that tried
+  # ``sacrifice.main`` / ``main`` / ``app.main`` and errored out.
+  acceptance_harness_hint: |
+    - The backend is a FastAPI app. The ASGI application object is `app` in
+      `app.main` (file `backend/app/main.py`); import it as `from app.main import app`.
+    - Drive HTTP endpoints with `fastapi.testclient.TestClient(app)`. Do not start
+      a server, and do not use `httpx.AsyncClient` against a network address.
+    - Your file is placed in `backend/tests/` and run with pytest from `backend/`.
+      `backend/tests/conftest.py` is loaded automatically and provides the test
+      env (dummy credentials, Stripe forced into test mode) and an autouse
+      `test_db` fixture that creates the schema and overrides the app's database
+      dependency — so you need no database setup of your own. The app package is
+      importable as `app.*`.
+    - `asyncio_mode = auto` is set, so `async def` tests need no decorator.
+    - Routes are mounted under `app/routes/` and most are prefixed `/api`; the
+      health endpoints are the exception. Use the exact paths and methods the
+      direction's api_spec.md states, never a guessed variant.
 models: {}  # use default routing
