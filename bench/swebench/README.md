@@ -14,18 +14,47 @@ exactly those tables.
 ## The measured result — 2026-08-04, five arms, n=19, k=1
 
 Full table: [`results.md`](results.md). Evidence:
-`results-archive/2026-08-04T04-18-05.349995Z/`, re-derivable byte-for-byte:
+`results-archive/2026-08-04T23-19-24.998844Z/`, re-derivable byte-for-byte:
 
 ```bash
 uv run python bench/swebench_adapter.py report \
-  --from-archive bench/swebench/results-archive/2026-08-04T04-18-05.349995Z --check
+  --from-archive bench/swebench/results-archive/2026-08-04T23-19-24.998844Z --check
 ```
+
+> **Provenance, read before quoting a number.** Two `report` runs exist for this
+> one sweep and they disagree on the `openhands` arm.
+>
+> | archive | `openhands` | $ | McNemar `factory` vs `openhands` | cost ratio |
+> |---|---:|---:|---:|---:|
+> | `2026-08-04T04-18-05.349995Z/` | 7/16 = **44%** | 15.37 | n=16, 1/3, **p=0.625** | **2.3×** |
+> | `2026-08-04T23-19-24.998844Z/` | 10/19 = **53%** | 18.20 | n=19, 1/4, **p=0.375** | **2.8×** |
+>
+> The first run lost three `openhands` rows to Azure `DeepSeek-V4-Pro` 429 rate
+> limits (`jsonpickle-588`, `keras-22316`, `rapid-mlx-289`); each recorded
+> `cost_usd: 0.0` and was excluded as invalid, which is why its denominator is 16.
+> The later run re-ran exactly those three as `attempt: 2`. **Both archives are
+> committed to `origin/main`** as of `664bcd7d` (PR #232), which also amended
+> `PRE-REGISTRATION-1.6.md` to close the `attempt > 1` protocol question.
+>
+> **The tables below use the later report**, matching `PLAN.md` §1, `STATUS.md`,
+> `README.md` and the committed `results.md` — which re-derives from the later
+> archive byte-for-byte, so that is the archive `--check` must be pointed at
+> (pointed at `04-18-05` it correctly exits non-zero on drift). **The conclusion
+> is the same under either report**: both put the chain below one agent on the
+> same model, both at p > 0.3, and the cost ratio moves further against the chain
+> in the later one. At MDE ≈ ±38 pp this is **"no measurable lift", not "the
+> chain hurts"** — nothing here measured harm.
+>
+> Derive either set from the per-row `<instance>/<arm>/result.json` files, never
+> from `sweep-<arm>.json` (see the warning below the tables). The 44% denominator
+> reproduces only if you apply the report's own audited-valid rule and exclude the
+> three errored rows; counting them raw gives 9/19.
 
 | arm | harness × model(s) the LEDGER says ran | resolved / valid | rate | 95% CI | $ | $ / resolved |
 |---|---|---:|---:|---|---:|---:|
 | claude-5 | Claude Code CLI × `claude-opus-5` (+ its own haiku-4-5 classifier) | 15/19 | **79%** | [54%, 94%] | 34.36 † | 2.29 † |
 | claude-4.8 | the SAME CLI, same flags × `claude-opus-4-8` | 14/19 | **74%** | [49%, 91%] | 23.56 † | 1.68 † |
-| openhands | OpenHands single agent, no chain × `azure/deepseek-v4-pro` (19 calls) | 7/16 | **44%** | [20%, 70%] | 15.37 | **2.20** |
+| openhands | OpenHands single agent, no chain × `azure/deepseek-v4-pro` (19 calls) | 10/19 | **53%** | [29%, 76%] | 18.20 | **1.82** |
 | factory | the chain on OpenHands × deepseek-v4-pro (33) + gpt-5.3-codex (6) + gpt-5.4 (31) | 7/19 | **37%** | [16%, 62%] | 35.94 | **5.13** |
 | bare | hand-rolled text loop, no tool calls × deepseek-v4-pro (727 calls) | 1/18 | **6%** | [0%, 27%] | 7.94 | 7.94 |
 
@@ -37,8 +66,8 @@ Paired McNemar exact, over instances where both arms are audited-valid:
 
 | comparison | isolates | n | only-A / only-B | p |
 |---|---|---:|---:|---:|
-| **factory vs openhands** | **the chain** | 16 | 1 / 3 | **0.625** |
-| **openhands vs bare** | **the tooling** | 15 | 0 / 6 | **0.031** |
+| **factory vs openhands** | **the chain** | 19 | 1 / 4 | **0.375** |
+| **bare vs openhands** | **the tooling** | 18 | 0 / 9 | **0.004** |
 | bare vs factory | both, entangled | 18 | 1 / 7 | 0.070 |
 | claude-5 vs factory | nothing attributable | 19 | 8 / 0 | **0.008** |
 | claude-4.8 vs factory | nothing attributable | 19 | 8 / 1 | 0.039 |

@@ -11,9 +11,16 @@ cheap non-Anthropic models (Azure gpt-5.x + DeepSeek).
 
 **It ships, and the chain is not proven.** Externally graded 2026-08-04 (n=19,
 k=1): the chain resolves 37% where a *single* OpenHands agent on the same model
-resolves 44% — no measurable lift (p=0.625), at 2.3× the cost per resolved
-instance. Claude Code resolves 79%. Do not write docs or directions that assume
-the chain's value is established; see `STATUS.md`.
+resolves 53% — no measurable lift (p=0.375), at 2.8× the cost per resolved
+instance. Claude Code resolves 79%. Those figures are the later of two `report`
+runs over this one sweep (`results-archive/2026-08-04T23-19-24.998844Z/`, the
+archive the committed `results.md` re-derives from byte-for-byte); the earlier
+`…T04-18-05.349995Z/` reports `openhands` 44% / p=0.625 / 2.3×, because three
+rows lost to Azure 429s were re-run there as `attempt: 2`. **The conclusion is
+the same under either report** — the chain sits below one agent on the same
+model, at p > 0.3 — and at MDE ≈ ±38 pp that is "no measurable lift", **not**
+"the chain hurts". Do not write docs or directions that assume the chain's value
+is established; see `STATUS.md` and `PLAN.md` §1.
 
 ```
 direction.md  →  PM (triage/split)  →  SM (story files)  →  Dev (OpenHands sandbox:
