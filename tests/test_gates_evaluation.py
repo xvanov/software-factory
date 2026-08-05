@@ -635,6 +635,40 @@ def test_production_tree_changed_fails_closed_without_a_derivable_diff(
     assert r.details["authoritative"] is False
 
 
+def test_production_tree_changed_falls_back_to_gh_when_the_worktree_is_gone(
+    monkeypatch: pytest.MonkeyPatch, app_cfg_empty: AppConfig
+) -> None:
+    """``_story_worktree`` swallows every failure into ``repo_root=None``. Without
+    a GitHub fallback, a required fail-closed gate would turn any worktree fault
+    into a permanently unmergeable PR."""
+    calls: list[tuple[int, str]] = []
+
+    def _fake_gh(pr_number: int, repo: str) -> tuple[list[str], str]:
+        calls.append((pr_number, repo))
+        return ["src/app.py"], "gh pr diff --name-only #7"
+
+    monkeypatch.setattr(production_tree_changed, "_gh_changed_paths", _fake_gh)
+    pr = PRContext(
+        pr_number=7,
+        head_sha="a",
+        base_branch="main",
+        files_changed=[],
+        repo_root=None,
+        dry_run=False,
+    )
+    r = production_tree_changed.evaluate(pr, app_cfg_empty)
+    assert r.passed, r.reason
+    assert calls == [(7, "o/r")]
+
+    # Dry-run must NOT shell out to GitHub — and with nothing to read it blocks.
+    calls.clear()
+    dry = PRContext(
+        pr_number=7, head_sha="a", base_branch="main", files_changed=[], dry_run=True
+    )
+    assert not production_tree_changed.evaluate(dry, app_cfg_empty).passed
+    assert calls == []
+
+
 def test_production_tree_changed_shares_the_bench_classifier() -> None:
     """The gate and the bench harness must not grow divergent definitions of
     "production code" — the harness strips/refuses on exactly this predicate."""

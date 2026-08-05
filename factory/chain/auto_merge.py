@@ -102,6 +102,15 @@ _MAX_CONFLICT_REBUILDS = 2
 # ``chain_kind`` without re-checking the TDD list.
 _DOCS_CHAIN_GATE_LABELS: frozenset[str] = frozenset({"canonical-paths-only"})
 
+# Gates a PR LABEL may never satisfy — only a fresh passing evaluation counts.
+# ``present_labels`` unions the PR's applied labels with the gates that just
+# passed, which is fine for gates whose label the chain itself once applied. It
+# is NOT fine for a fail-closed precondition: a PR carrying the literal label
+# ``production-tree-changed`` would otherwise clear the requirement without the
+# diff ever being looked at — the recorded-flag hole that gate's own docstring
+# says must not exist.
+_RESULT_ONLY_GATE_LABELS: frozenset[str] = frozenset({"production-tree-changed"})
+
 
 def _story_targets_factory_repo(app_config: AppConfig) -> bool:
     """True when ``app_config`` builds the factory's own repo (a self-edit app).
@@ -957,7 +966,13 @@ def _evaluate_one_pr(
         # under Loop-4 (the labelling stages died with the test-first
         # machinery), and a fresh evaluator pass is strictly stronger
         # evidence than a label applied on some earlier tick anyway.
-        present_labels = set(fixture.labels) | set(gates_passed)
+        # ...EXCEPT for the gates in ``_RESULT_ONLY_GATE_LABELS``, which only a
+        # fresh passing evaluation satisfies. A gate whose whole purpose is
+        # "fail closed on the real artifact" cannot be satisfied by a label
+        # somebody (or some bot) put on the PR.
+        present_labels = (
+            set(fixture.labels) - _RESULT_ONLY_GATE_LABELS
+        ) | set(gates_passed)
         missing_labels = [
             label
             for label in required_gate_labels(app_config, story)

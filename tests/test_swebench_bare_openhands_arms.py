@@ -1118,6 +1118,45 @@ def test_refusal_count_needs_both_an_os_refusal_and_a_locked_path(A: Any) -> Non
     )
 
 
+def test_a_git_failure_is_reported_not_swallowed(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """A silent ``[]`` from ``git ls-files`` would report ``files: 0,
+    bypassed: 0`` — indistinguishable from a clean run while protecting nothing.
+    That is the "countermeasure that silently stops applying" class."""
+    not_a_repo = tmp_path / "plain"
+    (not_a_repo / "tests").mkdir(parents=True)
+    (not_a_repo / "tests" / "test_a.py").write_text("def test_a(): pass\n")
+
+    lock = A.lock_test_files(not_a_repo)
+    assert lock["files"] == 0
+    assert lock["git_ok"] is False
+    assert lock["errors"], lock
+    report = A.readonly_test_report(not_a_repo, lock)
+    assert report["git_ok"] is False
+    assert report["lock_errors"]
+
+
+def test_a_lapsed_lock_is_reported_even_when_the_content_is_restored(
+    A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    """MEASURED: ``git apply`` / ``git checkout --`` onto a 0444 tracked file
+    succeeds and leaves it at 0664, and an arm that edits a test then reverts it
+    ends byte-identical. Both look clean under ``bypassed_count`` alone, so the
+    lapse has to be reported next to it."""
+    repo = tmp_path / "repo"
+    _seed_repo(repo)
+    lock = A.lock_test_files(repo)
+    target = repo / "tests" / "test_widget.py"
+    original = target.read_text(encoding="utf-8")
+    target.chmod(0o644)
+    target.write_text("def test_widget():\n    assert True\n", encoding="utf-8")
+    target.write_text(original, encoding="utf-8")  # revert
+
+    report = A.readonly_test_report(repo, lock)
+    assert report["bypassed_count"] == 0
+    assert report["unlocked_mode"] == ["tests/test_widget.py"]
+    assert report["lock_lapsed_count"] == 1
+
+
 def test_report_says_none_when_no_output_was_scanned(
     A: Any, tmp_path: Path  # noqa: N803
 ) -> None:

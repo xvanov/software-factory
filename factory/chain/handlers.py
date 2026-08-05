@@ -1306,13 +1306,18 @@ def parse_underspecified_declaration(text: str) -> str | None:
 def declared_underspecified(run_res: Any) -> str | None:
     """The declared reason from a dev sandbox result, or ``None``.
 
-    Reads the three places the dev's own words can land: its parsed
-    ``SELF_SUMMARY:`` block, its final assistant message, and the run summary.
-    ``_extract_self_summary`` already prefers the ``finish`` tool's message
-    over a plain trailing message, so a dev that declares via ``finish`` is
-    covered too.
+    Reads only the two places the DEV'S OWN WORDS land: its parsed
+    ``SELF_SUMMARY:`` block and its final assistant message.
+    ``_extract_self_summary`` already prefers the ``finish`` tool's message over
+    a plain trailing message, so a dev that declares via ``finish`` is covered.
+
+    ``run_res.summary`` is deliberately NOT read: it is the pytest output tail
+    (``factory/runner.py`` sets it from ``test_out``), which contains captured
+    stdout of arbitrary application code. That is a machine-generated, untrusted
+    channel, and this transition is terminal and not auto-recoverable — no such
+    channel gets to fire it.
     """
-    for field_name in ("self_summary", "last_assistant_message", "summary"):
+    for field_name in ("self_summary", "last_assistant_message"):
         reason = parse_underspecified_declaration(str(getattr(run_res, field_name, "") or ""))
         if reason is not None:
             return reason

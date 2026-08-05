@@ -125,6 +125,46 @@ def test_missing_gate_blocks_merge(factory_root: Path) -> None:
     assert "docs-current" in actions[0].reason
 
 
+def test_test_only_diff_blocks_merge(factory_root: Path) -> None:
+    """The measured false-green (2026-08-04): a story whose whole diff is test
+    files must not merge. ``harumiweb__exstruct-113`` spent $2.45, edited only
+    ``tests/cli/test_cli_lazy_imports.py``, was approved at tq=0.90 and reached
+    ``reviewer_done`` with diff_bytes=0."""
+    fixture = FixturePR(
+        pr_number=71,
+        head_sha="cafe",
+        base_branch="main",
+        labels=[],
+        files_changed=["tests/test_foo.py", "pyproject.toml"],
+        ci_state="success",
+        story=_good_story(),
+    )
+    actions = auto_merge_tick(factory_root, "sacrifice", dry_run=True, fixture_prs=[fixture])
+    assert not actions[0].merged
+    assert "production-tree-changed" in actions[0].reason
+    failed = {g["label"]: g for g in actions[0].gates_failed}
+    assert "no production-code change" in failed["production-tree-changed"]["reason"]
+
+
+def test_a_pr_label_cannot_satisfy_the_production_diff_gate(factory_root: Path) -> None:
+    """``present_labels`` unions applied PR labels with the gates that just
+    passed. For a fail-closed precondition that would be a recorded-flag hole:
+    a label named after the gate would clear the requirement without the diff
+    ever being looked at."""
+    fixture = FixturePR(
+        pr_number=72,
+        head_sha="cafe",
+        base_branch="main",
+        labels=["production-tree-changed"],  # the forged evidence
+        files_changed=["tests/test_foo.py"],
+        ci_state="success",
+        story=_good_story(),
+    )
+    actions = auto_merge_tick(factory_root, "sacrifice", dry_run=True, fixture_prs=[fixture])
+    assert not actions[0].merged
+    assert "production-tree-changed" in actions[0].reason
+
+
 def test_story_state_guard_prevents_premature_merge(factory_root: Path) -> None:
     """A story still in DEV_IN_PROGRESS is not eligible for merge even if
     fixture gates green."""

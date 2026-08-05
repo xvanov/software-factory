@@ -452,9 +452,12 @@ _TRANSITIONS: dict[tuple[StoryState, str], StoryState] = {
     (StoryState.DEV_IN_PROGRESS, EVENT_DEV_EXHAUSTED): StoryState.BLOCKED_TESTS_NEED_CLARIFICATION,
     (StoryState.DEV_RETRY, EVENT_DEV_STARTED): StoryState.DEV_IN_PROGRESS,
     (StoryState.DEV_RETRY, EVENT_DEV_EXHAUSTED): StoryState.BLOCKED_TESTS_NEED_CLARIFICATION,
-    # ImpossibleBench escape hatch. Reachable from both dev states — the
-    # handler advances to DEV_IN_PROGRESS before running, but a declaration
-    # arriving on a retry attempt must land in the same place.
+    # ImpossibleBench escape hatch. The LIVE edge is the DEV_IN_PROGRESS one:
+    # ``_handle_dev_once`` advances to DEV_IN_PROGRESS before it runs the
+    # sandbox, so that is the state a declaration is always parsed in. The
+    # DEV_RETRY edge is belt-and-braces for any future caller that declares
+    # without having advanced first — an IllegalTransitionError here would crash
+    # a tick over an honest answer.
     (
         StoryState.DEV_IN_PROGRESS,
         EVENT_DEV_UNDERSPECIFIED,
