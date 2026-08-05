@@ -75,6 +75,11 @@ state/.manager_escalation_history.json
 # swept cursor per app so it does not rescan closed issues every tick.
 state/issue_hygiene/
 
+# Diff-scoped mutation scores, one file per (app, head_sha): the durable record
+# of a ``factory mutation-score`` run AND its per-symbol cache, without which a
+# re-measurement costs one full test-suite run per symbol. Runtime, per-checkout.
+state/mutation/
+
 # Claude Code agent worktrees — linked working dirs sharing this repo's .git,
 # created per background agent and removed when unchanged. Never committed.
 # (``.claude/skills/`` IS tracked: those are checked-in project skills.)
