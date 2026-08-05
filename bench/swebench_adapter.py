@@ -2575,9 +2575,10 @@ def _build_bench_root(inst: dict[str, Any], repo: Path, root: Path) -> Path:
 #    posture — refuse, never proceed as if the oracle ran.
 #
 # Cost: the authoring call's tokens and dollars land in the RUN's isolated
-# ledger (see ``_bench_acceptance_author`` for why that needs explicit
-# routing), so ``_ledger_totals`` and ``_model_mix`` both count it and ``audit``
-# certifies it. It is a real cost of the product being measured.
+# ledger — ``acceptance._default_author`` binds ``_llm_author`` to the root and db
+# it is given — so ``_ledger_totals`` and ``_model_mix`` both count it and
+# ``audit`` certifies it. It is a real cost of the product being measured, and
+# ``_acceptance_author_ledger_rows`` refuses a row whose ledger lacks the call.
 #
 # NOT done here, deliberately: the ``acceptance-verified`` MERGE gate is not
 # run. This driver has no merge step at all (it terminates at
@@ -2642,53 +2643,14 @@ def _bench_acceptance_direction(problem_statement: str, dir_path: Path) -> Any:
     )
 
 
-def _bench_acceptance_author(spec_prompt: str, story: Any, *, root: Path, db: Path) -> str:
-    """An ``acceptance.AuthorFn`` that bills the RUN's ledger, not production's.
-
-    Prompt assembly is deliberately identical to ``acceptance._llm_author`` —
-    same persona, same schema (imported from it), same ``max_tokens``, same
-    wrapper text; a test compares the two call kwargs so they cannot drift.
-
-    The one difference is not cosmetic and cannot be skipped: ``_llm_author``
-    leaves ``db_path`` and ``software_factory_root`` unset, and
-    ``runner._DEFAULT_DB_PATH`` is the REPO's ``state/factory.db``. Under
-    ``FACTORY_STATE_ROOT`` that would write this call's ``Run`` row into
-    PRODUCTION telemetry — the exact class this repo lost a week to — where it
-    would also be invisible to ``_ledger_totals``, so the arm's cost column
-    would under-report the product it is pricing.
-    """
-    from factory.chain.acceptance import _ACCEPTANCE_SCHEMA
-    from factory.model_router import route
-    from factory.runner import _read_persona_prompt, text_run
-
-    persona = "acceptance_author"
-    persona_prompt = _read_persona_prompt(persona)
-    full_prompt = (
-        f"{persona_prompt.rstrip()}\n\n"
-        "---\n\n"
-        "## Input (SPEC ONLY — you are blind to any implementation)\n\n"
-        f"{spec_prompt}\n\n"
-        "---\n\n"
-        "Return the JSON object with the acceptance test file content."
-    )
-    result = text_run(
-        persona=persona,
-        prompt=full_prompt,
-        model_id=route(persona),
-        schema=_ACCEPTANCE_SCHEMA,
-        max_tokens=4096,
-        story_id=story.id,
-        app=story.app,
-        direction_id=story.direction_id,
-        db_path=db,
-        software_factory_root=root,
-    )
-    if not isinstance(result, dict):
-        raise RuntimeError("acceptance_author returned a non-dict for a schema call")
-    content = result.get("test_file_content")
-    if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("acceptance_author returned empty test_file_content")
-    return content
+# NO bench-local author function. ``acceptance._default_author`` binds the real
+# ``_llm_author`` to the run's own ``software_factory_root`` and ``db_path``
+# (chain PR #236), so passing ``author_fn=None`` uses the PRODUCTION authoring
+# call and the Run row lands in this run's isolated ledger — which is what
+# integrity property 5 needs and what ``_acceptance_author_ledger_rows`` checks.
+# An earlier revision of this file carried a copy of ``_llm_author`` purely to
+# thread those two kwargs; keeping it now would mean the measured arm ran
+# harness code where the product runs chain code.
 
 
 def _assert_oracle_outside_dev_tree(stored: Path, dev_trees: tuple[Path, ...]) -> None:
@@ -2766,8 +2728,9 @@ def _author_bench_acceptance_oracle(
         root,
         dry_run=False,
         db_path=db,
-        author_fn=author_fn
-        or (lambda prompt, st: _bench_acceptance_author(prompt, st, root=root, db=db)),
+        # None => the chain's own ``_default_author``, bound to THIS run's root
+        # and db. Tests inject a deterministic stub.
+        author_fn=author_fn,
     )
     if not ref:
         raise AcceptanceOracleUnavailable(
@@ -2787,7 +2750,11 @@ def _author_bench_acceptance_oracle(
         )
     _assert_oracle_outside_dev_tree(stored, dev_trees)
     content = stored.read_bytes()
-    spec_prompt = build_spec_prompt(story, direction)
+    # The harness hint MUST be passed: ``author_acceptance_test`` sends it, so
+    # omitting it here would persist a prompt that is not the one the author saw.
+    spec_prompt = build_spec_prompt(
+        story, direction, harness_hint=app_config.gates.acceptance_harness_hint
+    )
 
     # RELOCATE the store out of the factory root. MEASURED, not hypothetical: on
     # the first real run of this code the dev went looking for its story file and

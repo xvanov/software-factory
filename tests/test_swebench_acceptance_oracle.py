@@ -510,16 +510,20 @@ def test_the_first_dev_call_is_chosen_by_time_not_by_file_order(
     assert got["ok"] is False
 
 
-def test_nothing_copies_factory_state_into_a_dev_worktree(A: Any) -> None:  # noqa: N803
-    """The storage location only keeps the oracle hidden because the worktree
-    factory never copies factory ``state/`` into a checkout. Pin that: if
-    ``worktree.py`` ever started copying state in, property 2 would silently
-    stop holding while every artifact still claimed it did."""
-    src = (Path(A.__file__).parent.parent / "factory" / "chain" / "worktree.py").read_text(
-        encoding="utf-8"
-    )
-    assert "state/acceptance" not in src
-    assert "acceptance" not in src.lower()
+def test_the_chains_own_store_and_worktree_dirs_never_contain_each_other(
+    A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    """Read the invariant off the chain's OWN path functions rather than trusting
+    this harness's arithmetic: `acceptance_dir` and the per-story worktree root
+    must be siblings, neither containing the other. If the chain ever moved the
+    store under `state/worktrees/`, the relocation below would be moving a file
+    the dev had already been handed."""
+    from factory.chain.acceptance import acceptance_dir
+
+    store = acceptance_dir(tmp_path, "swebench", 7).resolve()
+    worktrees = (tmp_path / "state" / "worktrees").resolve()
+    assert worktrees not in store.parents and store != worktrees
+    assert store not in worktrees.parents
 
 
 # --------------------------------------------------------------------------- #
@@ -617,7 +621,13 @@ def test_authoring_failure_refuses_the_row(A: Any, tmp_path: Path) -> None:  # n
             dev_trees=(),
             author_fn=_boom,
         )
-    assert not (root / "state" / "acceptance").exists()
+    story = _story()
+    # No oracle was stored, and the story stays EXPECTED — nothing downstream may
+    # read the absence as "this story never needed one". (The chain's failed-pass
+    # sidecar `attempts.json` legitimately lands in the store dir; the oracle
+    # itself must not.)
+    assert not list((root / "state" / "acceptance").rglob("test_acceptance.py"))
+    assert story.acceptance_test_ref is None
 
 
 def test_a_non_opted_in_app_refuses_rather_than_silently_skipping(
@@ -764,10 +774,9 @@ def test_an_author_call_with_no_dev_call_is_ok_and_says_why(
 
 
 def test_the_authoring_calls_cost_must_be_in_this_runs_ledger(A: Any) -> None:  # noqa: N803
-    """``acceptance._llm_author`` leaves ``db_path`` unset and
-    ``runner._DEFAULT_DB_PATH`` is the REPO's production db, so an authoring call
-    routed the production way would both pollute live telemetry and vanish from
-    this arm's totals. Zero author rows in the isolated ledger is a refusal."""
+    """Zero author rows in the run's isolated ledger is a REFUSAL, not a footnote:
+    it means the authoring spend went somewhere else, so `_ledger_totals` is
+    under-pricing the product this arm is costing."""
 
     class _R:
         def __init__(self, persona: str) -> None:
@@ -777,52 +786,68 @@ def test_the_authoring_calls_cost_must_be_in_this_runs_ledger(A: Any) -> None:  
     assert A._acceptance_author_ledger_rows([_R("dev"), _R("acceptance_author")]) == 1
 
 
-def test_the_production_author_would_bill_the_wrong_ledger(A: Any) -> None:  # noqa: N803
-    """The reason the bench needs its own author at all, pinned so nobody
-    "simplifies" it back to ``_llm_author``: the production path's default db is
-    the REPO's, not the run's isolated state root."""
-    from factory.chain import acceptance as acc
-    from factory.runner import _DEFAULT_DB_PATH
-
-    src = inspect.getsource(acc._llm_author)
-    assert "db_path" not in src
-    assert "software_factory_root" not in src
-    assert _DEFAULT_DB_PATH.parts[-2:] == ("state", "factory.db")
-    assert "swebench-work" not in str(_DEFAULT_DB_PATH)
-
-
-def test_the_bench_author_matches_the_production_author_call(
-    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+def test_the_bench_uses_the_PRODUCTION_authoring_call(  # noqa: N802
+    A: Any,  # noqa: N803
 ) -> None:
-    """The bench author exists ONLY to route the ledger; every other kwarg must
-    be identical to ``acceptance._llm_author`` or the measured arm drifts from
-    the product it claims to measure."""
-    import factory.runner as runner
+    """No bench-local copy of the author. `acceptance._default_author` binds the
+    real `_llm_author` to the root and db it is handed, so `author_fn=None` runs
+    the PRODUCTION call and its Run row lands in this run's isolated ledger.
+
+    This is pinned because the harness previously carried a duplicate of
+    `_llm_author` purely to thread those two kwargs — and a duplicate means the
+    measured arm running harness code where the product runs chain code."""
     from factory.chain import acceptance as acc
 
-    seen: list[dict[str, Any]] = []
+    assert not hasattr(A, "_bench_acceptance_author")
+    src = inspect.getsource(A._author_bench_acceptance_oracle)
+    assert "author_fn=author_fn," in src
+    assert "_llm_author" not in src
 
-    def _fake(**kw: Any) -> dict[str, str]:
-        seen.append(kw)
-        return {"test_file_content": "def test_x():\n    pass\n"}
+    # The chain's default author really does bind the ledger it is given.
+    default_src = inspect.getsource(acc._default_author)
+    assert "software_factory_root=software_factory_root" in default_src
+    assert "db_path=db_path" in default_src
 
-    monkeypatch.setattr(runner, "text_run", _fake)
-    story = _story()
-    acc._llm_author("SPEC BODY", story)
-    A._bench_acceptance_author(
-        "SPEC BODY", story, root=tmp_path / "root", db=tmp_path / "db.sqlite"
-    )
-    prod, bench = seen
-    assert set(bench) - set(prod) == {"db_path", "software_factory_root"}
-    for k in prod:
-        assert prod[k] == bench[k], k
-    assert bench["db_path"] == tmp_path / "db.sqlite"
-    assert bench["software_factory_root"] == tmp_path / "root"
-    # And the persona is the independent one, on weights that are NOT the dev's.
+    # And the independent author's weights are NOT the dev's.
     from factory.model_router import route
 
-    assert bench["persona"] == "acceptance_author"
     assert route("acceptance_author") != route("dev", "standard")
+
+
+def test_the_persisted_spec_prompt_is_the_one_that_was_sent(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """`build_spec_prompt` takes a `harness_hint` the chain passes. Re-calling it
+    WITHOUT the hint would persist a prompt that is not the one the author saw —
+    provenance that quietly disagrees with the artifact it documents."""
+    from factory.chain import acceptance as acc
+
+    seen: list[str] = []
+    real = acc.build_spec_prompt
+
+    def _spy(story: Any, direction: Any, **kw: Any) -> str:
+        out = real(story, direction, **kw)
+        seen.append(out)
+        return out
+
+    monkeypatch.setattr(acc, "build_spec_prompt", _spy)
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg = _opted_in_config()
+    cfg.gates.acceptance_harness_hint = "the app lives at /srv/app; import `app`"
+    prov = A._author_bench_acceptance_oracle(
+        instance_id="inst-h",
+        problem_statement="fix the widget",
+        story=_story(),
+        app_config=cfg,
+        root=root,
+        db=root / "state" / "factory.db",
+        dev_trees=(),
+        author_fn=lambda p, s: "def test_ac1():\n    assert True\n",
+    )
+    sent, persisted = seen[0], Path(prov["spec_prompt_path"]).read_text(encoding="utf-8")
+    assert sent == persisted
+    assert "the app lives at /srv/app" in persisted
 
 
 # --------------------------------------------------------------------------- #

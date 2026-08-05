@@ -850,13 +850,14 @@ Five things hold it, each in code rather than in this paragraph:
    `prediction.diff` is written, so `grade` refuses it. The alternative
    (proceeding with a flag set) would reproduce exactly the mislabelling this
    change exists to fix.
-5. **The cost is this arm's cost.** `acceptance._llm_author` leaves `db_path`
-   unset and `runner._DEFAULT_DB_PATH` is the REPO's `state/factory.db` — correct
-   in production, wrong under `FACTORY_STATE_ROOT`, where it would write the call
-   into live telemetry AND hide it from `_ledger_totals`. `_bench_acceptance_author`
-   passes the run's db and state root explicitly; a test compares its `text_run`
-   kwargs against `_llm_author`'s so the two cannot otherwise drift. Measured on
-   `conan-io__conan-19735_interface`: **$0.0100** of the row's $0.3362.
+5. **The cost is this arm's cost.** There is deliberately **no bench-local author
+   function**: `acceptance._default_author` binds the real `_llm_author` to the
+   root and db it is handed, so `author_fn=None` runs the *production* call and
+   its `Run` row lands in this run's isolated ledger — counted by `_ledger_totals`
+   and `_model_mix`, certified by `audit`. `_acceptance_author_ledger_rows`
+   refuses a row whose ledger has no author call, so the accounting cannot
+   silently go missing. Measured on `conan-io__conan-19735_interface`:
+   **$0.0087** of the row's $0.5752.
 
 **Only the factory arm changes.** The opt-in (`gates.acceptance_oracle: true`)
 lives in the app config `_build_bench_root` writes, and `_build_bench_root` has
@@ -870,17 +871,22 @@ assume otherwise. This driver has no merge step at all — it terminates at
 `REVIEWER_DONE` — and the gate runs its test with the factory's own interpreter,
 which has none of the instance's dependencies, so on the host it would
 import-error on every row. "Blocks everything" is not a measurement. Enforcing it
-needs an app `acceptance_test_command` that executes inside the instance image,
-and before that is worth building, someone should measure whether a
-blind-authored oracle is satisfiable by a correct patch at all. So what this row
-proves is the ORDERING and the independence, not yet a second verdict channel.
+needs an app `acceptance_test_command` that executes inside the instance image —
+plus the three placement knobs and the `acceptance_harness_hint` that chain PR
+#236 added after finding that a layout-blind author guesses module paths and its
+test cannot import the app. The bench app sets **no** hint, which keeps this
+arm's author strictly spec-only; a hint would have to be written per instance
+before the gate could pass anything. And before any of that is worth building,
+someone should measure whether a blind-authored oracle is satisfiable by a
+correct patch at all. So what this row proves is the ORDERING and the
+independence, not yet a second verdict channel.
 
 First clean row: `conan-io__conan-19735_interface`, 2026-08-05 —
-`authored_before_dev_first_call: true` (the author call ended `18:40:51.356446Z`,
-the dev's first call started `18:40:52.036345Z`), `ledger_author_rows: 1`,
-`trail_scan.hits: 0`, oracle verdict RESOLVED, audit OK, $0.196 total of which
-$0.0075 is the authoring call. It is a single row under the pinned manifest, not a
-re-measurement: `results.md` is unchanged.
+`authored_before_dev_first_call: true` (the author call ended `19:31:35.090291Z`,
+the dev's first call started `19:31:35.955607Z`), `ledger_author_rows: 1`,
+`trail_scan.hits: 0`, `in_graded_diff: []`, oracle verdict RESOLVED, audit OK,
+$0.5752 total of which $0.0087 is the authoring call. It is a single row under the
+pinned manifest, not a re-measurement: `results.md` is unchanged.
 
 One reporting note: `model_escalated_calls` counts every call on a model other
 than the nominal `dev/standard` route, per persona and without exception — it
