@@ -112,10 +112,33 @@ _TEST_CODE_PATH = re.compile(
 # "2 skipped". Under exit-code grading that was RESOLVED. The plugin file
 # itself is ordinary production-looking code, so the CONFIG edit is the
 # chokepoint worth refusing on.
+#
+# THREE MORE, each a forced pass measured 2026-08-05 against the acceptance
+# oracle gate — every one of them classified PRODUCTION before this, so nothing
+# rolled it back:
+#
+#   * ``.pytest.ini`` — pytest honours the DOT-prefixed name as an inifile and it
+#     outranks ``pyproject.toml``. Every other name here is anchored on
+#     ``(^|/)``, which the leading dot walked straight past. Same attack as
+#     ``addopts = "-p _fixup"``, routed around the ``pyproject.toml`` rollback.
+#   * ``*.dist-info/`` and ``*.egg-info/`` — ``importlib.metadata`` scans every
+#     ``sys.path`` entry for these, and pytest calls
+#     ``load_setuptools_entrypoints("pytest11")``. An ``entry_points.txt``
+#     committed in the run cwd auto-loads a dev-authored plugin with NO config
+#     edit at all. They are build artifacts; a diff has no business in them.
+#   * a module that SHADOWS THE RUNNER in the run cwd (``pytest.py``,
+#     ``_pytest.py``, ``py.py``, ``pluggy.py``). ``python -m pytest`` puts the cwd
+#     at ``sys.path[0]``, so ``pytest.py`` there *becomes* the whole "pytest run"
+#     — print a summary, ``sys.exit(0)``, done.
 _COLLECTION_CHANNEL = re.compile(
-    r"(^|/)(pyproject\.toml|setup\.cfg|tox\.ini|pytest\.ini|setup\.py"
+    r"(^|/)(pyproject\.toml|setup\.cfg|tox\.ini|pytest\.ini|\.pytest\.ini|setup\.py"
     r"|noxfile\.py|sitecustomize\.py|usercustomize\.py|conftest\.py)$"
     r"|\.pth$"
+    # The test runner's own import names. Shadowing any of them replaces the
+    # thing that reports the verdict.
+    r"|(^|/)(pytest|_pytest|py|pluggy)\.py$"
+    # Installed-distribution metadata: the pytest11 entry-point channel.
+    r"|(^|/)[^/]*\.(dist-info|egg-info)(/|$)"
     r"|(^|/)[^/]*pytest[^/]*plugin[^/]*\.py$"
     r"|(^|/)[^/]*plugin[^/]*pytest[^/]*\.py$"
 )

@@ -33,6 +33,8 @@ import pytest
 
 from factory.app_config import AppConfig, AppGatesConfig
 from factory.chain.acceptance import (
+    _AUTHOR_ATTEMPTS,
+    _MAX_AUTHOR_PASSES,
     ORACLE_COPY_PREFIX,
     OracleSourceError,
     acceptance_dir,
@@ -46,6 +48,7 @@ from factory.chain.gates import acceptance_verified
 from factory.chain.gates.evaluator import PRContext
 from factory.chain.state_machine import StoryRecord, StoryState
 from factory.directions.parser import Direction
+from tests.oracle_repo import two_commit_repo
 
 _GOOD_ORACLE = (
     "from app.mod import normalize_email\n"
@@ -123,21 +126,33 @@ def _cfg(
     )
 
 
-def _nested_checkout(repo: Path, *, correct: bool = True) -> None:
+_GOOD_IMPL = "def normalize_email(e):\n    return e.lower()\n"
+_BUGGY_IMPL = "def normalize_email(e):\n    return e.strip()\n"
+
+
+def _nested_checkout(repo: Path, *, correct: bool = True) -> tuple[str, str]:
     """A checkout shaped like a real app: the package lives under ``backend/``.
 
     Importable only with ``cwd=backend`` — which is exactly why an oracle dropped
     at the repo root and run from the repo root cannot import it.
+
+    A REAL git branch off a base commit, because the gate grades the merge
+    candidate in a throwaway worktree and credits a green at HEAD only when the
+    oracle was RED at the merge base (PLAN A.6). The base commit therefore always
+    carries the buggy implementation. Returns ``(base_sha, head_sha)``.
     """
-    (repo / "backend" / "app").mkdir(parents=True, exist_ok=True)
-    (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
-    (repo / "backend" / "app" / "__init__.py").write_text("", encoding="utf-8")
-    impl = (
-        "def normalize_email(e):\n    return e.lower()\n"
-        if correct
-        else "def normalize_email(e):\n    return e.strip()\n"
+    return two_commit_repo(
+        repo,
+        base={
+            "backend/app/__init__.py": "",
+            "backend/app/mod.py": _BUGGY_IMPL,
+            "backend/tests/.gitkeep": "",
+        },
+        head={
+            "backend/app/mod.py": _GOOD_IMPL if correct else _BUGGY_IMPL,
+            "backend/app/story_marker.py": "MARKER = 1\n",
+        },
     )
-    (repo / "backend" / "app" / "mod.py").write_text(impl, encoding="utf-8")
 
 
 def _store_oracle(root: Path, *, story_id: int, content: str = _GOOD_ORACLE) -> str:
@@ -147,10 +162,12 @@ def _store_oracle(root: Path, *, story_id: int, content: str = _GOOD_ORACLE) -> 
     return str((out / "test_acceptance.py").relative_to(root))
 
 
-def _pr(root: Path, repo: Path | None, story: StoryRecord) -> PRContext:
+def _pr(root: Path, repo: Path | None, story: StoryRecord, sha: str = "abc") -> PRContext:
+    """``sha`` must be the checkout's real HEAD (or an ancestor of it): the gate
+    refuses to grade a tree that cannot be shown to contain the PR head commit."""
     return PRContext(
         pr_number=1,
-        head_sha="abc",
+        head_sha=sha,
         base_branch="main",
         story=story,
         repo_root=repo,
@@ -189,23 +206,21 @@ def _write_app_config(root: Path, *, on: bool = True) -> None:
 def test_default_root_placement_cannot_import_a_real_app(tmp_path: Path) -> None:
     """Reproduces the first real run: repo-root placement → import error → block."""
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
-    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref)), _cfg())
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), _head_sha), _cfg())
     assert not r.passed
     assert r.details["exit_code"] != 0
 
 
 def test_configured_dir_and_cwd_make_the_same_oracle_pass(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)),
+        _pr(root, repo, _story(ref=ref), _head_sha),
         _cfg(test_dir="backend/tests", cwd="backend"),
     )
     assert r.passed, r.details.get("output_tail")
@@ -218,12 +233,11 @@ def test_configured_dir_and_cwd_make_the_same_oracle_pass(tmp_path: Path) -> Non
 def test_configured_placement_still_fails_a_violating_implementation(tmp_path: Path) -> None:
     """The gate must keep FAILING on a real AC violation, not merely run."""
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo, correct=False)
+    _base_sha, _head_sha = _nested_checkout(repo, correct=False)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)),
+        _pr(root, repo, _story(ref=ref), _head_sha),
         _cfg(test_dir="backend/tests", cwd="backend"),
     )
     assert not r.passed
@@ -232,27 +246,32 @@ def test_configured_placement_still_fails_a_violating_implementation(tmp_path: P
 
 def test_test_dir_outside_the_checkout_blocks(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)), _cfg(test_dir="../escape")
+        _pr(root, repo, _story(ref=ref), _head_sha), _cfg(test_dir="../escape")
     )
     assert not r.passed
     assert "acceptance_test_dir" in str(r.details.get("infra_error", "")) or "outside" in r.reason
 
 
 def test_missing_test_dir_blocks_instead_of_raising(tmp_path: Path) -> None:
+    """A configured dir that does not exist in the merge candidate is an operator
+    config fault: it must block AUTHORITATIVELY, not raise out of the gate."""
     repo = tmp_path / "repo"
-    repo.mkdir()
+    base_sha, head_sha = two_commit_repo(
+        repo, base={"README.md": "app\n"}, head={"README.md": "app v2\n"}
+    )
+    assert base_sha != head_sha
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)), _cfg(test_dir="backend/tests")
+        _pr(root, repo, _story(ref=ref), head_sha), _cfg(test_dir="backend/tests")
     )
     assert not r.passed
     assert r.details["authoritative"] is True
+    assert "acceptance_test_dir" in str(r.details["infra_error"])
 
 
 # --------------------------------------------------------------------------- #
@@ -300,14 +319,13 @@ def test_unusable_author_output_is_a_failed_attempt_not_a_stored_oracle(
     assert ref is None
     assert story.acceptance_test_ref is None
     assert story.acceptance_expected is True  # blocks, never silently ships
-    assert calls["n"] == 3  # retried inside the pass
+    assert calls["n"] == _AUTHOR_ATTEMPTS  # retried inside the pass (inner guard = 2)
     assert not (acceptance_dir(root, "sacrifice", 13) / "test_acceptance.py").exists()
 
 
 def test_fenced_author_output_is_stored_unfenced_and_runs(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     story = _story(story_id=7, ref=None)
     ref = author_acceptance_test(
@@ -317,7 +335,7 @@ def test_fenced_author_output_is_stored_unfenced_and_runs(tmp_path: Path) -> Non
     )
     assert ref is not None
     r = acceptance_verified.evaluate(
-        _pr(root, repo, story), _cfg(test_dir="backend/tests", cwd="backend")
+        _pr(root, repo, story, _head_sha), _cfg(test_dir="backend/tests", cwd="backend")
     )
     assert r.passed, r.details.get("output_tail")
 
@@ -337,12 +355,11 @@ _ALL_SKIPPED = (
 
 def test_all_skipped_oracle_exits_zero_but_gate_blocks(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7, content=_ALL_SKIPPED)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)), _cfg(test_dir="backend/tests", cwd="backend")
+        _pr(root, repo, _story(ref=ref), _head_sha), _cfg(test_dir="backend/tests", cwd="backend")
     )
     assert r.details["exit_code"] == 0  # pytest is happy
     assert not r.passed, "an all-skipped oracle verifies nothing and must not pass"
@@ -357,14 +374,13 @@ def test_all_skipped_oracle_exits_zero_but_gate_blocks(tmp_path: Path) -> None:
 
 def test_stale_copy_anywhere_in_the_checkout_is_swept(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     stale = repo / "backend" / "tests" / f"{ORACLE_COPY_PREFIX}999.py"
     stale.write_text("def test_leaked():\n    assert True\n", encoding="utf-8")
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)), _cfg(test_dir="backend/tests", cwd="backend")
+        _pr(root, repo, _story(ref=ref), _head_sha), _cfg(test_dir="backend/tests", cwd="backend")
     )
     assert r.passed
     assert r.details["swept_before_run"] == [f"backend/tests/{ORACLE_COPY_PREFIX}999.py"]
@@ -375,13 +391,12 @@ def test_stale_copy_anywhere_in_the_checkout_is_swept(tmp_path: Path) -> None:
 def test_gate_excludes_the_oracle_pattern_from_git(tmp_path: Path) -> None:
     """Even a leaked copy must be un-committable: the chain does ``git add -A``."""
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)), _cfg(test_dir="backend/tests", cwd="backend")
+        _pr(root, repo, _story(ref=ref), _head_sha), _cfg(test_dir="backend/tests", cwd="backend")
     )
     excl = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
     assert f"{ORACLE_COPY_PREFIX}*" in excl
@@ -449,14 +464,13 @@ def test_stray_braces_in_the_command_template_block_rather_than_crash(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     # ``str.format`` would raise KeyError('foo') here and abort the whole merge
     # evaluation; literal substitution keeps it a normal (failing) command.
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)),
+        _pr(root, repo, _story(ref=ref), _head_sha),
         _cfg(command="echo {foo} {test_file} && exit 3", test_dir="backend/tests", cwd="backend"),
     )
     assert not r.passed
@@ -467,8 +481,7 @@ def test_unexpected_gate_error_blocks_authoritatively(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
 
@@ -477,7 +490,7 @@ def test_unexpected_gate_error_blocks_authoritatively(
 
     monkeypatch.setattr(acceptance_verified.shutil, "copyfile", _boom)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)), _cfg(test_dir="backend/tests", cwd="backend")
+        _pr(root, repo, _story(ref=ref), _head_sha), _cfg(test_dir="backend/tests", cwd="backend")
     )
     assert not r.passed
     assert r.details["authoritative"] is True
@@ -488,12 +501,11 @@ def test_command_that_never_names_the_oracle_blocks(tmp_path: Path) -> None:
     """A config typo that drops ``{test_file}`` would otherwise produce a green
     gate for a command that never ran the oracle."""
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)),
+        _pr(root, repo, _story(ref=ref), _head_sha),
         _cfg(command="pytest -q", test_dir="backend/tests", cwd="backend"),
     )
     assert not r.passed
@@ -501,19 +513,24 @@ def test_command_that_never_names_the_oracle_blocks(tmp_path: Path) -> None:
     assert "{test_file}" in str(r.details["infra_error"])
 
 
-def test_unreadable_non_pytest_runner_records_weaker_evidence(tmp_path: Path) -> None:
+def test_unreadable_non_pytest_runner_can_no_longer_pass(tmp_path: Path) -> None:
+    """DELIBERATE TIGHTENING (2026-08-05). An exit code with no readable test
+    summary used to be credited as a pass ("exit 0 is all an unreadable runner
+    gives us"). It cannot be any more: without counts there is no way to know the
+    oracle ran, and no way to establish that it was able to FAIL at the merge base.
+    An app whose runner hides pytest's summary must fix the runner."""
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)),
+        _pr(root, repo, _story(ref=ref), _head_sha),
         _cfg(command="true {test_file}", test_dir="backend/tests", cwd="backend"),
     )
-    assert r.passed  # exit 0 is all an unreadable runner gives us
+    assert not r.passed
     assert r.details["tests_passed"] is None
-    assert "skipped" in str(r.details["vacuity_check"])
+    assert r.details["unverifiable_kind"] == "unreadable_runner"
+    assert r.details["verified"] is False
 
 
 def test_wrapper_command_is_still_vacuity_checked(tmp_path: Path) -> None:
@@ -521,12 +538,11 @@ def test_wrapper_command_is_still_vacuity_checked(tmp_path: Path) -> None:
     summary — the check must read the OUTPUT, not the command string, or every
     wrapper-command app silently loses the anti-vacuity protection."""
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7, content=_ALL_SKIPPED)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)),
+        _pr(root, repo, _story(ref=ref), _head_sha),
         _cfg(
             command=f"{sys.executable} -B -m pytest {{test_file}} -q -p no:cacheprovider"
             " | cat",  # the word 'pytest' is there, but prove output-driven below
@@ -541,12 +557,11 @@ def test_wrapper_command_is_still_vacuity_checked(tmp_path: Path) -> None:
 def test_pytest_command_with_no_summary_blocks(tmp_path: Path) -> None:
     """Exit 0 with no readable pytest summary is not evidence of anything."""
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref)),
+        _pr(root, repo, _story(ref=ref), _head_sha),
         _cfg(command="echo pytest ran {test_file}; true", test_dir="backend/tests", cwd="backend"),
     )
     assert not r.passed
@@ -558,8 +573,7 @@ def test_sweep_never_deletes_a_tracked_file(tmp_path: Path) -> None:
     name matches the pattern stays put (deleting it would be committed by the
     chain's later ``git add -A``)."""
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _nested_checkout(repo)
+    _base_sha, _head_sha = _nested_checkout(repo)
     tracked = repo / "backend" / "tests" / f"{ORACLE_COPY_PREFIX}regression.py"
     tracked.write_text("def test_kept():\n    assert True\n", encoding="utf-8")
     for args in (
@@ -640,7 +654,9 @@ def test_authoring_stops_after_three_failed_passes_and_the_gate_says_so(
             story, _direction(tmp_path, ["ac"]), _cfg(), root,
             dry_run=False, db_path=root / "state" / "factory.db", author_fn=_boom,
         )
-    assert calls["n"] == 9  # 3 passes x 3 in-pass attempts
+    # 3 passes x the inner guard. The inner guard is 2, STRICTLY below the cap of
+    # 3 — an inner guard equal to the cap makes the early signal unreachable.
+    assert calls["n"] == _MAX_AUTHOR_PASSES * _AUTHOR_ATTEMPTS
     sidecar = json.loads(
         (acceptance_dir(root, "sacrifice", 9) / "attempts.json").read_text(encoding="utf-8")
     )
@@ -652,7 +668,7 @@ def test_authoring_stops_after_three_failed_passes_and_the_gate_says_so(
         story, _direction(tmp_path, ["ac"]), _cfg(), root,
         dry_run=False, db_path=root / "state" / "factory.db", author_fn=_boom,
     )
-    assert calls["n"] == 9
+    assert calls["n"] == _MAX_AUTHOR_PASSES * _AUTHOR_ATTEMPTS
 
     # ...and the story stays BLOCKED, with the exhaustion named for the operator.
     r = acceptance_verified.evaluate(_pr(root, tmp_path / "repo", story), _cfg())

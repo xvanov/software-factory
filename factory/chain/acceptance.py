@@ -24,11 +24,13 @@ The authored path (relative to the factory root) is recorded on
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import logging
 import os
 import re
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -55,7 +57,12 @@ _ACCEPTANCE_SCHEMA: dict[str, Any] = {
 # How many times to retry a flaky author call before giving up for this pass.
 # Expected-but-unauthored stories are re-attempted again on later ticks by
 # ``reauthor_missing_oracles`` — this just absorbs transient errors in one pass.
-_AUTHOR_ATTEMPTS = 3
+#
+# STRICTLY BELOW ``_MAX_AUTHOR_PASSES``. The repo convention is "caps at 3 with
+# inner guards at 2" (memory ``loop3_measurement_first_2026_08_01``): an inner
+# guard equal to the outer cap makes the early signal unreachable, and 3 passes ×
+# 3 attempts is 9 LLM calls for a story whose spec is simply unauthorable.
+_AUTHOR_ATTEMPTS = 2
 
 # How many PASSES (spawn + later tick self-heals) may attempt authoring before the
 # story is declared unauthorable. Without this ceiling the tick self-heal retries
@@ -104,14 +111,18 @@ def acceptance_dir(software_factory_root: Path, app: str, story_id: int | None) 
 def sweep_leaked_oracles(tree: Path) -> list[str]:
     """Delete every copied-in acceptance oracle found inside ``tree``.
 
-    The gate copies the oracle INTO the merge-candidate checkout — which is the
-    story's own dev worktree (``auto_merge._story_worktree`` returns the same
-    tree ``handlers._writing_worktree`` hands the dev). If the process dies
-    between the copy and the unlink, the oracle sits in the dev's tree, where the
-    dev can read it (independence gone) and where the chain's deterministic
-    ``git add -A`` commit (``handlers._commit_green_dev_work``) would bake it into
-    the PR. Called both before every gate run and on every worktree ensure, so
-    neither the dev nor a later gate run ever sees a stale copy.
+    ⚠ HISTORICAL, and kept for exactly that reason. The gate USED to copy the
+    oracle into the merge-candidate checkout — which is the story's own dev
+    worktree (``auto_merge._story_worktree`` returns the same tree
+    ``handlers._writing_worktree`` hands the dev) — so a process that died between
+    the copy and the unlink left the oracle where the dev could read it
+    (independence gone) and where the chain's deterministic ``git add -A`` commit
+    (``handlers._commit_green_dev_work``) would bake it into the PR. Since
+    2026-08-05 the oracle only ever lands in a throwaway judge tree, so this sweep
+    is cleanup after OLDER factory builds and interrupted runs, not part of the
+    happy path. Still called before every gate run and on every worktree ensure —
+    a stale copy from a previous build is a live breach, and the gate BLOCKS on
+    anything this cannot remove.
 
     Sweeps the compiled ``__pycache__/*.pyc`` too — pytest leaves one next to the
     copy, it contains the same assertions, and ``git add -A`` stages it.
@@ -123,25 +134,33 @@ def sweep_leaked_oracles(tree: Path) -> list[str]:
     it cannot be a leak (a leak is untracked by construction, and the git exclude
     the gate installs keeps it that way).
 
+    When git CANNOT ANSWER which paths are tracked (git missing from PATH, not a
+    repository, a transient OSError) the sweep DELETES NOTHING and returns an
+    empty list. The old behaviour was to treat "unknowable" as "nothing is
+    tracked" and delete every match, which destroyed git-tracked app files —
+    a destructive fail direction in a function whose docstring promises the
+    opposite. Refusing is fail-safe in both directions: nothing is destroyed, and
+    the caller that cares about a leak (``gates.acceptance_verified``) checks with
+    :func:`unremovable_oracle_leaks` afterwards and BLOCKS on anything left behind
+    that is genuinely a leak.
+
     Returns the relative paths removed (usually empty). Never raises.
     """
     root = Path(tree)
-    candidates: list[Path] = []
-    try:
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in _SWEEP_SKIP_DIRS]
-            candidates.extend(
-                Path(dirpath) / name
-                for name in filenames
-                if name.startswith(ORACLE_COPY_PREFIX)
-            )
-    except OSError:
-        return []
+    candidates = [root / rel for rel in find_leaked_oracles(root)]
     if not candidates:
         return []
 
     rels = [p.relative_to(root).as_posix() for p in candidates]
     tracked = _git_tracked(root, rels)
+    if tracked is None:
+        _log.warning(
+            "acceptance-oracle sweep: git cannot say which of %r is tracked in %s — "
+            "deleting NOTHING (an unknowable tracked-set must not authorise a "
+            "destructive sweep); the gate blocks on any copy left behind",
+            rels, root,
+        )
+        return []
     removed: list[str] = []
     for p, rel in zip(candidates, rels, strict=True):
         if rel in tracked:
@@ -158,8 +177,69 @@ def sweep_leaked_oracles(tree: Path) -> list[str]:
     return removed
 
 
-def _git_tracked(tree: Path, rel_paths: list[str]) -> set[str]:
-    """Which of ``rel_paths`` git tracks in ``tree`` (empty set when unknowable)."""
+def find_leaked_oracles(tree: Path) -> list[str]:
+    """Relative paths of every oracle-copy-shaped file inside ``tree``.
+
+    Split out of :func:`sweep_leaked_oracles` so the gate can ASK whether a copy
+    is present without also deleting it — "the sweep returned []" is not the same
+    fact as "the tree is clean" now that a sweep can legitimately refuse.
+    """
+    root = Path(tree)
+    found: list[str] = []
+    try:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in _SWEEP_SKIP_DIRS]
+            found.extend(
+                (Path(dirpath) / name).relative_to(root).as_posix()
+                for name in filenames
+                if name.startswith(ORACLE_COPY_PREFIX)
+            )
+    except OSError:
+        return found
+    return found
+
+
+def unremovable_oracle_leaks(tree: Path) -> list[str]:
+    """Oracle-shaped files in ``tree`` that are REAL leaks the sweep could not remove.
+
+    :func:`find_leaked_oracles` answers "does anything here look like an oracle
+    copy?", which is not the same question, and confusing them was a defect: an app
+    may legitimately COMMIT a test called ``test_acceptance_oracle_smoke.py``, and
+    the gate then blocked AUTHORITATIVELY on it — forever, unwaivably, for every
+    story in that app — while :func:`sweep_leaked_oracles` was in the same breath
+    logging "TRACKED by git, leaving it alone (a leaked oracle copy is never
+    tracked)". Two functions, opposite conclusions, same file.
+
+    A leak is UNTRACKED by construction: the gate never writes into this tree, and
+    the ``.git/info/exclude`` entry it installs keeps any stray copy out of the
+    index. So a tracked match is the app's own file and is not this gate's business.
+
+    Fail-safe when git cannot say what is tracked: every match counts as a leak, so
+    an unanswerable question BLOCKS rather than waving a real breach through.
+    """
+    root = Path(tree)
+    found = find_leaked_oracles(root)
+    if not found:
+        return []
+    tracked = _git_tracked(root, found)
+    if tracked is None:
+        _log.warning(
+            "acceptance-oracle leak check: git cannot say which of %r is tracked in "
+            "%s — treating every match as a leak (blocking is the safe direction)",
+            found, root,
+        )
+        return found
+    return [rel for rel in found if rel not in tracked]
+
+
+def _git_tracked(tree: Path, rel_paths: list[str]) -> set[str] | None:
+    """Which of ``rel_paths`` git tracks in ``tree``; ``None`` when UNKNOWABLE.
+
+    ``None`` and ``set()`` are different answers and the caller must not confuse
+    them: ``set()`` means "git answered: none of these is tracked" (so an
+    untracked match is a leak and may be deleted), ``None`` means "git could not
+    answer" (so deleting anything would be a guess).
+    """
     try:
         proc = subprocess.run(  # noqa: S603,S607 - fixed argv, no shell
             ["git", "ls-files", "-z", "--", *rel_paths],
@@ -169,9 +249,9 @@ def _git_tracked(tree: Path, rel_paths: list[str]) -> set[str]:
             timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
-        return set()
+        return None
     if proc.returncode != 0:
-        return set()
+        return None
     return {p for p in proc.stdout.split("\0") if p}
 
 
@@ -515,6 +595,197 @@ def author_exhausted(story: StoryRecord | None, software_factory_root: Path | No
     return author_passes(Path(software_factory_root), story.app, story.id) >= _MAX_AUTHOR_PASSES
 
 
+# --------------------------------------------------------------------------- #
+# operator surfaces: the WAIVER, the recorded block, and the attention list
+# --------------------------------------------------------------------------- #
+
+
+def oracle_sha256(source: str) -> str:
+    """Content id of an oracle file — what a waiver is scoped to."""
+    return hashlib.sha256(source.encode("utf-8", errors="replace")).hexdigest()
+
+
+def waiver_path(software_factory_root: Path, app: str, story_id: int | None) -> Path:
+    return acceptance_dir(software_factory_root, app, story_id) / "waiver.json"
+
+
+def read_waiver(
+    software_factory_root: Path | None,
+    app: str,
+    story_id: int | None,
+    *,
+    for_oracle_sha: str,
+) -> dict[str, Any] | None:
+    """The operator's recorded waiver for THIS oracle, or None.
+
+    A waiver exists for one situation only: the oracle is un-gradeable through no
+    fault of the dev — it already passes at the merge base (so it cannot
+    discriminate this story's diff), or its base run cannot be trusted. Without a
+    waiver those states BLOCK, which is correct and also a permanent wedge for a
+    story whose direction's criteria were already satisfied by a sibling; the
+    repo's rule is that every block has a path back, and the path back for an
+    operator judgement is an operator artifact, not a silent fail-open.
+
+    SCOPED TO THE ORACLE'S CONTENT, so re-authoring invalidates it, and it can
+    NEVER convert a red HEAD run into a pass (the gate checks the waiver only on
+    the base-side states — see ``gates.acceptance_verified``).
+    """
+    if software_factory_root is None:
+        return None
+    try:
+        raw = json.loads(
+            waiver_path(Path(software_factory_root), app, story_id).read_text(encoding="utf-8")
+        )
+    except Exception:  # noqa: BLE001 - no waiver / unreadable waiver = no waiver
+        return None
+    if not isinstance(raw, dict):
+        return None
+    if str(raw.get("oracle_sha256") or "") != for_oracle_sha:
+        return None
+    if not str(raw.get("reason") or "").strip():
+        # A waiver without a stated reason is not a decision, it is a hole.
+        return None
+    return raw
+
+
+def write_waiver(
+    software_factory_root: Path,
+    app: str,
+    story_id: int | None,
+    *,
+    oracle_sha: str,
+    reason: str,
+    operator: str = "operator",
+) -> Path:
+    """Record an operator waiver (see :func:`read_waiver`). Raises on bad input."""
+    if not reason.strip():
+        raise ValueError("a waiver needs a reason — it is a recorded human decision")
+    p = waiver_path(Path(software_factory_root), app, story_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps(
+            {
+                "app": app,
+                "story_id": story_id,
+                "oracle_sha256": oracle_sha,
+                "reason": reason.strip(),
+                "operator": operator,
+                "recorded_at": time.time(),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return p
+
+
+def clear_waiver(software_factory_root: Path, app: str, story_id: int | None) -> bool:
+    try:
+        waiver_path(Path(software_factory_root), app, story_id).unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _gate_block_path(software_factory_root: Path, app: str, story_id: int | None) -> Path:
+    return acceptance_dir(software_factory_root, app, story_id) / "gate_block.json"
+
+
+def record_gate_block(
+    software_factory_root: Path | None,
+    app: str,
+    story_id: int | None,
+    *,
+    kind: str,
+    reason: str,
+) -> None:
+    """Persist WHY the acceptance gate could not grade this story (best-effort).
+
+    ``factory inbox`` reads these. A story blocked on a non-authoritative
+    acceptance state sits at ``pr_open`` with no ``last_rejection_reason`` and no
+    blocked-state, so it appeared in no inbox category at all — the factory went
+    silent about a story only a human can move.
+    """
+    if software_factory_root is None:
+        return
+    try:
+        p = _gate_block_path(Path(software_factory_root), app, story_id)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            json.dumps(
+                {"kind": kind, "reason": reason[:600], "at": time.time()},
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def clear_gate_block(
+    software_factory_root: Path | None, app: str, story_id: int | None
+) -> None:
+    if software_factory_root is None:
+        return
+    try:
+        _gate_block_path(Path(software_factory_root), app, story_id).unlink()
+    except OSError:
+        pass
+
+
+def pending_acceptance_attention(
+    software_factory_root: Path, app: str
+) -> list[dict[str, Any]]:
+    """Stories whose acceptance oracle needs a HUMAN, newest-first-ish.
+
+    Two kinds, both invisible to every other operator surface:
+
+    * ``author_exhausted`` — authoring burned its pass ceiling; the gate blocks
+      forever and only a spec/harness fix moves it;
+    * whatever the gate last recorded via :func:`record_gate_block` (an oracle
+      that does not discriminate the diff, an unverifiable base run, a checkout
+      whose provenance could not be established).
+    """
+    out: list[dict[str, Any]] = []
+    base = Path(software_factory_root) / "state" / "acceptance" / app
+    try:
+        story_dirs = sorted(
+            (d for d in base.iterdir() if d.is_dir()),
+            key=lambda d: int(d.name) if d.name.isdigit() else 0,
+        )
+    except OSError:
+        return out
+    for d in story_dirs:
+        sid = int(d.name) if d.name.isdigit() else None
+        passes = author_passes(Path(software_factory_root), app, sid)
+        if passes >= _MAX_AUTHOR_PASSES:
+            out.append(
+                {
+                    "app": app,
+                    "story_id": sid,
+                    "kind": "author_exhausted",
+                    "reason": (
+                        f"acceptance authoring exhausted {passes} passes — fix the "
+                        "direction's acceptance criteria or the app's acceptance harness"
+                    ),
+                }
+            )
+        try:
+            blocked = json.loads((d / "gate_block.json").read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(blocked, dict) and blocked.get("kind"):
+            out.append(
+                {
+                    "app": app,
+                    "story_id": sid,
+                    "kind": str(blocked.get("kind")),
+                    "reason": str(blocked.get("reason") or "")[:300],
+                }
+            )
+    return out
+
+
 def _persist(story: StoryRecord, software_factory_root: Path, db_path: Path | None) -> bool:
     """Persist the story's acceptance flags. Returns False when the write failed.
 
@@ -762,8 +1033,13 @@ def reauthor_missing_oracles(
         return 0
 
     healed = 0
+    attempted = 0
     for story in candidates:
-        if healed >= max_per_pass:
+        # BOTH counters are bounded by ``max_per_pass``. Counting only successes
+        # left the FAILURE case — the one the cap exists for — unbounded: 25 live
+        # stories against a provider returning 500 burned 25 × _AUTHOR_ATTEMPTS
+        # LLM calls in a single pass while ``healed`` never moved off 0.
+        if healed >= max_per_pass or attempted >= max_per_pass:
             break
         if story.state in _NO_ORACLE_STATES:
             continue
@@ -773,6 +1049,14 @@ def reauthor_missing_oracles(
         if not expected:
             continue
         if author_exhausted(story, root):
+            # Exhausted stories are NOT silently skipped. The gate blocks them
+            # forever, so the only thing that can move them is an operator — and
+            # a ``continue`` before this emit made the factory go completely quiet
+            # about a permanently-stuck story.
+            _emit(
+                root, "author_exhausted", story,
+                passes=author_passes(root, story.app, story.id), source="reauthor_skip",
+            )
             continue
         direction = None
         try:
@@ -780,8 +1064,20 @@ def reauthor_missing_oracles(
         except Exception:  # noqa: BLE001
             direction = None
         if direction is None:
-            _emit(root, "reauthor_no_direction", story)
+            # Record the failed PASS. Without it the counter never moved, so
+            # ``author_exhausted`` never became True, and the gate blocked forever
+            # with the message "self-heals next tick" — a promise this branch
+            # cannot keep, because a missing direction dir does not come back on
+            # its own. Now three passes exhaust it and the block names the
+            # exhaustion for the operator.
+            passes = _record_failed_pass(root, story, "reauthor_no_direction")
+            attempted += 1
+            _emit(
+                root, "reauthor_no_direction", story,
+                passes=passes, exhausted=passes >= _MAX_AUTHOR_PASSES,
+            )
             continue
+        attempted += 1
         ref = author_acceptance_test(
             story, direction, app_config, root,
             dry_run=False, db_path=db, author_fn=author_fn,
@@ -809,8 +1105,18 @@ __all__ = [
     "author_exhausted",
     "author_passes",
     "build_spec_prompt",
+    "clear_gate_block",
+    "clear_waiver",
+    "find_leaked_oracles",
     "normalize_oracle_source",
+    "oracle_sha256",
+    "pending_acceptance_attention",
+    "read_waiver",
     "reauthor_missing_oracles",
+    "record_gate_block",
     "ref_is_readable",
     "sweep_leaked_oracles",
+    "unremovable_oracle_leaks",
+    "waiver_path",
+    "write_waiver",
 ]

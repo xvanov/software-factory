@@ -200,11 +200,15 @@ def evaluate_all_gates(pr: PRContext, app_config: AppConfig) -> dict[str, GateRe
     )
 
     out: dict[str, GateResult] = {}
-    # ORDER MATTERS for the last entry: ``acceptance_verified`` briefly copies the
-    # hidden oracle into the checkout to run it. Keeping it last means no other
-    # gate can observe that copy — ``tests_meaningful`` would score it as one of
-    # the dev's tests, and ``production_tree_changed`` reads the tree too. Do not
-    # move it earlier in this tuple.
+    # ORDER MATTERS for the last entry: ``acceptance_verified`` touches the
+    # checkout — it sweeps stale oracle copies left by older builds and writes a
+    # local ``.git/info/exclude`` entry. Keeping it last means no other gate can
+    # observe a copy of the hidden oracle: ``tests_meaningful`` would score it as
+    # one of the dev's tests, and ``production_tree_changed`` reads the tree too.
+    # (Since 2026-08-05 the oracle only ever runs in a throwaway judge worktree, so
+    # this is defence in depth rather than the sole guard — keep it anyway, and
+    # ``tests/test_gates_evaluation.py`` asserts the observed order.) Do not move it
+    # earlier in this tuple.
     for mod in (
         tests_green,
         tests_meaningful,

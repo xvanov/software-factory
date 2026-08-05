@@ -464,6 +464,112 @@ def approve_direction_cmd(
     )
 
 
+@app.command("acceptance-waive")
+def acceptance_waive_cmd(
+    story_id: int | None = typer.Argument(
+        None, help="Story id. Omit to LIST every acceptance oracle awaiting a human."
+    ),
+    app_name: str | None = typer.Option(None, "--app", help="App name; required to waive"),
+    reason: str | None = typer.Option(
+        None, "--reason", help="Why this story may merge without an oracle verification"
+    ),
+    clear: bool = typer.Option(False, "--clear", help="Remove an existing waiver"),
+    by: str | None = typer.Option(None, "--by", help="Who decided (default: $USER)"),
+) -> None:
+    """Record an OPERATOR DECISION that an un-gradeable acceptance oracle may pass.
+
+    The ``acceptance-verified`` gate credits a green at HEAD only when the same
+    oracle was RED at the merge base. Two states are nobody's fault and cannot be
+    graded — the oracle already passes at the base (a tautological oracle and a
+    criterion a sibling story already satisfied look identical from outside), and a
+    base run that cannot be trusted. Both BLOCK, which is correct and also a
+    permanent wedge; this is the path back.
+
+    A waiver is NOT a verification: the gate passes the story with
+    ``verified=False``, ``authoritative=False`` and the waiver's reason in the
+    result. It is scoped to the oracle's CONTENT, so re-authoring invalidates it,
+    and it can never clear a real failure, tampered output, or a checkout that is
+    not the merge candidate.
+    """
+    from factory.chain.acceptance import (
+        acceptance_dir,
+        clear_waiver,
+        oracle_sha256,
+        pending_acceptance_attention,
+        write_waiver,
+    )
+    from factory.chain.handlers import get_story
+
+    apps = [app_name] if app_name else _list_apps()
+
+    if story_id is None:
+        rows: list[dict[str, object]] = []
+        for a in apps:
+            rows.extend(pending_acceptance_attention(_FACTORY_ROOT, a))
+        if not rows:
+            console.print("[dim]No acceptance oracles awaiting a human.[/dim]")
+            return
+        table = Table(title="acceptance oracle (needs a human)")
+        for col in ("app", "story", "kind", "why"):
+            table.add_column(col)
+        for row in rows:
+            table.add_row(
+                str(row.get("app")), str(row.get("story_id")),
+                str(row.get("kind")), str(row.get("reason"))[:80],
+            )
+        console.print(table)
+        console.print(
+            "[dim]waive with:[/dim] factory acceptance-waive <story-id> --app <app> "
+            "--reason '...'"
+        )
+        return
+
+    if app_name is None:
+        console.print("[red]error:[/red] --app is required when naming a story")
+        raise typer.Exit(code=2)
+
+    if clear:
+        removed = clear_waiver(_FACTORY_ROOT, app_name, story_id)
+        console.print(
+            f"waiver for story {story_id} ({app_name}): "
+            + ("[green]cleared[/green]" if removed else "[dim]none found[/dim]")
+        )
+        return
+
+    if not reason or not reason.strip():
+        console.print("[red]error:[/red] --reason is required (a waiver is a recorded decision)")
+        raise typer.Exit(code=2)
+
+    story = get_story(story_id, _FACTORY_ROOT / "state" / "factory.db")
+    if story is None or story.app != app_name:
+        console.print(f"[red]error:[/red] no story {story_id} in app {app_name!r}")
+        raise typer.Exit(code=2)
+    stored = acceptance_dir(_FACTORY_ROOT, app_name, story_id) / "test_acceptance.py"
+    if not stored.is_file():
+        console.print(
+            f"[red]error:[/red] story {story_id} has no stored oracle at {stored} — "
+            "there is nothing to waive (the gate is blocking for a different reason)"
+        )
+        raise typer.Exit(code=2)
+
+    path = write_waiver(
+        _FACTORY_ROOT, app_name, story_id,
+        oracle_sha=oracle_sha256(stored.read_text(encoding="utf-8", errors="replace")),
+        reason=reason,
+        operator=(by or os.environ.get("USER") or "operator"),
+    )
+    console.print(
+        Panel.fit(
+            f"story [bold]{story_id}[/bold] ({app_name}) may merge WITHOUT an oracle "
+            f"verification.\nreason: {reason.strip()}\nrecorded at: {path}\n"
+            "This is not a verification — the gate will say so in its result, and the "
+            "waiver dies if the oracle is re-authored.",
+            title="acceptance waiver",
+            style="yellow",
+        )
+    )
+
+
 @app.command("directions-backfill")
 def directions_backfill_cmd(
     app_name: str = typer.Option(..., "--app", help="App name"),
@@ -1364,6 +1470,36 @@ def inbox_cmd(
         console.print(
             "[dim]approve/reject with:[/dim] factory approve-direction <id> --app <app> "
             "[dim](--reject to close)[/dim]"
+        )
+
+    # Acceptance oracles that only a human can move. A story blocked here sits at
+    # ``pr_open`` with no ``last_rejection_reason`` and no blocked state, so before
+    # this section it appeared in NO operator surface at all — the factory went
+    # completely silent about a permanently-stuck story (authoring exhausted, or an
+    # oracle that cannot discriminate the story's diff).
+    from factory.chain.acceptance import pending_acceptance_attention
+
+    acc_rows: list[dict[str, object]] = []
+    for a in apps:
+        try:
+            acc_rows.extend(pending_acceptance_attention(_FACTORY_ROOT, a))
+        except Exception:  # noqa: BLE001 - the inbox must never fail on one section
+            continue
+    if acc_rows:
+        acc_table = Table(title="acceptance oracle (needs a human)")
+        acc_table.add_column("app")
+        acc_table.add_column("story")
+        acc_table.add_column("kind")
+        acc_table.add_column("why")
+        for acc_row in acc_rows:
+            acc_table.add_row(
+                str(acc_row.get("app")), str(acc_row.get("story_id")),
+                str(acc_row.get("kind")), str(acc_row.get("reason"))[:80],
+            )
+        console.print(acc_table)
+        console.print(
+            "[dim]fix the spec/harness, or record a decision with:[/dim] "
+            "factory acceptance-waive <story-id> --app <app> --reason '...'"
         )
 
     # Budget warning.
