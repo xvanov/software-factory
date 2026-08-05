@@ -15,9 +15,11 @@ independently verified defects and every merge in the factory:
 1. **It ablated symbols the diff never touched.** It enumerated every public
    symbol of each changed file, capped the list at 5 and sorted by
    ``(path, lineno)`` — i.e. it took the top five of the alphabetically-first
-   changed file. Measured over the last 40 commits: median 21 candidates, 77%
-   hit the cap. On ``e13d98e0`` the five it picked had ZERO overlap with the
-   symbols the commit changed.
+   changed file. Verified here on ``e13d98e0``: 21 candidates, cap hit, and the
+   five it picked had ZERO overlap with the 9 symbols the commit changed (7 of
+   which it could never pick at all, being ``_``-prefixed). PLAN.md A.5 reports
+   the same shape across the last 40 commits — median 21 candidates, 77% at the
+   cap.
 2. **It was fail-OPEN.** ``factory.runner._run_pytest`` returns ``False`` for a
    600 s timeout, a missing command and a genuine test failure alike, and
    ``False`` was read as "the suite noticed → the symbol is exercised → good".
