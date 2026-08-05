@@ -1242,6 +1242,14 @@ _MAX_DEV_SANDBOX_INFRA_RETRIES = 3
 # now cut off at 3 and block for a human instead of burning three more
 # attempts. Whether attempts 4-6 were producing PASSING work is unmeasured —
 # PLAN.md Phase 1.3's gate-precision number is what would settle it.
+#
+# It is now partly settled, and not in favour of more retries: the 2026-08-04
+# hidden-oracle grading put the chain's own green verdict at 40% precision, and
+# ImpossibleBench (arXiv 2510.20270) measured cheating rising 33% -> 38% when an
+# agent gets multiple submissions with feedback. Under Loop-4 the dev owns its
+# own tests, so an extra attempt is also an extra chance to make the check
+# agree with the code. Do not raise this cap as an "improvement" — see the
+# ``_MAX_REVIEW_CYCLES`` note below for the same argument in full.
 _MAX_DEV_RETRIES = 3
 
 # Same-failure-signature fast-escalation cap. When consecutive dev runs fail
@@ -1406,6 +1414,24 @@ def _consecutive_same_dev_signature(prior_attempts: list[Any], current_sig: str)
 #
 # Review convergence is healthy at this cap: in the 14 days to 2026-08-01,
 # 101 of 122 stories used zero cycles, 18 used one, and the maximum was 5.
+#
+# DO NOT RAISE THESE AS AN "IMPROVEMENT". They are a stronger safety property
+# than "stop burning budget"; the external literature says more feedback rounds
+# buy gaming, not assurance:
+#   * ImpossibleBench (ICLR 2026, arXiv 2510.20270) measured cheating rising
+#     33% -> 38% when agents get MULTIPLE submissions with feedback. More
+#     cycles is the condition that produced more cheating.
+#   * Self-refine/self-repair at MATCHED budget (arXiv 2306.09896) buys only
+#     3-10% — i.e. the same tokens spent on more independent attempts do about
+#     as well, so extra cycles are not where the win is.
+# Under Loop-4 the dev owns the tests the reviewer's approve rule reads, so each
+# extra cycle is another chance to make the check agree with the code rather
+# than the code agree with the story. The 2026-08-04 hidden-oracle grading
+# measured the result: the chain's own green verdict was 40% precise.
+#
+# Lowering them, or replacing a cycle with an independent check that the dev
+# cannot author (a hidden oracle, a mutation score, execution output fed to the
+# reviewer), are the changes with evidence behind them. Raising them is not.
 _MAX_REVIEW_STUCK = 2
 _MAX_REVIEW_CYCLES = 3
 

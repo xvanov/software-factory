@@ -69,6 +69,13 @@ _MERGEABLE_STATES = {
 # before giving up and leaving it for a human — mirrors
 # ``orchestrator._MAX_AUTO_RECOVERIES``'s cap + signature-guard pattern so a
 # CI failure the dev cannot fix escalates instead of looping forever.
+#
+# DO NOT RAISE IT AS AN "IMPROVEMENT". The literature says extra feedback rounds
+# buy gaming rather than assurance — ImpossibleBench (ICLR 2026, arXiv
+# 2510.20270) measured cheating rising 33% -> 38% when agents get multiple
+# submissions with feedback, and self-repair at matched budget buys 3-10% (arXiv
+# 2306.09896). The full argument, and what to do instead, is at
+# ``handlers._MAX_REVIEW_CYCLES``.
 _MAX_CI_FIX_CYCLES = 3
 
 # CONFLICT -> dev REBUILD loop. When an open PR is genuinely CONFLICTING with
