@@ -92,11 +92,17 @@ Paired McNemar exact, over instances where both arms have an audited-valid row:
 | comparison | isolates | paired n | only-A / only-B | p |
 |---|---|---:|---:|---:|
 | **factory vs openhands** | **the chain** | 19 | 1 / 4 | **0.375** |
-| **openhands vs bare** | **the tooling** | 18 | 0 / 9 | **0.004** |
-| factory vs bare | chain + tooling, entangled | 18 | 1 / 7 | 0.070 |
+| **bare vs openhands** | **the tooling** | 18 | 0 / 9 | **0.004** |
+| bare vs factory | chain + tooling, entangled | 18 | 1 / 7 | 0.070 |
 | claude-5 vs factory | nothing attributable — reference only | 19 | 8 / 0 | 0.008 |
 | claude-4.8 vs factory | nothing attributable — reference only | 19 | 8 / 1 | 0.039 |
 | **claude-4.8 vs claude-5** | **contamination** (same harness, older cutoff) | 19 | 1 / 2 | **1.000** |
+
+Pair order is `results.md`'s, not rearranged: **A is the arm named first**, so
+`bare vs openhands` at 0 / 9 means bare resolved nothing openhands missed and
+openhands resolved nine bare missed. Never reorder a pair's name without
+swapping its two counts — the old `STATUS.md` needed a footnote for exactly
+that.
 
 What this establishes, in the pre-registration's own pre-committed words: **our
 lift comes from using a competent agent loop, not from the chain.**
@@ -1297,9 +1303,10 @@ when the plan was rewritten around the research synthesis.
     (`SOTA-RESEARCH-2026-07.md` carries both, with the provenance stated.)
 
 15. **The `openhands − bare` tooling result is stronger than previously
-    published, not weaker.** The committed report has n=15, 0/6, p=0.031; the
-    later report has n=18, 0/9, **p=0.004**. Either way it is the only
-    significant result among the three DeepSeek arms.
+    published, not weaker.** The committed report has the pair at n=15,
+    `bare vs openhands` 0 / 6, p=0.031; the later report has n=18, 0 / 9,
+    **p=0.004**. Either way it is the only significant result among the three
+    DeepSeek arms.
 
 16. **"Make test files read-only to the dev" contradicts the shipped design.**
     The dev owns its tests (`factory/personas/dev.md:38`), and
