@@ -1,0 +1,38 @@
+{
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "arm": "openhands",
+  "audited_at": "2026-08-04T23:19:05.969600+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-04T11:12:18.322649+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 7410.667,
+      "success": 0,
+      "error": "wall-clock cap 5400s hit; partial work is still graded"
+    }
+  ],
+  "ledger_cost_usd": 0.0,
+  "ledger_tokens_in": 0,
+  "ledger_tokens_out": 0,
+  "result_cost_usd": 0.0,
+  "prediction_sha256": "2951f057d8d3119c9505abefaca990b2c5d49b769b734550fca0afd17e820c15",
+  "base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+  "stripped_test_paths": [
+    "tests/test_reasoning_parsers.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

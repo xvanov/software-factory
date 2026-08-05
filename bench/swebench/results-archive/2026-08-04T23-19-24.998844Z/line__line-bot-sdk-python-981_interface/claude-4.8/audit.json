@@ -1,0 +1,22 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "claude-4.8",
+  "audited_at": "2026-08-04T04:17:19.552767+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.3086,
+  "ledger_tokens_in": 895431,
+  "ledger_tokens_out": 19292,
+  "result_cost_usd": 1.3086,
+  "prediction_sha256": "77229f9ff16cea0c12184b4e39a1390031c53422aec8c7ec085f05d2949e8c41",
+  "base_commit": "f0d222be1a25553005bff35c2ace82424a683fd9",
+  "stripped_test_paths": [
+    "tests/api/test_issue_stateless_channel_token_convenience.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

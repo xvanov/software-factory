@@ -1,0 +1,18 @@
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..69ea24b 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -1,3 +1,4 @@
++from collections import defaultdict
+ # Copyright (C) 2008 John Paulett (john -at- paulett.org)
+ # Copyright (C) 2009-2024 David Aguilar (davvid -at- gmail.com)
+ # All rights reserved.
+@@ -708,7 +709,7 @@ class Pickler:
+                 data = str(obj)  # type: ignore[assignment]
+             return data
+ 
+-        if util._is_dictionary_subclass(obj):
++        if type(obj) is not defaultdict and util._is_dictionary_subclass(obj):
+             self._flatten_dict_obj(obj, data, exclude=exclude)
+             return data
+ 

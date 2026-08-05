@@ -1,0 +1,65 @@
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..aa1b8b6 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -856,6 +856,23 @@ class Pickler:
+                     # Break the cycle by emitting a reference.
+                     # in this case it's Dict[str, int]
+                     value: Dict[str, int] = self._getref(factory)  # type: ignore[no-redef]
++
++            # If the dict already has a key named 'default_factory', save
++            # it before the factory attribute overwrites it.
++            if "default_factory" in data:
++                saved = data.pop("default_factory")
++                tag = tags.DCT_DEFAULT_FACTORY
++                if tag in data:
++                    # User data also has the tag key; use a backup key.
++                    fallback = "_" + tag
++                    idx = 1
++                    while fallback in data:
++                        fallback = "_" * idx + tag
++                        idx += 1
++                    data[fallback] = data.pop(tag)
++                    data[tag] = (saved, fallback)
++                else:
++                    data[tag] = saved
+             data["default_factory"] = value
+ 
+         # Sub-classes of dict
+diff --git a/jsonpickle/tags.py b/jsonpickle/tags.py
+index 537aae4..0baf38b 100644
+--- a/jsonpickle/tags.py
++++ b/jsonpickle/tags.py
+@@ -29,6 +29,7 @@ SET: str = "py/set"
+ STATE: str = "py/state"
+ TUPLE: str = "py/tuple"
+ TYPE: str = "py/type"
++DCT_DEFAULT_FACTORY: str = "py/dct_default_factory"
+ 
+ # All reserved tag names
+ RESERVED: set[str] = {
+diff --git a/jsonpickle/unpickler.py b/jsonpickle/unpickler.py
+index 7a6f2ba..eae600c 100644
+--- a/jsonpickle/unpickler.py
++++ b/jsonpickle/unpickler.py
+@@ -807,6 +807,20 @@ class Unpickler:
+         # after the instance is available for referencing.
+         factory = self._loadfactory(obj)
+ 
++        # If the dict had a key named 'default_factory', restore it now
++        # that the factory attribute has been consumed.
++        if tags.DCT_DEFAULT_FACTORY in obj:
++            entry = obj.pop(tags.DCT_DEFAULT_FACTORY)
++            if isinstance(entry, list) and len(entry) == 2:
++                # Double collision: (user_dict_value, fallback_tag)
++                value, fallback = entry
++                obj["default_factory"] = value
++                # Restore user's original tag value from fallback
++                if fallback in obj:
++                    obj[tags.DCT_DEFAULT_FACTORY] = obj.pop(fallback)
++            else:
++                obj["default_factory"] = entry
++
+         if has_tag(obj, tags.NEWARGSEX):
+             args, kwargs = obj[tags.NEWARGSEX]
+         else:

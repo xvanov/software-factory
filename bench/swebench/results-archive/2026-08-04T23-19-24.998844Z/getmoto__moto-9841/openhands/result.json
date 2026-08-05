@@ -1,0 +1,80 @@
+{
+  "arm": "openhands",
+  "instance_id": "getmoto__moto-9841",
+  "repo": "getmoto/moto",
+  "base_commit": "830a798c567bcdded2447efb7e98ca6d89b6a8c5",
+  "problem_statement_sha256": "15ec984f6cff0c04279f9cdcd95c41174f1d234491f4a5f968ead9e4b8ea565b",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "agent": "openhands-sdk default agent (cli_mode), single conversation",
+  "models_used": [
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.7962
+    }
+  ],
+  "model_escalated_calls": 0,
+  "ts": "2026-08-03T21:44:57.119074+00:00",
+  "wall_clock_s": 371.1,
+  "agent_wall_s": 360.9,
+  "steps_used": 46,
+  "step_cap": 600,
+  "sdk_events": 95,
+  "termination": "agent-finished",
+  "trajectory": "state/events/trajectories/nostory-1.ndjson",
+  "probe_plumbing": false,
+  "tokens_in": 965162,
+  "tokens_out": 10863,
+  "cached_input_tokens": 626432,
+  "cost_usd": 0.7962,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 1,
+  "usage_reliable": true,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.9,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_kms/test_kms.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "moto/kms/models.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_kms/test_kms.py"
+  ],
+  "diff_bytes": 1282,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "openhands",
+    "instance_id": "getmoto__moto-9841",
+    "image": "swerebench/sweb.eval.x86_64.getmoto_1776_moto-9841@sha256:25cb9ea1e18acfadbf1a8b4a5746153746cd994e138c01f295d83813ab63a171",
+    "graded_at": "2026-08-03T21:44:57.671393+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 149,
+    "pass_to_pass_declared_count": 149,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 18.1,
+    "log_tail": "ype_RSA[RSA_4096-RSASSA_PKCS1_V1_5_SHA_512]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_RSA[RSASSA_PSS_SHA_256-RSASSA_PSS_SHA_384]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_RSA[RSASSA_PSS_SHA_256-RSASSA_PSS_SHA_512]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_RSA[RSASSA_PSS_SHA_384-RSASSA_PSS_SHA_512]\nPASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_NIST_P256-ECDSA_SHA_256]\nPASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_SECG_P256K1-ECDSA_SHA_256]\nPASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_NIST_P384-ECDSA_SHA_384]\nPASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_NIST_P521-ECDSA_SHA_512]\nPASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_NIST_P256-ECDSA_SHA_384-valid_signing_algorithms0]\nPASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_SECG_P256K1-ECDSA_SHA_512-valid_signing_algorithms1]\nPASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_NIST_P384-ECDSA_SHA_256-valid_signing_algorithms2]\nPASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_NIST_P521-ECDSA_SHA_384-valid_signing_algorithms3]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_NIST_P256-ECDSA_SHA_256]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_SECG_P256K1-ECDSA_SHA_256]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_NIST_P384-ECDSA_SHA_384]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_NIST_P521-ECDSA_SHA_512]\nPASSED tests/test_kms/test_kms.py::test_sign_invalid_key_usage\nPASSED tests/test_kms/test_kms.py::test_sign_invalid_message\nPASSED tests/test_kms/test_kms.py::test_verify_happy[some encodeable plaintext]\nPASSED tests/test_kms/test_kms.py::test_verify_happy[some unencodeable plaintext \\xec\\x8a\\xcf\\xb6r\\xe9\\xb5\\xeb\\xff\\xa23\\x16]\nPASSED tests/test_kms/test_kms.py::test_verify_happy[some unicode characters \\xf8\\u02da\\u2206\\xf8\\u02c6\\u02c6\\u2206\\xdf\\xe7\\xf8\\u02c6\\u02c6\\xe7\\xdf\\xf8\\u02c6\\xa8\\xa5]\nPASSED tests/test_kms/test_kms.py::test_verify_happy_with_invalid_signature\nPASSED tests/test_kms/test_kms.py::test_verify_invalid_signing_algorithm\nPASSED tests/test_kms/test_kms.py::test_verify_invalid_message\nPASSED tests/test_kms/test_kms.py::test_verify_empty_signature\nPASSED tests/test_kms/test_kms.py::test_get_public_key\nPASSED tests/test_kms/test_kms.py::test_get_public_key_with_alias\nPASSED tests/test_kms/test_kms.py::test_ensure_key_can_be_verified_manually\n153 passed in 7.34s\nSWEBENCH_TALLY_8e5f018d52e9042b: pass_to_pass 153 passed in 7.34s\n[155 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_8e5f018d52e9042b: RESOLVED\n"
+  }
+}

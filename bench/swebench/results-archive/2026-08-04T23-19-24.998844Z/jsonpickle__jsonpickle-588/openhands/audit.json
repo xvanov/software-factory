@@ -1,0 +1,38 @@
+{
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "arm": "openhands",
+  "audited_at": "2026-08-04T08:54:32.436268+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-04T08:54:21.454835+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 2888795,
+      "tokens_out": 31168,
+      "cached_input_tokens": 2453248,
+      "cost_usd": 1.354952078,
+      "duration_s": 686.177,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.355,
+  "ledger_tokens_in": 2888795,
+  "ledger_tokens_out": 31168,
+  "result_cost_usd": 1.355,
+  "prediction_sha256": "7ccbf0a41c4b5ed7cca484ae6888af3f41e6ca32dbcc1f0e03fb1e63017902df",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "stripped_test_paths": [
+    "tests/object_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

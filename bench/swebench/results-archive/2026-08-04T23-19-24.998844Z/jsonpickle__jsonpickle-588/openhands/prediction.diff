@@ -1,0 +1,35 @@
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..5cad493 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -856,7 +856,10 @@ class Pickler:
+                     # Break the cycle by emitting a reference.
+                     # in this case it's Dict[str, int]
+                     value: Dict[str, int] = self._getref(factory)  # type: ignore[no-redef]
+-            data["default_factory"] = value
++            if "default_factory" in data:
++                data["py/default_factory"] = value
++            else:
++                data["default_factory"] = value
+ 
+         # Sub-classes of dict
+         if hasattr(obj, "__dict__") and self.unpicklable and obj != obj.__dict__:
+diff --git a/jsonpickle/unpickler.py b/jsonpickle/unpickler.py
+index 7a6f2ba..45b35f6 100644
+--- a/jsonpickle/unpickler.py
++++ b/jsonpickle/unpickler.py
+@@ -612,6 +612,14 @@ class Unpickler:
+         return self._mkref(obj)
+ 
+     def _loadfactory(self, obj: Dict[str, Any]) -> Optional[Any]:
++        try:
++            default_factory = obj["py/default_factory"]
++        except KeyError:
++            pass
++        else:
++            del obj["py/default_factory"]
++            return self._restore(default_factory)
++
+         try:
+             default_factory = obj["default_factory"]
+         except KeyError:

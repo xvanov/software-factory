@@ -1,0 +1,38 @@
+{
+  "instance_id": "keras-team__keras-22316",
+  "arm": "openhands",
+  "audited_at": "2026-08-04T09:08:40.533664+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 1 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-04T09:08:10.607272+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": null,
+      "tokens_in": 2040150,
+      "tokens_out": 27591,
+      "cached_input_tokens": 1452288,
+      "cost_usd": 1.4740655580000006,
+      "duration_s": 799.74,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.4741,
+  "ledger_tokens_in": 2040150,
+  "ledger_tokens_out": 27591,
+  "result_cost_usd": 1.4741,
+  "prediction_sha256": "e29fe4396e556c47cc3c64f91f6421ec11048ebd066e60359e05e998439591d0",
+  "base_commit": "34e55d4561ba2a61bbc72562e88b3704e0a43081",
+  "stripped_test_paths": [
+    "keras/src/ops/function_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

@@ -1,0 +1,22 @@
+{
+  "instance_id": "idaholab__montepy-933_interface",
+  "arm": "claude-4.8",
+  "audited_at": "2026-08-04T04:17:13.523818+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.5592,
+  "ledger_tokens_in": 600181,
+  "ledger_tokens_out": 5594,
+  "result_cost_usd": 0.5592,
+  "prediction_sha256": "2b3131edd5059869c57a8d62824ec1f811f92bc5ef2543cf19811122a488af56",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "stripped_test_paths": [
+    "tests/test_universe.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

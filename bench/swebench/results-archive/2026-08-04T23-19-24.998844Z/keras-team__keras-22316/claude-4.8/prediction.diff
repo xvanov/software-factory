@@ -1,0 +1,82 @@
+diff --git a/keras/src/ops/function.py b/keras/src/ops/function.py
+index 8d3c524..9faf562 100644
+--- a/keras/src/ops/function.py
++++ b/keras/src/ops/function.py
+@@ -283,6 +283,12 @@ def map_graph(inputs, outputs):
+     nodes_depths = {}  # dict {node: depth value}
+     operations_depths = {}  # dict {operation: depth value}
+ 
++    # The nodes that were actually traversed (i.e. that belong to the graph).
++    # Operations that only produce the `inputs` are excluded by `_build_map`,
++    # so their nodes are not part of this set and must not be reintroduced as
++    # depth-carrying parents below.
++    graph_nodes = set(nodes_in_decreasing_depth)
++
+     for node in reversed(nodes_in_decreasing_depth):
+         # If the depth is not set, the node has no outbound nodes (depth 0).
+         depth = nodes_depths.setdefault(node, 0)
+@@ -301,6 +307,12 @@ def map_graph(inputs, outputs):
+         # The "depth" of a node is the max of the depths
+         # of all nodes it is connected to + 1.
+         for node_dep in node.parent_nodes:
++            # Skip parents that are not part of the graph. This happens when a
++            # node consumes one of the `inputs` that was itself produced by
++            # another operation: that producing operation is not part of the
++            # `Function`'s computation graph.
++            if node_dep not in graph_nodes:
++                continue
+             previous_depth = nodes_depths.get(node_dep, 0)
+             nodes_depths[node_dep] = max(depth + 1, previous_depth)
+ 
+@@ -308,12 +320,22 @@ def map_graph(inputs, outputs):
+     # We do not error out here because the inputs may be used to compute losses
+     # and metrics.
+     for input_t in inputs:
+-        input_operation = input_t._keras_history[0]
+-        if input_operation and input_operation not in operations_depths:
++        input_operation, input_node_index, _ = input_t._keras_history
++        if not input_operation:
++            continue
++        input_node = input_operation._inbound_nodes[input_node_index]
++        # Only genuine input nodes (e.g. `InputLayer` outputs) are added back.
++        # An input that is the output of a regular operation does not bring
++        # that operation into the graph.
++        if not input_node.is_input:
++            continue
++        if input_operation not in operations_depths:
+             operations_depths[input_operation] = 0
+             operation_indices[input_operation] = -1
+-            nodes_depths[input_operation._inbound_nodes[0]] = 0
+-            network_nodes.add(make_node_key(input_operation, 0))
++            nodes_depths[input_node] = 0
++            network_nodes.add(
++                make_node_key(input_operation, input_node_index)
++            )
+ 
+     # Build a dict {depth: list of nodes with this depth}
+     nodes_by_depth = collections.defaultdict(list)
+@@ -439,6 +461,15 @@ def _build_map_helper(
+     if node in finished_nodes:
+         return
+ 
++    # If this tensor is one of the `Function`'s inputs and it was produced by a
++    # regular operation (rather than being a genuine input node such as an
++    # `InputLayer` output), then the producing operation is not part of the
++    # `Function`'s computation graph: the input value is provided directly.
++    # Treat the tensor as a leaf and don't record its operation or node.
++    is_boundary_input = tensor in tree.flatten(inputs)
++    if is_boundary_input and not node.is_input:
++        return
++
+     # Prevent cycles.
+     if node in nodes_in_progress:
+         raise ValueError(
+@@ -452,7 +483,7 @@ def _build_map_helper(
+ 
+     # Propagate to all previous tensors connected to this node.
+     nodes_in_progress.add(node)
+-    if not node.is_input and tensor not in tree.flatten(inputs):
++    if not node.is_input and not is_boundary_input:
+         for tensor in node.input_tensors:
+             _build_map_helper(
+                 inputs,

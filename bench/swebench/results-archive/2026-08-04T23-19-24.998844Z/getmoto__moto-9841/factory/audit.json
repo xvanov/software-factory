@@ -1,0 +1,102 @@
+{
+  "instance_id": "getmoto__moto-9841",
+  "arm": "factory",
+  "audited_at": "2026-08-04T04:17:10.486102+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-03T20:37:24.104978+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1174268,
+      "tokens_out": 12954,
+      "cached_input_tokens": 849152,
+      "cost_usd": 0.8138011720000001,
+      "duration_s": 437.152,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:37:31.194153+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 7050,
+      "tokens_out": 362,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.017295,
+      "duration_s": 6.339,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:41:35.520451+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 727594,
+      "tokens_out": 6645,
+      "cached_input_tokens": 499200,
+      "cost_usd": 0.5466219699999998,
+      "duration_s": 243.462,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:41:41.804817+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 7192,
+      "tokens_out": 504,
+      "cached_input_tokens": 2560,
+      "cost_usd": 0.019780000000000002,
+      "duration_s": 5.562,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:47:25.070734+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 921410,
+      "tokens_out": 8624,
+      "cached_input_tokens": 644352,
+      "cost_usd": 0.671492532,
+      "duration_s": 342.711,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-03T20:47:31.740982+00:00",
+      "persona": "reviewer",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 7351,
+      "tokens_out": 481,
+      "cached_input_tokens": 2688,
+      "cost_usd": 0.019544500000000003,
+      "duration_s": 5.897,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.0885,
+  "ledger_tokens_in": 2844865,
+  "ledger_tokens_out": 29570,
+  "result_cost_usd": 2.0885,
+  "prediction_sha256": "69cc93db24a120f7da4cc8afa3db9926cd65a5300a4a7cb13a8d72fee548f21d",
+  "base_commit": "830a798c567bcdded2447efb7e98ca6d89b6a8c5",
+  "stripped_test_paths": [
+    "tests/test_kms/test_kms.py",
+    "tests/test_kms/test_kms_cloudformation.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 3,
+  "trails_scanned": 3,
+  "oracle_probe_failures": []
+}

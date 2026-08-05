@@ -1,0 +1,95 @@
+{
+  "arm": "claude-4.8",
+  "arm_base": "claude",
+  "instance_id": "harumiweb__exstruct-113",
+  "repo": "harumiWeb/exstruct",
+  "base_commit": "c0c8c52d0a3b507ac13feb4b700e5d858f2a81dc",
+  "problem_statement_sha256": "0e985bc7f916867bd0c6857c934c51dbe021e3bcefcb27669bd11de1badc3718",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-4-8",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-4-8",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "996dc0cd-32bc-4e36-8d90-3a9ae2bd769d",
+  "ts": "2026-08-03T23:08:02.821984+00:00",
+  "wall_clock_s": 862.6,
+  "agent_wall_s": 859.3,
+  "num_turns": 59,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 4582498,
+  "tokens_out": 58864,
+  "cached_input_tokens": 4475304,
+  "cost_usd": 4.5791,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-8"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.002
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-4-8",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 4.5771
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/cli/test_cli_lazy_imports.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "src/exstruct/engine.py"
+  ],
+  "test_files_stripped": [
+    "tests/cli/test_cli_lazy_imports.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 5220,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-4.8",
+    "instance_id": "harumiweb__exstruct-113",
+    "image": "swerebench/sweb.eval.x86_64.harumiweb_1776_exstruct-113@sha256:a3234ba6d5ca57a07137b6e70c870111a00d4ca638329745ef65bde1a75c865e",
+    "graded_at": "2026-08-03T23:08:02.946835+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 6,
+    "pass_to_pass_declared_count": 6,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 5.5,
+    "log_tail": "Checking patch tests/cli/test_cli_lazy_imports.py...\nApplied patch tests/cli/test_cli_lazy_imports.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_5c681b9a072f86c0: OK (red as expected)\nChecking patch src/exstruct/engine.py...\nApplied patch src/exstruct/engine.py cleanly.\nSWEBENCH_APPLY_5c681b9a072f86c0: OK\n..                                                                       [100%]\n=========================== short test summary info ============================\nPASSED tests/cli/test_cli_lazy_imports.py::test_import_engine_module_stays_lightweight\nPASSED tests/cli/test_cli_lazy_imports.py::test_import_public_engine_export_stays_lightweight\n2 passed in 0.22s\nSWEBENCH_TALLY_5c681b9a072f86c0: fail_to_pass 2 passed in 0.22s\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\n......                                                                   [100%]\n=========================== short test summary info ============================\nPASSED tests/cli/test_cli_lazy_imports.py::test_import_exstruct_stays_lightweight\nPASSED tests/cli/test_cli_lazy_imports.py::test_import_cli_main_does_not_load_edit_or_extraction_modules\nPASSED tests/cli/test_cli_lazy_imports.py::test_import_cli_edit_does_not_load_mcp_or_edit_execution_modules\nPASSED tests/cli/test_cli_lazy_imports.py::test_public_type_hints_resolve_lazy_exports_at_runtime\nPASSED tests/cli/test_cli_lazy_imports.py::test_help_path_keeps_lightweight_import_boundaries\nPASSED tests/cli/test_cli_lazy_imports.py::test_ops_list_keeps_mcp_and_extraction_lightweight\n6 passed in 0.32s\nSWEBENCH_TALLY_5c681b9a072f86c0: pass_to_pass 6 passed in 0.32s\n[8 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_5c681b9a072f86c0: RESOLVED\n"
+  }
+}

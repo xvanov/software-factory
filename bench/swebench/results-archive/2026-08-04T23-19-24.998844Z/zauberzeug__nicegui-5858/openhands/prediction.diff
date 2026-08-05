@@ -1,0 +1,48 @@
+diff --git a/nicegui/elements/xterm/xterm.py b/nicegui/elements/xterm/xterm.py
+index a350f1f..e89c29d 100644
+--- a/nicegui/elements/xterm/xterm.py
++++ b/nicegui/elements/xterm/xterm.py
+@@ -5,7 +5,7 @@ from typing_extensions import Self
+ from ...awaitable_response import AwaitableResponse
+ from ...defaults import DEFAULT_PROP, resolve_defaults
+ from ...element import Element
+-from ...events import GenericEventArguments, Handler, XtermBellEventArguments, XtermDataEventArguments, handle_event
++from ...events import GenericEventArguments, Handler, XtermBellEventArguments, XtermDataEventArguments, XtermResizeEventArguments, handle_event
+ 
+ 
+ class Xterm(Element, component='xterm.js', esm={'nicegui-xterm': 'dist'}):
+@@ -60,6 +60,17 @@ class Xterm(Element, component='xterm.js', esm={'nicegui-xterm': 'dist'}):
+         self.on('data', handle_data)
+         return self
+ 
++    def on_resize(self, callback: Handler[XtermResizeEventArguments]) -> Self:
++        """Add a callback to be invoked when the terminal is resized (e.g. after calling ``fit()``).
++
++        The callback receives an event with ``cols`` and ``rows`` attributes.
++        This can be used to communicate the new terminal size to a backing pty.
++        """
++        def handle_resize(e: GenericEventArguments) -> None:
++            handle_event(callback, XtermResizeEventArguments(sender=self, client=self.client, cols=e.args['cols'], rows=e.args['rows']))
++        self.on('resize', handle_resize)
++        return self
++
+     def input(self, data: str, *, was_user_input: bool = True) -> AwaitableResponse:
+         """Input data to application side.
+ 
+diff --git a/nicegui/events.py b/nicegui/events.py
+index 3bbce0a..99936c4 100644
+--- a/nicegui/events.py
++++ b/nicegui/events.py
+@@ -420,6 +420,12 @@ class XtermDataEventArguments(UiEventArguments):
+     data: str
+ 
+ 
++@dataclass(kw_only=True, slots=True)
++class XtermResizeEventArguments(UiEventArguments):
++    cols: int
++    rows: int
++
++
+ EventT = TypeVar('EventT', bound=EventArguments)
+ Handler: TypeAlias = Callable[[EventT], Any] | Callable[[], Any]
+ 

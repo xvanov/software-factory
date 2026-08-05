@@ -1,0 +1,96 @@
+{
+  "arm": "claude-5",
+  "arm_base": "claude",
+  "instance_id": "vyperlang__vyper-4801",
+  "repo": "vyperlang/vyper",
+  "base_commit": "7d53bab7f8cce2a5fb037052663d85596d7eb2d1",
+  "problem_statement_sha256": "84f2becd4c3b96c244bb5420904e22abeb95c92c7b0836d3c4761a016e7130f7",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "6e954c72-ff87-450b-a0f2-706c40923579",
+  "ts": "2026-08-03T22:51:19.214858+00:00",
+  "wall_clock_s": 1354.1,
+  "agent_wall_s": 1344.7,
+  "num_turns": 46,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 2803681,
+  "tokens_out": 34332,
+  "cached_input_tokens": 2725049,
+  "cost_usd": 2.9855,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.0024
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-5",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 2.9831
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 3.6,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/unit/compiler/venom"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "vyper/venom/memory_allocator.py"
+  ],
+  "test_files_stripped": [
+    "tests/unit/compiler/venom/test_concretize_mem.py",
+    "tests/unit/compiler/venom/test_memory_allocator.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1366,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-5",
+    "instance_id": "vyperlang__vyper-4801",
+    "image": "swerebench/sweb.eval.x86_64.vyperlang_1776_vyper-4801@sha256:dc4b97c064a4bb67707e45875ccc0556aba2facc7d024a0172b9e53e3a3361ff",
+    "graded_at": "2026-08-03T22:51:19.457028+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 1,
+    "pass_to_pass_declared_count": 1,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 74.6,
+    "log_tail": "Checking patch tests/functional/codegen/features/test_immutable_allocator_overlap.py...\nChecking patch tests/unit/compiler/venom/test_memory_allocator.py...\nApplied patch tests/functional/codegen/features/test_immutable_allocator_overlap.py cleanly.\nApplied patch tests/unit/compiler/venom/test_memory_allocator.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_2ebedfc341511c6c: OK (red as expected)\nChecking patch vyper/venom/memory_allocator.py...\nApplied patch vyper/venom/memory_allocator.py cleanly.\nSWEBENCH_APPLY_2ebedfc341511c6c: OK\nbringing up nodes...\nbringing up nodes...\n\n.                                                                        [100%]\n=========================== short test summary info ============================\nPASSED tests/unit/compiler/venom/test_memory_allocator.py::test_allocate_overlapping_reserved_intervals\n1 passed in 14.77s\nSWEBENCH_TALLY_2ebedfc341511c6c: fail_to_pass 1 passed in 14.77s\n[3 node outcomes for fail_to_pass -> grade-nodes.log]\nbringing up nodes...\nbringing up nodes...\n\n.                                                                        [100%]\n=========================== short test summary info ============================\nPASSED tests/functional/codegen/features/test_immutable_allocator_overlap.py::test_immutable_hashing_overlap_regression\n1 passed in 13.93s\nSWEBENCH_TALLY_2ebedfc341511c6c: pass_to_pass 1 passed in 13.93s\n[3 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_2ebedfc341511c6c: RESOLVED\n"
+  }
+}

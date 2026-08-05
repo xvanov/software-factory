@@ -1,0 +1,101 @@
+{
+  "arm": "claude-5",
+  "arm_base": "claude",
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "repo": "raullenchai/Rapid-MLX",
+  "base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+  "problem_statement_sha256": "3ae27ef5d79a458199fe77579d9c2737af36949b5eba763d0b1ef7f02c8a8edf",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.220 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "00437fdd-1873-47de-a80d-5fda4d1b91c8",
+  "ts": "2026-08-03T22:30:49.852479+00:00",
+  "wall_clock_s": 910.8,
+  "agent_wall_s": 905.3,
+  "num_turns": 57,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 5061174,
+  "tokens_out": 68885,
+  "cached_input_tokens": 4927704,
+  "cost_usd": 5.4624,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.0065
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-5",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 5.4559
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_reasoning_parsers.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "vllm_mlx/reasoning/deepseek_r1_parser.py",
+    "vllm_mlx/reasoning/gemma4_parser.py",
+    "vllm_mlx/reasoning/gpt_oss_parser.py",
+    "vllm_mlx/reasoning/harmony_parser.py",
+    "vllm_mlx/reasoning/marker_scan.py",
+    "vllm_mlx/reasoning/minimax_parser.py",
+    "vllm_mlx/reasoning/think_parser.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_reasoning_parsers.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 35086,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-5",
+    "instance_id": "raullenchai__rapid-mlx-289",
+    "image": "swerebench/sweb.eval.x86_64.raullenchai_1776_rapid-mlx-289@sha256:c518273fc729729206db46632ff3ae99052e00d2279aad795302692b4a6e02b0",
+    "graded_at": "2026-08-03T22:30:49.961817+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 122,
+    "pass_to_pass_declared_count": 122,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 7.0,
+    "log_tail": "ase\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_direct_content_detected_early\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_content_phase_passthrough\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_undecided\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_undecided_empty\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_content_phase\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_reasoning_reclassifies\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_full_format\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_analysis_only\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_final_only\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_no_channels\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_multiple_analysis_blocks\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_reset_state\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_analysis_channel_switch\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_final_channel_switch\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_commentary_channel_switch\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_message_start_skipped\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_analysis_content_emitted\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_final_content_emitted\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_end_token_stops_message\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_return_token_stops_message\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_commentary_passed_through\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_control_tokens_skipped\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_full_streaming_simulation\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_empty_delta_returns_none\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_no_channel_seen_defaults_to_content\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_thought_open_then_text_routes_to_reasoning\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_delta_with_no_marker_routes_whole_to_current_channel\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_finished_content_phase_routes_to_content\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_reset_state\n============================= 122 passed in 0.09s ==============================\nSWEBENCH_TALLY_f4a44d8f90da5de6: pass_to_pass ============================= 122 passed in 0.09s ==============================\n[124 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_f4a44d8f90da5de6: RESOLVED\n"
+  }
+}

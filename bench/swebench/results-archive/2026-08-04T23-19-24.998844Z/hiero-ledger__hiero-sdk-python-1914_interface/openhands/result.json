@@ -1,0 +1,96 @@
+{
+  "arm": "openhands",
+  "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+  "repo": "hiero-ledger/hiero-sdk-python",
+  "base_commit": "93eed7c340fb65356c3a06ac78f74402c3a169af",
+  "problem_statement_sha256": "ffd670c2ee16b9cc31ebe5492b19d2624c027ca7b128591bcf2e75128f038cea",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "agent": "openhands-sdk default agent (cli_mode), single conversation",
+  "models_used": [
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.4489
+    }
+  ],
+  "model_escalated_calls": 0,
+  "ts": "2026-08-03T21:48:37.114797+00:00",
+  "wall_clock_s": 239.8,
+  "agent_wall_s": 226.6,
+  "steps_used": 19,
+  "step_cap": 600,
+  "sdk_events": 41,
+  "termination": "agent-finished",
+  "trajectory": "state/events/trajectories/nostory-1.ndjson",
+  "probe_plumbing": false,
+  "tokens_in": 734833,
+  "tokens_out": 16728,
+  "cached_input_tokens": 584192,
+  "cost_usd": 0.4489,
+  "cost_source": "derived-from-price-table",
+  "persona_calls": 1,
+  "usage_reliable": true,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.3,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/unit/account_info_test.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "src/hiero_sdk_python/account/account_info.py"
+  ],
+  "test_files_stripped": [
+    "tests/unit/account_info_test.py"
+  ],
+  "diff_bytes": 12584,
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "openhands",
+    "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+    "image": "swerebench/sweb.eval.x86_64.hiero-ledger_1776_hiero-sdk-python-1914_interface@sha256:7379c707cc7e9f690d07a08c3abfc1f97b9f70fd283bc2084040a052b79af57f",
+    "graded_at": "2026-08-03T21:48:37.675069+00:00",
+    "fail_to_pass_count": 12,
+    "pass_to_pass_count": 9,
+    "pass_to_pass_declared_count": 9,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/unit/account_info_test.py::test_proto_conversion: node(s) FAILED/ERROR: ['tests/unit/account_info_test.py::test_proto_conversion']",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_deprecated: node(s) FAILED/ERROR: ['tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_deprecated']",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_deprecated: node(s) FAILED/ERROR: ['tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_deprecated']",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_deprecated: node(s) FAILED/ERROR: ['tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_deprecated']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "CHANGELOG.md",
+      "src/hiero_sdk_python/account/account_info.py"
+    ],
+    "touched_files": [
+      "src/hiero_sdk_python/account/account_info.py"
+    ],
+    "gold_files_overlap": [
+      "src/hiero_sdk_python/account/account_info.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 13.7,
+    "log_tail": "o_test.TestDeprecatedProperties object at 0x716372e65ba0>\n\n    def test_decline_staking_reward_deprecated(self):\n        import warnings\n        info = self._make_info()\n        with warnings.catch_warnings(record=True) as w:\n            warnings.simplefilter(\"always\")\n            val = info.decline_staking_reward\n        assert val is True\n>       assert issubclass(w[0].category, DeprecationWarning)\n                          ^^^^\nE       IndexError: list index out of range\n\ntests/unit/account_info_test.py:312: IndexError\n=========================== short test summary info ============================\nPASSED tests/unit/account_info_test.py::test_from_proto\nPASSED tests/unit/account_info_test.py::test_to_proto\nPASSED tests/unit/account_info_test.py::test_proto_conversion_with_staking_info\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_setter\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_setter\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_setter\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_setters_preserve_other_staking_fields\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_constructor_legacy_kwargs_deprecated\nFAILED tests/unit/account_info_test.py::test_proto_conversion - AssertionErro...\nFAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_deprecated\nFAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_deprecated\nFAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_deprecated\n4 failed, 8 passed in 0.39s\nSWEBENCH_TALLY_0f350c1a4e9b6c9d: fail_to_pass 4 failed, 8 passed in 0.39s\n[14 node outcomes for fail_to_pass -> grade-nodes.log]\n.........                                                                [100%]\n=========================== short test summary info ============================\nPASSED tests/integration/account_create_transaction_e2e_test.py::test_create_account_with_alias_derived_from_non_ecdsa_key\nPASSED tests/integration/account_create_transaction_e2e_test.py::test_create_account_with_alias_from_seperate_non_ecdsa_key\nPASSED tests/unit/account_info_test.py::test_account_info_initialization\nPASSED tests/unit/account_info_test.py::test_account_info_default_initialization\nPASSED tests/unit/account_info_test.py::test_from_proto_with_token_relationships\nPASSED tests/unit/account_info_test.py::test_from_proto_none_raises_error\nPASSED tests/unit/account_info_test.py::test_to_proto_with_none_values\nPASSED tests/unit/account_info_test.py::test_str_and_repr\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_deprecated_properties_return_none_without_staking_info\n9 passed in 0.37s\nSWEBENCH_TALLY_0f350c1a4e9b6c9d: pass_to_pass 9 passed in 0.37s\n[11 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_0f350c1a4e9b6c9d: UNRESOLVED\n"
+  }
+}
