@@ -460,10 +460,25 @@ def test_missing_preconditions_are_reported_not_guessed(tmp_path: Path) -> None:
 
 
 def test_head_sha_that_does_not_resolve_falls_back_and_says_so(tmp_path: Path) -> None:
-    repo, _head = _repo(tmp_path)
+    repo, head = _repo(tmp_path)
     report = _measure(repo, "deadbeef" * 5, tmp_path)
     assert any("used HEAD" in n for n in report.notes)
     assert report.status == STATUS_MEASURED
+    # ...and it reports the sha it ACTUALLY measured, not the one asked for.
+    assert report.head_sha == head
+
+
+def test_an_unresolvable_head_never_shares_a_cache_bucket(tmp_path: Path) -> None:
+    """MEASURED on the first clean real run: with no ``--head``, the cache was
+    written to ``state/mutation/factory/unknown.json``. Two different commits
+    would then share one bucket and a measurement of A would be served as a
+    measurement of B."""
+    repo, head = _repo(tmp_path)
+    report = _measure(repo, "", tmp_path)  # no head_sha supplied
+    assert report.head_sha == head
+    root = tmp_path / "factory-root"
+    assert cache_path(root, "toy", head).is_file()
+    assert not (root / "state" / "mutation" / "toy" / "unknown.json").exists()
 
 
 # --------------------------------------------------------------------------- #

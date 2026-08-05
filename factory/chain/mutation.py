@@ -245,13 +245,31 @@ def _resolve_base_ref(repo_root: Path, base_branch: str) -> str | None:
     return _resolve_diff_base(repo_root, base_branch)
 
 
-def _resolve_head_ref(repo_root: Path, head_sha: str) -> tuple[str, list[str]]:
-    """Prefer the graded SHA; fall back to HEAD, saying so."""
+def _resolve_head_ref(repo_root: Path, head_sha: str) -> tuple[str, str, list[str]]:
+    """Return ``(ref_to_check_out, concrete_sha, notes)``.
+
+    The CONCRETE sha matters as much as the ref: it is the cache key. Keying on
+    the caller-supplied string would put every run that omitted ``--head`` under
+    the same ``"unknown"`` key, so a measurement of commit A would be served as a
+    measurement of commit B. MEASURED: the first clean run of this tool wrote
+    ``state/mutation/factory/unknown.json``. An empty ``concrete_sha`` disables
+    the cache entirely rather than guessing a key.
+    """
+    notes: list[str] = []
+    ref = "HEAD"
     if head_sha:
-        rc, _out, _err = _git(repo_root, "rev-parse", "--verify", "--quiet", f"{head_sha}^{{commit}}")
+        rc, _out, _err = _git(
+            repo_root, "rev-parse", "--verify", "--quiet", f"{head_sha}^{{commit}}"
+        )
         if rc == 0:
-            return head_sha, []
-    return "HEAD", [f"head_sha {head_sha!r} does not resolve in the checkout; used HEAD"]
+            ref = head_sha
+        else:
+            notes.append(f"head_sha {head_sha!r} does not resolve in the checkout; used HEAD")
+    rc, out, _err = _git(repo_root, "rev-parse", ref)
+    concrete = out.strip() if rc == 0 else ""
+    if not concrete:
+        notes.append(f"{ref} does not resolve to a commit; caching disabled for this run")
+    return ref, concrete, notes
 
 
 def _touched_lines(repo_root: Path, base_ref: str, head_ref: str) -> dict[str, set[int]] | None:
@@ -676,6 +694,7 @@ def _materialize_tree(repo_root: Path, head_ref: str, dest: Path) -> str | None:
 def cache_path(software_factory_root: Path | None, app: str, head_sha: str) -> Path:
     """``state/mutation/<app>/<head_sha>.json``.
 
+    ``head_sha`` must be a CONCRETE resolved sha — see ``_resolve_head_ref``.
     Root resolution is the one every other state writer uses (explicit arg →
     ``FACTORY_STATE_ROOT`` → cwd), reused rather than reimplemented so a test
     run can never write into production state.
@@ -816,7 +835,7 @@ def measure(
             reason=f"neither origin/{base_branch} nor {base_branch} resolves in the checkout",
             head_sha=head_sha,
         )
-    head_ref, notes = _resolve_head_ref(repo_root, head_sha)
+    head_ref, concrete_sha, notes = _resolve_head_ref(repo_root, head_sha)
 
     selection = select_symbols(repo_root, base_ref, head_ref, max_symbols=max_symbols)
     if selection is None:
@@ -833,7 +852,8 @@ def measure(
     report = MutationReport(
         status=STATUS_MEASURED,
         reason="",
-        head_sha=head_sha,
+        # The sha actually measured, not the one asked for.
+        head_sha=concrete_sha or head_sha,
         base_ref=base_ref,
         sampled=[s.key for s in sample],
         candidates=candidates,
@@ -847,7 +867,9 @@ def measure(
         return report
 
     fingerprint = _command_fingerprint(test_command)
-    cache_file = cache_path(software_factory_root, app, head_sha)
+    # No resolvable sha ⇒ no safe cache key ⇒ no cache. Never a shared bucket.
+    use_cache = use_cache and bool(concrete_sha)
+    cache_file = cache_path(software_factory_root, app, concrete_sha)
     cached = _load_cache(cache_file, fingerprint=fingerprint) if use_cache else {}
     cached_provenance = (
         _load_provenance(cache_file, fingerprint=fingerprint) if use_cache else {}
@@ -885,7 +907,7 @@ def measure(
         if source_label is None:
             report.status = STATUS_NO_TREE
             report.reason = "could not materialize a scratch checkout to mutate"
-            _finish(report, outcomes, started)
+            _finish(report, outcomes, started, save=None, allow_score=False)
             return report
         report.tree_source = source_label
 
@@ -935,7 +957,6 @@ def measure(
             per_run_timeout_s=per_run_timeout_s,
             budget_s=budget_s,
             started=started,
-            cached_provenance=cached_provenance,
             provenance=provenance,
             dirty=dirty,
         )
@@ -943,7 +964,13 @@ def measure(
         shutil.rmtree(tree, ignore_errors=True)
         shutil.rmtree(sentinels, ignore_errors=True)
 
-    _finish(report, outcomes, started, save=(cache_file, app, fingerprint), provenance=provenance)
+    _finish(
+        report,
+        outcomes,
+        started,
+        save=(cache_file, app, fingerprint) if concrete_sha else None,
+        provenance=provenance,
+    )
     return report
 
 
@@ -956,7 +983,6 @@ def _verify_provenance(
     per_run_timeout_s: int,
     budget_s: int,
     started: float,
-    cached_provenance: dict[str, str],
     provenance: dict[str, str],
     dirty: bool,
 ) -> None:
