@@ -242,3 +242,84 @@ Never report a `solo-noreview` number without the `factory` number beside it,
 and never report either without the archive it came from. The result file is
 `bench/swebench/RESULTS-B1-PHASE1A.md`. `bench/swebench/results.md` is the
 report output for a specific archive and is **not** touched by this run.
+
+---
+
+# Addendum — recorded 2026-08-05, mid-run, with 1 of 19 outcomes known
+
+**Nothing above this line was edited.** This addendum is appended because the
+confound section above is **incomplete**, and recording that now — before 18 of
+the 19 outcomes exist — is worth more than recording it afterwards. State of
+knowledge when this was written: the arm code was committed, one paid row had
+completed (`conan-io__conan-19735_interface`: chain green, oracle unresolved,
+`right_place_wrong_fix`, $0.2935) and the sweep over the other 18 was in flight.
+
+## A second confound, found by checking
+
+The section above disclosed one difference between `solo-noreview` and the
+archived `factory` rows (the acceptance-oracle authoring layer). Checking the
+commit log against the archived rows' own timestamps found another.
+
+The archived `factory` rows ran **2026-08-03 19:42–20:59 UTC**. Three commits
+touched `factory/**` after that:
+
+| commit | date | reaches the bench driver? |
+|---|---|---|
+| `7a2d7a68` A.2 production-diff precondition + A.3 underspecified terminal state | 2026-08-05 01:30 UTC | **A.3 YES, A.2 no** |
+| `69b75d1e` acceptance oracle executable, harness hint | 2026-08-05 19:07 UTC | partly (via the acceptance layer) |
+| `79d3576d` A.5 diff-scoped mutation score | 2026-08-05 21:38 UTC | **no** |
+
+Verified rather than assumed:
+
+- **A.2 is a MERGE gate** (`factory/chain/gates/production_tree_changed.py`,
+  reached through `auto_merge`/the gate evaluator). This driver has no merge step
+  and never calls either — `grep` for `auto_merge`/`evaluate_gates` in
+  `bench/swebench_adapter.py` returns nothing. **Nil for both arms.**
+- **A.5 touches `gates/tests_meaningful.py` and `auto_merge.py`** — merge-gate
+  territory, same argument. **Nil for both arms.**
+- **A.3 DOES reach it**, and it is the one that matters: `7a2d7a68` added **35
+  lines to `factory/personas/dev.md`** ("Declaring the story underspecified"),
+  plus the `blocked_underspecified` state-machine edge and the driver's terminal
+  state. So the **dev persona prompt itself differs** between `solo-noreview` and
+  the archived `factory` rows. That is a difference on the primary metric's own
+  path, and it was not disclosed above.
+
+## What this does to the claim
+
+The paired comparison therefore varies **three** things, not one:
+
+1. the reviewer round-trip (intended);
+2. the dev persona prompt (+35 lines, the underspecified escape hatch);
+3. the presence of the acceptance-oracle authoring layer.
+
+**So this run BOUNDS the reviewer's contribution; it does not measure it.**
+Combined with the ±38 pp MDE already pre-committed above, the honest reading is
+narrower than the one this file was written for:
+
+- **Decision rule 1 still stands and is still worth the money.** `only-factory ≥
+  5 of 19` is a gross-effect signal, and none of the three variables plausibly
+  manufactures five discordant instances in the factory's favour.
+- **The cost comparison is the robust half** and is unaffected by confounds 2 and
+  3 in any material way (confound 3 adds ~$0.02 per `solo-noreview` row, i.e.
+  against it).
+- **No sentence in the results file may call this a clean single-variable
+  ablation.** It is a bounded probe with a same-commit baseline missing.
+
+## Why it is not fixed by re-running
+
+A same-commit `factory` re-run is the correct fix and costs ~$36 on top of this
+arm, which breaches the **$50 hard stop** this run was authorised under. It is
+therefore recorded as **the first requirement of B.1 Phase 1b**: run both arms
+on ONE commit, in one sweep, before any decision. Re-running only the discordant
+instances would be selection on the outcome and is forbidden by Rule 5 above.
+
+## A prediction that is already known to be wrong in its reasoning
+
+Prediction 2 above said "roughly 25% lower cost", reasoning that "the reviewer is
+31 of the published run's 70 model calls but on the cheaper-per-call side". The
+archived ledger, read while this addendum was written, says the reviewer is
+**$0.65 of $35.94 — 1.8%**; the dev is $32.81 of it across 33 calls. So the
+mechanism for any saving is **fewer dev calls**, not the reviewer's own tokens.
+The point estimate ($25–30) stands as pre-committed and will be scored as
+written; the reasoning behind it was wrong and is corrected here rather than
+quietly in the results.
