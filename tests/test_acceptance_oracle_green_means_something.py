@@ -217,10 +217,14 @@ def test_D1_real_oracle_red_at_base_green_at_head_passes(tmp_path: Path) -> None
     assert r.details["base_sha"] == base[:12]
 
 
-def test_D1_new_module_story_counts_a_base_collection_error_as_red(tmp_path: Path) -> None:
-    """An oracle for a module the story CREATES cannot import at the base. That is a
-    legitimate red — a collection error is how a red-first test looks for new code —
-    so this must merge, not block."""
+def _new_module_repo(tmp_path: Path, impl: str) -> tuple[Path, str]:
+    """A story that ADDS ``backend/app/mod.py``, with ``backend/tests`` ALREADY at base.
+
+    The acceptance harness therefore resolves at the merge base and the base run
+    really happens — it just cannot IMPORT the module. This is the common story
+    shape (any story adding a module to an app past its first commit), and it is
+    the one that distinguishes an errors-only base red from a real one.
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
@@ -232,16 +236,90 @@ def test_D1_new_module_story_counts_a_base_collection_error_as_red(tmp_path: Pat
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "base without the module")
     _git(repo, "checkout", "-q", "-b", "feat/story")
-    _write_app(repo, _GOOD_IMPL)
+    _write_app(repo, impl)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "add the module")
-    head = _git(repo, "rev-parse", "HEAD")
+    return repo, _git(repo, "rev-parse", "HEAD")
 
+
+def test_D1_new_module_story_with_a_REAL_oracle_still_merges(tmp_path: Path) -> None:
+    """The good case for a story that adds the module its oracle imports.
+
+    The base run is an errors-only red, which is NOT credited as failability (see
+    the next test for why) — so this goes through ABLATION, and must still merge.
+    If this ever blocks, the errors-only rule has become a false block on the most
+    common story shape there is.
+    """
+    repo, head = _new_module_repo(tmp_path, _GOOD_IMPL)
     root = tmp_path / "factory"
     ref = _store(root)
     r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
     assert r.passed, r.reason
     assert r.details["base_run"]["summary"]["errors"] >= 1
+    assert r.details["base_run"]["verdict"] == "unknown"
+    assert r.details["failability_route"] == "ablation"
+    assert r.details["verified"] is True
+
+
+def test_D1_importing_tautology_for_a_new_module_is_NOT_credited(tmp_path: Path) -> None:
+    """THE NINTH DEFECT (found 2026-08-05 by the adversarial pass on this PR).
+
+    ``base_verdict`` counted an ERROR as red. For a story that ADDS a module, an
+    oracle whose only link to the criterion is ``from app.mod import thing`` errors
+    at the merge base whatever it asserts — so this tautology was red at base,
+    green at HEAD, and credited ``verified=True, authoritative=True`` against an
+    implementation that VIOLATES the criterion. The whole D1 family (``assert
+    True``, a self-referential assertion, an assertion inside ``try/except``) rode
+    that route, and it bypassed ablation entirely because ``red`` is definitive.
+
+    Errors-only reds are now ``unknown``, so this falls through to ablation, which
+    correctly proves nothing about a tautology and leaves the block standing.
+    """
+    repo, head = _new_module_repo(tmp_path, _BAD_IMPL)
+    root = tmp_path / "factory"
+    ref = _store(root, content=(
+        "from app.mod import normalize_email\n"
+        "\n"
+        "def test_ac1_email_is_lowercased():\n"
+        "    assert True\n"
+    ))
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+    assert not r.passed, f"credited a tautology via a base collection error: {r.reason}"
+    assert r.details["verified"] is False
+    assert r.details["unverifiable_kind"] == "failability_unverified"
+    assert r.details["base_run"]["verdict"] == "unknown"
+    assert r.details["base_run"]["summary"]["errors"] >= 1
+    # the green at HEAD was really observed — it is just not credited
+    assert r.details["head_status"] == "pass"
+    assert all(a["proven"] is False for a in r.details["failability_ablation"]["attempts"])
+
+
+def test_D1_new_module_oracle_that_swallows_its_assertion_is_NOT_credited(
+    tmp_path: Path,
+) -> None:
+    """Same route, a different way of asserting nothing: the only assertion sits in
+    a ``try/except`` that swallows it.
+
+    Worth its own test because the ablation half exercises a distinct mechanism —
+    the ``except`` also swallows the sentinel exception the ablation splices in, so
+    the mutant SURVIVES and nothing is proven. An oracle that cannot report a
+    failure is not failable, however faithfully it calls the code.
+    """
+    repo, head = _new_module_repo(tmp_path, _BAD_IMPL)
+    root = tmp_path / "factory"
+    ref = _store(root, content=(
+        "from app.mod import normalize_email\n"
+        "\n"
+        "def test_ac1_email_is_lowercased():\n"
+        "    try:\n"
+        "        assert normalize_email('User@Example.COM') == 'user@example.com'\n"
+        "    except Exception:\n"
+        "        pass\n"
+    ))
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+    assert not r.passed, f"credited an oracle that swallows its own assertion: {r.reason}"
+    assert r.details["unverifiable_kind"] == "failability_unverified"
+    assert r.details["base_run"]["verdict"] == "unknown"
 
 
 def _no_base_harness_repo(tmp_path: Path, *, impl: str = _GOOD_IMPL) -> tuple[Path, str]:
@@ -1540,7 +1618,15 @@ def test_classify_pytest_run(exit_code: int, output: str, expected: str) -> None
     ("exit_code", "output", "expected"),
     [
         (1, "1 failed, 2 passed in 0.1s", "red"),   # PARTIAL red is enough (the caveat)
-        (2, "1 error in 0.1s", "red"),
+        # An ERRORS-ONLY red is NOT proof of failability: an oracle that cannot be
+        # collected at the base is red whatever it asserts. ``unknown`` → ablation.
+        (2, "1 error in 0.1s", "unknown"),
+        (2, "3 errors in 0.1s", "unknown"),
+        # ...but a run where an assertion DID fail is red even if something also
+        # errored. Demanding an all-clean red would reject good work (the caveat).
+        (1, "1 failed, 1 error in 0.1s", "red"),
+        # Non-zero exit with no reported outcome is not an attributable red either.
+        (1, "3 passed in 0.1s", "unknown"),
         (0, "3 passed in 0.1s", "green"),
         (0, "2 skipped in 0.1s", "unknown"),
         (124, "timed out", "unknown"),

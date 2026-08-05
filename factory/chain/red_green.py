@@ -28,10 +28,17 @@ of them:
 green under the gold patch, so a hard both-halves gate rejects good patches.
 Two consequences are encoded in this module and must stay encoded:
 
-1. "Fails at base" means **at least one test failed or errored** at base
+1. "Fails at base" means **at least one test FAILED** at base
    (:func:`base_verdict`), never "the whole file was red". A story that
    implements one of its direction's several acceptance criteria produces an
    oracle whose other tests legitimately pass at base.
+
+   An ERROR-only red is not "fails at base" — it is ``unknown``. An oracle that
+   cannot be collected at the merge base (``from app.mod import thing`` for a
+   module the story adds) is red no matter what it asserts, so a tautology rides
+   that route to a credited green. See :func:`base_verdict` for the measurement.
+   Errors and failures are different facts here, and only the second one is
+   evidence.
 2. When the base run cannot be TRUSTED — infra error, timeout, unreadable
    output, nothing collected, no merge base — the verdict is ``unknown``, and an
    ``unknown`` falls back to **regression-only selection: it must never be read
@@ -221,21 +228,79 @@ BaseVerdict = Literal["red", "green", "unknown"]
 def base_verdict(exit_code: int, output: str) -> tuple[BaseVerdict, str, PytestSummary | None]:
     """Grade the BASE run: was the test able to fail without the story's diff?
 
-    * ``red`` — at least one test failed or errored at the merge base. This is
-      the only verdict that licenses crediting a green at HEAD. Deliberately
-      "at least one", not "all": see the caveat at the top of this module —
-      requiring every test to be red rejects good work.
+    * ``red`` — at least one test **FAILED** at the merge base: an assertion in
+      the oracle ran and disagreed with the base implementation. This is the only
+      verdict that licenses crediting a green at HEAD. Deliberately "at least
+      one", not "all": see the caveat at the top of this module — requiring every
+      test to be red rejects good work.
     * ``green`` — every test already passed at the merge base, so the test does
       not discriminate this story's diff and its green at HEAD carries no
       information about it.
     * ``unknown`` — the base run cannot be trusted (nothing collected, timeout,
-      unreadable output, conflicting summaries). Regression-only fallback:
-      never "approve".
+      unreadable output, conflicting summaries, or a red made ENTIRELY of
+      errors). Regression-only fallback: never "approve".
+
+    ⚠ WHY AN ERRORS-ONLY RED IS ``unknown`` AND NOT ``red`` (2026-08-05)
+    -------------------------------------------------------------------
+    This function used to count ``errors`` as red alongside ``failed``, and that
+    was a MEASURED forced pass. For a story that ADDS a module, an oracle whose
+    only relationship to the criterion is ``from app.mod import thing`` raises
+    ``ModuleNotFoundError`` at the merge base — a COLLECTION error — whatever it
+    goes on to assert. So::
+
+        from app.mod import normalize_email
+
+        def test_ac1():
+            assert True
+
+    was red at base, green at HEAD, and credited ``verified=True,
+    authoritative=True`` against an implementation that violated the criterion.
+    The whole D1 family (``assert True``, a self-referential assertion, an
+    assertion inside ``try/except``) rides that route, and it is the COMMON story
+    shape rather than an exotic one: any story creating a new module reaches it
+    whenever the app's test directory already exists at base, which it does for
+    every app past its first commit.
+
+    An error says the oracle could not RUN. Only a failure says its assertions
+    ran and discriminated. Those are different facts and no parse of the base run
+    alone can turn the first into the second — the file that failed to import is
+    exactly the file whose assertions we are trying to evaluate.
+
+    So an errors-only red is ``unknown``, which is not a block: it falls through
+    to the ABLATION route, and ablation answers precisely the question the base
+    run could not. The good case still merges — the real oracle for a new module
+    goes red when its symbol is gutted — and the tautology does not, because
+    gutting the code changes nothing ``assert True`` can see. The cost is that
+    new-module stories take the (more expensive) ablation route rather than the
+    cheap cached one; that is the price of the green meaning something.
+
+    A mixed run (``1 failed, 1 error``) IS red: an assertion did run and did
+    discriminate, and the caveat above forbids demanding that all of them do.
     """
     status, summary = classify_pytest_run(exit_code, output)
     if status == "fail":
-        n = (summary.failed + summary.errors) if summary else 0
-        return "red", f"{n} test(s) failed/errored at the merge base (RED as required)", summary
+        if summary is not None and summary.failed >= 1:
+            n = summary.failed
+            return (
+                "red",
+                f"{n} test(s) FAILED at the merge base (RED as required)",
+                summary,
+            )
+        # Errors only, or pytest exited non-zero while reporting no outcome at
+        # all. Nothing here shows the oracle's assertions ran, so it is not proof
+        # of failability. ``unknown`` → the ablation fallback, never a credit.
+        n_err = summary.errors if summary is not None else 0
+        return (
+            "unknown",
+            (
+                f"the base run is red but ENTIRELY from {n_err} error(s) and no test "
+                "failure (exit_code="
+                f"{exit_code}) — an oracle that cannot even be COLLECTED at the base "
+                "(a story that adds the module it imports) is red whatever it asserts, "
+                "so this is not evidence that its assertions discriminate anything"
+            ),
+            summary,
+        )
     if status == "pass":
         n = summary.passed if summary else 0
         return (
