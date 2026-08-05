@@ -23,7 +23,7 @@ proven".
 | Review convergence | 0 stories hit the cycle cap in 14 days (max 5, one story) |
 | CI-failure recovery | Real CI log is fed back to dev as a structured finding. Capped at 3 |
 | GitHub loop | 1 open issue, 0 open PRs, 0 blocked stories |
-| Spend control | $200/day cap, hourly cap, per-story budget |
+| Spend control | $300/day cap (`caps.daily_spend_usd`), hourly cap, per-story budget |
 | Test suite | 2,368 tests, ~5 min |
 | SWE-bench measurement pipeline | Five arms, one sweep, no re-rolls, pre-registered tables. Oracle is sha256-pinned upstream `FAIL_TO_PASS`/`PASS_TO_PASS`; test-edit stripping is asserted in code on **every** arm and stripped 96 test files across the 95 published rows; grading is a fresh `--rm` container with `--network none`; manifest frozen and committed *before* the first run; gold-patch control 19/20. `report --check` re-derives the published table byte-for-byte from the committed archive and exits non-zero on drift |
 | Integrity gate has teeth | It rejected a row in this very sweep: `bare` on `hiero-ledger__hiero-sdk-python-1914_interface` ran `curl -s https://raw.githubusercontent.com/…/account_info.py` — the upstream source of the exact file under test. That row is published as **invalid and excluded**, not re-rolled |

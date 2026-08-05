@@ -1,5 +1,10 @@
 # PLAN.md — reordered around the measured result
 
+**Reconciled with measured reality 2026-08-05** — A.2/A.3/A.8 done (#233), C.1 done
+(#235), A.1's chain half done but the flag deliberately not flipped (#236), A.4 done
+and **negative** (#237), A.7 blocked, A.5's premise falsified, Phase C reordered.
+The correction log at the end carries the details as entries 20–29.
+
 **Rewritten 2026-08-04, after the five-arm benchmark.** The chain shows no
 measurable lift over a single agent on the same model. Every phase below is
 ordered by the evidence for it, cheapest first, and the old ordering
@@ -49,6 +54,19 @@ not the code — re-sync before debugging.
   guards `_MAX_DEV_SAME_SIGNATURE = 2` (`:1259`) and `_MAX_REVIEW_STUCK = 2`
   (`:1304`).
 
+**Operational state, verified 2026-08-05.** Factory units **OFF** — all six
+systemd units inactive and disabled. Mode `normal`. Today's factory-tracked spend
+**$0.00** against the $300 daily cap. Live tree equals `origin/main`.
+
+The units stay off **deliberately**, until A.1's blockers close; then they come up
+**with the acceptance oracle enabled on one app**, so E.5's soak and A.1's soak
+are one cycle and a live tick cannot race an agent's test runs.
+
+**Queued behind the in-flight bench PR** (all four touch
+`bench/swebench_adapter.py`, so they serialize): the §1.6 G aggregate recompute
+(~1 h), the §1.6 G 429-retry (~4 h), C.3's Commit0-Lite plumbing probe, and A.7's
+`model_selectable` change.
+
 ---
 
 ## 1. The measured baseline — published, do not re-derive
@@ -58,16 +76,18 @@ working-oracle instances, **k = 1**, one sweep, tables pre-registered in
 `bench/swebench/PRE-REGISTRATION-1.6.md` before the data existed.
 
 > **Provenance, read before quoting a number.** Two `report` runs exist for this
-> sweep and they disagree on one arm. The run committed to `origin/main` is
-> `results-archive/2026-08-04T04-18-05.349995Z/` and reports `openhands`
+> sweep and they disagree on one arm.
+> `results-archive/2026-08-04T04-18-05.349995Z/` reports `openhands`
 > **7/16 = 44%**, `$15.37`, McNemar p=0.625 — three rows lost to Azure 429s. A
 > later run, `results-archive/2026-08-04T23-19-24.998844Z/`, re-ran those three
 > rows as `attempt: 2` and reports `openhands` **10/19 = 53%**, `$18.20`,
-> p=0.375. **That later archive exists in the live tree and is NOT committed to
-> `origin/main`** — commit it (operator bench PR) before 53% is quoted outside
-> this repo, and resolve the protocol question in `1.6 G` first: the report's own
-> "Discarded runs" section calls `attempt > 1` "a protocol violation, not a data
-> point" while the headline counts three such rows.
+> p=0.375. **Both archives are committed to `origin/main`** as of `664bcd7d`
+> (PR #232): `git ls-files` shows all seven archive roots, the later one carrying
+> 293 tracked files. The protocol question is closed too —
+> `PRE-REGISTRATION-1.6.md:220-221` now addresses the `attempt > 1`
+> contradiction, which the report's own "Discarded runs" section had called "a
+> protocol violation, not a data point" while the headline counted three such
+> rows.
 >
 > **The conclusion is the same under either report**, which is why this plan
 > uses the later one. Both put the chain below one agent on the same model, both
@@ -182,13 +202,25 @@ near-worthless — CodeMonkeys: random-of-10 45.8% vs selected 57.4%, i.e. most 
 the value is in *having* 10 candidates.
 
 **P4 — Role decomposition DOES win somewhere, and it is not single-issue
-patching.** CAID (arXiv 2603.21489) reports **+14.7 pp over single-agent on
-Commit0** (build 54 libraries from scratch) and **+25.6 pp on PaperBench**, using
-centralized delegation with **isolated git worktrees and branch-and-merge** —
+patching.** CAID — arXiv 2603.21489, *"Effective Strategies for Asynchronous
+Software Engineering Agents"* (Geng & Neubig), a **method, not a benchmark** —
+uses centralized delegation with **isolated git worktrees and branch-and-merge**,
 architecturally our chain, including primitives we already have
-(`factory/chain/worktree.py`, per-story worktrees). **This is the most important
-finding for the product: we measured our chain on the one task shape where the
-literature predicts it cannot help.**
+(`factory/chain/worktree.py`, per-story worktrees). It reports **+25.6 pp on
+PaperBench**, and on Commit0 a lift that is **per-model, not one effect size**.
+Verified 2026-08-05 against Appendix C: on Commit0-**Lite**, one-sided paired
+t-test, Claude Sonnet 4.5 **+6.0 pp** (t=2.87, p=0.006); GLM 4.7 **+3.6 pp**
+(t=1.37, p=0.095, not significant); MiniMax 2.5 **+14.7 pp** (t=2.81, p=0.007).
+So the widely-quoted +14.7 pp is the **MiniMax 2.5** row — the weakest of the
+three models — and the frontier effect is **+6.0 pp**. Both arms' code is public
+at `JiayiGeng/CAID` (`run_single.sh`, `run_multi.sh`), and CAID scored Commit0 as
+a **continuous mean with a paired t-test**, not binary resolve. **This is the
+most important finding for the product: we measured our chain on the one task
+shape where the literature predicts it cannot help.** Two consequences: (a) the
+gradient *strengthens* C.3's rationale for our cheap-model regime, because the
+gain is largest at the weakest model; (b) **do not power C.3 against 14.7 pp** —
+at n=16 paired, a 6-pp effect is far below resolution, so pre-register the effect
+you are actually powered for.
 
 **P5 — Our verification architecture is a known anti-pattern, three ways.**
 (a) SpecBench (2605.21384): every model saturates its visible suite while
@@ -227,9 +259,12 @@ bug but only 94/300 also flipping green under the gold patch, so a hard
 both-halves gate rejects good patches; the fail-safe fallback is regression-only
 selection, **never "approve"**.
 
-**P8 — Benchmark reality.** Axes **B (concurrent stories), D (CI-failure
-recovery), E (docs/context maintenance), F ($ per delivered unit over days)** are
-covered by **nothing published**; A (decomposition) only weakly. Widening
+**P8 — Benchmark reality.** Axes **B (concurrent stories), E (docs/context
+maintenance), F ($ per delivered unit over days)** are covered by **nothing
+published**; A (decomposition) only weakly. **Axis D is covered — the earlier
+claim that it was not is wrong.** **DevOps-Gym** (arXiv **2601.20882**) ships
+**66 build/CI-failure tasks** plus **17 end-to-end** pipeline tasks; it is
+**Java/Go only, zero Python**, and 3–4 weeks of integration for us. Widening
 SWE-rebench to n=60, k=3 costs **$513 Azure + ~$550 subscription** and moves the
 MDE from ±38 pp to ~±12–15 pp — our effect is −7 pp (−16 pp on the later
 report), so detecting it needs *high hundreds* of instances ($4–6k). **Widening
@@ -237,8 +272,12 @@ can bound the negative; it can never show the chain works.** Publicly runnable
 alternatives: **SWE Atlas** (2605.08366 — released harness and judge prompts, 284
 expert tasks, test-writing graded by **mutation score**, frontier ~42–43% Pass@1,
 Pass^3 drops 30–50%) and **Commit0** (where CAID's +14.7 pp was measured).
-Unconfirmed availability but the best axis fit: **RoadmapBench** (2605.15846),
-**ChainSWE** (2607.02606), **SlopCodeBench** (2603.24755). SWE-bench Pro leaks
+Also existing, and the best axis fit: **RoadmapBench** (2605.15846),
+**ChainSWE** (2607.02606), **SlopCodeBench** (2603.24755), **SWE-EVO**
+(**2512.18470**). **All seven candidates probed in C.1 EXIST** — every arXiv id
+resolved to a real paper with a real public artifact, and no name was a phantom,
+which given the fetch-rewrite hazard below was not the expected outcome. Details
+in `bench/benchmark-availability-2026-08.md`. SWE-bench Pro leaks
 post-`base_commit` git objects via `git log -p`. SWE-bench-Live is confirmed dead
 (0 test rows after 2025-10-01). SWE-Marathon is public but its frontier ceiling
 is <30% at 27.2 M tokens per attempt — not yet.
@@ -390,39 +429,49 @@ CLI-reported against the Anthropic subscription. Estimate was ~$50 Azure.
       `margin_days` per model bound; Table 4 names the bound TYPE.
       `deepseek-v4-pro` remains `release-date-proxy`. **The Claude half of the
       question is answered** — see §1 #8.
-- [ ] **G — the three debts D–F did not close.** All reporting, not measurement.
-      Neither of the first two moves a published number; both would mislead the
-      next reader. **[OPERATOR-PR-ONLY]**
+- [ ] **G — two of the three debts D–F did not close.** All reporting, not
+      measurement. Neither moves a published number; both would mislead the next
+      reader. **[OPERATOR-PR-ONLY]**
       - **No retry on a provider 429.** `openhands` lost 3 of 19 rows to Azure
         `DeepSeek-V4-Pro` `RateLimitError` under `--workers 4`, and a lost row
         records `cost_usd: 0.0`, which reads as free rather than as missing.
         Retry with backoff, or fail the sweep loudly — never both silently. The
         23:19Z report re-ran those three rows as `attempt: 2`, which is that fix
-        applied by hand; **decide whether a 429-lost row may be re-run at all**,
-        because the report's own "Discarded runs" section says `attempt > 1` is
-        "a protocol violation, not a data point" while the headline counts three
-        of them. Amend `PRE-REGISTRATION-1.6.md` Rule 5 to distinguish
-        *repairing an infrastructure loss* from *re-rolling an outcome*, or drop
-        the rows. Until that is written down, cite both numbers as §1 does.
-      - **`sweep-<arm>.json` aggregates contradict their own rows.** The
-        `resolved` / `audited_valid` / `audit_failed` counters are in-flight
-        snapshots taken before grading and before the #227 detector fix, so
-        `sweep-factory.json` says `resolved: 2, audit_failed: 13` while its own
-        `results` list says 7 resolved and the archived `audit.json` files say
-        19 ok / 0 invalid. Recompute the aggregates from the rows at write time,
-        or delete them.
-      - Minor, already closed in the later run: the 04-18 archive carries only
-        `sweep-bare.json` and `sweep-factory.json`; the 23:19Z archive carries
-        all five. Committing that archive closes this one for free.
-      - **Effort:** ~4 h for the 429 retry, ~1 h for the aggregates, ~1 h to
-        amend the pre-registration. **Cost $0** — no new sweep required.
+        applied by hand. **The protocol half is now written down** —
+        `PRE-REGISTRATION-1.6.md` Rule 5 was amended (`:220-221`, PR #232) to
+        distinguish *repairing an infrastructure loss* from *re-rolling an
+        outcome*. The code half is still open, and §1 still cites both numbers.
+      - **`sweep-<arm>.json` aggregates contradict their own rows, in four of
+        five files — worse than previously recorded.** The `resolved` /
+        `audited_valid` / `audit_failed` counters are in-flight snapshots taken
+        before grading and before the #227 detector fix. In
+        `2026-08-04T23-19-24.998844Z`, header `resolved` versus its own `results`
+        list: `sweep-factory.json` 2 vs 7; `sweep-openhands.json` 3 vs 9 (the
+        per-row files say 10); `sweep-claude-5.json` 5 vs 15;
+        `sweep-claude-4.8.json` 8 vs 14; `sweep-bare.json` 1 vs 1 — the only
+        consistent one. `sweep-factory.json` also claims
+        `audited_valid: 6, audit_failed: 13` while all 19 `audit.json` files read
+        `"ok": true`. **And `2026-08-04T04-18-05.349995Z/sweep-factory.json` is a
+        stale file from an entirely different sweep** (`instances: 4`,
+        `finished_at: 2026-08-03T02:47:45Z`) archived alongside 19 per-instance
+        rows. **Published numbers are unaffected** — they derive from
+        `<instance>/<arm>/result.json`. **Rule: trust only the per-row
+        artifacts.** Recompute the aggregates from the rows at write time, or
+        delete them.
+      - **CLOSED.** The 04-18 archive carries only `sweep-bare.json` and
+        `sweep-factory.json`; the 23:19Z archive carries all five, and committing
+        it (`664bcd7d`, PR #232) closed this one for free.
+      - **Effort:** ~4 h for the 429 retry, ~1 h for the aggregates. **Cost $0** —
+        no new sweep required. Both touch `bench/swebench_adapter.py`, so they
+        queue behind the in-flight bench PR (see §0).
 
 ---
 
 ## Phase A — stop the self-confirmation
 
 **Rests on P5, P6, P7. Effort ~1.5–2 weeks. Cost ~$60** (A.1's re-measure ~$40 +
-A.7's reviewer-ranking arm ~$18; everything else is cents). This phase comes first
+A.7's reviewer-ranking arm ~$18; everything else is cents — A.4 came in at
+**$1.2693** and A.1's chain half at **$0.02**). This phase comes first
 because it is the cheapest, because every later measurement is uninterpretable
 without it, and because P5 says our failure mode gets *worse* with model weakness
 and with repo scale — which is our exact operating point.
@@ -432,14 +481,38 @@ zero-byte patch (§1 #5). Nothing in Phase B is worth buying until a green verdi
 means something.
 
 **Replay before you ship.** Most of A is testable against archived reviewer
-prompts for cents rather than by re-running a sweep. **But check the corpus
-first:** `prompt_bodies.ndjson` (#193) had **zero production rows** as of
-2026-08-02, because the systemd units have been stopped since ~2026-07-30. Bring
-the units up (E.5) before claiming a replay corpus exists.
+prompts for cents rather than by re-running a sweep — A.4 did exactly that for
+$1.27. **But the corpus is not where this plan said it was.** Corrected
+2026-08-05:
+
+- `state/events/prompt_bodies.ndjson` **has never existed.** Production
+  `state/events/prompts.ndjson` (2,028 rows) and `prompts.ndjson.1` (43,840 rows)
+  carry **metadata only** — no prompt text, no response — and `prompt_hash` is a
+  truncated 16-char digest whose own docstring
+  (`factory/runner.py:205-215`) says it cannot be replayed.
+- Production has **zero rows after 2026-07-31**: the body writers landed
+  2026-08-01/02 (#193, #208) and the units stopped 2026-07-30, so the writer
+  shipped after the last run.
+- The **real** corpus is
+  `bench/swebench/runs/<instance>/factory/root/state/events/{prompt_bodies,response_bodies}.ndjson`
+  — full verbatim text, sha256-joinable on `prompt_hash`.
+- **It is gitignored, and `_reset_run_artifacts` (`bench/swebench_adapter.py:1556`)
+  `rmtree`s it at the top of every run function**; `_ROW_ARTIFACTS` (`:7197`)
+  excludes it from the committed archives. **So: copy the run-dir body files out
+  BEFORE any sweep.** An operator backup was taken 2026-08-05 at
+  `/home/k/sf-reviewer-corpus-2026-08-05/` — 25 instance dirs, 38 reviewer prompts
+  + 38 responses, 47 trajectory files, 25 run logs, 36 MB.
+
+E.5 remains the only way to generate a *production* body corpus.
 
 ### A.1 — Turn the independent acceptance oracle ON, and put it in the measured path
 
-- [ ] **The countermeasure P7 recommends first is already built here, in a
+**Chain half DONE — PR #236, merged `69b75d1e`. `gates.acceptance_oracle` is still
+absent from every app config, deliberately: an adversarial review found the flag
+is not safe to flip yet.** The blockers are listed below, and the fixes are in an
+in-flight PR ("A.1c + A.6"). The bench half is still open.
+
+- [x] **The countermeasure P7 recommends first is already built here, in a
       stronger form than the paper's.** `factory/chain/acceptance.py:1-22`
       documents it: authored from the **spec only** (direction ACs + `flow.md` /
       `api_spec.md`), authored **early** (at story spawn, `handlers.py:504` and
@@ -451,46 +524,119 @@ the units up (E.5) before claiming a replay corpus exists.
       and enforced by `factory/chain/gates/acceptance_verified.py`, which becomes
       merge-required when the app opts in
       (`factory/chain/gates/evaluator.py:79-87`).
-- [ ] **It has never run. Verified 2026-08-04.** `gates.acceptance_oracle`
-      defaults `False` (`factory/app_config.py:113`) and is set in **no** app
-      config — `apps/factory/config.yaml`, `apps/sacrifice/config.yaml` and
-      `apps/template-probe/config.yaml` all omit it. In `state/factory.db`,
-      `acceptance_expected` is 0 for **all 165 stories** and
-      `acceptance_test_ref` is null for **all 165**. This is the write-never
-      pattern one level up: a whole independence layer, built, tested, wired, and
-      switched off.
+- [x] **It had never run. Verified 2026-08-04, re-verified before PR #236.**
+      `gates.acceptance_oracle` defaults `False` (`factory/app_config.py:113`) and
+      is set in **no** app config — `apps/factory/config.yaml`,
+      `apps/sacrifice/config.yaml` and `apps/template-probe/config.yaml` all omit
+      it. In `state/factory.db`, `acceptance_expected` is 0 for **all 165 stories**
+      and `acceptance_test_ref` is null for **all 165**; `state/acceptance/` did
+      not exist. This is the write-never pattern one level up: a whole
+      independence layer, built, tested, wired, and switched off. **So every
+      published factory number — including the externally-graded 37% and the 40%
+      chain-verdict precision — was measured with the chain's only independent
+      correctness signal absent.**
 - [ ] **And the benchmark cannot see it.** `bench/swebench_adapter.py:2416` runs
       `allowed = {"dev", "review"}` against a story seeded at `SM_DONE`
       (`:2404`), while the oracle is authored in `handle_stories_spawned`. So the
       37% and the 40% chain-verdict precision in §1 were measured **with the
       chain's only independent oracle absent.** The arm labelled "the product"
-      was not the whole product.
-- **What:** (1) opt one app in and watch one story end to end; (2) teach the
-  adapter to author an oracle from the problem statement before the dev dispatch,
-  so the measured arm is the whole product.
-- **⚠ Fail-safe check before flipping the flag.** `required_gate_labels` keys off
-  `acceptance_expected`, **not** `acceptance_test_ref`
-  (`factory/chain/gates/evaluator.py:67-77`), deliberately: a story whose
-  authoring flaked is still required to pass, so it **blocks** rather than
-  shipping un-gated. Flipping the flag therefore blocks every AC-carrying story
-  until authoring works. Do it on one app, with the units up, and watch the first
-  story.
+      was not the whole product. **Still open.**
+- [x] **Made executable — PR #236.** The **first execution ever produced a 100%
+      false block**: the author is blind to the implementation *and* the repo
+      layout, guessed `sacrifice.main` / `main` / `app.main`, and the gate ran at
+      the repo root with the factory's interpreter →
+      `No module named 'app'`. Every AC-carrying story would have false-blocked,
+      then been re-dispatched to dev with an identical failure signature until it
+      sank to `blocked_tests_need_clarification`. **Nine defects fixed**, three of
+      them fail-opens: an all-skipped oracle exited 0 while the persona is *told*
+      to skip untestable criteria → vacuous green; a PR **label** could satisfy
+      the gate; and required-ness rode `story.acceptance_expected`, written by a
+      best-effort DB write that swallows its errors — while `auto_merge` computes
+      `missing_labels` only over the *required* set, so a lost write produced an
+      **un-gated merge**. Required-ness now keys off app opt-in, a config fact
+      that cannot be lost at runtime. Also fixed: **the gate copied the hidden
+      oracle into the story's own dev worktree** (`PRContext.repo_root` *is* that
+      worktree), which `handlers._commit_green_dev_work` later `git add -A`s, and
+      it left the compiled `.pyc` behind — evidenced by the second run sweeping
+      the first run's leftovers.
+- [x] **Real product finding on the way past.** sacrifice direction 002's
+      `api_spec.md` specifies `POST /healthz`; the shipped code serves GET. The
+      oracle failed authoritatively on `assert 405 == 200`. **No existing gate
+      catches spec-vs-implementation divergence.** Direction 078 passed 4/4. Total
+      cost **$0.02**.
+- **What is left:** (1) close the four blockers below, then opt **`sacrifice`** in
+  and watch one story end to end; (2) teach the adapter to author an oracle from
+  the problem statement before the dev dispatch, so the measured arm is the whole
+  product.
+
+**⚠ The flag is NOT safe to flip yet — adversarial review, 2026-08-05.** These are
+the blocking items; fixes are in the in-flight "A.1c + A.6" PR.
+
+1. **D1 — nothing verifies the oracle CAN FAIL.** `def test_ac1(): assert True` is
+   stored, runs, reports "1 passed", and yields `passed=True,
+   authoritative=True` against an implementation that violates the criterion. The
+   persona is told every test must be able to fail; nothing checks it. A required
+   gate whose green carries no information is exactly the "gate detached from a
+   real check" `factory/chain/gates/evaluator.py:18-29` forbids.
+2. **H1 — the oracle runs under collection config the DEV controls.** Two
+   *working* forced-pass attacks were demonstrated: a `pytest_runtest_call`
+   hookwrapper in `backend/tests/conftest.py` calling `outcome.force_result(None)`,
+   and `backend/pyproject.toml` `addopts` plus a root plugin.
+   `factory/diff_paths.py:152 is_collection_channel_path()` — the exact classifier
+   `bench/swebench_adapter.py:1251` uses to REFUSE such a prediction — **exists and
+   is unused on the chain side.** Stated honestly: sacrifice's own
+   `backend/tests/conftest.py:147` has an autouse fixture overriding `get_db` and
+   the shipped `acceptance_harness_hint` advertises it, so independence is
+   currently **conventional, not structural**.
+3. **D2 — the gate never verifies it is testing the merge candidate.**
+   `auto_merge.py:2343` resets to `origin/<feature_branch>` only
+   `if fetched.returncode == 0`; on fetch failure the gate can return an
+   authoritative pass against an unrelated checkout. The fix is
+   `git merge-base --is-ancestor` — a plain SHA equality check would false-block,
+   because `_story_worktree` merges `origin/main` in first.
+4. Lower-ranked but real: `_PASSED_RE.search` takes the **first** `(\d+) passed`,
+   so a forged summary beats the vacuity check; the leak sweep **deletes
+   git-tracked files** when git cannot answer (`_git_tracked` returns an empty
+   set), contradicting its own docstring; an unresolvable direction is a permanent
+   wedge that never exhausts and whose block message says "self-heals next tick";
+   oracle-authoring exhaustion appears in **no** `factory inbox` category and stops
+   re-emitting its event; `.pytest_cache` `nodeids` / `lastfailed` retain the
+   oracle's test names in the dev's tree.
+5. **Gate ordering is load-bearing and untested:** `acceptance_verified` must stay
+   **LAST** in `evaluate_all_gates`, or `tests_meaningful` scores the copied oracle
+   as one of the dev's tests. Today that is a comment with no test.
+
+- **⚠ Fail-safe check before flipping the flag.** Required-ness now keys off app
+  opt-in rather than `acceptance_expected` (PR #236), so a story whose authoring
+  flaked still **blocks** rather than shipping un-gated. Flipping the flag
+  therefore blocks every AC-carrying story until authoring works. Do it on one
+  app, with the units up, and watch the first story.
 - **⚠ And do not claim independence you do not have.** `acceptance_author` is
   `azure/gpt-5.4` (`factory/routes.yaml:94`), the same model as `reviewer`
   (`:124`) — acceptable, because what matters is that it is not the dev's model
   (`:130`, `azure/deepseek-v4-pro`). P6 says rank them; A.7 does.
+- **Flip prerequisites, once the blockers close:** `sacrifice` **only**; all three
+  apps currently have **0 non-terminal stories**, so a flip authors nothing
+  retroactively; `sacrifice-db` must be running or the gate false-blocks on
+  `ConnectionRefusedError`; `hypothesis` is missing from sacrifice's backend dev
+  extra, so EARS-form criteria would fail collection; and **never flip
+  `template-probe`** — the oracle is pytest-only and that app is TypeScript.
 - **Done looks like:** one story with a non-null `acceptance_test_ref` that the
   `acceptance-verified` gate actually ran, plus one benchmark row whose
   `result.json` shows an oracle authored before the dev's first call.
-- **Effort:** ~2 h to flip and soak one story; ~1 day for the bench half
-  **[OPERATOR-PR-ONLY]**. **Cost:** ~$1 of extra authoring per story; ~$40 to
-  re-measure 19 instances.
+- **Effort:** the in-flight PR, then ~2 h to flip and soak one story; ~1 day for
+  the bench half **[OPERATOR-PR-ONLY]**. **Cost:** ~$1 of extra authoring per
+  story; ~$40 to re-measure 19 instances.
 
-### A.2 — A production-tree-changed precondition before any green verdict
+### A.2 — A production-tree-changed precondition before any green verdict — **DONE**
 
-- [ ] **Evidence is one artifact-backed row on `origin/main`** — §1 #5. The chain
+**Shipped in `7a2d7a68`, PR #233, 2026-08-04.** Artifacts on `main`:
+`factory/diff_paths.py` (the lifted classifier) and
+`factory/chain/gates/production_tree_changed.py`.
+
+- [x] **Evidence is one artifact-backed row on `origin/main`** — §1 #5. The chain
       said green on a zero-byte production patch.
-- [ ] **The existing guard cannot catch it.** `_dev_produced_empty_diff`
+- [x] **The existing guard cannot catch it.** `_dev_produced_empty_diff`
       (`factory/chain/handlers.py:2484`, short-circuited at `:2997`) tests the
       **whole** diff, so a diff containing only test files reads as non-empty, the
       story proceeds to review, and the reviewer approves a change to the tests
@@ -510,11 +656,14 @@ the units up (E.5) before claiming a replay corpus exists.
 - **Effort:** ~3 h. Chain code. **Fail-safe review required** — this touches the
   dev → review handoff.
 
-### A.3 — An "underspecified / impossible" terminal state
+### A.3 — An "underspecified / impossible" terminal state — **DONE**
 
-- [ ] **Evidence:** P7 — GPT-5 cheating **54% → 9%** and o3 **49% → 12%** once the
+**Shipped in `7a2d7a68`, PR #233, 2026-08-04.**
+`StoryState.BLOCKED_UNDERSPECIFIED` is at `factory/chain/state_machine.py:233`.
+
+- [x] **Evidence:** P7 — GPT-5 cheating **54% → 9%** and o3 **49% → 12%** once the
       agent has a legitimate way to say the task is unsatisfiable.
-- [ ] **Verified gap.** `StoryState` has eight `BLOCKED_*` sinks
+- [x] **Verified gap.** `StoryState` has eight `BLOCKED_*` sinks
       (`factory/chain/state_machine.py:71-149`), and every one of them means "the
       machine gave up", not "the spec contradicts itself". The nearest,
       `BLOCKED_TESTS_NEED_CLARIFICATION`, is reached only by **exhaustion**
@@ -533,36 +682,83 @@ the units up (E.5) before claiming a replay corpus exists.
   unresolved in `report`.
 - **Effort:** ~4 h (state, transition, persona text, inbox surface). Chain code.
 
-### A.4 — The reviewer gets execution output, not diff text
+### A.4 — The reviewer gets execution output, not diff text — **MEASURED, NEGATIVE. Do not ship it.**
 
-- [ ] **Evidence:** P7 — judge agreement with ground truth **42% → 72%** on
-      execution output instead of a diff; P5(c) — LLM judges score MCC < 15 on
-      code quality, and *more* judge pipeline means *less* validity.
-- [ ] **Verified current state.** `_fetch_pr_diff_for_review`
-      (`factory/chain/handlers.py:2618`, called at `:3065` and `:3449`) is the
-      reviewer's entire view of the work. Its fail-closed posture is correct
-      (#203 — the old fail-open fed the fetch's error text to the model *as* the
-      diff), but what it delivers is diff **text**.
-- **What:** attach the recorded test-run evidence to the reviewer prompt — the
-  dev's own run output (the `output_tail` plumbing exists on the gate path,
-  `factory/chain/gates/smoke_green.py:51-56`, and #195 persists failing gates'
-  details) plus a harness-run result. Keep the diff; add the execution evidence;
-  and say in the prompt which one wins when they disagree.
-- **Do not** add a second judge or a judge pipeline. P5(c) measures that as worse
-  than one simple prompt.
-- **Done looks like:** a replay over archived reviewer prompts shows agreement
-  with the hidden oracle rising on the 19 instances in §1, measured *before* the
-  change ships.
-- **Effort:** ~1 day. Chain code. **Cost: cents** if the replay corpus exists —
-  read the Phase A preamble first.
+**DONE, PR #237, merged `f687b7ee`.** Replay over 18 archived reviewer calls (only
+the last call per instance carries a label the oracle earned;
+`pandas-dev__pandas-63945` never reached review). Model `azure/gpt-5.4`, the
+production reviewer route. Pre-registered before any paid call. **Spend $1.2693**
+(108 calls, 1,079,340 in / 29,105 out) against a $5 hard stop. **Zero treatment
+iterations.** Artifacts committed under `bench/reviewer-replay/`.
+
+- [x] **Evidence it rested on:** P7 — judge agreement with ground truth
+      **42% → 72%** on execution output instead of a diff; P5(c) — LLM judges score
+      MCC < 15 on code quality, and *more* judge pipeline means *less* validity.
+- [x] **Baseline reproduced exactly at $0 first.** TP=6 FP=9 FN=1 TN=2 →
+      precision 40.0%, recall 85.7%, accuracy **8/18 = 44.4%**.
+      `factory_says_green` gives the identical table.
+- [x] **Control-arm fidelity 15/18, 17/18, 15/18** over three replicates, above the
+      pre-registered 12/18 floor. The residual is reviewer nondeterminism; no
+      temperature is passed in production or in the replay.
+- [x] **Result.** Archived recording 8/18 = 44.4% [21.5%, 69.2%]; control rep1
+      **11/18 = 61.1%** [35.7%, 82.7%]; treatment rep1 **8/18 = 44.4%** [21.5%,
+      69.2%]. **Δ = −16.7 pp.** Paired McNemar exact two-sided **3–0 against the
+      treatment, p = 0.25** — not significant, and at n=18 nothing under ±33 pp
+      could be. **Control ≥ treatment in 9 of 9 replicate pairings**; the control's
+      worst replicate still beat the treatment.
+- [x] **Mechanism, and it is an independence error in A.4's own design.** The
+      treatment cut findings raised from **26 → 11** across 54 calls per arm and
+      raised mean `test_quality_score`. On all three flipped instances the
+      control's blocking findings were substantively right and the treatment
+      discarded them citing the transcript. The transcript is independent of the
+      dev's **narration**, not of the dev's **choices** — a dev on run-until-green
+      stops when its own tests pass, so the transcript is **green by
+      construction**, and the precedence rule told the reviewer to let that green
+      outrank its own reading. **This does not refute P7:** P7's judge sees an
+      oracle-side *harness* run; ours saw the author's run history. Different
+      variables, same name.
+- [x] **A.4's premise text was also wrong.** The reviewer was **never** fed diff
+      text only. `## Latest test output` is present on all 31 graded-sweep calls —
+      but at **491–1,894 bytes** against a `## PR diff` of **2,053–56,040 bytes**,
+      and it is the dev's own `dev_attempts[-1]` output (ANSI included), i.e. the
+      dev's self-report. **Absence was never the defect.**
+- **Recommendation, recorded: do NOT ship the production change.** Do not add a
+  second judge or a judge pipeline either — P5(c) measures that as worse than one
+  simple prompt.
+- **Forward path: A.4 is not dead, it is blocked on A.1 being real.** The
+  genuinely independent execution evidence A.4 needed is the **acceptance
+  oracle's** output — authored from spec, before the dev exists, never shown to it.
+- **Two incidental findings, open leads.**
+  1. **The instance id is in the reviewer prompt on all 18 rows** — the `## Story`
+     heading is literally `# <instance_id>`. Not introduced by the splice; this is
+     a contamination note about the graded sweep itself.
+  2. **The control replay scored 11/18 where production scored 8/18 on identical
+     bytes**, so three of production's nine false approvals are recoverable by a
+     re-roll alone. That points at **k>1 on the reviewer** — cheap, orthogonal to
+     A.4, and the one multi-agent pattern P3 says has clean same-model gains. This
+     is an **observation from three replicates, not a measurement.**
 
 ### A.5 — Replace `test_quality_score` with a diff-scoped mutation score
 
 - [ ] **What it is today: a number the reviewer model asserts about itself.**
       `test_quality_score` is emitted by the reviewer persona
       (`factory/personas/reviewer.md:38`, `:54`, `:178`, `:203`), read at
-      `factory/chain/handlers.py:3168`, and it gates the verdict below 0.7. P5(c)
-      puts an LLM's judgement of test strength near chance.
+      `factory/chain/handlers.py:3318`, and the verdict gate is
+      `if verdict == "approve" and score >= 0.7` at **`:3396`**. P5(c) puts an
+      LLM's judgement of test strength near chance. **PLAN's earlier line reference
+      `:3168` was wrong** — that sits inside the empty-diff short-circuit, whose
+      hardcoded `"test_quality_score": 0.0` is at `:3162`.
+- [ ] **⚠ A.5's stated premise is measurably FALSE — do not justify this item as
+      "the 0.7 threshold is doing damage".** Measured 2026-08-05 over all 31
+      verbatim reviewer calls of the graded n=19 sweep: `approve` with
+      `score >= 0.7` = **15**, `approve` with `score < 0.7` = **0** (the lowest
+      approve is 0.78); `request_changes` `>= 0.7` = 8, `< 0.7` = 8. **The
+      `and score >= 0.7` clause vetoed nothing on any of the 31 calls**, and every
+      rejection is independently carried by at least one medium/high finding, so
+      the score never blocked alone either. `test_quality_score` is collinear with
+      the verdict emitted in the same JSON object — a restatement of the decision,
+      not an input to it. **Demoting or deleting it changes 0 of 31 verdicts and
+      0 of 19 rows.**
 - [ ] **The measurement that should replace it exists and is broken.**
       `factory/chain/gates/tests_meaningful.py:63-138` implements real mutation
       testing (no-op a symbol, re-run the suite, fail if it stays green). It has
@@ -601,14 +797,18 @@ the units up (E.5) before claiming a replay corpus exists.
   real red, mutation in a throwaway copy, per-`(head_sha, symbol)` caching, and
   **advisory until measured** — then let the score it produces replace the
   reviewer's self-reported number.
-- **Why this is now worth two days when the old 3.8 said "deleting is cheaper".**
-  Three things changed: P7 gives a measured payoff (test strength 53% → 89.5%
-  under mutation feedback; LLM suites average ~40% mutation score, one case at
-  100% coverage / 4% mutation); §1 #4 says the number it replaces is a coin flip;
-  and SWE Atlas grades test-writing **by mutation score** (P8), so this buys
-  Phase C comparability for free. Deleting the branch is still the right call if
-  the rewrite stalls — a gate detached from a real check is worse than no gate
-  (`factory/chain/gates/evaluator.py:18-29`).
+- **The three justifications that survive the 2026-08-05 measurement.** (a)
+  `tests-meaningful` is in `LOOP4_REQUIRED_GATE_LABELS` while broken four ways,
+  one flag from every merge — a live hazard whichever way it resolves. (b)
+  Chain-verdict precision is 6/15 = **40%**, so the reviewer's *judgement* of test
+  strength needs replacing with a *measurement*. (c) SWE Atlas grades test-writing
+  **by mutation score** (P8), so this buys Phase C comparability for free. P7 still
+  gives the payoff figure (test strength 53% → 89.5% under mutation feedback; LLM
+  suites average ~40% mutation score, one case at 100% coverage / 4% mutation).
+- **Deleting the ablation branch is a legitimate resolution of (a)** — a gate
+  detached from a real check is worse than no gate
+  (`factory/chain/gates/evaluator.py:18-29`). **A rewrite-vs-delete decision is in
+  flight.**
 - **⚠ Never flip `mutation_testing` as an experiment.** It is one flag from
   breaking every merge. See memory `ablation_gate_dormant_and_broken`.
 - **Effort:** ~2 days. **Cost context:** the full factory suite is 5m36s warm, so
@@ -616,6 +816,10 @@ the units up (E.5) before claiming a replay corpus exists.
   the cache is not optional.
 
 ### A.6 — Harness-owned red→green, with a regression-only fallback
+
+**Folded into the in-flight "A.1c + A.6" PR.** "Require the oracle to be red at the
+PR's merge base before crediting a green" **is** harness-owned red→green, so it is
+built once, on the oracle path, alongside A.1's blocker fixes.
 
 - [ ] **Evidence:** P7 — red→green doubles patch-stream precision at k=1, and it
       is a second, independent kill for the §1 #5 zero-byte class.
@@ -639,7 +843,10 @@ the units up (E.5) before claiming a replay corpus exists.
   proceeds.
 - **Effort:** ~1 day. Chain code. Cost: one extra suite run per story.
 
-### A.7 — Check whether the reviewer is actually STRONGER than the dev — and cut the loop if not
+### A.7 — Check whether the reviewer is actually STRONGER than the dev — and cut the loop if not — **BLOCKED**
+
+**Blocked, and the block is a guardrail working correctly.** There is no free
+replay path and the cheap shortcut is refused by design.
 
 - [ ] **Evidence:** P6. Weaker-reviewer-on-stronger-writer **−8.6 pp** (fixed 3,
       broke 13); stronger-on-weaker **+18.1 pp**; self-review **+0.0 pp**. Our
@@ -649,8 +856,26 @@ the units up (E.5) before claiming a replay corpus exists.
       `azure/gpt-5.3-codex` (`:135`), reviewer `azure/gpt-5.4` (`:124`).
       `model_router.check_review_independence` refuses a colliding config and
       says nothing about which model is better.
-- **What:** rank the three deployments on the same 19 instances. Phase C gives
-  most of this free — `openhands` at 53% is a capability read for
+- [ ] **No `azure/gpt-5.4` *agent* arm exists in either archive.** gpt-5.4 appears
+      only as the reviewer *inside* the factory arm — 31 single-turn text calls,
+      never an agent loop — so there is nothing to replay, and ranking it requires
+      it to attempt the instances.
+- [ ] **The harness refuses the cheap path, correctly.** `openhands` has
+      `model_selectable=False` (`bench/swebench_adapter.py:3704-3721`) and
+      `resolve_arm_model` (`:3856`) raises `SystemExit` telling you to change
+      `routes.yaml` instead. **And that is blocked too:** setting `dev.standard` to
+      `azure/gpt-5.4` collides with `reviewer: azure/gpt-5.4`
+      (`factory/routes.yaml:124`) and
+      `model_router.check_review_independence` (`factory/model_router.py:117`)
+      raises `ReviewIndependenceError` at router load, refusing to resolve *any*
+      route.
+- **Cheapest valid path:** an operator bench PR setting `model_selectable=True` on
+  the `openhands` `ArmSpec`, then `--arm openhands --model azure/gpt-5.4`.
+  `run_key` (`:3877`) keys the run dir as `openhands@azure/gpt-5.4`, so it
+  **cannot clobber** the existing corpus. Queues behind the in-flight bench PR
+  (see §0).
+- **What it buys:** rank the three deployments on the same 19 instances. Phase C
+  gives most of this free — `openhands` at 53% is a capability read for
   `deepseek-v4-pro` under a fixed harness. One more `openhands` arm on
   `azure/gpt-5.4` places the reviewer on the same axis. If the reviewer is not
   measurably stronger than the dev, cut the review cycle to **one advisory pass**
@@ -658,12 +883,15 @@ the units up (E.5) before claiming a replay corpus exists.
 - **Done looks like:** a per-model rate table under one fixed harness, and a
   recorded decision on the review loop that cites it.
 - **Effort:** ~half a day of analysis. **Cost ~$18** for one 19-instance
-  `openhands` arm on the reviewer's deployment. **[OPERATOR-PR-ONLY]** for the
-  bench half.
+  `openhands` arm on the reviewer's deployment (the measured `openhands` arm was
+  $15.37 for 16 rows / $18.20 for 19). **[OPERATOR-PR-ONLY]** for the bench half.
 
-### A.8 — Do NOT add review cycles
+### A.8 — Do NOT add review cycles — **DONE, pinned by a test**
 
-- [ ] **Evidence, both directions.** P5(b): multiple submissions with feedback
+**Shipped in `7a2d7a68`, PR #233, 2026-08-04:** `tests/test_loop_cap_ceiling.py`
+pins the loop caps, so raising them now fails CI rather than passing review.
+
+- [x] **Evidence, both directions.** P5(b): multiple submissions with feedback
       raised cheating **33% → 38%**. Ours: reviewer cycles `0×7, 1×9, 2×2, 3×1`
       across the 19 factory rows and the resolve rate did not move (§1 #6).
 - **What:** nothing. The caps stay at 3 with inner guards at 2
@@ -779,9 +1007,24 @@ task shape where role decomposition is *known* not to help. C.3 is the direct
 test of the shape where it is known to help. C.4 — more SWE-rebench — is demoted
 because it cannot produce a positive result no matter how much it costs.
 
-### C.1 — Free availability probe, first
+**⚠ Run order, INVERTED 2026-08-05 by C.1's findings: C.1 (done) → C.3 → C.2 →
+C.4.** The section numbers are left alone so references keep resolving; the
+ordering is what changed. Commit0-Lite (C.3) is Python/pytest end to end, so
+`_GRADE_SCRIPT`, per-node `PASSED` grading, the oracle store, the five report
+tables and the Clopper-Pearson / McNemar statistics all transfer untouched — 4–7
+days — and it is the only option that can come back positive. SWE Atlas (C.2)
+costs more than this plan priced it; the reasons are in C.2. Keep C.2 — after C.3.
 
-- [ ] **1 day, $0, and the highest expected value per dollar in the plan.** Probe
+### C.1 — Free availability probe, first — **DONE, $0**
+
+**PR #235, merged `b721f65d`, cost $0.** Deliverable committed at
+`bench/benchmark-availability-2026-08.md`. **All seven probed candidates EXIST** —
+every arXiv id resolved to a real paper with a real public artifact, no name was a
+phantom. It also produced two ids this plan was missing (DevOps-Gym **2601.20882**,
+SWE-EVO **2512.18470**), corrected P8's "axis D is covered by nothing published",
+and inverted the Phase C run order.
+
+- [x] **1 day, $0, and the highest expected value per dollar in the plan.** Probe
       whether these are actually runnable: **RoadmapBench** (2605.15846 — 115
       tasks, median 5 weighted subtasks, hidden target-version tests, git tags
       pruned, OpenHands baselines published — the best axis fit we found),
@@ -794,11 +1037,11 @@ because it cannot produce a positive result no matter how much it costs.
   the note in `SOTA-RESEARCH-2026-07.md`. Check each arXiv id resolves and each
   dataset has a downloadable harness. A "this benchmark does not exist" outcome is
   a *successful* probe.
-- **Done looks like:** a five-row table — name, arXiv id resolves y/n, harness
-  public y/n, oracle shipped y/n, axis covered — committed under `bench/`.
+- [x] **Done looks like:** a five-row table — name, arXiv id resolves y/n, harness
+      public y/n, oracle shipped y/n, axis covered — committed under `bench/`.
 - **Effort:** 1 day. **Cost $0.**
 
-### C.2 — SWE Atlas, n=60, three arms
+### C.2 — SWE Atlas, n=60, three arms — **run AFTER C.3**
 
 - [ ] **Why this suite:** 2605.08366 ships its harness **and** its judge prompts,
       284 expert-authored tasks, frontier ~42–43% Pass@1 with Pass^3 dropping
@@ -809,30 +1052,54 @@ because it cannot produce a positive result no matter how much it costs.
       every sweep from now on — it is the only pair that holds the model fixed and
       varies the harness, so it is the only arm that can measure the product. A
       factory number published without it is a number about the model.
+- [ ] **⚠ It costs more than the line below prices it. Verified in C.1's probe.**
+      **200 of its 284 tasks are not Python** (Go 106, Python 84, TS/JS 56, C/C++
+      38). Its oracle is a **paid LLM judge** — `EVAL_MODEL` defaults to
+      `claude-opus-4-5` — which both contradicts our own P5(c) evidence and
+      **defeats `report --check` byte-stability**. And it needs Harbor + Modal +
+      ~4.28 GB per image. None of that kills the suite; all of it says C.3 first.
 - **Done looks like:** the five pre-registered tables, an archived
   `report --check`-green run, and the mutation-score column filled.
-- **Effort:** ~1 week for the adapter. **Cost ~$400.**
+- **Effort:** ~1 week for the adapter. **Cost ~$400** — re-cost it against the
+  four findings above before committing to the number.
 
-### C.3 — Commit0 lite, n ≈ 15 — the direct test of P4 on our own architecture
+### C.3 — Commit0-Lite, n = 16 — the direct test of P4 on our own architecture — **run FIRST in Phase C**
 
 - [ ] **This is the highest-information experiment in the plan for the product
       question, because it is the only one that can come back positive.** CAID
-      (2603.21489) measured **+14.7 pp over a single agent on Commit0** — build a
-      library from scratch, 54 of them — using centralized delegation with
-      **isolated git worktrees and branch-and-merge**. That is our architecture,
-      including primitives we already have (`factory/chain/worktree.py`, per-story
-      worktrees, `freshen_behind_prs`, conflict-rebuild-on-fresh-branch).
-- [ ] **Arms: `factory` and `openhands`, same model, n ≈ 15.** Report paired
-      McNemar as always. At n=15 this resolves a large effect only — CAID's
-      +14.7 pp is roughly that size, which is why n=15 is defensible here and n=19
-      was not enough for a 7-pp question.
+      (2603.21489) measured its Commit0 lift — build a library from scratch — using
+      centralized delegation with **isolated git worktrees and branch-and-merge**.
+      That is our architecture, including primitives we already have
+      (`factory/chain/worktree.py`, per-story worktrees, `freshen_behind_prs`,
+      conflict-rebuild-on-fresh-branch). Both CAID arms are public
+      (`JiayiGeng/CAID`, `run_single.sh` / `run_multi.sh`), so **C.3 reproduces a
+      published comparison rather than inventing one.**
+- [ ] **The plumbing transfers untouched, which is why it goes first.** Commit0 is
+      Python/pytest end to end, so `_GRADE_SCRIPT`, per-node `PASSED` grading, the
+      oracle store, the five report tables and the Clopper-Pearson / McNemar
+      statistics all carry over. 4–7 days.
+- [ ] **Arms: `factory` and `openhands`, same model, n = 16.** `SPLIT_LITE` is
+      exactly **16 repos** (`commit0/harness/constants.py:87`), so this plan's
+      earlier "n ≈ 15" matches the published split. **Pre-register the effect you
+      are actually powered for, and it is not 14.7 pp** — per P4, +14.7 is the
+      MiniMax 2.5 row, the frontier effect is +6.0 pp, and at n=16 paired a 6-pp
+      effect is far below resolution. Note also that CAID scored Commit0 as a
+      **continuous mean with a paired t-test**, not binary resolve; pre-register
+      which statistic we report.
+- [ ] **⚠ The Commit0 integrity trap — design grading around it before spending
+      anything.** The tasks reimplement stripped bodies of famous PyPI libraries
+      (jinja, pyjwt, babel, cachetools, marshmallow), so the reference
+      implementation is one `pip download` away: **grading MUST be offline.**
+      Contamination is maximal by construction, which makes any Commit0 number a
+      **paired within-corpus comparison and never a published rate.**
 - **⚠ State the asymmetry up front.** A positive result here does not rehabilitate
   the chain on single-issue patching; it relocates the claim to a different task
   shape, which is exactly what P1 and P4 together predict. Write that in the
   pre-registration, before the data.
 - **Done looks like:** a paired two-arm table on Commit0 with the same
   archive/`--check` discipline as §1.
-- **Effort:** 2–4 days for the adapter. **Cost ~$450.**
+- **Effort:** 4–7 days for the adapter, and a plumbing probe first (queued behind
+  the in-flight bench PR — see §0). **Cost ~$450.**
 
 ### C.4 — Widening SWE-rebench — DEMOTED, with its honest costing
 
@@ -1032,6 +1299,11 @@ on cost alone.
 
 ### E.5 — Bring the units up, watch one cycle, and decide the FMS on cost — **promoted**
 
+**⚠ Sequenced, deliberately: the units stay OFF until A.1's blockers close, then
+come up with the acceptance oracle enabled on one app.** That makes E.5's soak and
+A.1's soak one cycle, and it stops a live tick racing an agent's test runs. See §0
+for the current operational state.
+
 - [ ] **Start:** `uv run factory on`, then confirm
       `systemctl --user status factory-manager.service factory-tick@sacrifice.timer`.
       Check `Result=` and `errors=` **across two runs** — "services up" is not
@@ -1056,8 +1328,10 @@ on cost alone.
 - **Do not delete before measuring.** The wiring bugs were fixed in PR #113
   (2026-07-24) and the newest apply attempt predates parts of that work, so the
   tier has arguably never run in its fixed form. One honest cycle first.
-- **This step is also a prerequisite for Phase A's replay corpus** —
-  `prompt_bodies.ndjson` has no production rows while the units are stopped.
+- **This step is the only way to generate a *production* `prompt_bodies` corpus**,
+  which today has **zero rows** — the writers landed after the last run. It is not
+  a prerequisite for Phase A's replay corpus; that corpus lives in the bench run
+  dirs. Read the corrected facts in the Phase A preamble.
 - **Effort:** ~half a day of watching, plus the deletion PR if the rule trips.
 
 ### E.6 — Extend the persona contract-collision validator — ~2 h
@@ -1228,7 +1502,9 @@ isolation, in inverted form), E.6 (validator extension). **1.5, A.5 and the
 
 Every claim in the original 2026-08-01 briefing was re-checked. Nine needed
 correcting; the rest verified exactly. Corrections 14–19 were added 2026-08-04,
-when the plan was rewritten around the research synthesis.
+when the plan was rewritten around the research synthesis. **Corrections 20–29
+were added 2026-08-05**, after the session that shipped A.2/A.3/A.8 (#233), the
+archive commit (#232), C.1 (#235), A.1's chain half (#236) and A.4 (#237).
 
 1. **Manager spend share — 52.0%, and the in-repo docstring says 53%.**
    `factory/manager/detectors/fms_yield.py:12` reads
@@ -1342,6 +1618,115 @@ when the plan was rewritten around the research synthesis.
     rests on (`Claw-SWE-Bench`, arXiv 2606.12344) **could not be verified to
     exist**. The design intuition — collect file state, not model-emitted unified
     diffs — stands; the number does not. Do not lean on it.
+
+20. **Both archives are now committed, so #14's "uncommitted" clause is stale.**
+    `664bcd7d` (PR #232) committed `2026-08-04T23-19-24.998844Z` — `git ls-files`
+    shows all seven archive roots, 293 tracked files in that one — and amended
+    `PRE-REGISTRATION-1.6.md` Rule 5, which addresses the `attempt > 1`
+    contradiction at `:220-221`. §1's provenance note has been corrected. **The
+    docs half of #14 was not done in that PR and is still open**: `README.md` now
+    carries 53% / p=0.375 / 2.8×, while `CLAUDE.md`, `STATUS.md` and
+    `bench/swebench/README.md` still carry 44% / p=0.625 / 2.3×. Both readings are
+    now re-derivable from committed archives, so neither is *wrong* — but the repo
+    disagrees with itself, and the next doc PR should settle it.
+
+21. **CAID's Commit0 lift is per-model, not one effect size — and +14.7 pp is the
+    WEAKEST model's row.** Appendix C, Commit0-**Lite**, one-sided paired t-test:
+    Claude Sonnet 4.5 **+6.0 pp** (t=2.87, p=0.006); GLM 4.7 **+3.6 pp** (t=1.37,
+    p=0.095, not significant); MiniMax 2.5 **+14.7 pp** (t=2.81, p=0.007). Two
+    consequences, both in P4: the gradient *strengthens* C.3's rationale for a
+    cheap-model regime, and **C.3 must not be powered against 14.7 pp**.
+
+22. **CAID is a METHOD, not a benchmark.** arXiv 2603.21489 is *"Effective
+    Strategies for Asynchronous Software Engineering Agents"* (Geng & Neubig), with
+    both arms public at `JiayiGeng/CAID` (`run_single.sh`, `run_multi.sh`). It
+    scored Commit0 as a **continuous mean with a paired t-test**, not binary
+    resolve. `SPLIT_LITE` is exactly **16 repos**
+    (`commit0/harness/constants.py:87`), so this plan's "n ≈ 15" matched the
+    published split.
+
+23. **"Axis D is covered by nothing published" was wrong, and two arXiv ids were
+    missing.** **DevOps-Gym** (**2601.20882**) has **66 build/CI-failure tasks**
+    plus **17 end-to-end** pipeline tasks — Java/Go only, **zero Python**, 3–4
+    weeks of integration. **SWE-EVO** is **2512.18470**. And **all seven probed
+    candidates EXIST**: every id resolved to a real paper with a real public
+    artifact. Given the fetch-rewrite hazard, that was not the expected outcome.
+    Details in `bench/benchmark-availability-2026-08.md`.
+
+24. **Phase C's order inverts: C.3 before C.2.** Commit0-Lite is Python/pytest end
+    to end, so the whole grading and reporting substrate transfers untouched (4–7
+    days), and it is the only option that can come back positive. SWE Atlas costs
+    more than this plan priced it: **200 of its 284 tasks are not Python** (Go 106,
+    Python 84, TS/JS 56, C/C++ 38), its oracle is a **paid LLM judge**
+    (`EVAL_MODEL` defaults to `claude-opus-4-5`) which contradicts our own P5(c)
+    evidence **and defeats `report --check` byte-stability**, and it needs Harbor +
+    Modal + ~4.28 GB per image. C.2 stays; it moves after C.3.
+
+25. **Phase A's replay-corpus premise named a path that has never existed.**
+    `state/events/prompt_bodies.ndjson` has never existed. Production
+    `state/events/prompts.ndjson` (2,028 rows) and `prompts.ndjson.1` (43,840 rows)
+    carry **metadata only**, and `prompt_hash` is a truncated 16-char digest whose
+    own docstring (`factory/runner.py:205-215`) says it cannot be replayed.
+    Production has **zero rows after 2026-07-31** — the writers landed 2026-08-01/02
+    (#193, #208) and the units stopped 2026-07-30. The real corpus is
+    `bench/swebench/runs/<instance>/factory/root/state/events/{prompt_bodies,response_bodies}.ndjson`,
+    which is gitignored, `rmtree`d by `_reset_run_artifacts`
+    (`bench/swebench_adapter.py:1556`) at the top of every run function, and
+    excluded from archives by `_ROW_ARTIFACTS` (`:7197`). **Rule: copy the run-dir
+    body files out BEFORE any sweep.** Operator backup 2026-08-05:
+    `/home/k/sf-reviewer-corpus-2026-08-05/` (25 instance dirs, 38 reviewer prompts
+    + 38 responses, 47 trajectory files, 25 run logs, 36 MB).
+
+26. **The §1.6 G aggregate debt hits FOUR of five sweep files, not one, plus a
+    stale file.** In `2026-08-04T23-19-24.998844Z`, header `resolved` vs its own
+    `results` list: factory 2 vs 7; openhands 3 vs 9 (per-row files say 10);
+    claude-5 5 vs 15; claude-4.8 8 vs 14; bare 1 vs 1 (the only consistent one).
+    `sweep-factory.json` also claims `audited_valid: 6, audit_failed: 13` while all
+    19 `audit.json` files read `"ok": true`. And
+    `2026-08-04T04-18-05.349995Z/sweep-factory.json` is a **stale file from an
+    entirely different sweep** (`instances: 4`,
+    `finished_at: 2026-08-03T02:47:45Z`) archived alongside 19 per-instance rows.
+    **Published numbers are unaffected** — they derive from
+    `<instance>/<arm>/result.json`. **Trust only the per-row artifacts.**
+
+27. **A.4's premise was wrong and its treatment is measurably worse.** The reviewer
+    was **never** fed diff text only: `## Latest test output` is present on all 31
+    graded-sweep calls, at 491–1,894 bytes against a `## PR diff` of
+    2,053–56,040 bytes, and it is the dev's own `dev_attempts[-1]` output. Absence
+    was never the defect. Measured (PR #237, $1.2693): control rep1 **11/18 =
+    61.1%** vs treatment rep1 **8/18 = 44.4%**, **Δ = −16.7 pp**, McNemar exact
+    3–0 against the treatment, p = 0.25, control ≥ treatment in **9 of 9**
+    replicate pairings. The mechanism is an independence error in A.4's own design:
+    a run-until-green dev's transcript is **green by construction**, so the
+    precedence rule let that green outrank the reviewer's own reading. **This does
+    not refute P7** — P7's judge sees an oracle-side harness run. Do not ship the
+    production change; A.4 is blocked on A.1 being real.
+
+28. **A.5's stated premise is measurably FALSE, and its cited line was wrong.**
+    Over all 31 verbatim reviewer calls: `approve` with `score >= 0.7` = 15,
+    `approve` with `score < 0.7` = **0** (lowest approve 0.78);
+    `request_changes` 8 / 8. **The `and score >= 0.7` clause vetoed nothing**, and
+    every rejection is independently carried by a medium/high finding.
+    `test_quality_score` is collinear with the verdict in the same JSON object.
+    **Demoting or deleting it changes 0 of 31 verdicts and 0 of 19 rows.** The gate
+    is at `factory/chain/handlers.py:3396`, score read at `:3318`; the cited
+    `:3168` sits inside the empty-diff short-circuit (hardcoded
+    `"test_quality_score": 0.0` at `:3162`). A.5's surviving justifications are the
+    `LOOP4_REQUIRED_GATE_LABELS` hazard, the 40% chain-verdict precision, and SWE
+    Atlas comparability.
+
+29. **A.7 is blocked by two guardrails behaving correctly, not by missing work.**
+    No `azure/gpt-5.4` **agent** arm exists in either archive — gpt-5.4 appears only
+    as the reviewer inside the factory arm (31 single-turn text calls), so there is
+    nothing to replay. `openhands` has `model_selectable=False`
+    (`bench/swebench_adapter.py:3704-3721`) and `resolve_arm_model` (`:3856`) raises
+    `SystemExit`; changing `routes.yaml` instead collides
+    `dev.standard` with `reviewer: azure/gpt-5.4` (`factory/routes.yaml:124`) and
+    `check_review_independence` (`factory/model_router.py:117`) refuses to resolve
+    *any* route. Cheapest valid path: an operator bench PR flipping
+    `model_selectable=True` on the `openhands` `ArmSpec`, then
+    `--arm openhands --model azure/gpt-5.4`; `run_key` (`:3877`) keys the run dir
+    `openhands@azure/gpt-5.4`, so it cannot clobber the corpus. ~$18.
 
 Verified exactly as stated, no correction needed: the 122/118/24 chain counts;
 17-validated/3-rejected staging; 1 open issue / 0 open PRs / 0 blocked; L4's
