@@ -113,7 +113,7 @@ def sweep_leaked_oracles(tree: Path) -> list[str]:
     the PR. Called both before every gate run and on every worktree ensure, so
     neither the dev nor a later gate run ever sees a stale copy.
 
-    Sweeps the compiled ``__pycache__/…​.pyc`` too — pytest leaves one next to the
+    Sweeps the compiled ``__pycache__/*.pyc`` too — pytest leaves one next to the
     copy, it contains the same assertions, and ``git add -A`` stages it.
 
     NEVER deletes a file git TRACKS. Otherwise this sweep would itself be a

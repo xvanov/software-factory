@@ -200,6 +200,11 @@ def evaluate_all_gates(pr: PRContext, app_config: AppConfig) -> dict[str, GateRe
     )
 
     out: dict[str, GateResult] = {}
+    # ORDER MATTERS for the last entry: ``acceptance_verified`` briefly copies the
+    # hidden oracle into the checkout to run it. Keeping it last means no other
+    # gate can observe that copy — ``tests_meaningful`` would score it as one of
+    # the dev's tests, and ``production_tree_changed`` reads the tree too. Do not
+    # move it earlier in this tuple.
     for mod in (
         tests_green,
         tests_meaningful,
