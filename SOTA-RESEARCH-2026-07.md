@@ -19,14 +19,26 @@
 Our claim: *harness quality beats model size; cheap models plus loops and backpressure
 beat frontier models plus a thin harness, far cheaper.*
 
-**Confirmed — harness variance exceeds model variance.**
+**Confirmed — harness variance exceeds model variance**, but on a narrower
+evidence base than this section originally claimed. Corrected 2026-08-04: the
+Claw-SWE-Bench citation could not be verified to exist, so the load-bearing
+verified datapoint is the LangChain one, plus the leaderboard-derived spreads
+below.
 
-- Claw-SWE-Bench (arXiv 2606.12344), 350 real issues, 43 repos, model held fixed,
-  five harnesses swapped: pass@1 spread **12.5 pp on GLM 5.1, 27.4 pp on
-  Qwen 3.6-flash**. Model spread with harness fixed: 29.4 pp. Harness choice ≈ one
-  model tier, and matters *more* the weaker the model.
 - LangChain held gpt-5.2-codex fixed and changed only prompts/tools/middleware:
-  **52.8% → 66.5% on Terminal-Bench 2.0**, rank ~30 → top-5.
+  **52.8% → 66.5% on Terminal-Bench 2.0**, rank ~30 → top-5. **This is the one
+  verified fixed-model harness-swap datapoint in this file.**
+- ~~Claw-SWE-Bench (arXiv 2606.12344), 350 real issues, 43 repos, model held
+  fixed, five harnesses swapped: pass@1 spread 12.5 pp on GLM 5.1, 27.4 pp on
+  Qwen 3.6-flash; model spread with harness fixed 29.4 pp.~~ **DOWNGRADED
+  2026-08-04 — the arXiv id could not be verified to resolve.** Do not cite it.
+- Independent replacement evidence, computed from the SWE-bench Verified
+  leaderboard's own `results.json` (2026-08-04): **fixed-model scaffold spread
+  scales inversely with model strength** — `claude-opus-4-5` **2.4–4.8 pts** (a
+  100-line bash-only agent lands within 2.4 of SOTA), `claude-sonnet-4` 11.9,
+  GLM-4.6 12.8, `Qwen3-Coder-480B` **14.2**, Kimi-K2 family **~21.6**, and at the
+  cheap end the minimal scaffold is the *loser*. Same conclusion — harness matters
+  more the weaker the model — from a source we can re-derive.
 - Cheap+good beats strong+generic, directly: Qwen 3.6-flash + OpenClaw **66.0% at
   ~$0.20/task** beats GLM 5.1 + GenericAgent **63.1% at ~$0.25**.
 
@@ -121,14 +133,29 @@ insight. We got there first.
   for current numbers before citing anything time-bound from that pass.
 - Long-range systemd journal history for `factory-tick@sacrifice` rotates out;
   `ticks.ndjson` is the only durable record for that kind of retrospective.
-- **External numbers above 80% on any SWE-bench variant should be treated as
-  contaminated or unverifiable.** OpenAI's 2026-07-08 audit found ~30% of SWE-bench
-  Pro's public tasks broken and retracted its recommendation; Cursor found Pro scores
-  collapse when agents lose internet and git history, with some agents retrieving gold
-  patches. swebench.com's own leaderboards are JS-rendered and could not be fetched;
+- **External numbers above 80% on any SWE-bench-FAMILY corpus should be treated as
+  contaminated or unverifiable** — narrowed 2026-08-04 from "any benchmark".
+  OpenAI's 2026-07-08 audit found ~30% of SWE-bench Pro's public tasks broken and
+  retracted its recommendation; Cursor found Pro scores collapse when agents lose
+  internet and git history, with some agents retrieving gold patches; and Pro
+  additionally leaks post-`base_commit` git objects reachable via `git log -p`.
+  swebench.com's own leaderboards are JS-rendered and could not be fetched;
   verified figures come from aggregators or from papers reporting their own runs.
-- Several research agents reported that their fetch pipeline silently substituted proper
-  nouns. Sources here are cited by **URL**, not by rendered title, for that reason.
+  **The rule does not generalize past that family.** Terminal-Bench 2.1 has Opus 5
+  at **89.1%, container-verified**, and our own container-graded SWE-rebench row
+  put `claude-opus-5` at 79% with a **clean contamination probe** (`claude-opus-4-8`,
+  cutoff Jan 2026, scored 74% on the same harness, p=1.000). A high number on a
+  corpus with a working oracle and a passed contamination control is a high number.
+- **Fetched content is lower-confidence than fetched numbers.** Several research
+  agents reported that their fetch pipeline silently substituted proper nouns —
+  abstracts came back reading "software ENGINEERING" where the source says
+  "software design". The mundane cause is this org's global `DESIGN → ENGINEERING`
+  text-rewrite rule being applied to *retrieved* text and not only to authored
+  prose. Consequence: **anything quoting a fetched benchmark or paper NAME is
+  lower-confidence than anything quoting a NUMBER from the same fetch.** Sources
+  here are cited by **URL and arXiv id**, never by rendered title, and any name
+  taken from a fetch must be re-verified against the source before it is quoted
+  outside this repo.
 - Model names post-dating May 2026 (Claude Mythos 5, GPT-5.6 Sol, Kimi K3, Muse Spark,
   Inkling) are reported as sourced, not independently confirmed.
 - **The "we beat Claude Code cheaply" caveat is now moot — it has been measured, and we
@@ -140,6 +167,12 @@ insight. We got there first.
   measurable lift** over it (p=0.625) at 2.3× the cost per resolved instance. What
   produced the apparent lift was tooling, not orchestration (44% vs 6% for a no-tools
   loop, p=0.031). Full result: `bench/swebench/results.md`.
+  **Update 2026-08-04:** those `openhands` figures are from the archive committed to
+  `origin/main` (`results-archive/2026-08-04T04-18-05.349995Z/`), where the arm lost
+  3 rows to Azure 429s. A later report re-ran those rows and puts `openhands` at
+  **10/19 = 53%**, p=0.375, $1.82 per resolved instance — a **2.8×** cost ratio, and
+  `openhands` vs `bare` at **p=0.004**. The conclusion is unchanged and the gap is
+  wider. See `PLAN.md` §1 for the provenance rule and Corrections #14.
 - **Contamination is not the explanation for Claude's lead.** `claude-opus-4-8`
   (published cutoff Jan 2026) scores 74% against `claude-opus-5`'s 79% on the same
   harness, p=1.000, even though all 19 instances predate opus-5's cutoff. The relevant
@@ -156,8 +189,22 @@ insight. We got there first.
   hours, 1,300 trials: no configuration passed 30%. Failure mix: 41.6% implementation,
   31.4% timeout, 15.4% reward hacking, 7.6% premature termination.
 - **Auto-designed multi-agent systems are retired.** MAS-Zero GPT-5 scored 45.52% at
-  $998 vs plain CoT-SC GPT-5 at 57.09% for $286. *Expert*-architected role splits still
-  win — which is what our persona pipeline is. Don't let the FMS search topologies.
+  $998 vs plain CoT-SC GPT-5 at 57.09% for $286. Don't let the FMS search topologies.
+  **Narrowed 2026-08-04 — this bullet used to end "*Expert*-architected role splits
+  still win — which is what our persona pipeline is." That is now scoped:**
+  - **Supported** for CAID (arXiv 2603.21489) on **Commit0** (+14.7 pp over a
+    single agent, building 54 libraries from scratch) and **PaperBench**
+    (+25.6 pp), using centralized delegation with isolated git worktrees and
+    branch-and-merge.
+  - **NOT supported for this repo's chain on single-issue patching.** No entry in
+    the SWE-bench Verified top 20 decomposes by SDLC role, there is no sequential
+    critic anywhere in it, and EPAM *removed* its unit-testing stage and
+    multi-iteration loop moving to Sonnet 4 and scored 76.8% — joint-highest for
+    that model. Our own measurement agrees: 37% for the chain vs 53% for one
+    OpenHands agent on the same weights (`bench/swebench/results.md`).
+  - The reading that survives both: role decomposition wins where the task is
+    *composed of many separable units*, and loses where the task is one patch.
+    See `PLAN.md` Phase C.3, which tests exactly that on our own architecture.
 - **Harnesses may be depreciating assets.** The strongest dissent holds that harness
   components encode expiring assumptions and should be deletable within hours, with
   ~90-day replacement cycles; O'Reilly's "Kirby effect" describes frontier models
@@ -175,4 +222,52 @@ insight. We got there first.
   denominator), **activation** (credit a patch only if its instrumentation beacon
   actually fired), **significance** (paired significance test on a sealed split never
   consulted during search); and file-state patch collection over model-emitted unified
-  diffs (Claw-SWE-Bench: 69.1% → <1.5% apply failures switching transport).
+  diffs (~~Claw-SWE-Bench: 69.1% → <1.5% apply failures switching transport~~ —
+  **DOWNGRADED 2026-08-04, the citation could not be verified; the design intuition
+  stands, the number does not**. `PLAN.md`'s deferred patch-apply item is costed on
+  our own 21 historical failures instead).
+
+---
+
+## Benchmark reality — measured and re-scoped 2026-08-04
+
+What our own product claim needs, versus what the field publishes. This section
+replaces the assumption that a bigger SWE-bench run is the next measurement.
+
+**The axes our claim turns on are unmeasured by anyone.** **B** concurrent
+stories, **D** CI-failure recovery, **E** docs and context maintenance, **F**
+dollars per delivered unit over days — **nothing published covers them**. Axis A
+(does decomposition help) is covered only weakly, and only on single-issue
+patching, where the answer is no (see the MAS-Zero bullet above).
+
+**Corpus status, verified:**
+
+- **SWE-rebench (Nebius) is the suite of record and it is healthy** — 860
+  execution-validated Python instances, docker image and oracle shipped in-row,
+  monthly splits through 2026-05-12. Supply by `created_at`: `>2026-02-01` = 167,
+  `>2026-04-24` = 30, `>2026-06-01` = 0.
+- **SWE-bench Pro — frozen.** ~30% of public tasks broken per OpenAI's 2026-07-08
+  audit, and it **leaks post-`base_commit` git objects reachable via `git log -p`**.
+- **SWE-bench-Live — dead.** Last modified 2025-09-18, newest instance
+  2025-09-02, **0 rows after 2025-10-01**. It cannot serve as a freshness control.
+- **SWE-Marathon — public, but not yet useful to us.** Frontier ceiling under 30%
+  at ~27.2 M tokens per attempt.
+- **Publicly runnable and worth adapting:** **SWE Atlas** (arXiv 2605.08366 —
+  released harness *and* judge prompts, 284 expert tasks, **test-writing graded by
+  mutation score**, frontier ~42–43% Pass@1 with Pass^3 dropping 30–50%) and
+  **Commit0** (the suite where CAID measured +14.7 pp for role decomposition).
+- **Best axis fit, availability UNCONFIRMED — probe before budgeting:**
+  **RoadmapBench** (2605.15846 — 115 tasks, median 5 weighted subtasks, hidden
+  target-version tests, git tags pruned, OpenHands baselines published),
+  **ChainSWE** (2607.02606 — sequential dependent fixes, up to 70% degradation
+  with chain length), **SlopCodeBench** (2603.24755 — erosion and verbosity over
+  196 checkpoints; best agent passes 14.8%). **These names came through the fetch
+  pipeline described in "Honest limits" above — verify each id resolves before
+  spending anything against them.**
+
+**Statistical reality of widening.** SWE-rebench at n=60, k=3 costs **$513 Azure +
+~$550 subscription** and moves the MDE from ±38 pp to ~±12–15 pp. Our measured
+effect is −7 pp (−16 pp on the later report), so *detecting* it needs high
+hundreds of instances, $4–6k. **Widening can bound the negative; it can never
+show the chain works.** The measurement that can is a corpus of multi-unit tasks
+with human-authored oracles — `PLAN.md` Phase D.

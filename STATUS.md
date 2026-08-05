@@ -35,21 +35,21 @@ Do not "fix" anything in this table without a measurement that shows it broke.
 
 | Problem | Evidence | Fix |
 |---|---|---|
-| **The chain shows no measurable lift over a single agent** | Measured 2026-08-04, n=19, k=1: `factory` 7/19 = 37% [16%, 62%] vs `openhands` 7/16 = 44% [20%, 70%] on the same weights, same prompt, same tools. Paired McNemar exact **p=0.625** (n=16, only-A/only-B = 1/3). Directionally −7 pp, which is well inside the ±38 pp MDE — this is "no measurable lift", **not** "the chain hurts" | `PLAN.md` Phase 2 — k≥3 at larger n is the only thing that can resolve it |
-| **The chain costs 2.3× per resolved instance for that non-gain** | `factory` $35.94 / 7 = **$5.13 per resolved**; `openhands` $15.37 / 7 = **$2.20**. Same price-table basis, so directly comparable. The factory also burns 2.1× the fresh input tokens (14.3 M vs 6.8 M) | `PLAN.md` Phase 4 |
-| The chain's own green verdict is barely better than a coin flip | Chain-verdict precision 6/15 = **40%** [16%, 68%] — the chain said green and the hidden oracle failed it 9 times out of 15. Recall 6/7 = 86% [42%, 100%] | `PLAN.md` Phase 2 |
-| FMS **L4 apply** tier is dead | 163 attempts, 0 PRs, nothing since 2026-07-23 | `PLAN.md` Phase 4 |
-| Manager cost is unjustified | ~52% of all LLM spend | `PLAN.md` Phase 4 |
-| `factory_improver` does not land | 196 proposals, 1 commit. 179 apply failures | `PLAN.md` 3.1 |
-| L3 re-diagnoses known faults | 165 proposals span 37 distinct classes | `PLAN.md` 3.3 |
-| The old (`bench.py`) benchmark is retracted | Tasks t1–t6 are shipped, so the pool is contaminated; the 20 reported rows still have no raw artifacts. Its July "7/7 vs 5/7, $0.65 vs $8.19" campaign is **superseded** — see `bench/CAMPAIGN-2026-07-17.md`'s header | `PLAN.md` Phase 2 |
-| Merge-gate precision is unknown | The SWE-bench harness runs dev+review only, so what is measured is **chain-verdict** precision (6/15 = 40%), not the merge gate | `PLAN.md` Phase 2 |
+| **The chain shows no measurable lift over a single agent** | Measured 2026-08-04, n=19, k=1: `factory` 7/19 = 37% [16%, 62%] vs `openhands` 7/16 = 44% [20%, 70%] on the same weights, same prompt, same tools. Paired McNemar exact **p=0.625** (n=16, only-A/only-B = 1/3). Directionally −7 pp, which is well inside the ±38 pp MDE — this is "no measurable lift", **not** "the chain hurts" | `PLAN.md` Phase A (make the verdict mean something) then Phase C (measure where the claim can be expressed) |
+| **The chain costs 2.3× per resolved instance for that non-gain** | `factory` $35.94 / 7 = **$5.13 per resolved**; `openhands` $15.37 / 7 = **$2.20**. Same price-table basis, so directly comparable. The factory also burns 2.1× the fresh input tokens (14.3 M vs 6.8 M) | `PLAN.md` Phase B + E.5 |
+| The chain's own green verdict is barely better than a coin flip | Chain-verdict precision 6/15 = **40%** [16%, 68%] — the chain said green and the hidden oracle failed it 9 times out of 15. Recall 6/7 = 86% [42%, 100%]. One row went green on a **zero-byte** production patch (`harumiweb__exstruct-113`) | `PLAN.md` Phase A |
+| FMS **L4 apply** tier is dead | 163 attempts, 0 PRs, nothing since 2026-07-23 | `PLAN.md` E.5 |
+| Manager cost is unjustified | ~52% of all LLM spend | `PLAN.md` E.5 |
+| `factory_improver` does not land | 196 proposals, 1 commit. 179 apply failures — but 158 were `dirty_working_tree`, already fixed, so the real payoff is 21 | `PLAN.md` Phase E, "Deferred" |
+| L3 re-diagnoses known faults | 165 proposals span 37 distinct classes | `PLAN.md` E.5 |
+| The old (`bench.py`) benchmark is retracted | Tasks t1–t6 are shipped, so the pool is contaminated; the 20 reported rows still have no raw artifacts. Its July campaign graded the factory on tests the factory wrote, so it never measured correctness; its numbers are **withdrawn** — see `bench/CAMPAIGN-2026-07-17.md`'s header | `PLAN.md` Phase C |
+| Merge-gate precision is unknown | The SWE-bench harness runs dev+review only (`allowed = {"dev", "review"}`), so what is measured is **chain-verdict** precision (6/15 = 40%), not the merge gate — and the independent acceptance oracle never runs at all | `PLAN.md` A.1 |
 | A 4-worker sweep silently loses runs to provider 429s | `openhands` lost 3 of 19 rows to Azure `DeepSeek-V4-Pro` `RateLimitError`. There is **no retry on a provider 429** and the lost row records `cost_usd: 0.0`, so it reads as free rather than as missing | `PLAN.md` 1.6 G |
 | The sweep's own aggregate counters disagree with their own rows | `sweep-<arm>.json` reports `resolved` / `audited_valid` / `audit_failed` from in-flight state (pre-#227 detector, pre-grade), so e.g. `sweep-factory.json` says `resolved: 2, audit_failed: 13` while its own `results` rows say 7 resolved and the archived `audit.json` files say 19 ok / 0 invalid. Only `results.md` and the archive are authoritative | `PLAN.md` 1.6 G |
-| n=19, k=1 cannot resolve the comparison that matters | MDE ≈ **±38 pp**. `factory` − `openhands` is −7 pp. Every arm's CI is ~45 pp wide | `PLAN.md` 2.1 + 2.3 — k≥3, larger n |
-| Absolute rates on the DeepSeek arms are not contamination-clean | `deepseek-v4-pro` publishes **no** cutoff, so its only defensible bound is its release date 2026-04-24, and **15 of 19** instances sit inside it. (For the Claude arms the question is now *answered* — see conclusion 5 below.) The freshest public SWE-rebench instance anywhere is 2026-05-12 | `PLAN.md` 2.1 |
-| `SWE-bench-Live` is abandoned | Last modified 2025-09-18, newest instance 2025-09-02, 0 rows after 2025-10-01. PLAN 2.1's 30-instance control was not executable | `PLAN.md` 2.1 — replaced by a two-stratum design |
-| State has no backup | The twin guards source only | `PLAN.md` 3.4 |
+| n=19, k=1 cannot resolve the comparison that matters | MDE ≈ **±38 pp**. `factory` − `openhands` is −7 pp. Every arm's CI is ~45 pp wide | `PLAN.md` C.4 — k≥3, larger n, and read why it is demoted |
+| Absolute rates on the DeepSeek arms are not contamination-clean | `deepseek-v4-pro` publishes **no** cutoff, so its only defensible bound is its release date 2026-04-24, and **15 of 19** instances sit inside it. (For the Claude arms the question is now *answered* — see conclusion 5 below.) The freshest public SWE-rebench instance anywhere is 2026-05-12 | `PLAN.md` C.4 |
+| `SWE-bench-Live` is abandoned | Last modified 2025-09-18, newest instance 2025-09-02, 0 rows after 2025-10-01. The old 30-instance control was not executable | `PLAN.md` C.4 — replaced by a two-stratum design |
+| State has no backup | The twin guards source only | `PLAN.md` E.1 |
 
 ## The benchmark — measured 2026-08-04, five arms, n=19
 
@@ -185,7 +185,9 @@ Each of these was live on 2026-08-03 and is fixed in this harness:
 
 What remains open is reporting, not measurement: `PLAN.md` 1.6 G.
 
-`PLAN.md` Phase 2 is the gate on turning any of this into a defensible number.
+`PLAN.md` Phase A is the gate on the chain's verdict meaning anything, and Phase C
+is the gate on turning any of this into a defensible number. Phase 1.6 G names the
+two reporting debts this sweep left open.
 
 ## Fixed 2026-08-02 (Phase 1.1–1.3 + the three bugs that invalidated 2026-08-01)
 
@@ -300,7 +302,7 @@ Two harnesses, do not confuse them.
 - **`bench/bench.py` — retired for grading.** It scores the factory on
   sacrifice's own gates, i.e. on tests the factory wrote. Its July campaign is
   superseded (`bench/CAMPAIGN-2026-07-17.md`), its raw artifacts are gone and
-  its task pool is contaminated. Pinned as of `PLAN.md` 0.3/0.4 — `base_sha` is a
+  its task pool is contaminated. Pinned by `PLAN.md` Phase 0 (#197) — `base_sha` is a
   literal SHA and an empty one is refused, the Claude arm pins `--model`,
   `clean()` no longer deletes `bench/runs/`, every `result.json` records its
   base/routes/price-table provenance — so it is usable as a *convergence*

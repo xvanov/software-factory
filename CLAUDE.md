@@ -172,6 +172,16 @@ tick; **manager code needs a service restart**.
 6. **env/PATH and test-pollution mirages** — a "systemic" failure that is
    really a missing `uv` on the systemd PATH, or tests writing to production
    telemetry.
+7. **rewritten fetched text** — the org-level `DESIGN → ENGINEERING` rewrite rule
+   is applied to *fetched web content*, not only to prose you author. Research
+   agents have read abstracts as "software ENGINEERING" where the source says
+   "software design". It silently corrupts proper nouns in any retrieved source.
+   **So: anything quoting a fetched benchmark, paper or product NAME is
+   lower-confidence than anything quoting a NUMBER from the same fetch.** Cite by
+   URL and arXiv id, and re-verify any fetched name before acting on it or
+   quoting it outside this repo. This is the mundane cause of the caveat in
+   `SOTA-RESEARCH-2026-07.md` ("Fetched content is lower-confidence than fetched
+   numbers"), and it is why one load-bearing citation there was downgraded.
 
 ## Documentation style
 
