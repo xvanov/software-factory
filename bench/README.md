@@ -135,8 +135,9 @@ superseded-by header.
   prompt, same tools, no chain. **Not `factory` − bare** — that varies the chain
   and the tool interface at once, which is exactly how the retracted "+58 pp
   scaffold lift" happened. Measured 2026-08-04: `factory` − `openhands` = −7 pp,
-  p=0.625, while `openhands` − `bare` = +38 pp, p=0.031. See `PLAN.md` 2.2. Never
+  p=0.625, while `openhands` − `bare` = +38 pp, p=0.031. See `PLAN.md` §1. Never
   report a factory number without the matched `openhands` number beside it.
 - **Contaminated task pool**: the six directions behind t1–t6 (`023`–`028`) are
   now `closed` — the factory has since shipped them, so they can no longer be
-  used as held-out tasks. See `PLAN.md` 2.1.
+  used as held-out tasks. The 45 `pm-validated` directions are the held-out pool —
+  see `PLAN.md` Phase D.
