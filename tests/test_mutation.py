@@ -574,17 +574,69 @@ def test_the_base_ref_resolver_is_the_chain_s_own(tmp_path: Path) -> None:
 
 
 def test_no_gate_imports_the_mutation_module() -> None:
-    """The structural guarantee that keeps this advisory: there is no path from
-    a merge decision to this code. If a gate ever imports it, that is a
-    deliberate decision an operator must make, not a drive-by edit."""
+    """The structural guarantee that keeps this advisory: there is no path from a
+    merge decision to this code. If a gate ever imports it, that is a deliberate
+    decision an operator must make, not a drive-by edit.
+
+    This test IS the advisory claim, so it is deliberately over-inclusive:
+    recursive over the package (a gate in a subpackage counts), and it parses the
+    AST rather than grepping, so ``import factory.chain.mutation``,
+    ``from factory.chain import mutation`` and ``from ..mutation import x`` are all
+    caught in whatever form they are written.
+    """
+    import ast as _ast
+
     gates_dir = Path(mutation.__file__).parent / "gates"
-    offenders = [
-        p.name
-        for p in gates_dir.glob("*.py")
-        if "chain.mutation" in p.read_text(encoding="utf-8")
-        or "chain import mutation" in p.read_text(encoding="utf-8")
-    ]
+    files = sorted(gates_dir.rglob("*.py"))
+    assert files, "gates package not found — this guarantee would be vacuous"
+
+    offenders: list[str] = []
+    for path in files:
+        tree = _ast.parse(path.read_text(encoding="utf-8"))
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Import):
+                if any(a.name.endswith("chain.mutation") for a in node.names):
+                    offenders.append(f"{path.name}:{node.lineno}")
+            elif isinstance(node, _ast.ImportFrom):
+                module = node.module or ""
+                hit = module.endswith("chain.mutation") or module.endswith("mutation")
+                # ``from . import mutation`` / ``from ..chain import mutation``
+                hit = hit or any(a.name == "mutation" for a in node.names)
+                if hit:
+                    offenders.append(f"{path.name}:{node.lineno}")
     assert offenders == [], f"gates importing the mutation measurement: {offenders}"
+
+
+def test_the_gate_import_detector_actually_detects(tmp_path: Path) -> None:
+    """A guard that cannot fail is the bug this whole module treats. Proves the
+    detector's own teeth on each import form, in a fake gates package."""
+    import ast as _ast
+
+    forms = [
+        "import factory.chain.mutation",
+        "from factory.chain.mutation import measure",
+        "from factory.chain import mutation",
+        "from ..mutation import measure",
+        "from . import mutation",
+    ]
+
+    def _detects(source: str) -> bool:
+        tree = _ast.parse(source)
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Import):
+                if any(a.name.endswith("chain.mutation") for a in node.names):
+                    return True
+            elif isinstance(node, _ast.ImportFrom):
+                module = node.module or ""
+                if module.endswith("chain.mutation") or module.endswith("mutation"):
+                    return True
+                if any(a.name == "mutation" for a in node.names):
+                    return True
+        return False
+
+    for form in forms:
+        assert _detects(form), form
+    assert not _detects("from factory.chain.gates.evaluator import GateResult")
 
 
 @pytest.mark.parametrize("status", [STATUS_BASELINE_RED, STATUS_BASELINE_INFRA])
@@ -661,6 +713,45 @@ def test_a_duplicate_definition_is_measured_once(tmp_path: Path) -> None:
     assert any("duplicate definition" in n for n in notes)
 
 
+def test_uv_is_exposed_without_restoring_the_callers_venv_bin(tmp_path: Path) -> None:
+    """``uv`` must resolve, but never by putting its parent directory back: on a
+    machine where ``uv`` lives inside the caller's virtualenv, that directory also
+    holds ``pytest`` and restoring it re-opens the leak. So the fallback is a shim
+    holding a link to the ONE executable."""
+    fake_venv_bin = tmp_path / "caller" / ".venv" / "bin"
+    fake_venv_bin.mkdir(parents=True)
+    for name in ("uv", "pytest"):
+        exe = fake_venv_bin / name
+        exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        exe.chmod(0o755)
+
+    tree = tmp_path / "scratch" / "repo"
+    tree.mkdir(parents=True)
+    env = mutation._mutant_env(tree)
+    entries = env["PATH"].split(":")
+    assert str(fake_venv_bin) not in entries, "the caller's venv bin was restored"
+    # Whatever uv resolves to on this machine, pytest must NOT come from a venv
+    # outside the scratch tree.
+    resolved_pytest = shutil.which("pytest", path=env["PATH"])
+    if resolved_pytest is not None:
+        parts = Path(resolved_pytest).resolve().parts
+        assert not any(p in {".venv", "venv", "virtualenv"} for p in parts), resolved_pytest
+
+
+def test_the_uv_shim_exposes_only_uv(tmp_path: Path) -> None:
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "uv").write_text("", encoding="utf-8")
+    (venv_bin / "pytest").write_text("", encoding="utf-8")
+    tree = tmp_path / "scratch" / "repo"
+    tree.mkdir(parents=True)
+
+    shim = mutation._uv_shim_dir(tree, venv_bin / "uv")
+    assert shim is not None
+    assert [p.name for p in shim.iterdir()] == ["uv"]
+    assert shutil.which("pytest", path=str(shim)) is None
+
+
 def test_the_callers_virtualenv_is_unreachable_from_the_scratch_tree(tmp_path: Path) -> None:
     """The first real run of this tool ran
     ``<caller>/.venv/bin/python <caller>/.venv/bin/pytest`` with cwd inside the
@@ -673,11 +764,15 @@ def test_the_callers_virtualenv_is_unreachable_from_the_scratch_tree(tmp_path: P
     outside_venv_bins = [
         entry
         for entry in env["PATH"].split(":")
-        if any(part in {".venv", "venv", "virtualenv", "site-packages"} for part in Path(entry).parts)
+        if any(
+            part in {".venv", "venv", "virtualenv", "site-packages"}
+            for part in Path(entry).parts
+        )
         and not entry.startswith(str(tmp_path.resolve()))
     ]
     assert outside_venv_bins == [], outside_venv_bins
-    # ...and the command an app actually declares can still find its driver.
+    # ...and the command an app actually declares can still find its driver,
+    # however uv happens to be installed on this machine.
     assert shutil.which("uv", path=env["PATH"]) is not None
 
 
@@ -776,7 +871,8 @@ def test_check_can_fail_never_returns_true_on_infrastructure_failure(tmp_path: P
         timeout_s=60,
     )
     assert not proven
-    assert "infrastructure failure" in detail
+    # The baseline catches it before any mutation, and says which state it saw.
+    assert "the check is infra, not green" in detail
 
     proven2, detail2 = mutation.check_can_fail(
         repo_root=repo,
@@ -788,6 +884,30 @@ def test_check_can_fail_never_returns_true_on_infrastructure_failure(tmp_path: P
     )
     assert not proven2
     assert "could not be mutated" in detail2
+
+
+def test_check_can_fail_requires_a_green_check_first(tmp_path: Path) -> None:
+    """Without a baseline, an ALREADY-RED check "goes red" under any mutation and
+    would be certified as able to fail. ``True`` is the permissive answer here, so
+    this is the fail-open direction."""
+    repo, head = _repo(tmp_path, exercised=True)
+    (repo / "tests" / "test_broken_oracle.py").write_text(
+        "def test_oracle():\n    assert False\n", encoding="utf-8"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "broken oracle")
+    head = _git(repo, "rev-parse", "HEAD").strip()
+
+    proven, detail = mutation.check_can_fail(
+        repo_root=repo,
+        head_ref=head,
+        target_path="z_last.py",
+        qualname="target",
+        check_command=f"{PY} -m pytest -q tests/test_broken_oracle.py",
+        timeout_s=120,
+    )
+    assert not proven
+    assert "not green, BEFORE any mutation" in detail
 
 
 def test_check_can_fail_never_writes_to_the_source_checkout(tmp_path: Path) -> None:

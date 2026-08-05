@@ -568,8 +568,13 @@ def _mutant_env(tree_dir: Path) -> dict[str, str]:
     ``PYTHONHOME``, ``UV_PROJECT_ENVIRONMENT``, and any venv ``bin`` on ``PATH``
     that is not inside the scratch tree). A test command that then cannot find
     its runner fails as INFRA — which reports ``skipped``, the honest answer —
-    instead of silently measuring the wrong tree. ``uv``'s own directory is put
-    back afterwards so an app whose command starts with ``uv`` still resolves it.
+    instead of silently measuring the wrong tree.
+
+    ``uv`` still has to resolve, because that is what most app test commands start
+    with. It is exposed through a shim directory holding a symlink to the ONE
+    executable, never by putting its parent directory back: on a machine where
+    ``uv`` lives inside the caller's virtualenv, restoring that directory would
+    hand ``pytest`` back and re-open the exact leak this function exists to close.
     """
     from factory.runner import _isolated_test_env
 
@@ -587,13 +592,35 @@ def _mutant_env(tree_dir: Path) -> dict[str, str]:
         ):
             continue
         kept.append(entry)
-    uv_path = shutil.which("uv", path=os.pathsep.join(kept))
-    if uv_path is None:
+
+    if shutil.which("uv", path=os.pathsep.join(kept)) is None:
         original_uv = shutil.which("uv", path=env.get("PATH", ""))
         if original_uv is not None:
-            kept.append(str(Path(original_uv).parent))
+            shim = _uv_shim_dir(tree_dir, Path(original_uv))
+            if shim is not None:
+                kept.insert(0, str(shim))
     env["PATH"] = os.pathsep.join(kept)
     return env
+
+
+def _uv_shim_dir(tree_dir: Path, uv_path: Path) -> Path | None:
+    """A directory containing only a link to ``uv``, or None.
+
+    Deliberately NOT ``uv_path.parent``: that directory may be the caller's
+    virtualenv ``bin``, which also holds ``pytest``. Exposing one executable
+    cannot re-open the leak. Lives beside the scratch tree so it is removed with
+    it; a symlink failure returns None (``uv`` then does not resolve, the command
+    fails as INFRA, and the run reports ``skipped`` — never a score).
+    """
+    shim = tree_dir.parent / ".factory-uv-shim"
+    link = shim / uv_path.name
+    try:
+        shim.mkdir(parents=True, exist_ok=True)
+        if not link.exists():
+            link.symlink_to(uv_path)
+    except OSError:
+        return None
+    return shim
 
 
 def _run_suite(cwd: Path, test_command: str, timeout_s: int) -> tuple[str, str]:
@@ -978,11 +1005,20 @@ def measure(
         shutil.rmtree(tree, ignore_errors=True)
         shutil.rmtree(sentinels, ignore_errors=True)
 
+    # Cache only a measurement of the COMMIT. The ``worktree-copy`` fallback
+    # copies the working tree, which may be dirty and is not guaranteed to be at
+    # ``head_ref``; storing its outcomes under the sha would let a later run serve
+    # them as a measurement of that commit.
+    cacheable = bool(concrete_sha) and not report.tree_source.startswith("worktree-copy")
+    if not cacheable and concrete_sha:
+        report.notes.append(
+            f"not cached: tree_source={report.tree_source!r} is not the graded commit"
+        )
     _finish(
         report,
         outcomes,
         started,
-        save=(cache_file, app, fingerprint) if concrete_sha else None,
+        save=(cache_file, app, fingerprint) if cacheable else None,
         provenance=provenance,
     )
     return report
@@ -1021,10 +1057,14 @@ def _verify_provenance(
             if dirty or time.monotonic() - started > budget_s:
                 verdict = "unverified"
             else:
-                verdict = _provenance_probe(
+                verdict, dirty = _provenance_probe(
                     tree_dir, rel_path, test_command, per_run_timeout_s
                 )
-                provenance[rel_path] = verdict
+                # Only a clean probe's verdict is trustworthy enough to cache.
+                if not dirty:
+                    provenance[rel_path] = verdict
+                else:
+                    verdict = "unverified"
         # Recorded either way: "this survived verdict was checked" is part of the
         # evidence, not just the failures.
         report.notes.append(f"{rel_path}: provenance {verdict}")
@@ -1118,7 +1158,10 @@ def check_can_fail(
     through is the fail-open bug this whole module exists to correct.
 
     Like ``measure``, it never writes to ``repo_root``: the mutation happens in a
-    throwaway ``git clone`` at ``head_ref``.
+    throwaway ``git clone`` at ``head_ref``. And like ``measure``, it takes a
+    GREEN baseline first — an already-red check "goes red" under any mutation, and
+    reporting that as proof would be the fail-open direction on the one call where
+    ``True`` is the permissive answer.
     """
     _reap_stale_trees()
     try:
@@ -1130,6 +1173,12 @@ def check_can_fail(
     try:
         if _materialize_tree(repo_root, head_ref, tree_dir) is None:
             return False, "could not materialize a scratch checkout to mutate"
+        baseline, baseline_out = _run_suite(tree_dir, check_command, timeout_s)
+        if baseline != GREEN:
+            return False, (
+                f"the check is {baseline}, not green, BEFORE any mutation — a red "
+                f"check proves nothing about the criterion: {baseline_out.strip()[:200]}"
+            )
         sym = Symbol(path=target_path, qualname=qualname, lineno=0, touched_lines=0)
         outcome, _dirty = _ablate_one(tree_dir, sym, check_command, sentinels, timeout_s)
     finally:
@@ -1144,8 +1193,10 @@ def check_can_fail(
 
 def _provenance_probe(
     tree_dir: Path, rel_path: str, test_command: str, per_run_timeout_s: int
-) -> str:
-    """Is the suite actually reading THIS file in THIS tree? ``"ok"``/``"failed"``.
+) -> tuple[str, bool]:
+    """Is the suite actually reading THIS file in THIS tree?
+
+    Returns ``(("ok"|"failed"), tree_left_dirty)``.
 
     A surviving mutant is ambiguous: either the tests never assert on the
     symbol, or the suite is not importing the tree we mutated at all (a leaked
@@ -1166,21 +1217,28 @@ def _provenance_probe(
     try:
         original = target.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return "failed"
+        return "failed", False
     try:
         target.write_text(original + "\nthis is (not valid python\n", encoding="utf-8")
         outcome, _output = _run_suite(tree_dir, test_command, per_run_timeout_s)
     except OSError:
-        return "failed"
+        return "failed", True
     finally:
         try:
             target.write_text(original, encoding="utf-8")
         except OSError:
             pass
+    # A failed restore leaves a syntactically broken file behind, and the NEXT
+    # file's probe would then be red for THIS file's reason and read as "ok" —
+    # a proof of provenance that proves nothing. The caller stops on dirty.
+    try:
+        dirty = target.read_text(encoding="utf-8", errors="replace") != original
+    except OSError:
+        dirty = True
     # Green with a syntactically broken file ⇒ the suite never reads it.
     # Anything else ⇒ it does. A timeout would also read as "ok" here, which
     # only risks KEEPING a survived finding, never manufacturing a kill.
-    return "failed" if outcome == GREEN else "ok"
+    return ("failed" if outcome == GREEN else "ok"), dirty
 
 
 def _ablate_one(
@@ -1240,7 +1298,12 @@ def _ablate_one(
             target.write_text(original, encoding="utf-8")
         except OSError:
             pass
-    dirty = target.read_text(encoding="utf-8", errors="replace") != original
+    try:
+        dirty = target.read_text(encoding="utf-8", errors="replace") != original
+    except OSError:
+        # Reading back is part of the never-raises contract, not outside it: an
+        # unreadable scratch file is exactly the condition ``dirty`` exists for.
+        dirty = True
 
     ran = sentinel.exists()
     if outcome == GREEN:
