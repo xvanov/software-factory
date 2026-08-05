@@ -2512,6 +2512,84 @@ def auto_merge_cmd(
     console.print(table)
 
 
+@app.command("mutation-score")
+def mutation_score_cmd(
+    app_name: str = typer.Option(..., "--app", help="App name (supplies test_command)"),
+    repo_root: Path = typer.Option(
+        ..., "--repo-root", help="Checkout to measure (never written to)"
+    ),
+    base: str = typer.Option("main", "--base", help="Base branch the diff is against"),
+    head: str = typer.Option("", "--head", help="Head SHA (default: the checkout's HEAD)"),
+    test_command: str = typer.Option(
+        "",
+        "--test-command",
+        help=(
+            "Override the app's test_command. Needed when the app's command is "
+            "not self-sufficient in a fresh checkout — the factory's own "
+            "`uv run pytest -q` is not, because pytest is a dev extra."
+        ),
+    ),
+    max_symbols: int = typer.Option(5, "--max-symbols", help="Cap on ablations per run"),
+    budget_seconds: int = typer.Option(1800, "--budget-seconds", help="Wall-clock budget"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Ignore cached per-symbol results"),
+    as_json: bool = typer.Option(False, "--json", help="Emit the raw report as JSON"),
+) -> None:
+    """Measure the diff-scoped MUTATION SCORE of a checkout: for each symbol the
+    diff touched, replace its body with a raise and see whether the suite
+    notices.
+
+    This is a measurement, not a gate. It runs the app's ``test_command`` once
+    per symbol plus a baseline, in a THROWAWAY clone at the graded SHA — the
+    checkout you point it at is never written to. If the suite is not green in
+    that clone before any mutation, the run reports ``skipped`` rather than a
+    score: a coverage claim derived from an already-red suite is not a
+    measurement. Results are cached per ``(head_sha, symbol)`` under
+    ``state/mutation/<app>/``, so re-running the same SHA is free and a run cut
+    short by the budget resumes where it stopped.
+    """
+    import json as _json
+
+    from factory.app_config import load_app_config
+    from factory.chain.mutation import measure
+
+    app_config = load_app_config(app_name, _FACTORY_ROOT)
+    report = measure(
+        repo_root=repo_root,
+        head_sha=head,
+        base_branch=base,
+        test_command=test_command or app_config.gates.test_command,
+        app=app_name,
+        software_factory_root=_FACTORY_ROOT,
+        max_symbols=max_symbols,
+        budget_s=budget_seconds,
+        use_cache=not no_cache,
+    )
+
+    if as_json:
+        console.print_json(_json.dumps(report.as_dict()))
+        return
+
+    score = "n/a" if report.score is None else f"{report.score:.2f}"
+    table = Table(title=f"mutation-score — app={app_name} status={report.status}")
+    table.add_column("field")
+    table.add_column("value")
+    table.add_row("score", score)
+    table.add_row("killed", ", ".join(report.killed) or "-")
+    table.add_row("survived", ", ".join(report.survived) or "-")
+    table.add_row("skipped", ", ".join(f"{s['symbol']} ({s['why']})" for s in report.skipped) or "-")
+    table.add_row("candidates", f"{report.candidates} (truncated={report.truncated})")
+    table.add_row("baseline", report.baseline)
+    table.add_row("tree", report.tree_source)
+    table.add_row("cache hits", str(report.cache_hits))
+    table.add_row("elapsed", f"{report.elapsed_s:.1f}s")
+    console.print(table)
+    console.print(Panel.fit(report.reason, title="mutation-score"))
+    if report.notes:
+        console.print(Panel.fit("\n".join(report.notes), title="notes"))
+    if report.status.startswith("skipped") and report.baseline_output:
+        console.print(Panel.fit(report.baseline_output[-1500:], title="baseline output (tail)"))
+
+
 @app.command("rollback-watch")
 def rollback_watch_cmd(
     app_name: str = typer.Option(..., "--app", help="App name"),

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -25,6 +26,7 @@ from factory.chain.gates import (
 from factory.chain.gates.evaluator import (
     ALL_GATE_LABELS,
     LOOP4_REQUIRED_GATE_LABELS,
+    GateResult,
     PRContext,
     evaluate_all_gates,
     gate_label_for,
@@ -321,28 +323,75 @@ def test_tests_meaningful_passes_on_app_initializer_diff(
     assert all(fnd["kind"] != "direct_db_bootstrap" for fnd in r.details.get("findings", []))
 
 
-def test_tests_meaningful_mutation_status_skipped_by_default(
+def test_tests_meaningful_reports_that_mutation_is_not_a_gate(
     app_cfg_empty: AppConfig,
 ) -> None:
     pr = PRContext(pr_number=1, head_sha="a", base_branch="main", files_changed=[])
     r = tests_meaningful.evaluate(pr, app_cfg_empty)
     assert r.passed
-    assert r.details["mutation_status"] == "skipped"
+    assert r.details["mutation_status"] == "not_a_merge_gate"
 
 
-def test_tests_meaningful_ablation_needs_checkout_in_dry_run() -> None:
-    """WS1.3: mutation_testing opt-in in dry-run (no checkout to mutate) must
-    FAIL — a green here would be false confidence."""
-    cfg = AppConfig(name="x", repo="o/r", gates=AppGatesConfig(mutation_testing=True))
-    pr = PRContext(pr_number=1, head_sha="a", base_branch="main", files_changed=[])
-    r = tests_meaningful.evaluate(pr, cfg)
-    assert not r.passed
-    assert r.details["mutation_status"] == "unrun_dry_run"
+# --- the hazard this gate used to carry ----------------------------------- #
+#
+# ``tests-meaningful`` is in LOOP4_REQUIRED_GATE_LABELS, and it used to run
+# real ablation behind ``gates.mutation_testing``. That flag — false in all
+# three app configs, never once flipped — was the only thing between four
+# defects (wrong symbols, fail-open on infra failure, mutation of the live
+# story worktree, and passed=False in dry-run) and every merge in the factory.
+# The measurement moved to ``factory/chain/mutation.py`` and is reachable only
+# from ``factory mutation-score``. These two tests are the closure: the flag can
+# no longer reach a merge verdict, in dry-run or in real-run.
 
 
-def test_tests_meaningful_ablation_needs_test_command(tmp_path: Path) -> None:
-    """Opt-in real-run without a test_command cannot run ablation → fail."""
-    cfg = AppConfig(name="x", repo="o/r", gates=AppGatesConfig(mutation_testing=True))
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_mutation_testing_flag_cannot_change_the_verdict(tmp_path: Path, dry_run: bool) -> None:
+    (tmp_path / "mod.py").write_text(
+        "def add(a, b):\n    return a + b\n\n\ndef unused():\n    return 42\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_mod.py").write_text(
+        "from mod import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n", encoding="utf-8"
+    )
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        files_changed=["mod.py", "tests/test_mod.py"],
+        repo_root=tmp_path,
+        dry_run=dry_run,
+    )
+    off = tests_meaningful.evaluate(
+        pr,
+        AppConfig(
+            name="x",
+            repo="o/r",
+            gates=AppGatesConfig(mutation_testing=False, test_command="python -m pytest -q"),
+        ),
+    )
+    on = tests_meaningful.evaluate(
+        pr,
+        AppConfig(
+            name="x",
+            repo="o/r",
+            gates=AppGatesConfig(mutation_testing=True, test_command="python -m pytest -q"),
+        ),
+    )
+    assert on.as_dict() == off.as_dict()
+    assert on.passed
+
+
+def test_tests_meaningful_never_shells_out(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A required merge gate must not be able to run a test suite, mutate a
+    checkout, or block for 600 s waiting on one."""
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise AssertionError("tests-meaningful shelled out")
+
+    monkeypatch.setattr("subprocess.run", _boom)
+    monkeypatch.setattr("subprocess.Popen", _boom)
+    (tmp_path / "mod.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
     pr = PRContext(
         pr_number=1,
         head_sha="a",
@@ -351,93 +400,12 @@ def test_tests_meaningful_ablation_needs_test_command(tmp_path: Path) -> None:
         repo_root=tmp_path,
         dry_run=False,
     )
-    r = tests_meaningful.evaluate(pr, cfg)
-    assert not r.passed
-    assert r.details["mutation_status"] == "no_test_command"
-
-
-def _ablation_repo(tmp_path: Path, *, test_exercises_unused: bool) -> Path:
-    """A tiny runnable repo: ``mod.add`` is always exercised; ``mod.unused`` is
-    exercised only when ``test_exercises_unused`` is True."""
-    (tmp_path / "conftest.py").write_text("", encoding="utf-8")  # puts repo on sys.path
-    (tmp_path / "mod.py").write_text(
-        "def add(a, b):\n    return a + b\n\n\ndef unused():\n    return 42\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "tests").mkdir()
-    body = [
-        "from mod import add" + (", unused" if test_exercises_unused else ""),
-        "",
-        "def test_add():",
-        "    assert add(2, 3) == 5",
-    ]
-    if test_exercises_unused:
-        body += ["", "def test_unused():", "    assert unused() == 42"]
-    (tmp_path / "tests" / "test_mod.py").write_text("\n".join(body) + "\n", encoding="utf-8")
-    return tmp_path
-
-
-def test_tests_meaningful_ablation_fails_on_unexercised_symbol(tmp_path: Path) -> None:
-    """The suite tests ``add`` but never ``unused`` — gutting ``unused`` leaves
-    the suite green, so the gate must FAIL naming it."""
-    repo = _ablation_repo(tmp_path, test_exercises_unused=False)
     cfg = AppConfig(
         name="x",
         repo="o/r",
         gates=AppGatesConfig(mutation_testing=True, test_command="python -m pytest -q"),
     )
-    pr = PRContext(
-        pr_number=1,
-        head_sha="a",
-        base_branch="main",
-        files_changed=["mod.py", "tests/test_mod.py"],
-        repo_root=repo,
-        dry_run=False,
-    )
-    r = tests_meaningful.evaluate(pr, cfg)
-    assert not r.passed, r.reason
-    assert r.details["mutation_status"] == "ablation_failed"
-    assert any("unused" in s for s in r.details["unexercised"])
-    # The exercised symbol must NOT be flagged.
-    assert not any("::add" in s for s in r.details["unexercised"])
-    # File restored after ablation.
-    assert "return 42" in (repo / "mod.py").read_text()
-
-
-def test_tests_meaningful_ablation_passes_when_symbols_exercised(tmp_path: Path) -> None:
-    """When every sampled symbol is exercised, gutting any of them turns the
-    suite red, so the gate passes."""
-    repo = _ablation_repo(tmp_path, test_exercises_unused=True)
-    cfg = AppConfig(
-        name="x",
-        repo="o/r",
-        gates=AppGatesConfig(mutation_testing=True, test_command="python -m pytest -q"),
-    )
-    pr = PRContext(
-        pr_number=1,
-        head_sha="a",
-        base_branch="main",
-        files_changed=["mod.py", "tests/test_mod.py"],
-        repo_root=repo,
-        dry_run=False,
-    )
-    r = tests_meaningful.evaluate(pr, cfg)
-    assert r.passed, r.reason
-    assert r.details["mutation_status"] == "ablation_passed"
-
-
-def test_changed_public_symbols_skips_test_and_private(tmp_path: Path) -> None:
-    (tmp_path / "svc.py").write_text(
-        "def public():\n    return 1\n\n\ndef _private():\n    return 2\n\n\n"
-        "class Widget:\n    def render(self):\n        return 3\n"
-        "    def _helper(self):\n        return 4\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_svc.py").write_text("def test_x():\n    assert True\n", "utf-8")
-    syms = tests_meaningful._changed_public_symbols(["svc.py", "tests/test_svc.py"], tmp_path)
-    quals = {q for _, q in syms}
-    assert quals == {"public", "Widget.render"}
+    assert tests_meaningful.evaluate(pr, cfg).passed
 
 
 # --- docs_current -------------------------------------------------------- #
@@ -727,6 +695,72 @@ def test_evaluate_all_gates_returns_every_label(
     # All gates pass for this happy-path fixture under dry-run.
     failed = [(k, v.reason) for k, v in results.items() if not v.passed]
     assert not failed, f"unexpected gate failures: {failed!r}"
+
+
+def test_H8_acceptance_gate_is_last_in_the_evaluator_tuple(
+    tmp_path: Path, app_cfg_with_commands: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``acceptance_verified`` must run LAST, and that must be a test.
+
+    The acceptance gate briefly copies the hidden, spec-authored oracle test into
+    the dev's checkout to run it, then sweeps it out. Any gate that reads the tree
+    while that copy exists sees a file the dev never wrote: ``tests-meaningful``
+    would scan it as one of the dev's tests, ``production-tree-changed`` reads the
+    tree too. ``evaluate_all_gates`` carries a comment saying so and, until now,
+    nothing enforced it — exactly the kind of silent guarantee a concurrent
+    refactor breaks without any test going red.
+
+    Asserted on OBSERVED call order, not on the source text, so a restructure
+    that keeps the comment but changes the behaviour still fails.
+    """
+    from factory.chain.gates import (
+        acceptance_verified,
+        canonical_paths_only,
+        docs_current,
+        production_tree_changed,
+        smoke_green,
+        tests_green,
+        tests_meaningful,
+    )
+
+    order: list[str] = []
+    for mod in (
+        tests_green,
+        tests_meaningful,
+        production_tree_changed,
+        docs_current,
+        canonical_paths_only,
+        smoke_green,
+        acceptance_verified,
+    ):
+        label = gate_label_for(mod.__name__.rsplit(".", 1)[-1])
+        real = mod.evaluate
+
+        def _spy(
+            pr_ctx: PRContext,
+            cfg: AppConfig,
+            _label: str = label,
+            _real: Any = real,
+        ) -> GateResult:
+            order.append(_label)
+            return _real(pr_ctx, cfg)
+
+        monkeypatch.setattr(mod, "evaluate", _spy)
+
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        story=_story(),
+        repo_root=tmp_path,
+        files_changed=["src/foo.py"],
+        dry_run=True,
+    )
+    evaluate_all_gates(pr, app_cfg_with_commands)
+    assert order[-1] == "acceptance-verified", f"call order was {order}"
+    # And the two gates that read the tree must both precede it.
+    assert order.index("tests-meaningful") < order.index("acceptance-verified")
+    assert order.index("production-tree-changed") < order.index("acceptance-verified")
 
 
 # --- smoke_green (D002 runtime verifier) --------------------------------- #

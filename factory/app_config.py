@@ -76,6 +76,12 @@ class AppGatesConfig(BaseModel):
     test_command: str | None = None
     coverage_command: str | None = None
     e2e_command: str | None = None
+    # INERT since the ablation branch was removed from the ``tests-meaningful``
+    # merge gate. Retained so existing app configs keep parsing; nothing reads
+    # it. Mutation scoring is now a measurement you invoke deliberately
+    # (``factory mutation-score``), not a flag that can arm a required gate —
+    # see the ``factory/chain/gates/tests_meaningful.py`` docstring for the four
+    # defects that made this flag a merge-wide hazard.
     mutation_testing: bool = False
     # Whether a WORKING end-to-end/browser harness actually exists in the app
     # (Playwright installed + config + the stack runnable in the sandbox). A
