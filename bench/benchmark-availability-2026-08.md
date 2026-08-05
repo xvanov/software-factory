@@ -252,7 +252,7 @@ directions (+30.7 on `simpy`, −10.5 on another). Two consequences:
    DeepSeek). It is also consistent with P6's relative-capability finding and
    with the harness-vs-model research finding (memory:
    `harness_vs_model_research_2026_08_04`) that harness is worth 10–22 pp
-   at cheap models, 2–5 pp at frontier".
+   at cheap models, 2–5 pp at frontier.
 2. **But do not power the experiment against 14.7 pp.** At n=16 paired, a 6-pp
    effect is far below resolution. Pre-register the effect you are powered for
    and say plainly that n=16 resolves only a MiniMax-sized effect. Also note CAID
