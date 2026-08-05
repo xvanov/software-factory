@@ -6,11 +6,30 @@ Point-in-time facts. Verify before you rely on them. The commands are in
 All systemd units are deliberately **stopped**. Run `factory on` to start.
 
 **Read this first.** The clean five-arm benchmark is in. **The chain shows no
-measurable lift over a single OpenHands agent on the same model** — 37% vs 44%,
-McNemar exact p=0.625 — and it costs 2.3× per resolved instance to get there.
+measurable lift over a single OpenHands agent on the same model** — 37% vs 53%,
+McNemar exact p=0.375 — and it costs 2.8× per resolved instance to get there.
 What produces the lift is *tooling*, not orchestration. Details, CIs and
 caveats: "The benchmark" below. Nothing in this file supports "the chain is
 proven".
+
+> **Provenance, read before quoting a number.** Two `report` runs exist for this
+> one sweep and they disagree on one arm.
+> `results-archive/2026-08-04T04-18-05.349995Z/` reports `openhands`
+> **7/16 = 44%**, `$15.37`, McNemar p=0.625, cost ratio **2.3×** — three rows
+> were lost to Azure 429s and excluded as invalid. The later
+> `results-archive/2026-08-04T23-19-24.998844Z/` re-ran those three rows as
+> `attempt: 2` and reports `openhands` **10/19 = 53%**, `$18.20`, p=0.375, cost
+> ratio **2.8×**. Both archives are committed to `origin/main` as of `664bcd7d`
+> (PR #232), which also amended `PRE-REGISTRATION-1.6.md` to close the
+> `attempt > 1` protocol question.
+>
+> **This file uses the later report**, matching `PLAN.md` §1, `README.md` and the
+> committed `bench/swebench/results.md` — which re-derives from the later archive
+> byte-for-byte, so that is the archive `report --check` must be pointed at.
+> **The conclusion is the same under either report**: both put the chain below
+> one agent on the same model, both at p > 0.3, and the cost ratio moves further
+> against the chain in the later one. At MDE ≈ ±38 pp this is **"no measurable
+> lift", not "the chain hurts"** — nothing here measured harm.
 
 ## What works
 
@@ -35,8 +54,8 @@ Do not "fix" anything in this table without a measurement that shows it broke.
 
 | Problem | Evidence | Fix |
 |---|---|---|
-| **The chain shows no measurable lift over a single agent** | Measured 2026-08-04, n=19, k=1: `factory` 7/19 = 37% [16%, 62%] vs `openhands` 7/16 = 44% [20%, 70%] on the same weights, same prompt, same tools. Paired McNemar exact **p=0.625** (n=16, only-A/only-B = 1/3). Directionally −7 pp, which is well inside the ±38 pp MDE — this is "no measurable lift", **not** "the chain hurts" | `PLAN.md` Phase A (make the verdict mean something) then Phase C (measure where the claim can be expressed) |
-| **The chain costs 2.3× per resolved instance for that non-gain** | `factory` $35.94 / 7 = **$5.13 per resolved**; `openhands` $15.37 / 7 = **$2.20**. Same price-table basis, so directly comparable. The factory also burns 2.1× the fresh input tokens (14.3 M vs 6.8 M) | `PLAN.md` Phase B + E.5 |
+| **The chain shows no measurable lift over a single agent** | Measured 2026-08-04, n=19, k=1: `factory` 7/19 = 37% [16%, 62%] vs `openhands` 10/19 = 53% [29%, 76%] on the same weights, same prompt, same tools. Paired McNemar exact **p=0.375** (n=19, only-A/only-B = 1/4). Directionally −16 pp, which is well inside the ±38 pp MDE — this is "no measurable lift", **not** "the chain hurts". The earlier archive reports 44% / p=0.625; same conclusion, see the provenance note at the top | `PLAN.md` Phase A (make the verdict mean something) then Phase C (measure where the claim can be expressed) |
+| **The chain costs 2.8× per resolved instance for that non-gain** | `factory` $35.94 / 7 = **$5.13 per resolved**; `openhands` $18.20 / 10 = **$1.82**. Same price-table basis, so directly comparable. The factory also burns 1.8× the fresh input tokens (14.3 M vs 7.8 M). On the earlier archive the ratio is 2.3× ($2.20 per resolved) — it moves *against* the chain in the later one | `PLAN.md` Phase B + E.5 |
 | The chain's own green verdict is barely better than a coin flip | Chain-verdict precision 6/15 = **40%** [16%, 68%] — the chain said green and the hidden oracle failed it 9 times out of 15. Recall 6/7 = 86% [42%, 100%]. One row went green on a **zero-byte** production patch (`harumiweb__exstruct-113`) | `PLAN.md` Phase A |
 | FMS **L4 apply** tier is dead | 163 attempts, 0 PRs, nothing since 2026-07-23 | `PLAN.md` E.5 |
 | Manager cost is unjustified | ~52% of all LLM spend | `PLAN.md` E.5 |
@@ -46,7 +65,7 @@ Do not "fix" anything in this table without a measurement that shows it broke.
 | Merge-gate precision is unknown | The SWE-bench harness runs dev+review only (`allowed = {"dev", "review"}`), so what is measured is **chain-verdict** precision (6/15 = 40%), not the merge gate — and the independent acceptance oracle never runs at all | `PLAN.md` A.1 |
 | A 4-worker sweep silently loses runs to provider 429s | `openhands` lost 3 of 19 rows to Azure `DeepSeek-V4-Pro` `RateLimitError`. There is **no retry on a provider 429** and the lost row records `cost_usd: 0.0`, so it reads as free rather than as missing | `PLAN.md` 1.6 G |
 | The sweep's own aggregate counters disagree with their own rows | `sweep-<arm>.json` reports `resolved` / `audited_valid` / `audit_failed` from in-flight state (pre-#227 detector, pre-grade), so e.g. `sweep-factory.json` says `resolved: 2, audit_failed: 13` while its own `results` rows say 7 resolved and the archived `audit.json` files say 19 ok / 0 invalid. Only `results.md` and the archive are authoritative | `PLAN.md` 1.6 G |
-| n=19, k=1 cannot resolve the comparison that matters | MDE ≈ **±38 pp**. `factory` − `openhands` is −7 pp. Every arm's CI is ~45 pp wide | `PLAN.md` C.4 — k≥3, larger n, and read why it is demoted |
+| n=19, k=1 cannot resolve the comparison that matters | MDE ≈ **±38 pp**. `factory` − `openhands` is −16 pp on the later archive, −7 pp on the earlier one — both far inside it. Every arm's CI is ~45 pp wide | `PLAN.md` C.4 — k≥3, larger n, and read why it is demoted |
 | Absolute rates on the DeepSeek arms are not contamination-clean | `deepseek-v4-pro` publishes **no** cutoff, so its only defensible bound is its release date 2026-04-24, and **15 of 19** instances sit inside it. (For the Claude arms the question is now *answered* — see conclusion 5 below.) The freshest public SWE-rebench instance anywhere is 2026-05-12 | `PLAN.md` C.4 |
 | `SWE-bench-Live` is abandoned | Last modified 2025-09-18, newest instance 2025-09-02, 0 rows after 2025-10-01. The old 30-instance control was not executable | `PLAN.md` C.4 — replaced by a two-stratum design |
 | State has no backup | The twin guards source only | `PLAN.md` E.1 |
@@ -59,12 +78,16 @@ arms, **n=19, k=1, no re-rolls**. Tables and decision rules were fixed in
 `bench/swebench/PRE-REGISTRATION-1.6.md` *before* the data existed.
 
 Evidence: `bench/swebench/results.md`, backed row-for-row by
-`bench/swebench/results-archive/2026-08-04T04-18-05.349995Z/`. Re-derive it:
+`bench/swebench/results-archive/2026-08-04T23-19-24.998844Z/`. Re-derive it:
 
 ```bash
 uv run python bench/swebench_adapter.py report \
-  --from-archive bench/swebench/results-archive/2026-08-04T04-18-05.349995Z --check
+  --from-archive bench/swebench/results-archive/2026-08-04T23-19-24.998844Z --check
 ```
+
+That archive — not the earlier `04-18-05` one — is the one the committed
+`results.md` reproduces; pointed at `04-18-05`, `--check` correctly exits
+non-zero on drift.
 
 **An arm is a (harness, model set) pair.** Never quote half of one.
 
@@ -72,7 +95,7 @@ uv run python bench/swebench_adapter.py report \
 |---|---|---|---:|---:|---|---:|---:|
 | claude-5 | Claude Code CLI 2.1.220 | `claude-opus-5` + the CLI's own `claude-haiku-4-5` classifier | 15/19 | **79%** | [54%, 94%] | 34.36 † | 2.29 † |
 | claude-4.8 | the SAME CLI, same flags | `claude-opus-4-8` + haiku-4-5 | 14/19 | **74%** | [49%, 91%] | 23.56 † | 1.68 † |
-| openhands | OpenHands single agent, **no chain** | `azure/deepseek-v4-pro` (19 calls) | 7/16 | **44%** | [20%, 70%] | 15.37 | **2.20** |
+| openhands | OpenHands single agent, **no chain** | `azure/deepseek-v4-pro` (19 calls) | 10/19 | **53%** | [29%, 76%] | 18.20 | **1.82** |
 | factory | software-factory chain on OpenHands | `azure/deepseek-v4-pro` (33 calls) + `azure/gpt-5.3-codex` (6) + `azure/gpt-5.4` (31) | 7/19 | **37%** | [16%, 62%] | 35.94 | **5.13** |
 | bare | hand-rolled text loop, **no tool calls** | `azure/deepseek-v4-pro` (727 calls) | 1/18 | **6%** | [0%, 27%] | 7.94 | 7.94 |
 
@@ -87,32 +110,38 @@ row:
 
 | comparison | what it isolates | paired n | only-A / only-B | p |
 |---|---|---:|---:|---:|
-| **factory vs openhands** | **the chain** | 16 | 1 / 3 | **0.625** |
-| **openhands vs bare** | **the tooling** | 15 | 0 / 6 | **0.031** |
-| factory vs bare | chain + tooling, entangled | 18 | 7 / 1 ‡ | 0.070 |
+| **factory vs openhands** | **the chain** | 19 | 1 / 4 | **0.375** |
+| **bare vs openhands** | **the tooling** | 18 | 0 / 9 | **0.004** |
+| bare vs factory | chain + tooling, entangled | 18 | 1 / 7 | 0.070 |
 | claude-5 vs factory | nothing attributable — reference only | 19 | 8 / 0 | **0.008** |
 | claude-4.8 vs factory | nothing attributable — reference only | 19 | 8 / 1 | 0.039 |
 | **claude-4.8 vs claude-5** | **contamination** (same harness, older cutoff) | 19 | 1 / 2 | **1.000** |
 
-‡ `results.md` prints this pair as `bare vs factory`, only-A/only-B = 1/7.
+Pair order is `results.md`'s, not rearranged: **A is the arm named first**, so
+`bare vs openhands` at 0 / 9 means bare resolved nothing openhands missed and
+openhands resolved nine bare missed. Never reorder a pair's name without swapping
+its two counts — an earlier revision of this table renamed one pair and kept its
+counts, which inverted its meaning.
 
 ### What this measures
 
-1. **The chain shows no measurable lift.** 37% vs 44%, p=0.625, on the same
+1. **The chain shows no measurable lift.** 37% vs 53%, p=0.375, on the same
    weights, the same prompt and the same tools — the only pair here that holds
    the model fixed and varies the harness. `PRE-REGISTRATION-1.6.md` Rule 1
    pre-committed the wording for exactly this outcome, so it is published in
    exactly those words: **our lift comes from using a competent agent loop, not
-   from the chain.**
-2. **What produces the lift is TOOLING, not orchestration.** `openhands` 44% vs
-   `bare` 6%, p=0.031 — the one significant result among the DeepSeek arms. The
+   from the chain.** On the earlier archive the same pair is 37% vs 44%, p=0.625
+   — the conclusion does not turn on which report you read.
+2. **What produces the lift is TOOLING, not orchestration.** `openhands` 53% vs
+   `bare` 6%, p=0.004 — the one significant result among the DeepSeek arms. The
    retracted "+58 pp scaffold lift" was measuring the difference between having
    a usable editor and tool-calling API and not having one. Separating that from
    the chain is precisely what the missing `openhands` arm was needed for.
 3. **Cost makes it worse, not better.** $5.13 per resolved instance for the
-   chain against $2.20 for a single agent — **2.3× for no measurable gain**, on
-   the same price-table basis, plus 2.1× the fresh input tokens (14.3 M vs
-   6.8 M) and 2.8× the median wall clock (995 s vs 357 s).
+   chain against $1.82 for a single agent — **2.8× for no measurable gain**, on
+   the same price-table basis, plus 1.8× the fresh input tokens (14.3 M vs
+   7.8 M) and 2.6× the median wall clock (995 s vs 385 s). The earlier archive
+   puts this at 2.3× ($2.20 per resolved); the later one is worse for the chain.
 4. **Claude Code is roughly twice the factory** — 79% vs 37%, p=0.008 — but that
    arm varies **harness AND model** at once. It is a reference point, not a
    scaffold deficit, and that caveat travels with the number everywhere.
@@ -124,8 +153,9 @@ row:
    reference rather than undermining it, and it retires the doubt PLAN 2.1
    recorded about publishing an absolute rate for the Claude arms.
 6. **n=19, k=1. MDE ≈ ±38 pp.** So the honest phrasing for #1 is "no measurable
-   lift", **not** "the chain hurts". −7 pp is well inside noise. Nothing here
-   measured harm, and no reader should take it that way.
+   lift", **not** "the chain hurts". −16 pp (−7 pp on the earlier archive) is
+   well inside noise. Nothing here measured harm, and no reader should take it
+   that way.
 7. **The subset relation still holds, and needs no significance test.** The
    factory's 7 passes are a **strict subset** of `claude-opus-5`'s 15 — only-B = 0
    in that pair, i.e. the factory solved nothing Claude Code missed. Against
@@ -133,11 +163,15 @@ row:
 
 ### Two caveats that cut against the factory — stated, not buried
 
-- **`openhands` is under-counted.** It lost 3 of 19 rows to Azure
-  `DeepSeek-V4-Pro` 429 rate limits, and **2 of those 3 had already produced
-  patches the oracle RESOLVES** (`jsonpickle-588`, `rapid-mlx-289`). Counted,
-  `openhands` is **9/19 = 47%** and the gap to the chain widens. There is no
-  retry on a provider 429, and the lost row records `cost_usd: 0.0`.
+- **`openhands` was under-counted in the first report, and counting it widens the
+  gap.** It lost 3 of 19 rows to Azure `DeepSeek-V4-Pro` 429 rate limits, and
+  **2 of those 3 had already produced patches the oracle RESOLVES**
+  (`jsonpickle-588`, `rapid-mlx-289`). The conservative reading of the earlier
+  archive is 9/19 = 47%; the later archive re-ran all three as `attempt: 2` and
+  measures **10/19 = 53%**, which is the number this file uses. Either way the
+  gap to the chain widens, never narrows. The underlying harness defect stands:
+  there is no retry on a provider 429, and a lost row records `cost_usd: 0.0`, so
+  it reads as free rather than as missing (`PLAN.md` 1.6 G).
 - **7/19 is exactly the "matched-weights ceiling" the previous retraction
   predicted independently.** The 2026-08-03 audit derived 7/19 = 37% by
   subtracting the hard-tier-assisted resolves from the retracted 11/19. This
