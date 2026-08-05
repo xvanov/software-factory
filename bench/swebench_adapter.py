@@ -149,6 +149,17 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 FACTORY_ROOT = Path(__file__).resolve().parent.parent
+
+# The harness runs as a SCRIPT (``python bench/swebench_adapter.py``) and is
+# also imported by file path from the tests, so ``factory`` is not necessarily
+# importable yet. Put the repo root on the path BEFORE importing the shared
+# path classifier below; ``run_factory`` repeats this insert for the chain
+# imports it does lazily.
+if str(FACTORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(FACTORY_ROOT))
+
+from factory import diff_paths as _diff_paths  # noqa: E402 — needs the path insert above
+
 BENCH_DIR = FACTORY_ROOT / "bench"
 SWE_DIR = BENCH_DIR / "swebench"
 RUNS_DIR = SWE_DIR / "runs"
@@ -1014,40 +1025,14 @@ def _instance(instance_id: str) -> dict[str, Any]:
 
 _DIFF_GIT = "diff --git "
 
-_TEST_PATH = re.compile(
-    r"(^|/)tests?(/|$)"           # a tests/ or test/ directory anywhere
-    r"|(^|/)test_[^/]+$"          # test_foo.py
-    r"|_test\.[a-z]+$"            # foo_test.go
-    r"|(^|/)conftest\.py$"        # pytest fixtures shape the oracle too
-    r"|\.spec\.[jt]sx?$"
-    r"|(^|/)testing(/|$)"
-)
-
-# Files that decide WHICH tests run and WHETHER they run, without being test
-# files themselves. ``_TEST_PATH`` strips test code; these are the collection
-# and auto-import channels that reach the same outcome sideways:
-#
-#   * ``pyproject.toml`` / ``setup.cfg`` / ``tox.ini`` / ``pytest.ini`` —
-#     ``[tool.pytest.ini_options] addopts``, ``-p <plugin>``, markers,
-#     ``collect_ignore``;
-#   * ``setup.py`` / ``noxfile.py`` — run at build/test time;
-#   * ``sitecustomize.py`` / ``usercustomize.py`` / ``*.pth`` — imported by
-#     the interpreter itself, before pytest starts;
-#   * ``*pytest*plugin*.py`` — an entry-point plugin.
-#
-# Measured against real pytest: a root ``_fixup.py`` with
-# ``pytest_collection_modifyitems`` marking every item skipped plus
-# ``addopts = "-p _fixup"`` makes ``python -m pytest <ids>`` exit 0 with
-# "2 skipped". Under exit-code grading (see ``_GRADE_SCRIPT``) that was
-# RESOLVED. The plugin file itself is ordinary production-looking code, so the
-# CONFIG edit is the chokepoint worth refusing on.
-_COLLECTION_CHANNEL = re.compile(
-    r"(^|/)(pyproject\.toml|setup\.cfg|tox\.ini|pytest\.ini|setup\.py"
-    r"|noxfile\.py|sitecustomize\.py|usercustomize\.py|conftest\.py)$"
-    r"|\.pth$"
-    r"|(^|/)[^/]*pytest[^/]*plugin[^/]*\.py$"
-    r"|(^|/)[^/]*plugin[^/]*pytest[^/]*\.py$"
-)
+# The path classifier moved to ``factory/diff_paths.py`` (2026-08-04) so the
+# chain's ``production-tree-changed`` merge gate can gate on the SAME
+# definition this harness strips and refuses on. Two copies would mean the
+# benchmark and the chain disagreeing about what a production change is. The
+# regexes and their measured rationale are documented there; these names are
+# kept because the whole module (and its tests) already reference them.
+_TEST_PATH = _diff_paths._TEST_PATH
+_COLLECTION_CHANNEL = _diff_paths._COLLECTION_CHANNEL
 
 
 class DiffRefused(RuntimeError):
@@ -1071,12 +1056,12 @@ class DiffRefused(RuntimeError):
 
 
 def is_test_path(path: str) -> bool:
-    return bool(_TEST_PATH.search(path))
+    return _diff_paths.is_test_path(path)
 
 
 def is_collection_channel_path(path: str) -> bool:
     """True for a file that can change which tests run, or whether they run."""
-    return bool(_COLLECTION_CHANNEL.search(path))
+    return _diff_paths.is_collection_channel_path(path)
 
 
 def _c_unquote(token: str) -> str | None:

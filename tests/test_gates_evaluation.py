@@ -17,6 +17,7 @@ from factory.app_config import AppConfig, AppGatesConfig
 from factory.chain.gates import (
     canonical_paths_only,
     docs_current,
+    production_tree_changed,
     smoke_green,
     tests_green,
     tests_meaningful,
@@ -84,11 +85,16 @@ def test_all_gate_labels_complete() -> None:
     assert ALL_GATE_LABELS == [
         "tests-green",
         "tests-meaningful",
+        "production-tree-changed",
         "docs-current",
         "canonical-paths-only",
         "smoke-green",
         "acceptance-verified",
     ]
+    # production-tree-changed is REQUIRED, not merely evaluated: auto_merge
+    # filters non-required gate failures out of ``missing_labels``, so a
+    # non-required blocking result would not block.
+    assert "production-tree-changed" in LOOP4_REQUIRED_GATE_LABELS
 
 
 def test_removed_gate_labels_are_gone() -> None:
@@ -489,6 +495,170 @@ def test_canonical_paths_only_fails_on_forbidden_diff(app_cfg_empty: AppConfig) 
     )
     r = canonical_paths_only.evaluate(pr, app_cfg_empty)
     assert not r.passed
+
+
+# --- production_tree_changed --------------------------------------------- #
+#
+# The false-green this closes was MEASURED (2026-08-04, hidden-oracle grading):
+# ``harumiweb__exstruct-113`` spent $2.45, edited only
+# ``tests/cli/test_cli_lazy_imports.py``, was approved by the reviewer at
+# test_quality_score=0.90 and reached ``reviewer_done`` with diff_bytes=0.
+
+
+def _ptc_pr(paths: list[str], **kw: object) -> PRContext:
+    return PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        files_changed=list(paths),
+        **kw,  # type: ignore[arg-type]
+    )
+
+
+def test_production_tree_changed_passes_on_code_and_tests(app_cfg_empty: AppConfig) -> None:
+    r = production_tree_changed.evaluate(
+        _ptc_pr(["src/payments.py", "tests/test_payments.py"]), app_cfg_empty
+    )
+    assert r.passed, r.reason
+    assert r.details["production_paths"] == ["src/payments.py"]
+    assert r.details["authoritative"] is True
+
+
+def test_production_tree_changed_blocks_test_only_diff(app_cfg_empty: AppConfig) -> None:
+    """A story with a test-only diff must NOT reach green."""
+    r = production_tree_changed.evaluate(
+        _ptc_pr(["tests/cli/test_cli_lazy_imports.py", "src/pkg/conftest.py"]),
+        app_cfg_empty,
+    )
+    assert not r.passed
+    assert "no production-code change" in r.reason
+    assert "tests/cli/test_cli_lazy_imports.py" in r.details["test_paths"]
+
+
+def test_production_tree_changed_blocks_pytest_config_only_diff(
+    app_cfg_empty: AppConfig,
+) -> None:
+    """A story whose only non-test change is ``pyproject.toml`` must NOT reach
+    green: ``addopts = "-p _fixup"`` plus a collection hook makes the whole
+    suite exit 0 with "skipped" (measured against real pytest)."""
+    for cfg_path in (
+        "pyproject.toml",
+        "pytest.ini",
+        "tox.ini",
+        "setup.cfg",
+        "noxfile.py",
+        "sitecustomize.py",
+        "src/_vendor.pth",
+        "my_pytest_plugin.py",
+    ):
+        r = production_tree_changed.evaluate(
+            _ptc_pr(["tests/test_a.py", cfg_path]), app_cfg_empty
+        )
+        assert not r.passed, f"{cfg_path} was treated as production code"
+        assert cfg_path in r.details["collection_config_paths"]
+
+
+def test_production_tree_changed_blocks_empty_diff(app_cfg_empty: AppConfig) -> None:
+    r = production_tree_changed.evaluate(
+        _ptc_pr([], repo_root=None), app_cfg_empty
+    )
+    assert not r.passed
+    assert "cannot determine" in r.reason
+
+
+def test_production_tree_changed_counts_docs_as_production(app_cfg_empty: AppConfig) -> None:
+    """The predicate asks "was anything but the oracle touched" — so a
+    docs-only story still passes, keeping the false-block surface at zero."""
+    r = production_tree_changed.evaluate(_ptc_pr(["README.md"]), app_cfg_empty)
+    assert r.passed
+
+
+def test_production_tree_changed_derives_from_git_when_no_file_list(
+    tmp_path: Path, app_cfg_empty: AppConfig
+) -> None:
+    """The production merge path builds fixtures with ``files_changed=[]`` and a
+    story worktree, so the git derivation is the branch that actually runs."""
+    import subprocess
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args], cwd=str(tmp_path), check=True, capture_output=True
+        )
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text("def test_a():\n    assert 1\n")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    git("checkout", "-qb", "feature")
+    # Test-only commit on the branch → blocked.
+    (tmp_path / "tests" / "test_a.py").write_text("def test_a():\n    assert 2\n")
+    git("commit", "-qam", "tests only")
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        files_changed=[],
+        repo_root=tmp_path,
+        dry_run=False,
+    )
+    r = production_tree_changed.evaluate(pr, app_cfg_empty)
+    assert not r.passed, r.reason
+    assert r.details["changed_paths"] == ["tests/test_a.py"]
+
+    # ...and passes once real code lands.
+    (tmp_path / "src.py").write_text("x = 1\n")
+    git("add", "-A")
+    git("commit", "-qm", "code")
+    r2 = production_tree_changed.evaluate(pr, app_cfg_empty)
+    assert r2.passed, r2.reason
+    assert r2.details["production_paths"] == ["src.py"]
+
+
+def test_production_tree_changed_fails_closed_without_a_derivable_diff(
+    tmp_path: Path, app_cfg_empty: AppConfig
+) -> None:
+    """No file list and a repo_root git cannot read → BLOCK. A gate that cannot
+    see the diff must never bless it."""
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        files_changed=[],
+        repo_root=tmp_path / "not-a-repo",
+        dry_run=False,
+    )
+    r = production_tree_changed.evaluate(pr, app_cfg_empty)
+    assert not r.passed
+    assert r.details["authoritative"] is False
+
+
+def test_production_tree_changed_shares_the_bench_classifier() -> None:
+    """The gate and the bench harness must not grow divergent definitions of
+    "production code" — the harness strips/refuses on exactly this predicate."""
+    import importlib.util
+
+    adapter = Path(__file__).resolve().parents[1] / "bench" / "swebench_adapter.py"
+    spec = importlib.util.spec_from_file_location("_swe_ptc", adapter)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    from factory import diff_paths
+
+    assert mod._TEST_PATH is diff_paths._TEST_PATH
+    assert mod._COLLECTION_CHANNEL is diff_paths._COLLECTION_CHANNEL
+    for p in (
+        "tests/test_a.py",
+        "pyproject.toml",
+        "src/app.py",
+        "pkg/conftest.py",
+        "docs/x.md",
+    ):
+        assert mod.is_test_path(p) is diff_paths.is_test_path(p)
+        assert mod.is_collection_channel_path(p) is diff_paths.is_collection_channel_path(p)
 
 
 # --- evaluate_all_gates ------------------------------------------------- #
