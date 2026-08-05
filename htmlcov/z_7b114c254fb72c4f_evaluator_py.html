@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_7b114c254fb72c4f_production_tree_changed_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-08-05 18:35 +0000
+            created at 2026-08-05 19:12 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -160,25 +160,25 @@
     <p class="pln"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t"><span class="str">    satisfy it). ``smoke-green`` becomes required exactly when the app has a</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t"><span class="str">    working, declared smoke harness.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t80" href="#t80">80</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t"><span class="str">    ``acceptance-verified`` (WS1.2) becomes required when the app opts in</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t"><span class="str">    (``gates.acceptance_oracle``) AND the story is EXPECTED to have an oracle</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t83" href="#t83">83</a></span><span class="t"><span class="str">    (``story.acceptance_expected`` &#8212; set at spawn to "opted in AND the direction</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t84" href="#t84">84</a></span><span class="t"><span class="str">    carried ACs", INDEPENDENT of whether authoring succeeded). Keying off</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t85" href="#t85">85</a></span><span class="t"><span class="str">    ``acceptance_expected`` &#8212; NOT ``acceptance_test_ref`` &#8212; is the false-green</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t86" href="#t86">86</a></span><span class="t"><span class="str">    fix: a story whose author flaked (expected, no stored file) is STILL</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t87" href="#t87">87</a></span><span class="t"><span class="str">    required to pass, so it blocks (and self-heals) rather than silently</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t88" href="#t88">88</a></span><span class="t"><span class="str">    shipping un-gated. Legacy stories (``acceptance_expected`` default False)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t89" href="#t89">89</a></span><span class="t"><span class="str">    with a stored ref are still required via the ref fallback. No-AC stories and</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t"><span class="str">    apps that haven't opted in are never blocked; without a ``story`` (app-level</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t91" href="#t91">91</a></span><span class="t"><span class="str">    query) it stays out of the required set.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t">    <span class="nam">labels</span> <span class="op">=</span> <span class="nam">list</span><span class="op">(</span><span class="nam">LOOP4_REQUIRED_GATE_LABELS</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t94" href="#t94">94</a></span><span class="t">    <span class="nam">gates</span> <span class="op">=</span> <span class="nam">app_config</span><span class="op">.</span><span class="nam">gates</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t">    <span class="key">if</span> <span class="nam">gates</span><span class="op">.</span><span class="nam">smoke_harness_ready</span> <span class="key">and</span> <span class="nam">gates</span><span class="op">.</span><span class="nam">smoke_command</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t96" href="#t96">96</a></span><span class="t">        <span class="nam">labels</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="str">"smoke-green"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t97" href="#t97">97</a></span><span class="t">    <span class="key">if</span> <span class="nam">gates</span><span class="op">.</span><span class="nam">acceptance_oracle</span> <span class="key">and</span> <span class="nam">story</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">and</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t98" href="#t98">98</a></span><span class="t">        <span class="nam">story</span><span class="op">.</span><span class="nam">acceptance_expected</span> <span class="key">or</span> <span class="nam">story</span><span class="op">.</span><span class="nam">acceptance_test_ref</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t99" href="#t99">99</a></span><span class="t">    <span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t"><span class="str">    ``acceptance-verified`` (WS1.2) becomes required as soon as the app opts in</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t"><span class="str">    (``gates.acceptance_oracle``) &#8212; for EVERY story, and with no ``story`` at all.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t83" href="#t83">83</a></span><span class="t"><span class="str">    Applicability is the GATE's decision, not the required set's: the gate passes</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t84" href="#t84">84</a></span><span class="t"><span class="str">    a story whose direction genuinely carries no acceptance criteria, and blocks</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t85" href="#t85">85</a></span><span class="t"><span class="str">    when it cannot establish that (see ``gates.acceptance_verified``).</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t86" href="#t86">86</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t87" href="#t87">87</a></span><span class="t"><span class="str">    This deliberately does NOT read ``story.acceptance_expected``. That flag is</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t88" href="#t88">88</a></span><span class="t"><span class="str">    written by a best-effort DB write which swallows its own errors, so a lost</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t89" href="#t89">89</a></span><span class="t"><span class="str">    write dropped the story out of the required set entirely &#8212; and a failing gate</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t"><span class="str">    that is not required is filtered straight out of the merge decision</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t91" href="#t91">91</a></span><span class="t"><span class="str">    (``auto_merge`` computes ``missing_labels`` only over this function), so the PR</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t"><span class="str">    merged un-gated. A required-ness decision that depends on a write succeeding</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t"><span class="str">    is a fail-open; app opt-in is a config fact that cannot be lost at runtime.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t94" href="#t94">94</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t">    <span class="nam">labels</span> <span class="op">=</span> <span class="nam">list</span><span class="op">(</span><span class="nam">LOOP4_REQUIRED_GATE_LABELS</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t96" href="#t96">96</a></span><span class="t">    <span class="nam">gates</span> <span class="op">=</span> <span class="nam">app_config</span><span class="op">.</span><span class="nam">gates</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t97" href="#t97">97</a></span><span class="t">    <span class="key">if</span> <span class="nam">gates</span><span class="op">.</span><span class="nam">smoke_harness_ready</span> <span class="key">and</span> <span class="nam">gates</span><span class="op">.</span><span class="nam">smoke_command</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t98" href="#t98">98</a></span><span class="t">        <span class="nam">labels</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="str">"smoke-green"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t99" href="#t99">99</a></span><span class="t">    <span class="key">if</span> <span class="nam">gates</span><span class="op">.</span><span class="nam">acceptance_oracle</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t100" href="#t100">100</a></span><span class="t">        <span class="nam">labels</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="str">"acceptance-verified"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t101" href="#t101">101</a></span><span class="t">    <span class="key">return</span> <span class="nam">labels</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -282,18 +282,23 @@
     <p class="run run2"><span class="n"><a id="t200" href="#t200">200</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t201" href="#t201">201</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t202" href="#t202">202</a></span><span class="t">    <span class="nam">out</span><span class="op">:</span> <span class="nam">dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">GateResult</span><span class="op">]</span> <span class="op">=</span> <span class="op">{</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t203" href="#t203">203</a></span><span class="t">    <span class="key">for</span> <span class="nam">mod</span> <span class="key">in</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t204" href="#t204">204</a></span><span class="t">        <span class="nam">tests_green</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t205" href="#t205">205</a></span><span class="t">        <span class="nam">tests_meaningful</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t206" href="#t206">206</a></span><span class="t">        <span class="nam">production_tree_changed</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t207" href="#t207">207</a></span><span class="t">        <span class="nam">docs_current</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t208" href="#t208">208</a></span><span class="t">        <span class="nam">canonical_paths_only</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t209" href="#t209">209</a></span><span class="t">        <span class="nam">smoke_green</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t210" href="#t210">210</a></span><span class="t">        <span class="nam">acceptance_verified</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t211" href="#t211">211</a></span><span class="t">    <span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t212" href="#t212">212</a></span><span class="t">        <span class="nam">result</span> <span class="op">=</span> <span class="nam">mod</span><span class="op">.</span><span class="nam">evaluate</span><span class="op">(</span><span class="nam">pr</span><span class="op">,</span> <span class="nam">app_config</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t213" href="#t213">213</a></span><span class="t">        <span class="nam">out</span><span class="op">[</span><span class="nam">result</span><span class="op">.</span><span class="nam">label</span><span class="op">]</span> <span class="op">=</span> <span class="nam">result</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t214" href="#t214">214</a></span><span class="t">    <span class="key">return</span> <span class="nam">out</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t203" href="#t203">203</a></span><span class="t">    <span class="com"># ORDER MATTERS for the last entry: ``acceptance_verified`` briefly copies the</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t204" href="#t204">204</a></span><span class="t">    <span class="com"># hidden oracle into the checkout to run it. Keeping it last means no other</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t205" href="#t205">205</a></span><span class="t">    <span class="com"># gate can observe that copy &#8212; ``tests_meaningful`` would score it as one of</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t206" href="#t206">206</a></span><span class="t">    <span class="com"># the dev's tests, and ``production_tree_changed`` reads the tree too. Do not</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t207" href="#t207">207</a></span><span class="t">    <span class="com"># move it earlier in this tuple.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t208" href="#t208">208</a></span><span class="t">    <span class="key">for</span> <span class="nam">mod</span> <span class="key">in</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t209" href="#t209">209</a></span><span class="t">        <span class="nam">tests_green</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t210" href="#t210">210</a></span><span class="t">        <span class="nam">tests_meaningful</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t211" href="#t211">211</a></span><span class="t">        <span class="nam">production_tree_changed</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t212" href="#t212">212</a></span><span class="t">        <span class="nam">docs_current</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t213" href="#t213">213</a></span><span class="t">        <span class="nam">canonical_paths_only</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t214" href="#t214">214</a></span><span class="t">        <span class="nam">smoke_green</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t215" href="#t215">215</a></span><span class="t">        <span class="nam">acceptance_verified</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">    <span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">        <span class="nam">result</span> <span class="op">=</span> <span class="nam">mod</span><span class="op">.</span><span class="nam">evaluate</span><span class="op">(</span><span class="nam">pr</span><span class="op">,</span> <span class="nam">app_config</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">        <span class="nam">out</span><span class="op">[</span><span class="nam">result</span><span class="op">.</span><span class="nam">label</span><span class="op">]</span> <span class="op">=</span> <span class="nam">result</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">    <span class="key">return</span> <span class="nam">out</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -303,7 +308,7 @@
             <a class="nav" href="z_7b114c254fb72c4f_production_tree_changed_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-08-05 18:35 +0000
+            created at 2026-08-05 19:12 +0000
         </p>
     </div>
 </footer>
