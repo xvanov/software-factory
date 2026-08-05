@@ -13,21 +13,77 @@ The thesis under test: **harness quality beats model size.** A well-instrumented
 
 **The thesis is not proven, and the latest measurement runs against it.** Externally graded on SWE-rebench with a hidden oracle (2026-08-04, five arms, n=19, k=1 — [full result](bench/swebench/results.md)):
 
-| arm | harness × model | resolved | rate | 95% CI |
-|---|---|---:|---:|---|
-| Claude Code CLI | × `claude-opus-5` | 15/19 | **79%** | [54%, 94%] |
-| Claude Code CLI | × `claude-opus-4-8` | 14/19 | **74%** | [49%, 91%] |
-| one OpenHands agent, **no chain** | × `azure/deepseek-v4-pro` | 7/16 | **44%** | [20%, 70%] |
-| **this factory's chain** | × deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | **37%** | [16%, 62%] |
-| hand-rolled loop, **no tool calls** | × `azure/deepseek-v4-pro` | 1/18 | **6%** | [0%, 27%] |
+Every arm ran **the same 19 instances** and every arm got an oracle verdict on
+all 19, so every rate below is out of 19 — no arm gets a smaller denominator
+than another.
 
-- **The chain shows no measurable lift over a single agent on the same model** — 37% vs 44%, McNemar exact p=0.625. The lift comes from using a competent agent loop, not from the chain.
-- **What does produce lift is tooling**, not orchestration: 44% vs 6%, p=0.031.
-- **And the chain costs 2.3× per resolved instance** to get there — $5.13 vs $2.20.
-- Claude Code is roughly twice the factory (p=0.008), but that comparison varies harness *and* model, so it is a reference point rather than a scaffold deficit.
-- n=19, k=1, MDE ≈ ±38 pp. That means "no measurable lift" — **not** "the chain hurts".
+| harness | model(s) | solved | rate | total $ | **$ per solved** |
+|---|---|---:|---:|---:|---:|
+| Claude Code CLI | `claude-opus-5` | 15/19 | **79%** | 34.36 | **2.29** |
+| Claude Code CLI | `claude-opus-4-8` | 14/19 | **74%** | 23.56 | **1.68** |
+| one OpenHands agent, **no chain** | `azure/deepseek-v4-pro` | 10/19 | **53%** | 18.20 † | **1.82** † |
+| **this factory's chain** | deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | **37%** | 35.94 † | **5.13** |
+| hand-rolled loop, **no tool calls** | `azure/deepseek-v4-pro` | 1/19 | **5%** | 7.94 | 7.94 |
 
-The July 2026 campaign that read the other way (7/7 vs 5/7 at $0.65/task) graded against sacrifice's *own* merge gates — tests the factory wrote — and is [superseded](bench/CAMPAIGN-2026-07-17.md).
+Reading it:
+
+- **The chain does not beat a single agent on the same model** — 37% vs 53%.
+  Across all 19 paired instances the single agent won 4 the chain lost; the chain
+  won 1 the agent lost. The gap is **3 instances**, and at this sample size that
+  still does not clear significance (McNemar exact **p=0.375**). A 16-point gap
+  that cannot reach p<0.05 is exactly what n=19 buys.
+- **The chain is also the most expensive way to solve one** — $5.13, versus $1.82
+  for the same model with no chain and **$2.29 for Claude Code**, a frontier
+  model. ~2.0× the single agent in total, **2.8× per solved instance**, for fewer
+  solves.
+- **What produces lift is tooling, not orchestration**: 53% with a real editor and
+  tool-calling versus 5% with neither — n=18, 0/9 discordant, **p=0.004**. That
+  gap is real and significant; the orchestration gap is neither.
+- Claude Code roughly doubles the factory (**p=0.008**), but that comparison
+  changes the harness *and* the model at once, so it is a reference point, not a
+  measurement of the chain.
+- The contamination probe came back **clean**: `claude-opus-4-8` (published cutoff
+  Jan 2026) 74% vs `claude-opus-5` (May 2026) 79% on an identical harness,
+  p=1.000, even though every instance predates opus-5's cutoff. Memorisation is
+  not carrying the frontier number.
+
+**† Both Azure figures are floors.** Three OpenHands rows and two factory rows
+carry an unmetered session — a crashed sandbox that recorded `cost_usd: 0` and
+zero tokens while doing real work. 18 of 19 OpenHands rows are metered at $18.20,
+so **$18.20 and $1.82 are floors, not estimates**; the true figures are slightly
+higher. Even as floors the ratios above hold. The leak is filed as a harness debt.
+
+**Cost units are not identical either.** The Azure rows are a price-table estimate
+over provider-reported tokens — real money, and the cache-read rate in that table
+is itself *estimated*. The Claude rows are what the CLI reports at API list prices,
+billed in practice against a flat subscription. Same order of magnitude, not the
+same meter.
+
+**Three rows were re-run, and it is disclosed.** Three OpenHands rows died on Azure
+`429` rate limits recording no cost and no tokens. A provider rate limit is an
+infrastructure failure rather than a result, so those three — and only those
+three — were repaired once under
+[pre-registration Rule 5](bench/swebench/PRE-REGISTRATION-1.6.md). Outcomes:
+`jsonpickle-588` resolved twice, `rapid-mlx-289` resolved twice, and
+**`keras-22316` flipped from wrong-fix to resolved on the second draw.** So the
+conservative reading is 9/19 = 47% and the re-run reading is 10/19 = 53%; the
+table shows the latter because it is the metered, graded, audit-valid run, and
+both are published. One row in three flipping on a reseed is also the clearest
+evidence here that single-seed results at n=19 are unstable.
+
+**What the ± ranges in [`results.md`](bench/swebench/results.md) mean.** 7 solved
+of 19 is 37%, but 19 samples cannot pin down true skill: the 95% confidence
+interval [16%, 62%] is the band of true rates that would not be surprised by this
+result. The factory's band and the single agent's [29%, 76%] overlap almost
+entirely — **at n=19 these two arms cannot be told apart.** The smallest
+difference this sample could reliably detect is roughly ±38 points, so the finding
+is "**no measurable lift**", not "the chain hurts". Running each instance 3+ times
+is what would sharpen it.
+
+The July 2026 campaign read the other way, but it graded the factory against
+sacrifice's *own* merge gates — tests the factory itself wrote — so it could not
+measure correctness at all. Its numbers are **withdrawn**, not merely superseded:
+see [the campaign's retraction header](bench/CAMPAIGN-2026-07-17.md).
 
 > **An LLM agent working in this repo?** Read [`CLAUDE.md`](CLAUDE.md) first (or
 > [`AGENTS.md`](AGENTS.md) if you're on a non-Claude tool) — it is the short,
