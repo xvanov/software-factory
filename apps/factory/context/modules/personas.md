@@ -45,9 +45,26 @@ treats the directory's `*.md` glob as the registry.
   at story-spawn time (pm-sync), from the spec alone — never the dev's code
   or tests. Stored under `state/acceptance/<app>/<story_id>/`, outside the
   app repo and the dev's worktree, so the dev sandbox has no path to it.
-  `StoryRecord.acceptance_test_ref` holds the stored ref; whether one is
-  required is fixed at spawn (`gates.acceptance_oracle AND
-  direction.acceptance`), independent of whether authoring later succeeds.
+  `StoryRecord.acceptance_test_ref` holds the stored ref. Required-ness is a
+  property of the APP, not of that row: once `gates.acceptance_oracle` is on,
+  `acceptance-verified` is required for every non-docs story and the gate
+  decides applicability, re-deriving "does this story have acceptance
+  criteria" from the direction on disk (a DB flag can be lost by a failed
+  write; app config cannot). Authoring is bounded (3 passes, then it stays
+  blocked and names the exhaustion), idempotent (a stored oracle is never
+  re-authored — the pre-dev freeze is the anti-reward-hack property), and its
+  output is validated as runnable python before it is stored.
+- **The oracle needs the app's harness, and the app must declare it.** The
+  author is blind to the implementation but must still be able to IMPORT the
+  app: `gates.acceptance_harness_hint` gives it the repo-layout facts, and
+  `gates.acceptance_test_dir` / `acceptance_test_cwd` /
+  `acceptance_test_command` tell the gate where to place and how to run the
+  test. With the defaults (repo root, factory interpreter) a real app's oracle
+  cannot import anything — measured 2026-08-05 against sacrifice. The gate
+  runs the test in the merge-candidate checkout, requires exit 0 AND at least
+  one passing test (an all-skipped run verifies nothing), sweeps its copy —
+  and any compiled `.pyc` of it — out of the tree afterwards, and blocks on
+  any infrastructure error rather than raising.
 - **EARS mode.** `sm` decomposes every verbatim AC into
   `### Testable Claims (EARS)` (`AC<n>.<m>: WHEN … SHALL …`). When EARS
   claims are present, `acceptance_author` encodes them as Hypothesis

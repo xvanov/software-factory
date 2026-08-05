@@ -66,6 +66,7 @@ Safety notes
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -75,6 +76,8 @@ from factory.chain.branch import (
     _run_git,
     feature_branch_name,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 def worktree_path(
@@ -92,6 +95,30 @@ def worktree_path(
     sid = int(story_id) if story_id is not None else 0
     safe_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", slug).strip("-")[:60] or "story"
     return Path(software_factory_root) / "state" / "worktrees" / f"{app}-{sid}-{safe_slug}"
+
+
+def _sweep_acceptance_oracles(worktree: Path, *, story_id: int | None) -> None:
+    """Remove any independent acceptance oracle left inside a REUSED worktree.
+
+    The ``acceptance-verified`` gate copies the story's hidden oracle into this
+    same tree to run it, and removes it again. If that process was killed in
+    between, the copy is still there when the dev is dispatched into the reused
+    worktree on a later tick — and the dev is supposed to be blind to it (it is
+    also a file the chain's ``git add -A`` commit would publish into the PR).
+    Sweeping on every ensure closes that window at the one choke point BOTH the
+    dev handler and the merge gate go through. Best-effort; never raises.
+    """
+    try:
+        from factory.chain.acceptance import sweep_leaked_oracles
+
+        removed = sweep_leaked_oracles(worktree)
+    except Exception:  # noqa: BLE001 - hygiene must never fail worktree creation
+        return
+    if removed:
+        _logger.warning(
+            "removed leaked acceptance oracle(s) from reused worktree %s (story=%s): %s",
+            worktree, story_id, removed,
+        )
 
 
 def ensure_worktree_for_story(
@@ -125,6 +152,7 @@ def ensure_worktree_for_story(
 
     # If the worktree already exists with the expected branch, reuse it.
     if wt.exists() and (wt / ".git").exists():
+        _sweep_acceptance_oracles(wt, story_id=story_id)
         head_proc = _run_git(wt, "rev-parse", "--abbrev-ref", "HEAD", check=False)
         if head_proc.returncode == 0 and head_proc.stdout.strip() == branch:
             return wt

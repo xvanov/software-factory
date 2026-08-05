@@ -109,7 +109,15 @@ _DOCS_CHAIN_GATE_LABELS: frozenset[str] = frozenset({"canonical-paths-only"})
 # ``production-tree-changed`` would otherwise clear the requirement without the
 # diff ever being looked at — the recorded-flag hole that gate's own docstring
 # says must not exist.
-_RESULT_ONLY_GATE_LABELS: frozenset[str] = frozenset({"production-tree-changed"})
+# Gates that ONLY a fresh passing evaluation can satisfy — a PR label with the
+# same name never counts. ``acceptance-verified`` belongs here for the same reason
+# ``production-tree-changed`` does, and more so: its entire value is that an
+# INDEPENDENT test was actually executed against the merge candidate. Accepting a
+# label as evidence would let anything that can label a PR (an operator, a bot, a
+# future chain step) substitute a string for the run.
+_RESULT_ONLY_GATE_LABELS: frozenset[str] = frozenset(
+    {"production-tree-changed", "acceptance-verified"}
+)
 
 
 def _story_targets_factory_repo(app_config: AppConfig) -> bool:

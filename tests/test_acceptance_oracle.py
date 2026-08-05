@@ -283,12 +283,18 @@ def test_not_required_without_opt_in() -> None:
     assert "acceptance-verified" not in required_gate_labels(_oracle_cfg(on=False), story)
 
 
-def test_not_required_when_opted_in_but_no_acs() -> None:
-    """Opt-in app, but this story has NO acceptance criteria (expected=False) —
-    the gate must NOT be required for it, so it never blocks such stories."""
+def test_required_for_every_story_once_opted_in() -> None:
+    """Opting the app in makes the label REQUIRED regardless of per-story flags.
+
+    Required-ness used to read ``story.acceptance_expected``, a value written by a
+    best-effort DB write that swallows its errors — so a lost write dropped the
+    story out of the required set, and a failing gate that is not required is
+    filtered out of the merge decision entirely (the PR merged un-gated).
+    Applicability is the gate's call now, not the required set's; a no-AC story is
+    passed by the gate as "not applicable" (see the gate tests)."""
     story = _story(ref=None, expected=False)
     labels = required_gate_labels(_oracle_cfg(on=True), story)
-    assert "acceptance-verified" not in labels
+    assert "acceptance-verified" in labels
 
 
 def test_required_when_expected_even_if_authoring_failed() -> None:
@@ -308,10 +314,11 @@ def test_required_when_opted_in_and_ref_present() -> None:
         assert base in labels
 
 
-def test_not_required_without_story() -> None:
-    """App-level query (no story): the gate can't be required — nothing to
-    verify against yet."""
-    assert "acceptance-verified" not in required_gate_labels(_oracle_cfg(on=True))
+def test_required_without_story_too() -> None:
+    """App-level query (no story): still required for an opted-in app. A PR with no
+    StoryRecord has no oracle and cannot be independently verified, so the gate
+    blocks it rather than the required set quietly dropping the requirement."""
+    assert "acceptance-verified" in required_gate_labels(_oracle_cfg(on=True))
 
 
 # --------------------------------------------------------------------------- #
@@ -353,7 +360,12 @@ def test_opted_in_expected_no_ref_blocks_authoritatively(tmp_path: Path) -> None
 
 
 def test_opted_in_not_expected_no_ref_is_skip(tmp_path: Path) -> None:
-    """opted-in + NOT expected (no ACs) + no ref → not applicable skip (pass)."""
+    """opted-in + the direction on disk really has NO ACs → not applicable (pass).
+
+    The exemption is re-derived from the SPEC, so it takes a direction on disk
+    without acceptance criteria — a bare ``expected=False`` flag is no longer
+    enough to skip the gate."""
+    write_direction_on_disk(tmp_path, app="sacrifice", direction_id="002", acceptance=[])
     pr = PRContext(
         pr_number=1,
         head_sha="a",
@@ -365,6 +377,77 @@ def test_opted_in_not_expected_no_ref_is_skip(tmp_path: Path) -> None:
     r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
     assert r.passed
     assert r.details["acceptance_expected"] is False
+    assert r.details["expected_source"] == "no_acceptance_criteria"
+
+
+def write_direction_on_disk(
+    root: Path, *, app: str, direction_id: str, acceptance: list[str]
+) -> Path:
+    """Write a minimal parseable direction under ``apps/<app>/directions/``."""
+    ddir = root / "apps" / app / "directions" / f"{direction_id}-emails"
+    ddir.mkdir(parents=True, exist_ok=True)
+    ac_block = (
+        "\n## Acceptance Criteria\n\n" + "\n".join(f"- {a}" for a in acceptance) + "\n"
+        if acceptance
+        else ""
+    )
+    (ddir / "direction.md").write_text(
+        f"---\ntitle: emails\n---\n\n# emails\n\n## Why\n\nx.\n{ac_block}",
+        encoding="utf-8",
+    )
+    return ddir
+
+
+def test_opted_in_flagless_story_with_acs_on_disk_still_blocks(tmp_path: Path) -> None:
+    """The lost-flag fail-open: ``acceptance_expected`` never persisted, no ref —
+    but the direction on disk DOES carry acceptance criteria, so the story is
+    expected and the gate blocks instead of skipping it as "not applicable"."""
+    write_direction_on_disk(
+        tmp_path, app="sacrifice", direction_id="002", acceptance=["the email is lowercased"]
+    )
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        story=_story(ref=None, expected=False),
+        software_factory_root=tmp_path,
+        dry_run=False,
+    )
+    r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
+    assert not r.passed
+    assert r.details["authoritative"] is True
+    assert r.details["expected_source"] == "spec"
+
+
+def test_opted_in_unresolvable_direction_blocks(tmp_path: Path) -> None:
+    """Cannot resolve the direction → cannot establish the story is EXEMPT →
+    block. A detector that cannot decide must not wave the story through."""
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        story=_story(ref=None, expected=False),
+        software_factory_root=tmp_path,  # no apps/ tree at all
+        dry_run=False,
+    )
+    r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
+    assert not r.passed
+    assert r.details["expected_source"] == "direction_unresolvable"
+
+
+def test_opted_in_without_story_record_blocks(tmp_path: Path) -> None:
+    """An opted-in app's PR with no StoryRecord cannot be verified → block."""
+    pr = PRContext(
+        pr_number=1,
+        head_sha="a",
+        base_branch="main",
+        story=None,
+        software_factory_root=tmp_path,
+        dry_run=False,
+    )
+    r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
+    assert not r.passed
+    assert r.details["expected_source"] == "no_story_record"
 
 
 def test_missing_stored_file_expected_blocks_authoritatively(tmp_path: Path) -> None:

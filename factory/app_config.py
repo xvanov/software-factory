@@ -107,16 +107,49 @@ class AppGatesConfig(BaseModel):
     # state OUTSIDE the dev worktree, and the ``acceptance-verified`` gate copies
     # it into the merge-candidate checkout and runs it as a REQUIRED gate. Off by
     # default so the rollout is per-app opt-in — an app that hasn't enabled it
-    # sees no new merge blocks (mirrors the ``smoke_harness_ready`` rollout). The
-    # gate is required only for stories that actually got an oracle authored
-    # (ACs present + this flag on); legacy / no-AC stories are never blocked.
+    # sees no new merge blocks (mirrors the ``smoke_harness_ready`` rollout).
+    #
+    # Turning this on makes ``acceptance-verified`` a REQUIRED gate for every
+    # non-docs story in the app (the gate itself decides applicability: a story
+    # whose direction carries no acceptance criteria passes as "not applicable").
+    # Required-ness deliberately does NOT depend on a DB flag — see
+    # ``evaluator.required_gate_labels``. Before flipping it, set
+    # ``acceptance_test_dir`` / ``acceptance_test_cwd`` / ``acceptance_test_command``
+    # so the authored test can actually import the app, and
+    # ``acceptance_harness_hint`` so the author knows where the app lives.
     acceptance_oracle: bool = False
     # Command template the acceptance gate runs, with ``{test_file}`` substituted
-    # for the copied-in test's path (relative to the checkout root). Defaults to
-    # ``python -m pytest {test_file} -q`` when unset; apps whose suite needs a
-    # wrapper (e.g. ``uv run pytest {test_file} -q``) override it here so the
-    # oracle runs against the app's real python env.
+    # for the copied-in test's path (relative to ``acceptance_test_cwd``).
+    # Defaults to ``<this interpreter> -m pytest {test_file} -q`` when unset; apps
+    # whose suite needs a wrapper (e.g. ``uv run --extra dev pytest {test_file}
+    # -q``) override it here so the oracle runs against the app's real python env.
+    #
+    # Substitution is a literal replace, so a template may contain other braces
+    # without exploding (a ``KeyError`` from ``str.format`` used to escape the
+    # gate and abort the whole merge evaluation).
     acceptance_test_command: str | None = None
+    # WHERE in the checkout the oracle file is placed, repo-relative. Default
+    # (unset) = the checkout root, which is wrong for most real apps and was a
+    # 100%-false-block: measured 2026-08-05 against sacrifice, an oracle dropped
+    # at the repo root cannot import the app at all (``No module named 'app'``)
+    # because the package lives under ``backend/`` and the env defaults its
+    # conftest sets are only loaded for files under ``backend/tests/``. Point this
+    # at the app's own test directory (sacrifice: ``backend/tests``) so the oracle
+    # runs inside the same harness the app's own suite gets.
+    acceptance_test_dir: str | None = None
+    # WHERE the command runs, repo-relative (``cwd``). Default (unset) = the
+    # checkout root. Must be the directory the app's pytest config/rootdir lives
+    # in (sacrifice: ``backend``), because that is what puts the app package on
+    # ``sys.path``. ``{test_file}`` is rendered relative to THIS directory.
+    acceptance_test_cwd: str | None = None
+    # Operator-written HARNESS FACTS handed to the acceptance author: how to
+    # import/boot the app and drive its public surface (module path of the ASGI
+    # app, the test client to use, a CLI entrypoint, …). This is repo LAYOUT, not
+    # the dev's implementation — the author still never sees the dev's code or
+    # tests, so independence is preserved — and without it the author must GUESS
+    # module paths, which is exactly how the first real run failed. Keep it to
+    # stable, spec-adjacent facts that are true for every story in the app.
+    acceptance_harness_hint: str | None = None
 
     # Flaky-test quarantine (WS4.4). When True, the ``tests-green`` real-run gate
     # routes a RED ``test_command`` through flake detection: any failing test is
