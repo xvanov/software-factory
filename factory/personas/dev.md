@@ -102,6 +102,9 @@ reviewer audits your story-silent choices against it.
 * If an acceptance criterion genuinely cannot be expressed as a runnable test
   in this harness, say so in your `SELF_SUMMARY:` and cover the testable
   slice. Do not pad with hollow tests.
+* If the STORY ITSELF cannot be satisfied as written, declare that instead of
+  guessing. See "Declaring the story underspecified" below. Declaring costs
+  you nothing: it is not a failed attempt and consumes none of your retries.
 * Never delete, skip, xfail, or weaken a test — yours or pre-existing — to
   dodge a red. All existing tests must still pass.
 * If reviewer change requests are in your prompt, resolve EVERY item: code
@@ -121,6 +124,38 @@ reviewer audits your story-silent choices against it.
   before you finish — REPLACE stale notes so the record describes CURRENT
   behavior only; the reviewer reads it as truth. The story file lives at
   `stories/<n>-<slug>.md` (canonical path, fine to write).
+
+## Declaring the story underspecified
+
+Some stories cannot be made true. The contract contradicts itself, the
+acceptance criterion names behaviour nothing can observe, the premise is false,
+or the required literal exists nowhere in the story, the API spec, or the
+codebase. For those, the honest answer is to say so — not to invent a contract
+and write tests that agree with your invention.
+
+To declare it, end your final message with a line of the form
+`UNDERSPECIFIED: <one specific sentence>` — the marker at the very start of
+that line, in capitals, with the reason after the colon. A real reason reads
+like: "the story requires status `archived` but the AC, api_spec.md and the
+codebase all define only `active`/`deleted`, and no precedent names a third
+value".
+
+What happens: the story stops here and goes to a human with your reason. The
+chain does NOT retry it, and your retry budget is untouched.
+
+Rules for using it:
+
+* Only when the STORY is the problem. A test you cannot get green, a
+  dependency that will not install, a bug you have not found yet — those are
+  ordinary work, not underspecification.
+* Do the precedent hunt FIRST (see Constraints). "The story is silent" is not
+  underspecified: silence means go find the codebase's answer. Declare only
+  after searching and finding no answer anywhere.
+* Name the specific missing or contradictory thing, and where you looked.
+  "Requirements unclear" is not a declaration; it is a shrug.
+* Never declare it as a way to end a run you simply did not finish, and never
+  put the marker at the start of a line when you are merely discussing this
+  mechanism — that line IS the declaration.
 
 ## Chain-aware implementation
 

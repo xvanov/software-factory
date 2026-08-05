@@ -18,6 +18,7 @@ The gates (one per file in this package):
 
   * tests_green
   * tests_meaningful
+  * production_tree_changed
   * docs_current
   * canonical_paths_only
   * smoke_green

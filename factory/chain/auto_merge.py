@@ -69,6 +69,13 @@ _MERGEABLE_STATES = {
 # before giving up and leaving it for a human — mirrors
 # ``orchestrator._MAX_AUTO_RECOVERIES``'s cap + signature-guard pattern so a
 # CI failure the dev cannot fix escalates instead of looping forever.
+#
+# DO NOT RAISE IT AS AN "IMPROVEMENT". The literature says extra feedback rounds
+# buy gaming rather than assurance — ImpossibleBench (ICLR 2026, arXiv
+# 2510.20270) measured cheating rising 33% -> 38% when agents get multiple
+# submissions with feedback, and self-repair at matched budget buys 3-10% (arXiv
+# 2306.09896). The full argument, and what to do instead, is at
+# ``handlers._MAX_REVIEW_CYCLES``.
 _MAX_CI_FIX_CYCLES = 3
 
 # CONFLICT -> dev REBUILD loop. When an open PR is genuinely CONFLICTING with
@@ -94,6 +101,15 @@ _MAX_CONFLICT_REBUILDS = 2
 # Kept as a frozenset so the worker can swap the gate set on
 # ``chain_kind`` without re-checking the TDD list.
 _DOCS_CHAIN_GATE_LABELS: frozenset[str] = frozenset({"canonical-paths-only"})
+
+# Gates a PR LABEL may never satisfy — only a fresh passing evaluation counts.
+# ``present_labels`` unions the PR's applied labels with the gates that just
+# passed, which is fine for gates whose label the chain itself once applied. It
+# is NOT fine for a fail-closed precondition: a PR carrying the literal label
+# ``production-tree-changed`` would otherwise clear the requirement without the
+# diff ever being looked at — the recorded-flag hole that gate's own docstring
+# says must not exist.
+_RESULT_ONLY_GATE_LABELS: frozenset[str] = frozenset({"production-tree-changed"})
 
 
 def _story_targets_factory_repo(app_config: AppConfig) -> bool:
@@ -950,7 +966,13 @@ def _evaluate_one_pr(
         # under Loop-4 (the labelling stages died with the test-first
         # machinery), and a fresh evaluator pass is strictly stronger
         # evidence than a label applied on some earlier tick anyway.
-        present_labels = set(fixture.labels) | set(gates_passed)
+        # ...EXCEPT for the gates in ``_RESULT_ONLY_GATE_LABELS``, which only a
+        # fresh passing evaluation satisfies. A gate whose whole purpose is
+        # "fail closed on the real artifact" cannot be satisfied by a label
+        # somebody (or some bot) put on the PR.
+        present_labels = (
+            set(fixture.labels) - _RESULT_ONLY_GATE_LABELS
+        ) | set(gates_passed)
         missing_labels = [
             label
             for label in required_gate_labels(app_config, story)

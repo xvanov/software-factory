@@ -30,6 +30,11 @@ from factory.chain.state_machine import StoryRecord
 ALL_GATE_LABELS: list[str] = [
     "tests-green",
     "tests-meaningful",
+    # The diff changed at least one PRODUCTION file (2026-08-04). Added after
+    # the first hidden-oracle grading found a story that spent $2.45, edited
+    # only a test file, was approved at test_quality_score=0.90 and reached
+    # ``reviewer_done`` with ``diff_bytes: 0``. See production_tree_changed.py.
+    "production-tree-changed",
     "docs-current",
     "canonical-paths-only",
     "smoke-green",
@@ -46,6 +51,15 @@ ALL_GATE_LABELS: list[str] = [
 LOOP4_REQUIRED_GATE_LABELS: list[str] = [
     "tests-green",
     "tests-meaningful",
+    # REQUIRED, not merely evaluated. ``auto_merge`` builds ``present_labels``
+    # from the passing gates but computes ``missing_labels`` ONLY over
+    # ``required_gate_labels(...)`` (auto_merge.py:~955), so a non-required
+    # gate's failure is filtered straight out of the merge decision and the PR
+    # merges anyway. A blocking result that does not block is worse than no
+    # gate. Universally required is safe here where ``smoke-green`` was not:
+    # the check needs no per-app harness, and docs/config/source all count as
+    # production, so the only diffs it blocks are vacuous ones.
+    "production-tree-changed",
     "docs-current",
     "canonical-paths-only",
 ]
@@ -179,6 +193,7 @@ def evaluate_all_gates(pr: PRContext, app_config: AppConfig) -> dict[str, GateRe
         acceptance_verified,
         canonical_paths_only,
         docs_current,
+        production_tree_changed,
         smoke_green,
         tests_green,
         tests_meaningful,
@@ -188,6 +203,7 @@ def evaluate_all_gates(pr: PRContext, app_config: AppConfig) -> dict[str, GateRe
     for mod in (
         tests_green,
         tests_meaningful,
+        production_tree_changed,
         docs_current,
         canonical_paths_only,
         smoke_green,

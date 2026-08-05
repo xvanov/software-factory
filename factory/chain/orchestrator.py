@@ -389,6 +389,9 @@ _NON_CAP_COUNTING_STATES = {
     StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
     StoryState.BLOCKED_DEPLOY_FAILED.value,
     StoryState.BLOCKED_REVIEW_NONCONVERGENT.value,
+    # Dev-declared underspecification (terminal, awaiting a human). Like every
+    # other sink it must not hold a concurrency slot.
+    StoryState.BLOCKED_UNDERSPECIFIED.value,
     # WS1.1 terminal budget sink — the story is done burning spend; it must
     # not count against concurrency caps.
     StoryState.BLOCKED_BUDGET_EXCEEDED.value,
@@ -652,6 +655,11 @@ _PENDING_HUMAN_STATES: frozenset[str] = frozenset(
         StoryState.BLOCKED_BUDGET_EXCEEDED.value,
         StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
         StoryState.BLOCKED_REVIEW_NONCONVERGENT.value,
+        # Dev declared the story unsatisfiable as written. Only a human can
+        # rewrite the story (or reject the claim), so a dependent waiting
+        # behind one is waiting on a human — and it must stay revivable rather
+        # than be treated as a definitive dead end.
+        StoryState.BLOCKED_UNDERSPECIFIED.value,
     }
 )
 
@@ -1028,6 +1036,11 @@ _MAX_AUTO_RECOVERIES = 2
 # deploy_failed is intentionally excluded — it's handled at the merge layer by
 # ``auto_merge._attempt_pr_reconcile`` (stale branches) and true content
 # conflicts there need regeneration/human handling, not a dev re-run.
+# ``BLOCKED_UNDERSPECIFIED`` is deliberately ABSENT: re-entering the chain at
+# SM_DONE would re-dispatch dev against the same under-specified story and earn
+# the same declaration — a retry loop wearing a different hat, and one that
+# would make the escape hatch cost spend instead of saving it. The story needs a
+# human to rewrite it or to reject the dev's claim.
 _AUTO_RECOVERABLE_STATES: dict[str, str] = {
     StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value: StoryState.SM_DONE.value,
     StoryState.BLOCKED_REVIEW_NONCONVERGENT.value: StoryState.SM_DONE.value,
@@ -2555,6 +2568,10 @@ def tick(
                                     StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
                                     StoryState.BLOCKED_DEPLOY_FAILED.value,
                                     StoryState.BLOCKED_REVIEW_NONCONVERGENT.value,
+                                    # Keep the worktree: the operator reading a
+                                    # dev's underspecification claim needs the
+                                    # partial work that prompted it.
+                                    StoryState.BLOCKED_UNDERSPECIFIED.value,
                                 ]
                             ),
                         )

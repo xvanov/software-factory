@@ -36,10 +36,12 @@ legal_edges:
   - {from: deploy_pending, to: deploy_pending}
   - {from: deploy_pending, to: deployed}
   - {from: dev_in_progress, to: blocked_tests_need_clarification}
+  - {from: dev_in_progress, to: blocked_underspecified}
   - {from: dev_in_progress, to: dev_retry}
   - {from: dev_in_progress, to: tests_green}
   - {from: dev_retry, to: blocked_budget_exceeded}
   - {from: dev_retry, to: blocked_tests_need_clarification}
+  - {from: dev_retry, to: blocked_underspecified}
   - {from: dev_retry, to: dev_in_progress}
   - {from: docs_enforcer_check, to: pr_open}
   - {from: docs_enforcer_check, to: reviewer_requested_changes}

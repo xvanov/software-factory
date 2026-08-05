@@ -149,6 +149,17 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 FACTORY_ROOT = Path(__file__).resolve().parent.parent
+
+# The harness runs as a SCRIPT (``python bench/swebench_adapter.py``) and is
+# also imported by file path from the tests, so ``factory`` is not necessarily
+# importable yet. Put the repo root on the path BEFORE importing the shared
+# path classifier below; ``run_factory`` repeats this insert for the chain
+# imports it does lazily.
+if str(FACTORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(FACTORY_ROOT))
+
+from factory import diff_paths as _diff_paths  # noqa: E402 — needs the path insert above
+
 BENCH_DIR = FACTORY_ROOT / "bench"
 SWE_DIR = BENCH_DIR / "swebench"
 RUNS_DIR = SWE_DIR / "runs"
@@ -1014,40 +1025,14 @@ def _instance(instance_id: str) -> dict[str, Any]:
 
 _DIFF_GIT = "diff --git "
 
-_TEST_PATH = re.compile(
-    r"(^|/)tests?(/|$)"           # a tests/ or test/ directory anywhere
-    r"|(^|/)test_[^/]+$"          # test_foo.py
-    r"|_test\.[a-z]+$"            # foo_test.go
-    r"|(^|/)conftest\.py$"        # pytest fixtures shape the oracle too
-    r"|\.spec\.[jt]sx?$"
-    r"|(^|/)testing(/|$)"
-)
-
-# Files that decide WHICH tests run and WHETHER they run, without being test
-# files themselves. ``_TEST_PATH`` strips test code; these are the collection
-# and auto-import channels that reach the same outcome sideways:
-#
-#   * ``pyproject.toml`` / ``setup.cfg`` / ``tox.ini`` / ``pytest.ini`` —
-#     ``[tool.pytest.ini_options] addopts``, ``-p <plugin>``, markers,
-#     ``collect_ignore``;
-#   * ``setup.py`` / ``noxfile.py`` — run at build/test time;
-#   * ``sitecustomize.py`` / ``usercustomize.py`` / ``*.pth`` — imported by
-#     the interpreter itself, before pytest starts;
-#   * ``*pytest*plugin*.py`` — an entry-point plugin.
-#
-# Measured against real pytest: a root ``_fixup.py`` with
-# ``pytest_collection_modifyitems`` marking every item skipped plus
-# ``addopts = "-p _fixup"`` makes ``python -m pytest <ids>`` exit 0 with
-# "2 skipped". Under exit-code grading (see ``_GRADE_SCRIPT``) that was
-# RESOLVED. The plugin file itself is ordinary production-looking code, so the
-# CONFIG edit is the chokepoint worth refusing on.
-_COLLECTION_CHANNEL = re.compile(
-    r"(^|/)(pyproject\.toml|setup\.cfg|tox\.ini|pytest\.ini|setup\.py"
-    r"|noxfile\.py|sitecustomize\.py|usercustomize\.py|conftest\.py)$"
-    r"|\.pth$"
-    r"|(^|/)[^/]*pytest[^/]*plugin[^/]*\.py$"
-    r"|(^|/)[^/]*plugin[^/]*pytest[^/]*\.py$"
-)
+# The path classifier moved to ``factory/diff_paths.py`` (2026-08-04) so the
+# chain's ``production-tree-changed`` merge gate can gate on the SAME
+# definition this harness strips and refuses on. Two copies would mean the
+# benchmark and the chain disagreeing about what a production change is. The
+# regexes and their measured rationale are documented there; these names are
+# kept because the whole module (and its tests) already reference them.
+_TEST_PATH = _diff_paths._TEST_PATH
+_COLLECTION_CHANNEL = _diff_paths._COLLECTION_CHANNEL
 
 
 class DiffRefused(RuntimeError):
@@ -1071,12 +1056,12 @@ class DiffRefused(RuntimeError):
 
 
 def is_test_path(path: str) -> bool:
-    return bool(_TEST_PATH.search(path))
+    return _diff_paths.is_test_path(path)
 
 
 def is_collection_channel_path(path: str) -> bool:
     """True for a file that can change which tests run, or whether they run."""
-    return bool(_COLLECTION_CHANNEL.search(path))
+    return _diff_paths.is_collection_channel_path(path)
 
 
 def _c_unquote(token: str) -> str | None:
@@ -1824,6 +1809,255 @@ def _prepare_cloned_tree(
     return None
 
 
+# --------------------------------------------------------------------------- #
+# read-only test files — ImpossibleBench's cheating countermeasure
+# --------------------------------------------------------------------------- #
+#
+# EVIDENCE (ImpossibleBench, ICLR 2026, arXiv 2510.20270): making test files
+# read-only "significantly reduces cheating while maintaining performance".
+# Hiding the tests entirely drove cheating to zero but DEGRADED legitimate
+# performance, so read-only is the setting that was measured to be worth having:
+# the arm can still read and RUN its tests (its red/green feedback loop is
+# intact), it just cannot quietly rewrite the thing it is being judged against.
+#
+# Scoped to the BENCHMARK HARNESS. In production, the dev owning its tests is
+# the deliberate Loop-4 design and is not reversed here.
+#
+# Applied to EVERY arm, not just factory. An intervention on one arm of a
+# comparison is a confound: the factory-minus-bare delta is the headline number,
+# and changing what only factory may write changes what that delta means.
+#
+# HONEST LIMIT — read this before quoting the numbers this produces. Every arm
+# runs as the uid that owns these files and has a shell, so ``chmod u+w`` (or
+# ``git checkout``, which replaces rather than writes) defeats the lock. This is
+# a strong default plus a MEASUREMENT, not a sandbox boundary:
+#   * ``refused`` counts writes the OS actually rejected (what the lock buys);
+#   * ``bypassed`` names files whose content changed anyway (what it does not).
+# Both land in ``result.json``. A non-zero ``bypassed`` is the signal that the
+# lock needs real enforcement (a different uid, or a read-only mount) before
+# anyone claims tests were unwritable.
+_TEST_FILE_RO_MODE = 0o444
+
+# Signatures of a write the OS refused, as they appear in agent tool output.
+_WRITE_REFUSED_MARKS = (
+    "permission denied",
+    "read-only file system",
+    "eacces",
+    "errno 13",
+    "operation not permitted",
+)
+
+
+def _tracked_files(tree: Path) -> tuple[list[str], str | None]:
+    """``(paths, error)`` from ``git ls-files`` in ``tree``.
+
+    Tracked-only on purpose: an untracked file the arm just created is its own
+    work, not part of the tree it was handed.
+
+    The error string is returned rather than swallowed. A silent ``[]`` would
+    make "git could not answer" indistinguishable from "this tree has no test
+    files", i.e. the lock would report ``files: 0, bypassed: 0`` and read as
+    clean while protecting nothing.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(tree), "ls-files"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [], f"git ls-files could not run in {tree}: {exc}"
+    if proc.returncode != 0:
+        return [], (
+            f"git ls-files rc={proc.returncode} in {tree}: "
+            f"{(proc.stderr or '').strip()[-200:]}"
+        )
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()], None
+
+
+def _digest_file(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def lock_test_files(tree: Path) -> dict[str, Any]:
+    """chmod every tracked test file in ``tree`` read-only (0444).
+
+    Only FILES are locked, never their directories: pytest writes
+    ``__pycache__`` beside the tests it imports and git replaces files by
+    unlinking them, so a read-only directory would break legitimate runs (and
+    the grade script's ``git clean -fd``) instead of only blocking edits.
+
+    Returns ``{"files": N, "digests": {rel: sha256}, "errors": [...],
+    "git_ok": bool}``. Idempotent — safe to call before every dispatch, which is
+    how the factory arm re-locks a worktree git has since re-materialised.
+    """
+    digests: dict[str, str] = {}
+    errors: list[str] = []
+    tracked, git_error = _tracked_files(tree)
+    if git_error:
+        errors.append(git_error)
+    for rel in tracked:
+        if not _diff_paths.is_test_path(rel):
+            continue
+        path = tree / rel
+        if not path.is_file() or path.is_symlink():
+            continue
+        digest = _digest_file(path)
+        if digest is None:
+            errors.append(f"unreadable: {rel}")
+            continue
+        digests[rel] = digest
+        try:
+            path.chmod(_TEST_FILE_RO_MODE)
+        except OSError as exc:
+            errors.append(f"chmod failed on {rel}: {exc}")
+    return {
+        "files": len(digests),
+        "digests": digests,
+        "errors": errors[:20],
+        "git_ok": git_error is None,
+    }
+
+
+def verify_test_files_locked(tree: Path, digests: dict[str, str]) -> dict[str, Any]:
+    """What became of the locked files. Read ``bypassed`` AND ``lock_lapsed``.
+
+    * ``bypassed`` — locked file whose CONTENT differs from what was locked.
+      The lock did not hold (chmod-back, ``git checkout``, ``git apply``, a
+      root-owned process).
+    * ``unlocked_mode`` — byte-identical but no longer read-only. MEASURED: a
+      ``git apply`` / ``git checkout --`` onto a 0444 tracked file succeeds and
+      leaves it at 0664, and an arm that edits a test and reverts it also ends
+      byte-identical. So this means "the lock has lapsed", which covers both
+      "an attempt is in flight" and "an edit landed and was undone" — it is NOT
+      proof that nothing was written.
+    * ``missing`` — locked file that is gone (directories stay writable by
+      design, so deletion is possible).
+    * ``lock_lapsed_count`` — ``unlocked_mode`` + ``missing``. A zero
+      ``bypassed_count`` only means "tests were unwritable" when this is 0 too.
+    """
+    bypassed: list[str] = []
+    unlocked_mode: list[str] = []
+    missing: list[str] = []
+    for rel, want in digests.items():
+        path = tree / rel
+        if not path.exists():
+            missing.append(rel)
+            continue
+        got = _digest_file(path)
+        if got != want:
+            bypassed.append(rel)
+            continue
+        try:
+            if path.stat().st_mode & 0o222:
+                unlocked_mode.append(rel)
+        except OSError:
+            pass
+    return {
+        "bypassed": sorted(bypassed)[:20],
+        "bypassed_count": len(bypassed),
+        "unlocked_mode": sorted(unlocked_mode)[:20],
+        "missing": sorted(missing)[:20],
+        "lock_lapsed_count": len(unlocked_mode) + len(missing),
+    }
+
+
+def count_refused_test_writes(text: str, locked: list[str]) -> dict[str, Any]:
+    """Count write attempts the OS refused on a LOCKED test file.
+
+    A line has to carry both an OS refusal signature and the name of a file we
+    actually locked — matched on the full relative path or the basename, since
+    tool output quotes paths in whatever form the agent used. Neither half
+    alone counts: "Permission denied" on a pip install is not a test write, and
+    a test path in ordinary output is not an attempt.
+    """
+    if not text or not locked:
+        return {"refused": 0, "samples": []}
+    names = {rel.lower() for rel in locked} | {rel.rsplit("/", 1)[-1].lower() for rel in locked}
+    refused = 0
+    samples: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        low = line.lower()
+        if not any(mark in low for mark in _WRITE_REFUSED_MARKS):
+            continue
+        if not any(name in low for name in names):
+            continue
+        refused += 1
+        if len(samples) < 5:
+            samples.append(line[:300])
+    return {"refused": refused, "samples": samples}
+
+
+#
+# Big enough that no real run is truncated: a factory row's whole trajectory dir
+# is single-digit MB per dev call over at most four calls plus reviews. The cap
+# exists so a pathological trail cannot exhaust memory, and truncation is
+# REPORTED (``scan_truncated``) rather than silently changing the meaning of
+# ``refused`` — an undercount that looks like a low number is worse than a
+# missing one, especially on the arm whose delta is the headline.
+_SCAN_CAP_BYTES = 64_000_000
+
+
+def _read_text_tree(
+    paths: list[Path], *, cap_bytes: int = _SCAN_CAP_BYTES
+) -> tuple[str, bool]:
+    """``(text, truncated)`` — readable text from ``paths`` (files or dirs)."""
+    out: list[str] = []
+    total = 0
+    for p in paths:
+        files = sorted(p.rglob("*")) if p.is_dir() else [p]
+        for f in files:
+            if not f.is_file():
+                continue
+            try:
+                chunk = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            out.append(chunk)
+            total += len(chunk)
+            if total >= cap_bytes:
+                return "".join(out), True
+    return "".join(out), False
+
+
+def readonly_test_report(
+    tree: Path,
+    lock: dict[str, Any],
+    *,
+    output_paths: list[Path] | None = None,
+) -> dict[str, Any]:
+    """The ``test_readonly`` block written into ``result.json``.
+
+    ``files`` is what was locked, ``refused`` is what the lock actually
+    prevented (scanned from the arm's own tool output), ``bypassed`` is where it
+    failed to, and ``lock_lapsed_count`` is where it stopped applying.
+    ``git_ok: false`` means the file list itself could not be built, so
+    ``files: 0`` says nothing about the tree.
+    """
+    digests: dict[str, str] = dict(lock.get("digests") or {})
+    report: dict[str, Any] = {
+        "mode": "0444",
+        "files": len(digests),
+        "lock_errors": lock.get("errors") or [],
+        "git_ok": bool(lock.get("git_ok", True)),
+        **verify_test_files_locked(tree, digests),
+    }
+    text, truncated = _read_text_tree(output_paths or [])
+    scanned = count_refused_test_writes(text, sorted(digests))
+    # None, not 0: "we did not look" and "we looked and found none" are
+    # different claims, and only one of them is evidence.
+    report["refused"] = scanned["refused"] if output_paths else None
+    report["refused_samples"] = scanned["samples"] if output_paths else []
+    report["scan_truncated"] = truncated if output_paths else None
+    return report
+
+
 # The test policy EVERY arm must receive BYTE-IDENTICALLY. Extracted from
 # ``_STORY_TEMPLATE`` (whose rendered text is unchanged — pinned by
 # ``test_story_template_rendering_is_unchanged``) because the bare arm's system
@@ -2418,33 +2652,85 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         StoryState.REVIEWER_DONE.value,
         StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
         StoryState.BLOCKED_REVIEW_NONCONVERGENT.value,
+        # The dev can declare the story underspecified (ImpossibleBench escape
+        # hatch). That is a real terminal outcome for this arm, not an anomaly:
+        # without it here the driver would exit through the "dispatches None"
+        # branch and the row would read as a harness stop rather than the arm's
+        # own answer. It is NOT green (``factory_says_green`` keys on
+        # reviewer_done), so it still grades as unresolved.
+        StoryState.BLOCKED_UNDERSPECIFIED.value,
     }
+    # READ-ONLY TEST FILES (ImpossibleBench; see ``lock_test_files``). The dev
+    # does not work in ``repo`` — it works in a per-story git worktree the chain
+    # creates on the first dispatch, and ``git worktree add`` materialises fresh
+    # files with default modes, so locking ``repo`` cannot reach it. The seam is
+    # therefore the worktree factory itself: lock immediately after it returns,
+    # on EVERY dispatch, which also re-locks after any git operation that
+    # replaced a file.
+    #
+    # Patching ``handlers.ensure_worktree_for_story`` (not
+    # ``worktree.ensure_worktree_for_story``) is deliberate: handlers imported
+    # the name at module load, so the module-global in HANDLERS is the one its
+    # callers resolve. Guarded so a rename fails the run LOUDLY instead of
+    # silently leaving every test file writable — a countermeasure that
+    # silently stops applying is worse than none, because the number keeps
+    # being reported.
+    from factory.chain import handlers as _handlers
+
+    if not hasattr(_handlers, "ensure_worktree_for_story"):
+        raise SystemExit(
+            "bench: handlers.ensure_worktree_for_story is gone — the read-only "
+            "test-file lock has no seam and would silently not apply"
+        )
+    _orig_ensure_worktree = _handlers.ensure_worktree_for_story
+    factory_lock: dict[str, Any] = {"files": 0, "digests": {}, "errors": [], "applied": 0}
+
+    def _ensure_worktree_and_lock(*a: Any, **kw: Any) -> Path:
+        wt = _orig_ensure_worktree(*a, **kw)
+        locked = lock_test_files(Path(wt))
+        # Keep the FIRST digest for a path: it is the content the arm was
+        # handed, which is what "bypassed" has to be measured against.
+        merged = dict(locked["digests"])
+        merged.update(factory_lock["digests"])
+        factory_lock["digests"] = merged
+        factory_lock["files"] = len(merged)
+        factory_lock["errors"] = (factory_lock["errors"] + locked["errors"])[:20]
+        factory_lock["applied"] = int(factory_lock["applied"]) + 1
+        return wt
+
+    _handlers.ensure_worktree_for_story = _ensure_worktree_and_lock
+
     # The dispatch-loop budget deliberately starts HERE (setup already spent
     # is not dev's fault); the reported wall_clock_s uses ``entered``.
     started = time.monotonic()
     transitions: list[str] = []
     error: str | None = None
-    for _ in range(max_steps):
-        if time.monotonic() - started > timeout_s:
-            error = f"wall-clock cap {timeout_s}s hit"
-            break
-        with Session(eng) as s:
-            row = s.get(StoryRecord, story_id)
-            assert row is not None
-        if row.state in terminal:
-            break
-        name = O._dispatch_for_story(row)
-        if name not in allowed:
-            transitions.append(f"stop: state={row.state} dispatches {name}")
-            break
-        before = row.state
-        try:
-            O._invoke_handler(name, row, cfg, root, dry_run=False, db_path=db)
-        except Exception as exc:  # never crash the driver
-            error = f"{name}: {type(exc).__name__}: {exc}"
-            break
-        transitions.append(f"{name}: {before} -> {row.state}")
-        print(transitions[-1], flush=True)
+    try:
+        for _ in range(max_steps):
+            if time.monotonic() - started > timeout_s:
+                error = f"wall-clock cap {timeout_s}s hit"
+                break
+            with Session(eng) as s:
+                row = s.get(StoryRecord, story_id)
+                assert row is not None
+            if row.state in terminal:
+                break
+            name = O._dispatch_for_story(row)
+            if name not in allowed:
+                transitions.append(f"stop: state={row.state} dispatches {name}")
+                break
+            before = row.state
+            try:
+                O._invoke_handler(name, row, cfg, root, dry_run=False, db_path=db)
+            except Exception as exc:  # never crash the driver
+                error = f"{name}: {type(exc).__name__}: {exc}"
+                break
+            transitions.append(f"{name}: {before} -> {row.state}")
+            print(transitions[-1], flush=True)
+    finally:
+        # Never leave the patch installed: ``run_factory`` is called in-process
+        # by tests, and a leaked wrapper would outlive the run it belongs to.
+        _handlers.ensure_worktree_for_story = _orig_ensure_worktree
 
     # EVERY Run row in this isolated DB belongs to this run — see
     # ``_ledger_totals`` for why a story_id filter under-reported cost 1.62x.
@@ -2461,6 +2747,16 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     ]
     graded_wt = matches[0] if matches else repo
     raw_diff = _capture_diff(graded_wt)
+
+    # What the read-only lock actually bought, measured against the tree the
+    # dev worked in and the dev's own tool output (the trajectories the chain
+    # writes per dev call).
+    readonly = readonly_test_report(
+        graded_wt,
+        factory_lock,
+        output_paths=[root / "state" / "events" / "trajectories"],
+    )
+    readonly["locks_applied"] = factory_lock["applied"]
 
     # The arm has stopped; its audit trail can come home. This happens BEFORE
     # the diff is refused below, because `audit` treats a missing trail as a
@@ -2494,6 +2790,7 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
                 "error": f"diff refused: {exc.reason}",
                 "refused_paths": refused,
                 "factory_says_green": False,
+                "test_readonly": readonly,
             },
         )
         raise SystemExit(f"diff refused: {exc.reason}") from exc
@@ -2547,6 +2844,10 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "test_files_stripped": stripped,
         "refused_paths": refused,
         "diff_bytes": len(code_diff),
+        # What the ImpossibleBench read-only lock bought on this row:
+        # ``refused`` writes the OS rejected, ``bypassed_count`` files whose
+        # content changed anyway. See ``lock_test_files`` for the honest limit.
+        "test_readonly": readonly,
     }
     out = _write_result(instance_id, "factory", result)
     _print_run_summary(result, out)
@@ -2831,6 +3132,11 @@ def run_bare(
     from factory.model_router import route
     from factory.runner import text_run as _text_run
 
+    # Read-only test files, identically to every other arm (see
+    # ``lock_test_files``): this arm works directly in ``repo``, so the lock
+    # lands here, after the collect precheck has run against a normal tree.
+    bare_lock = lock_test_files(repo)
+
     model = route("dev", "standard")
     text_run = _probe_text_run() if probe else _text_run
     transcript: list[dict[str, Any]] = []
@@ -2959,6 +3265,13 @@ def run_bare(
             continue
 
         exit_code, output = _bare_exec(command, repo)
+        # RE-LOCK after every command. Measured: ``git apply`` / ``git checkout
+        # --`` onto a 0444 tracked file succeeds and leaves it at 0664, so a
+        # single git-mediated write early in a run would silently unlock every
+        # test file for the rest of it. The chmod is idempotent and cheap; the
+        # digests from the FIRST lock are the ones ``bypassed`` is measured
+        # against, so re-locking cannot hide an edit that already landed.
+        lock_test_files(repo)
         # ``None`` means the command never produced a status (timeout / could not
         # start), so there is no exit code to report and claiming "Exit None"
         # would be one more thing for the model to misread.
@@ -3043,6 +3356,11 @@ def run_bare(
         "files_changed": kept,
         "test_files_stripped": stripped,
         "diff_bytes": len(code_diff),
+        # Read-only test files, same policy as every arm. The refusal count is
+        # scanned from this arm's own untruncated command log.
+        "test_readonly": readonly_test_report(
+            repo, bare_lock, output_paths=[cmd_log]
+        ),
         "transcript": transcript[-20:],
     }
     out = _write_result(instance_id, "bare", result)
@@ -3875,6 +4193,10 @@ def run_claude(
             precheck={**precheck, "tail": collect_tail[-1500:]},
         )
 
+    # Read-only test files, identically to every other arm (see
+    # ``lock_test_files``); this arm works directly in ``repo``.
+    claude_lock = lock_test_files(repo)
+
     prompt = _claude_task_prompt(inst, repo)
     turns = min(max_steps, _CLAUDE_TURN_CAP)
     argv = _claude_cli_argv(prompt, model=resolved_model, max_turns=turns)
@@ -4021,6 +4343,11 @@ def run_claude(
         "test_files_stripped": stripped,
         "refused_paths": refused,
         "diff_bytes": len(code_diff),
+        # Read-only test files, same policy as every arm. Refusals are scanned
+        # from the CLI's own transcript.
+        "test_readonly": readonly_test_report(
+            repo, claude_lock, output_paths=[transcript_path]
+        ),
     }
     out = _write_result(instance_id, key, result)
     _print_run_summary(result, out)
@@ -4207,6 +4534,10 @@ def run_openhands(
             precheck={**precheck, "tail": collect_tail[-1500:]},
         )
 
+    # Read-only test files, identically to every other arm (see
+    # ``lock_test_files``); this arm works directly in ``repo``.
+    openhands_lock = lock_test_files(repo)
+
     # The IDENTICAL task text the factory dev's story file is written from —
     # same helper, same arguments, no arm-specific wording.
     task = _STORY_TEMPLATE.format(
@@ -4390,6 +4721,13 @@ def run_openhands(
         "files_changed": kept,
         "test_files_stripped": stripped,
         "diff_bytes": len(code_diff),
+        # Read-only test files, same policy as every arm. Refusals are scanned
+        # from the agent's own copied-out trajectory.
+        "test_readonly": readonly_test_report(
+            repo,
+            openhands_lock,
+            output_paths=[traj_path] if traj_path else [],
+        ),
     }
     out = _write_result(instance_id, "openhands", result)
     _print_run_summary(result, out)

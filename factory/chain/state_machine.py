@@ -196,6 +196,41 @@ class StoryState(StrEnum):
     # state — reconciliation never resurrects on its own (it only ever advances
     # toward terminal, so it stays idempotent).
     CLOSED_BY_OPERATOR = "closed_by_operator"
+    # DEV-DECLARED underspecification. The dev persona may end a run with
+    # ``UNDERSPECIFIED: <reason>`` when the story cannot be satisfied as
+    # written — a contradictory or missing contract, an acceptance criterion
+    # with no observable behaviour, a task whose premise is false. The dev
+    # handler routes the story HERE instead of counting a retry.
+    #
+    # EVIDENCE (ImpossibleBench, ICLR 2026, arXiv 2510.20270): giving the agent
+    # an explicit way to declare a task impossible/underspecified dropped
+    # test-exploitation from 54% -> 9% (GPT-5) and 49% -> 12% (o3). Without the
+    # escape hatch, an agent handed an unsatisfiable task does not stop — it
+    # games whatever check is in reach. Under Loop-4 (dev owns its own tests)
+    # that check is the dev's own test file, which is exactly the false-green
+    # the 2026-08-04 hidden-oracle grading measured (self-verdict 40% precise).
+    #
+    # Properties this state must keep, all of them load-bearing:
+    #   * TERMINAL — no outgoing transition, so ``is_terminal`` is True,
+    #     ``_dispatch_for_story`` returns None and the chain stops driving it.
+    #   * CONSUMES NO DEV RETRY — ``story.dev_retries`` is untouched on the way
+    #     in. A declaration is not a failed attempt; charging a retry for it
+    #     would make honesty cost the same as failure.
+    #   * NOT auto-recoverable — deliberately absent from
+    #     ``orchestrator._AUTO_RECOVERABLE_STATES``. Re-entering the chain at
+    #     SM_DONE would re-dispatch dev against the SAME under-specified story
+    #     and get the same declaration, i.e. a retry loop wearing a different
+    #     hat. The story needs a human to rewrite it (or to reject the claim).
+    #   * PENDING-HUMAN, not resolved — in
+    #     ``orchestrator._PENDING_HUMAN_STATES`` and surfaced by
+    #     ``factory inbox``; deliberately absent from
+    #     ``tracker_issue._RESOLVED_STORY_STATES`` so the tracker issue stays
+    #     open until the operator rules. ``reconcile_closed_trackers`` is the
+    #     way out when they rule by closing the issue.
+    # The reason the dev gave is recorded in ``StoryRecord.error`` (the repo
+    # rule: every BLOCKED_* transition records a reason) and in a
+    # ``dev_declared_underspecified`` story event.
+    BLOCKED_UNDERSPECIFIED = "blocked_underspecified"
 
 
 class StoryRecord(SQLModel, table=True):
@@ -359,6 +394,11 @@ EVENT_DEV_STARTED = "dev_started"
 EVENT_DEV_TESTS_GREEN = "dev_tests_green"
 EVENT_DEV_TESTS_RED = "dev_tests_red"  # dev finished but tests still red
 EVENT_DEV_EXHAUSTED = "dev_exhausted"  # max retries hit
+# The dev DECLARED the story underspecified/unsatisfiable as written (the
+# ``UNDERSPECIFIED:`` marker in its final message). Distinct from
+# EVENT_DEV_EXHAUSTED: nothing was retried to exhaustion, the dev is refusing
+# to guess. Routes to the terminal BLOCKED_UNDERSPECIFIED sink.
+EVENT_DEV_UNDERSPECIFIED = "dev_underspecified"
 EVENT_REVIEWER_STARTED = "reviewer_started"
 EVENT_REVIEWER_APPROVE = "reviewer_approve"
 EVENT_REVIEWER_REQUEST_CHANGES = "reviewer_request_changes"
@@ -412,6 +452,17 @@ _TRANSITIONS: dict[tuple[StoryState, str], StoryState] = {
     (StoryState.DEV_IN_PROGRESS, EVENT_DEV_EXHAUSTED): StoryState.BLOCKED_TESTS_NEED_CLARIFICATION,
     (StoryState.DEV_RETRY, EVENT_DEV_STARTED): StoryState.DEV_IN_PROGRESS,
     (StoryState.DEV_RETRY, EVENT_DEV_EXHAUSTED): StoryState.BLOCKED_TESTS_NEED_CLARIFICATION,
+    # ImpossibleBench escape hatch. The LIVE edge is the DEV_IN_PROGRESS one:
+    # ``_handle_dev_once`` advances to DEV_IN_PROGRESS before it runs the
+    # sandbox, so that is the state a declaration is always parsed in. The
+    # DEV_RETRY edge is belt-and-braces for any future caller that declares
+    # without having advanced first — an IllegalTransitionError here would crash
+    # a tick over an honest answer.
+    (
+        StoryState.DEV_IN_PROGRESS,
+        EVENT_DEV_UNDERSPECIFIED,
+    ): StoryState.BLOCKED_UNDERSPECIFIED,
+    (StoryState.DEV_RETRY, EVENT_DEV_UNDERSPECIFIED): StoryState.BLOCKED_UNDERSPECIFIED,
     (StoryState.TESTS_GREEN, EVENT_REVIEWER_STARTED): StoryState.REVIEWER_IN_PROGRESS,
     (StoryState.REVIEWER_IN_PROGRESS, EVENT_REVIEWER_APPROVE): StoryState.REVIEWER_DONE,
     (

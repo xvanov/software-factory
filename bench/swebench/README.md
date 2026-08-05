@@ -449,6 +449,50 @@ which the gold-patch control surfaced before any model spend:
   edit could break an otherwise valid patch, and grading the remainder as the
   arm's answer is `proxy != real`. Measured: 0 of the 188 retained
   `prediction.diff` files and 0 of the 20 pinned oracle patches touch one.
+- **Test files are read-only while the arm runs** (`lock_test_files`, added
+  2026-08-04). ImpossibleBench (ICLR 2026, arXiv 2510.20270) measured that
+  making test files read-only "significantly reduces cheating while maintaining
+  performance"; hiding them entirely drove cheating to zero but *degraded*
+  legitimate work, so read-only is the setting worth having — the arm still
+  reads and RUNS its tests, it just cannot quietly rewrite what judges it. Every
+  tracked test file in the arm's tree is `chmod 0444`; directories stay writable
+  (pytest writes `__pycache__`, git replaces files by unlinking). Applied to
+  **every arm**, because an intervention on one arm of a comparison is a
+  confound. For the factory arm the lock is applied to the dev's per-story git
+  worktree on each dispatch — `git worktree add` materialises fresh files, so
+  locking the source clone would not reach it.
+  **Honest limit:** every arm runs as the uid owning those files and has a
+  shell, so `chmod u+w` (or `git checkout`) defeats the lock. This is a strong
+  default plus a measurement, not a sandbox boundary. `result.json.test_readonly`
+  therefore separates `refused` (writes the OS actually rejected, scanned from
+  the arm's own tool output) from `bypassed_count` (files whose content changed
+  anyway). A non-zero `bypassed_count` means the lock needs real enforcement (a
+  different uid, or a read-only mount) before anyone claims the tests were
+  unwritable; `refused: null` means that arm's output was not scanned, which is
+  not the same as zero attempts.
+  **The lock can also LAPSE, which is not the same as being bypassed.** Measured:
+  `git apply` and `git checkout --` onto a `0444` tracked file both succeed and
+  leave it at `0664`, because git replaces the file rather than writing through
+  it. So one git-mediated write early in a run would silently unlock every test
+  file for the rest of it, and `bypassed_count: 0` would still read as clean. Two
+  consequences, both visible in `test_readonly`:
+  - `unlocked_mode` / `lock_lapsed_count` — files still byte-identical but no
+    longer read-only. That covers *both* "an attempt is in flight" and "an edit
+    landed and was reverted", so it is **not** proof that nothing was written.
+    A zero `bypassed_count` only means "the tests were unwritable" when
+    `lock_lapsed_count` is `0` as well. Read the two together or neither.
+  - The bare arm **re-locks after every command** (the factory arm already
+    re-locks on each dispatch). The chmod is idempotent and cheap, and the
+    digests `bypassed` is measured against are the ones from the *first* lock,
+    so re-locking cannot paper over an edit that already landed.
+  Two more fields exist so that a *silent* failure of the measurement cannot
+  masquerade as a clean result — the countermeasure-stops-applying class:
+  - `git_ok: false` — `git ls-files` could not answer, so the list of files to
+    lock was never built. `files: 0, bypassed_count: 0` then says nothing about
+    the tree; it is an unmeasured run, not a clean one.
+  - `scan_truncated: true` — the arm's output exceeded the 64 MB scan cap, so
+    `refused` is an undercount. Reported rather than swallowed, because a low
+    number that looks like a real one is worse than a missing one.
 - **Grading is per-node, not per-exit-code.** `pytest` exits 0 when every
   selected test SKIPS, so `if ! pytest -q <ids>` graded a fully-skipped run as
   RESOLVED. Both sets now run with `-rpfEsxX` and every declared

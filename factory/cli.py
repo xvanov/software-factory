@@ -1305,7 +1305,15 @@ def inbox_cmd(
                     continue
                 if r.last_rejection_reason:
                     reason = r.last_rejection_reason
-                elif r.state in {"blocked_tests_need_clarification", "reviewer_requested_changes"}:
+                elif r.state in {
+                    "blocked_tests_need_clarification",
+                    # Dev declared the story unsatisfiable as written. The whole
+                    # point of the escape hatch is that a HUMAN reads the claim,
+                    # so it has to surface here (the declared reason is on
+                    # ``StoryRecord.error``, shown by ``factory why <id>``).
+                    "blocked_underspecified",
+                    "reviewer_requested_changes",
+                }:
                     reason = r.state
                 if reason:
                     needs_human_table.add_row(a, str(r.id), r.slug, r.state, reason)
@@ -1523,6 +1531,7 @@ def queue_cmd(
         StoryState.CI_GREEN.value,
         StoryState.READY_FOR_MERGE.value,
         StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
+        StoryState.BLOCKED_UNDERSPECIFIED.value,
         StoryState.SUPERSEDED_BY_SIBLING.value,
         StoryState.CLOSED_BY_OPERATOR.value,
     }
@@ -2151,8 +2160,8 @@ def _story_progress_rows(app_name: str | None) -> list[dict[str, Any]]:
         "SELECT id, app, slug, state, chain_kind, dev_retries, reviewer_cycles, "
         "github_issue_number, updated_at FROM stories WHERE state NOT IN "
         "('deployed','blocked_tests_need_clarification','blocked_deploy_failed',"
-        "'blocked_review_nonconvergent','superseded_by_sibling','story_created',"
-        "'closed_by_operator')"
+        "'blocked_review_nonconvergent','blocked_underspecified',"
+        "'superseded_by_sibling','story_created','closed_by_operator')"
     )
     params: list[Any] = []
     if app_name:
