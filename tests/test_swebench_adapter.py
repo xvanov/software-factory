@@ -3975,8 +3975,8 @@ def test_cli_claude_arm_defaults_to_the_turn_cap(
     assert seen["max_steps"] == A._CLAUDE_TURN_CAP
 
     monkeypatch.setattr(
-        A, "run_factory", lambda iid, *, max_steps, timeout_s: seen.update(
-            factory_steps=max_steps
+        A, "run_factory", lambda iid, *, max_steps, timeout_s, arm: seen.update(
+            factory_steps=max_steps, factory_arm=arm
         )
     )
     monkeypatch.setattr(
@@ -3984,6 +3984,18 @@ def test_cli_claude_arm_defaults_to_the_turn_cap(
     )
     A.main()
     assert seen["factory_steps"] == 16
+    assert seen["factory_arm"] == "factory"
+
+    # The chain driver serves more than one arm id since the B.1 reviewer
+    # ablation, so it is handed the arm and the ablation keeps the same budget.
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["swebench_adapter.py", "run", "--instance", "i1", "--arm", "solo-noreview"],
+    )
+    A.main()
+    assert seen["factory_steps"] == 16
+    assert seen["factory_arm"] == "solo-noreview"
 
 
 # --------------------------------------------------------------------------- #

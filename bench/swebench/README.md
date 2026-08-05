@@ -171,6 +171,11 @@ report's headline labels all read.
 `claude` remains as an alias for the CLI on its default model
 (`claude-opus-5`); `--model <id>` overrides it and keys its own run directory.
 
+A **sixth** arm, `solo-noreview`, was added later for one ablation and is **not
+part of the five-arm result above** — see "The solo-noreview arm" below and
+[`PRE-REGISTRATION-B1.md`](PRE-REGISTRATION-B1.md). It never appears in
+`results.md`.
+
 Each adjacent pair subtracts one thing, and only that thing:
 
 - `factory` − `openhands` = **the chain** (PM/SM decomposition, a reviewer on
@@ -794,6 +799,60 @@ The wall-clock cap ABANDONS the conversation rather than killing it — an
 in-process agent loop cannot be killed, the same trade-off `sandbox_run` makes —
 and grades the tree as it stands. That is why the trajectory is persisted
 incrementally rather than at the end.
+
+## The solo-noreview arm — the reviewer ablation (PLAN.md B.1 Phase 1a)
+
+`solo-noreview` is the `factory` arm with the **reviewer round-trip removed and
+nothing else**. Pre-registered in
+[`PRE-REGISTRATION-B1.md`](PRE-REGISTRATION-B1.md); result in
+[`RESULTS-B1-PHASE1A.md`](RESULTS-B1-PHASE1A.md). It is **not** part of the
+five-arm result at the top of this file and never enters `results.md`.
+
+It is `base="factory"` in `_ARMS`: the same `run_factory` driver, the same code
+path. Exactly two behaviours differ, both from one table
+(`_FACTORY_DRIVER_MODES`):
+
+| | `factory` | `solo-noreview` |
+|---|---|---|
+| personas the driver dispatches | `{dev, review}` | `{dev}` |
+| the arm's own green claim | `reviewer_done` | `tests_green` |
+
+The BLOCKED_* terminal sinks are identical across the two arms on purpose:
+`blocked_review_nonconvergent` is unreachable without a reviewer, and removing
+it from one arm would be a second difference for no benefit.
+
+Everything else is held: the rendered story bytes (one `_STORY_TEMPLATE`, and a
+test proves the arm id cannot reach the prompt expression at all), the dev
+persona, `routes.yaml`, the OpenHands sandbox and its default toolset, the 600
+iteration cap, the 16-tick and 5400 s budgets, the read-only test-file lock, the
+collect precheck, the acceptance-oracle authoring, `split_diff` /
+`assert_no_test_edits`, grading and audit. **No navigation-tooling change** —
+that is B.2, deliberately a separate arm, because moving two variables at once
+makes neither attributable.
+
+Three things this cost:
+
+- **The driver is arm-parameterized.** It hard-coded `"factory"` in nine places
+  (`_run_dir`, `_work_dir`, six `result.json` writes and the acceptance author's
+  spec/event destinations). A second `base="factory"` arm on the old code would
+  have written its rows into `runs/<instance>/factory/`, and
+  `_reset_run_artifacts` would have deleted the published rows **and** the only
+  replayable reviewer corpus this repo has. A test pins the isolation.
+- **`_FACTORY_DRIVER_MODES` fails loud.** A `base="factory"` arm with no entry is
+  refused before the instance is even looked up. A silent default would run the
+  full chain and publish it as an ablation that never happened.
+- **`audit` finds the state root by runner FAMILY, not by arm id.** It compared
+  `arm == "factory"` to decide whether the isolated factory root sits at
+  `<run_dir>/root`; a second chain arm would have been audited against an empty
+  directory and failed with "no Run ledger" on a perfectly good row.
+
+`result.json` records `green_state` and `chain_personas` on every chain-driver
+row, so `factory_says_green` never has to be interpreted — the row says which
+claim it was making.
+
+`--probe-plumbing` still has no factory-base implementation (documented above);
+the free checks for this arm are `tests/test_swebench_solo_noreview_arm.py` and
+`run-all --arm solo-noreview --only-working --dry-run`.
 
 ## The factory arm carries the chain's independent acceptance oracle
 
