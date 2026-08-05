@@ -795,6 +795,133 @@ in-process agent loop cannot be killed, the same trade-off `sandbox_run` makes �
 and grades the tree as it stands. That is why the trajectory is persisted
 incrementally rather than at the end.
 
+## The factory arm carries the chain's independent acceptance oracle
+
+**Every published `factory` row was measured without it.** The chain has exactly
+one layer that does not re-derive truth from artifacts the dev produced:
+`factory/chain/acceptance.py` authors a test from the SPEC ONLY, at story spawn,
+stores it outside the dev's worktree, and never shows it to the dev. This driver
+seeds a story at `SM_DONE` and dispatches only `dev`/`review` — i.e. it starts
+*downstream* of `handle_stories_spawned`, where authoring happens. So the 37% and
+the 40% chain-verdict precision above were produced by an arm labelled "the
+product" that was missing the product's only independence layer. Fixed
+2026-08-05 (`PLAN.md` A.1b); the rows in `results.md` predate it.
+
+`run_factory` now authors the oracle from the instance's `problem_statement`
+after the story row exists and **before the dispatch loop**, through the chain's
+own `author_acceptance_test` — same spec-only prompt assembly, same persona
+(`acceptance_author`, `azure/gpt-5.4`, which is not the dev's model), same
+storage layout, same `acceptance_expected` / `acceptance_test_ref` bookkeeping.
+`result.json.acceptance` records what was authored and, separately, the
+**measured** proof of the ordering:
+
+| field | what it answers |
+|---|---|
+| `authored_ref` / `ref` / `store_root` | where the chain wrote the oracle, and where the harness relocated it to |
+| `in_root_store_removed` | the in-root path that must no longer exist |
+| `sha256` / `bytes` | which bytes judged this row |
+| `spec_source` / `spec_prompt_sha256` / `spec_prompt_path` | what the author was shown — the prompt is persisted verbatim, in the RUN DIR |
+| `ordering` | the author call's END vs the dev's FIRST call's START, read from the run's own `runs.ndjson` |
+| `authored_before_dev_first_call` | the one-boolean form of the row above |
+| `ledger_author_rows` | the authoring call is billed to THIS run, not to production |
+| `trail_scan` | how many times any persona trail referenced the store (must be 0) |
+| `in_graded_diff` / `in_stripped_paths` | the authored test never reached the prediction |
+| `gate_enforced` | **`false`** — see the limit below |
+
+Five things hold it, each in code rather than in this paragraph:
+
+1. **The hidden grading oracle cannot reach the author.** Structural, by
+   signature: `_bench_acceptance_direction(problem_statement: str, dir_path)`
+   takes the statement STRING, so there is no parameter through which
+   `oracle.json.z`'s gold patch, gold test patch or `fail_to_pass` ids could
+   arrive — and the manifest record the caller holds does not contain them
+   either (only `oracle_sha256`). The direction's `has_flow` / `has_api_spec` are
+   False and its dir is empty, so `build_spec_prompt` reads nothing off disk.
+2. **The authored test is never visible to the dev, and the store is not even
+   discoverable.** The chain authors it into production's own
+   `<work>/root/state/acceptance/<app>/<story>/`, which is a SIBLING of the dev's
+   `state/worktrees/<name>/` — and **that is not good enough here, measured**: on
+   the first real run of this code the dev went looking for its story file, ran
+   `find <root>/state -name "*.md"` from one level above its worktree, and the
+   listing named the acceptance store (the `spec_prompt.md` provenance file was
+   the thing that matched). The trail scan caught it and refused the row, which is
+   the countermeasure working, but the layout was the bug.
+
+   So the oracle is now **relocated out of the factory root** into an unguessable
+   `mkdtemp` directory under the scratch root — `_prepared_tree_dir`, the same
+   standard the GOLD patch's prepared trees are held to ("so an arm cannot guess a
+   sibling even if it goes looking") — and `StoryRecord.acceptance_test_ref`
+   becomes the absolute path, which `ref_is_readable` and the gate both already
+   accept. The in-root store is deleted, the chain's own
+   `state/events/acceptance.ndjson` (which carries the ref) moves to the run dir,
+   the spec prompt is written to the run dir rather than beside the test, and
+   **any** acceptance-named leftover inside the factory root refuses the row. A
+   walk of `<root>/state` now finds nothing of the layer.
+
+   `_assert_oracle_outside_dev_tree` re-derives containment from the real paths
+   (against the repo, the worktree root AND the factory root) and refuses if it is
+   ever false. Location is still not proof — every arm runs as this uid with a
+   shell, so nothing on this filesystem is unreachable — so
+   `_acceptance_trail_scan` reads the dev's trajectories and every persona prompt
+   body for two needles: the absolute store and the relative `state/acceptance`
+   (the shape a ref leak would take). A hit refuses the row; so does a truncated
+   scan or no scannable trail, because an undercount must not read as clean. The
+   needle is never the basename: a dev writing its own `test_acceptance.py` in the
+   repo under test is legitimate work, and a countermeasure that blocks legitimate
+   work is broken, not fail-safe.
+3. **The authored test cannot reach the graded diff.** Its basename is asserted
+   to classify as a test path before the author is called, so `split_diff` strips
+   it and `assert_no_test_edits` re-refuses it; `kept` is re-checked afterwards.
+4. **Fail CLOSED.** Authoring failure aborts the row before any dev spend, with
+   `error` recorded — so `classify_run` buckets it `run_failed` and no headline
+   can absorb it. An unverifiable ordering, a missing author Run row or a trail
+   hit refuses the row by the same route `DiffRefused` takes: no
+   `prediction.diff` is written, so `grade` refuses it. The alternative
+   (proceeding with a flag set) would reproduce exactly the mislabelling this
+   change exists to fix.
+5. **The cost is this arm's cost.** There is deliberately **no bench-local author
+   function**: `acceptance._default_author` binds the real `_llm_author` to the
+   root and db it is handed, so `author_fn=None` runs the *production* call and
+   its `Run` row lands in this run's isolated ledger — counted by `_ledger_totals`
+   and `_model_mix`, certified by `audit`. `_acceptance_author_ledger_rows`
+   refuses a row whose ledger has no author call, so the accounting cannot
+   silently go missing. Measured on `conan-io__conan-19735_interface`:
+   **$0.0087** of the row's $0.5752.
+
+**Only the factory arm changes.** The opt-in (`gates.acceptance_oracle: true`)
+lives in the app config `_build_bench_root` writes, and `_build_bench_root` has
+exactly one caller. No arm's task text mentions the oracle, and the rendered
+`_STORY_TEMPLATE` is pinned byte-for-byte by a test — arm parity was the subject
+of a previous retraction.
+
+**Honest limit: the `acceptance-verified` MERGE gate is NOT run**, and
+`result.json` says so (`gate_enforced: false`) rather than leaving a reader to
+assume otherwise. This driver has no merge step at all — it terminates at
+`REVIEWER_DONE` — and the gate runs its test with the factory's own interpreter,
+which has none of the instance's dependencies, so on the host it would
+import-error on every row. "Blocks everything" is not a measurement. Enforcing it
+needs an app `acceptance_test_command` that executes inside the instance image —
+plus the three placement knobs and the `acceptance_harness_hint` that chain PR
+#236 added after finding that a layout-blind author guesses module paths and its
+test cannot import the app. The bench app sets **no** hint, which keeps this
+arm's author strictly spec-only; a hint would have to be written per instance
+before the gate could pass anything. And before any of that is worth building,
+someone should measure whether a blind-authored oracle is satisfiable by a
+correct patch at all. So what this row proves is the ORDERING and the
+independence, not yet a second verdict channel.
+
+First clean row: `conan-io__conan-19735_interface`, 2026-08-05 —
+`authored_before_dev_first_call: true` (the author call ended `19:31:35.090291Z`,
+the dev's first call started `19:31:35.955607Z`), `ledger_author_rows: 1`,
+`trail_scan.hits: 0`, `in_graded_diff: []`, oracle verdict RESOLVED, audit OK,
+$0.5752 total of which $0.0087 is the authoring call. It is a single row under the
+pinned manifest, not a re-measurement: `results.md` is unchanged.
+
+One reporting note: `model_escalated_calls` counts every call on a model other
+than the nominal `dev/standard` route, per persona and without exception — it
+already included the reviewer, and it now includes the acceptance author too. Read
+`model_calls` (per persona, per tier) for dev hard-tier escapes.
+
 ## Which weights actually ran
 
 `result.json` used to carry no `model` at all on the factory arm. That hid a
@@ -888,7 +1015,21 @@ uv run python bench/swebench_adapter.py report --check      # must print CHECK O
 ### What the archive contains
 
 `results-archive/<generated-at>/` holds, per row, `result.json` + `audit.json` +
-`prediction.diff`; plus `sweep-<arm>.json` for every arm that produced a row,
+`prediction.diff`; plus, on the factory arm, `spec_prompt.md` +
+`acceptance-events.ndjson` (the acceptance oracle's provenance — without them a
+row's independence claim rests on a sha256 with nothing to check it against) and
+`root/state/events/prompt_bodies.ndjson`
+and `root/state/events/response_bodies.ndjson` — the only replayable reviewer
+corpus this repo has (verbatim reviewer prompts and responses, joinable on
+`prompt_hash`, ~130 KB per row). Those two are **optional extras**, copied when
+present and never part of the missing-artifact refusal: `_ROW_ARTIFACTS` doubles
+as that fail-closed set, checked over live run dirs and over archives, so adding
+them to it would refuse every existing row and every non-factory arm — i.e.
+retroactively invalidate the committed archives and break `report --check`. They
+are archived because they live in gitignored scratch that `_reset_run_artifacts`
+deletes at the top of every run: one re-run of an instance destroyed its corpus
+permanently, the same way 0 of the 19 published instances kept the selftest log
+that certified them. Plus `sweep-<arm>.json` for every arm that produced a row,
 `selftest.json` and `selftest-logs/` (the gold-patch control, which previously
 rested on a summary the next selftest overwrote), the rendered `results.md`, and
 `report-meta.json`.

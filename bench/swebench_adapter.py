@@ -1585,6 +1585,13 @@ def _reset_run_artifacts(run_dir: Path) -> None:
         "bare-commands.ndjson",  # APPENDED per step; must not span runs
         "claude-transcript.ndjson",  # the claude arm's action trail
         "claude-stderr.log",
+        # The factory arm's acceptance-oracle provenance. A run that dies before
+        # authoring would otherwise leave the PREVIOUS run's spec prompt beside the
+        # new result.json, and a reader would read one run's oracle input as
+        # another's. (`result.json` records `spec_prompt_sha256`, so a mismatch is
+        # detectable — but detectable-after-the-fact is not the same as absent.)
+        _ACCEPTANCE_SPEC_NAME,
+        _ACCEPTANCE_EVENTS_NAME,
     ):
         (run_dir / name).unlink(missing_ok=True)
     # `run-all` captures each child's stdout here, so `sweep-grade.log` held the
@@ -2496,6 +2503,13 @@ def _build_bench_root(inst: dict[str, Any], repo: Path, root: Path) -> Path:
             "test_command": test_cmd,
             "smoke_command": "",
             "smoke_harness_ready": False,
+            # OPT THIS APP IN to the chain's independent acceptance oracle
+            # (PLAN A.1). Without it ``acceptance_expected_for`` returns False
+            # and the measured factory arm carries no independence layer at all
+            # — which is how the published 37% and the 40% chain-verdict
+            # precision were measured. ``_build_bench_root`` has exactly one
+            # caller (``run_factory``), so no other arm sees this file.
+            "acceptance_oracle": True,
         },
     }
     (app_dir / "config.yaml").write_text(
@@ -2507,6 +2521,505 @@ def _build_bench_root(inst: dict[str, Any], repo: Path, root: Path) -> Path:
         json.dumps(settings, indent=2), encoding="utf-8"
     )
     return root
+
+
+# --------------------------------------------------------------------------- #
+# the chain's INDEPENDENT acceptance oracle, inside the measured path (A.1b)
+# --------------------------------------------------------------------------- #
+#
+# The chain has ONE layer that does not re-derive truth from artifacts the dev
+# produced: ``factory/chain/acceptance.py`` authors a test from the SPEC ONLY,
+# EARLY (at story spawn), stores it outside the dev's worktree, and never shows
+# it to the dev. The benchmark could not see it: this driver seeds a story at
+# ``SM_DONE`` and only ever dispatches ``dev``/``review``, i.e. it starts
+# DOWNSTREAM of ``handle_stories_spawned`` where authoring happens. So the
+# published ``factory`` 37% and its 40% chain-verdict precision were measured
+# with the chain's only independent oracle ABSENT — the arm labelled "the
+# product" was not the whole product.
+#
+# The four integrity properties this code has to hold, and where each is held:
+#
+# 1. THE HIDDEN GRADING ORACLE NEVER REACHES THE AUTHOR. Structural, not
+#    reviewed-by-eye: ``_bench_acceptance_direction`` takes the problem
+#    statement STRING. There is no parameter through which ``oracle.json.z``'s
+#    gold patch, gold test patch or fail_to_pass ids could arrive, and the
+#    manifest record the caller holds does not contain them either (only
+#    ``oracle_sha256``). ``has_flow``/``has_api_spec`` are False and the
+#    direction's ``dir_path`` is an EMPTY directory, so ``build_spec_prompt``
+#    reads nothing off disk. The assembled prompt is persisted beside the
+#    authored test so a reader can check what the author actually saw.
+# 2. THE AUTHORED ORACLE IS NEVER VISIBLE TO THE DEV, and its store is not even
+#    DISCOVERABLE. The chain authors it into production's own
+#    ``<work>/root/state/acceptance/swebench/<story_id>/`` — a SIBLING of the
+#    dev's ``<work>/root/state/worktrees/<name>/`` — and that is not good enough
+#    here, MEASURED: on the first real run the dev ran
+#    ``find <root>/state -name "*.md"`` and the listing named the store. So the
+#    harness relocates it out of the factory root into an unguessable
+#    ``_prepared_tree_dir``, deletes the in-root store, moves the chain's
+#    ``state/events/acceptance.ndjson`` to the run dir, and refuses on ANY
+#    acceptance-named leftover under ``<root>/state``.
+#    ``_assert_oracle_outside_dev_tree`` re-derives containment from the real
+#    paths; ``_acceptance_trail_scan`` then measures whether any persona trail
+#    referenced the store at all, and a hit refuses the row.
+# 3. THE AUTHORED TEST CANNOT REACH THE GRADED DIFF. Its basename is asserted
+#    to classify as a test path (``is_test_path``), so ``split_diff`` strips it
+#    and ``assert_no_test_edits`` re-refuses it — the same two mechanisms every
+#    other test path goes through. Asserted at authoring time, before spend,
+#    and again against ``kept`` after the diff is captured.
+# 4. FAIL CLOSED. Authoring failure ABORTS the row before any dev spend, with
+#    ``error`` recorded, so ``classify_run`` buckets it ``run_failed`` and no
+#    headline can absorb it. Rationale: this arm's claim is "the chain,
+#    including its independence layer"; a row that silently lost the layer
+#    would be the same mislabelling A.1b exists to fix. Production's choice
+#    (``acceptance_expected`` stays True, the merge gate BLOCKS) is the same
+#    posture — refuse, never proceed as if the oracle ran.
+#
+# Cost: the authoring call's tokens and dollars land in the RUN's isolated
+# ledger — ``acceptance._default_author`` binds ``_llm_author`` to the root and db
+# it is given — so ``_ledger_totals`` and ``_model_mix`` both count it and
+# ``audit`` certifies it. It is a real cost of the product being measured, and
+# ``_acceptance_author_ledger_rows`` refuses a row whose ledger lacks the call.
+#
+# NOT done here, deliberately: the ``acceptance-verified`` MERGE gate is not
+# run. This driver has no merge step at all (it terminates at
+# ``REVIEWER_DONE``), and the gate would need an app-specific
+# ``acceptance_test_command`` that executes inside the instance's docker image
+# — the factory venv has none of the instance's dependencies, so on the host it
+# would import-error on every row and "block everything" is not a measurement.
+# ``result.json`` says so in ``acceptance.gate_enforced: false`` rather than
+# leaving a reader to assume the gate ran.
+
+# Written by ``acceptance.author_acceptance_test``; the name is pinned here
+# because property 3 is asserted against it.
+_ACCEPTANCE_STORED_NAME = "test_acceptance.py"
+_ACCEPTANCE_SPEC_NAME = "spec_prompt.md"
+_ACCEPTANCE_EVENTS_NAME = "acceptance-events.ndjson"
+
+# The store's RELATIVE name — what ``StoryRecord.acceptance_test_ref`` holds, and
+# therefore the shape a leak would take if a chain change ever put the ref into a
+# persona prompt. Every absolute mention of the store contains it, so it is the
+# total-hit needle for ``_acceptance_trail_scan``.
+_ACCEPTANCE_REL_NEEDLE = "state/acceptance"
+
+
+class AcceptanceOracleUnavailable(RuntimeError):
+    """The independent acceptance oracle could not be authored or placed.
+
+    Always fatal for the row (property 4). Never downgraded to a warning: a
+    factory row that lost its independence layer is not the product this arm
+    claims to measure.
+    """
+
+
+def _bench_acceptance_direction(problem_statement: str, dir_path: Path) -> Any:
+    """A ``Direction`` whose SPEC is the SWE-bench problem statement, and nothing else.
+
+    Integrity property 1 is enforced by this signature: the parameter is the
+    statement STRING. ``dir_path`` must be an empty directory — it exists only
+    because ``build_spec_prompt`` may read ``flow.md`` / ``api_spec.md`` from it,
+    and both flags below are False so it never does.
+    """
+    from factory.directions.parser import Direction
+
+    return Direction(
+        id="swebench",
+        slug="swebench",
+        title="SWE-bench instance",
+        type_tag=None,
+        why=None,
+        has_flow=False,
+        has_api_spec=False,
+        # The upstream problem statement IS the spec for this task. Verbatim,
+        # unsummarised, un-restructured: any rewriting here would be the
+        # harness inventing acceptance criteria.
+        acceptance=[problem_statement],
+        explore_tag=False,
+        artifacts_paths=[],
+        app="swebench",
+        status="in_progress",
+        raw_frontmatter={},
+        raw_body="",
+        dir_path=dir_path,
+    )
+
+
+# NO bench-local author function. ``acceptance._default_author`` binds the real
+# ``_llm_author`` to the run's own ``software_factory_root`` and ``db_path``
+# (chain PR #236), so passing ``author_fn=None`` uses the PRODUCTION authoring
+# call and the Run row lands in this run's isolated ledger — which is what
+# integrity property 5 needs and what ``_acceptance_author_ledger_rows`` checks.
+# An earlier revision of this file carried a copy of ``_llm_author`` purely to
+# thread those two kwargs; keeping it now would mean the measured arm ran
+# harness code where the product runs chain code.
+
+
+def _assert_oracle_outside_dev_tree(stored: Path, dev_trees: tuple[Path, ...]) -> None:
+    """Refuse unless the stored oracle is outside every tree the dev can write.
+
+    Integrity property 2, re-derived from the real paths rather than asserted in
+    a comment. Resolved on both sides so a symlinked work root cannot make a
+    containment check silently answer "no".
+    """
+    target = stored.resolve()
+    for tree in dev_trees:
+        t = Path(tree).resolve()
+        if target == t or t in target.parents:
+            raise AcceptanceOracleUnavailable(
+                f"the authored acceptance oracle {stored} is INSIDE the dev's tree "
+                f"{tree} — the dev could read or rewrite the test judging it. "
+                "Refusing the run."
+            )
+
+
+def _author_bench_acceptance_oracle(
+    *,
+    problem_statement: str,
+    instance_id: str,
+    story: Any,
+    app_config: Any,
+    root: Path,
+    db: Path,
+    dev_trees: tuple[Path, ...],
+    author_fn: Any = None,
+) -> dict[str, Any]:
+    """Author the independent acceptance oracle for one bench story. Fail CLOSED.
+
+    Calls the chain's own ``author_acceptance_test`` — same spec-only prompt
+    assembly, same storage location, same ``acceptance_expected`` /
+    ``acceptance_test_ref`` bookkeeping — and then verifies the three structural
+    properties a benchmark row needs before any dev spend. Raises
+    ``AcceptanceOracleUnavailable`` on any failure.
+
+    Returns the provenance block recorded under ``result.json['acceptance']``.
+    """
+    from factory.chain.acceptance import (
+        _AUTHOR_ATTEMPTS,
+        _persist,
+        acceptance_expected_for,
+        author_acceptance_test,
+        build_spec_prompt,
+    )
+
+    # Property 3, checked BEFORE spend: if the stored name did not classify as a
+    # test path, a copy of it inside the repo would survive ``split_diff`` and
+    # land in the graded prediction.
+    if not is_test_path(_ACCEPTANCE_STORED_NAME):
+        raise AcceptanceOracleUnavailable(
+            f"{_ACCEPTANCE_STORED_NAME!r} does not classify as a test path, so a "
+            "copy of the acceptance oracle inside the repo would survive "
+            "split_diff and be graded as the arm's answer"
+        )
+
+    spec_dir = root / "apps" / "swebench" / "directions" / "swebench-acceptance"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    direction = _bench_acceptance_direction(problem_statement, spec_dir)
+    if not acceptance_expected_for(app_config, direction):
+        raise AcceptanceOracleUnavailable(
+            "the bench app is not opted in to gates.acceptance_oracle (or the "
+            "spec carries no acceptance criteria), so the chain would author no "
+            "oracle and this arm would not be measuring the whole product"
+        )
+
+    authored_at = datetime.now(UTC).isoformat()
+    ref = author_acceptance_test(
+        story,
+        direction,
+        app_config,
+        root,
+        dry_run=False,
+        db_path=db,
+        # None => the chain's own ``_default_author``, bound to THIS run's root
+        # and db. Tests inject a deterministic stub.
+        author_fn=author_fn,
+    )
+    if not ref:
+        raise AcceptanceOracleUnavailable(
+            "acceptance_author produced no test after "
+            f"{_AUTHOR_ATTEMPTS} attempts (story.acceptance_expected="
+            f"{getattr(story, 'acceptance_expected', None)}); refusing the row "
+            "rather than measuring a chain with no independence layer"
+        )
+
+    stored = Path(ref)
+    stored = stored if stored.is_absolute() else root / stored
+    if stored.name != _ACCEPTANCE_STORED_NAME:
+        raise AcceptanceOracleUnavailable(
+            f"the acceptance oracle was stored as {stored.name!r}, not "
+            f"{_ACCEPTANCE_STORED_NAME!r} — property 3 was asserted against the "
+            "wrong name and the file might not be stripped from the diff"
+        )
+    _assert_oracle_outside_dev_tree(stored, dev_trees)
+    content = stored.read_bytes()
+    # The harness hint MUST be passed: ``author_acceptance_test`` sends it, so
+    # omitting it here would persist a prompt that is not the one the author saw.
+    spec_prompt = build_spec_prompt(
+        story, direction, harness_hint=app_config.gates.acceptance_harness_hint
+    )
+
+    # RELOCATE the store out of the factory root. MEASURED, not hypothetical: on
+    # the first real run of this code the dev went looking for its story file and
+    # ran ``find <root>/state -name "*.md"`` from one level above its worktree —
+    # and the listing named the acceptance store. Production's
+    # ``root/state/acceptance/`` is a sibling of ``root/state/worktrees/``, so any
+    # walk of the factory root's state enumerates it.
+    #
+    # So the oracle goes where this harness ALREADY puts oracle-bearing material:
+    # an unguessable ``mkdtemp`` directory under the scratch root
+    # (``_prepared_tree_dir`` — "so an arm cannot guess a sibling even if it goes
+    # looking"), the same standard the GOLD patch's prepared trees are held to.
+    # ``StoryRecord.acceptance_test_ref`` becomes the ABSOLUTE path, which
+    # ``ref_is_readable`` and the ``acceptance-verified`` gate both already accept.
+    #
+    # Honest limit, unchanged from the rest of this harness: every arm runs as
+    # this uid with a shell, so nothing on this filesystem is unreachable. What is
+    # achievable is that the store is not somewhere a plain walk of the agent's
+    # own ancestry lands, and that a walk which finds it anyway is DETECTED
+    # (``_acceptance_trail_scan``) rather than silent.
+    hidden_dir = _prepared_tree_dir(f"acceptance-{instance_id[:40]}-")
+    hidden = hidden_dir / _ACCEPTANCE_STORED_NAME
+    shutil.move(str(stored), str(hidden))
+    shutil.rmtree(root / "state" / "acceptance", ignore_errors=True)
+    if (root / "state" / "acceptance").exists():
+        raise AcceptanceOracleUnavailable(
+            f"the in-root acceptance store {root / 'state' / 'acceptance'} survived "
+            "relocation — it is one directory walk from the dev's worktree"
+        )
+    _assert_oracle_outside_dev_tree(hidden, (*dev_trees, root))
+    story.acceptance_test_ref = str(hidden)
+    _persist(story, root, db)
+
+    # The author's INPUT goes to the RUN DIR, never beside the test. It used to be
+    # written into the store as ``spec_prompt.md`` — which is what the dev's
+    # ``find -name "*.md"`` matched. Provenance is preserved (a reader can check
+    # exactly what the author saw); the bait is not.
+    spec_out = _run_dir(instance_id, "factory") / _ACCEPTANCE_SPEC_NAME
+    spec_out.write_text(spec_prompt, encoding="utf-8")
+
+    # Same treatment for the chain's own visibility stream. ``acceptance._emit``
+    # writes ``state/events/acceptance.ndjson`` carrying the (pre-relocation) ref,
+    # and that file sits in a directory the dev demonstrably enumerates. Moved to
+    # the run dir: the evidence is kept, the advertisement is not.
+    events_out: str | None = None
+    src_events = root / "state" / "events" / "acceptance.ndjson"
+    if src_events.is_file():
+        dest_events = _run_dir(instance_id, "factory") / _ACCEPTANCE_EVENTS_NAME
+        shutil.move(str(src_events), str(dest_events))
+        events_out = str(dest_events)
+    leftovers = sorted(
+        str(p) for p in (root / "state").rglob("*") if "acceptance" in p.name
+    )
+    if leftovers:
+        raise AcceptanceOracleUnavailable(
+            f"acceptance-named artifacts remain inside the factory root {leftovers} "
+            "— the dev enumerates this directory, so the independence layer would "
+            "be advertised to the arm under test"
+        )
+
+    return {
+        "expected": bool(getattr(story, "acceptance_expected", False)),
+        # The ref as the CHAIN authored it, and where it actually is now.
+        "authored_ref": str(ref),
+        "ref": str(hidden),
+        "stored_path": str(hidden),
+        # The store root the trail scan looks for, and the in-root path that must
+        # no longer exist.
+        "store_root": str(hidden_dir),
+        "in_root_store_removed": str(root / "state" / "acceptance"),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "bytes": len(content),
+        "authored_at": authored_at,
+        # Structural: this function returns before the dispatch loop starts, so
+        # nothing dev-authored existed when the oracle was written. The MEASURED
+        # form of the same claim comes from the ledger — see
+        # ``_acceptance_ordering``.
+        "authored_before_dev_dispatch": True,
+        "spec_source": "problem_statement",
+        "spec_prompt_sha256": hashlib.sha256(spec_prompt.encode("utf-8")).hexdigest(),
+        "spec_prompt_file": _ACCEPTANCE_SPEC_NAME,
+        "spec_prompt_bytes": len(spec_prompt.encode("utf-8")),
+        "spec_prompt_path": str(spec_out),
+        "events_path": events_out,
+        "outside_dev_tree": True,
+        "stripped_from_prediction_if_present": True,
+        # The merge gate is out of this driver's reach — see the section comment.
+        "gate_enforced": False,
+        "gate_not_enforced_reason": (
+            "this driver terminates at reviewer_done and runs no merge gates; "
+            "acceptance-verified would additionally need an app "
+            "acceptance_test_command that executes inside the instance image"
+        ),
+    }
+
+
+def _acceptance_ordering(events_dir: Path) -> dict[str, Any]:
+    """MEASURE "authored before the dev's first call" from the run's own ledger.
+
+    Read from ``state/events/runs.ndjson`` — the same stream ``_model_mix``
+    reads and ``audit`` certifies — so the ordering is a fact a reader
+    re-derives from the artifact, not a boolean this code asserts about itself.
+    Compares the author call's END to the dev's first call's START, the strict
+    form of the claim.
+
+    ``ok`` is False whenever the ordering cannot be established, including a
+    missing or unreadable stream: the caller refuses the prediction on False, so
+    an unmeasurable run must not read as a clean one.
+    """
+    author_ends: list[str] = []
+    dev_starts: list[str] = []
+    author_calls = 0
+    dev_calls = 0
+    path = events_dir / "runs.ndjson"
+    if not path.exists():
+        return {
+            "ok": False,
+            "reason": f"no {path.name} in the run's ledger — ordering unmeasurable",
+            "acceptance_author_calls": 0,
+            "dev_calls": 0,
+            "acceptance_author_ended_at": None,
+            "dev_first_started_at": None,
+        }
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(ev, dict) or ev.get("event") != "run":
+                    continue
+                persona = str(ev.get("persona") or "")
+                if persona == "acceptance_author":
+                    author_calls += 1
+                    end = ev.get("ended_at") or ev.get("started_at")
+                    if isinstance(end, str):
+                        author_ends.append(end)
+                elif persona == "dev":
+                    dev_calls += 1
+                    start = ev.get("started_at") or ev.get("ended_at")
+                    if isinstance(start, str):
+                        dev_starts.append(start)
+    except OSError as exc:
+        return {
+            "ok": False,
+            "reason": f"runs.ndjson unreadable ({exc}) — ordering unmeasurable",
+            "acceptance_author_calls": 0,
+            "dev_calls": 0,
+            "acceptance_author_ended_at": None,
+            "dev_first_started_at": None,
+        }
+
+    # LAST author end vs FIRST dev start, both ordered by PARSED time — see the
+    # comment on the comparison below for why a string sort is the wrong question.
+    def _key(stamp: str) -> tuple[int, Any]:
+        try:
+            parsed = datetime.fromisoformat(stamp)
+        except ValueError:
+            return (1, stamp)  # unparseable sorts last and refuses below
+        # A naive stamp cannot be compared against an aware one at all (TypeError),
+        # so it is treated as unparseable rather than crashing the driver.
+        return (0, parsed) if parsed.tzinfo is not None else (1, stamp)
+
+    author_end = max(author_ends, key=_key) if author_ends else None
+    dev_start = min(dev_starts, key=_key) if dev_starts else None
+    out: dict[str, Any] = {
+        "acceptance_author_calls": author_calls,
+        "dev_calls": dev_calls,
+        "acceptance_author_ended_at": author_end,
+        "dev_first_started_at": dev_start,
+    }
+    if author_calls == 0 or author_end is None:
+        out["ok"] = False
+        out["reason"] = (
+            "the ledger records NO acceptance_author call, so the authoring "
+            "call's cost is not in this arm's totals and the ordering cannot be "
+            "shown"
+        )
+        return out
+    if dev_calls == 0:
+        out["ok"] = True
+        out["reason"] = "no dev call in the ledger — nothing could precede the oracle"
+        return out
+    if dev_start is None:
+        out["ok"] = False
+        out["reason"] = (
+            f"{dev_calls} dev call(s) in the ledger but none carries a readable "
+            "timestamp — ordering unmeasurable"
+        )
+        return out
+    # PARSED, not string-compared. ``isoformat()`` drops ``.%f`` when microseconds
+    # are zero, so ``…:39+00:00`` and ``…:39.99+00:00`` differ in width, and a
+    # lexicographic compare would be answering a question about ASCII rather than
+    # about time. An unparseable stamp refuses, like every other unmeasurable.
+    try:
+        ok = datetime.fromisoformat(author_end) <= datetime.fromisoformat(dev_start)
+    except ValueError as exc:
+        out["ok"] = False
+        out["reason"] = (
+            f"ledger timestamps unparseable ({exc}; author={author_end!r} "
+            f"dev={dev_start!r}) — ordering unmeasurable"
+        )
+        return out
+    out["ok"] = ok
+    out["reason"] = (
+        f"acceptance_author finished {author_end}, dev's first call started {dev_start}"
+        if out["ok"]
+        else (
+            f"ORDERING VIOLATED: acceptance_author finished {author_end} but dev's "
+            f"first call started {dev_start} — the oracle was not frozen before the "
+            "dev ran"
+        )
+    )
+    return out
+
+
+def _acceptance_trail_scan(root: Path, acceptance_root: Path) -> dict[str, Any]:
+    """Did any persona's trail ever touch the stored acceptance oracle?
+
+    Property 2 says the authored test is invisible to the dev. Storage location
+    ALONE does not prove that — the dev has a shell, and ``state/acceptance/`` is
+    one ``..`` from its worktree, exactly as in production. Nothing in the
+    harness detected a violation, so this measures it: the arm's own action
+    trails (the OpenHands trajectories the chain writes per dev call) and every
+    persona prompt body are scanned for the ABSOLUTE acceptance directory.
+
+    TWO disjoint needles, because the store is nameable two ways. The ABSOLUTE
+    relocated path is what a shell would use. ``state/acceptance`` is the shape
+    ``StoryRecord.acceptance_test_ref`` USED to hold and the in-root store the
+    chain writes before relocation, so a regression that skipped the relocation,
+    or a chain change that put a relative ref into a persona prompt, is caught by
+    the same scan.
+
+    Neither needle is the BASENAME, deliberately: ``test_acceptance.py`` would be
+    a false-positive machine — a dev writing its own ``test_acceptance.py`` in the
+    repo under test is legitimate work, and a countermeasure that blocks
+    legitimate work is broken, not fail-safe. Measured: on the first real row the
+    string ``acceptance`` alone appears 20+ times as persona prose about
+    "acceptance criteria", and neither needle appeared at all.
+
+    ``files_scanned: 0`` is reported rather than swallowed: nothing scanned means
+    "unmeasured", which is not the same as clean. So is ``scan_truncated``.
+    """
+    needles = [str(acceptance_root), _ACCEPTANCE_REL_NEEDLE]
+    paths = [*_trajectory_files(root), root / "state" / "events" / "prompt_bodies.ndjson"]
+    present = [p for p in paths if p.is_file()]
+    text, truncated = _read_text_tree(present)
+    per_needle = {n: text.count(n) for n in needles}
+    return {
+        "needles": needles,
+        "files_scanned": len(present),
+        "hits": sum(per_needle.values()),
+        "hits_per_needle": per_needle,
+        "scan_truncated": truncated,
+    }
+
+
+def _acceptance_author_ledger_rows(runs: list[Any]) -> int:
+    """How many ``Run`` rows in the isolated DB are acceptance-author calls.
+
+    Zero means the authoring spend went somewhere other than this run's ledger,
+    so ``_ledger_totals`` under-reports the arm's cost (integrity property 5).
+    """
+    return sum(1 for r in runs if str(getattr(r, "persona", "")) == "acceptance_author")
 
 
 def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
@@ -2647,6 +3160,59 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         story_id = story.id
 
     cfg = load_app_config("swebench", root)
+
+    # THE CHAIN'S INDEPENDENT ACCEPTANCE ORACLE — authored HERE, i.e. after the
+    # story row exists and BEFORE the dispatch loop below makes the dev's first
+    # model call. Ordering is structural (straight-line code, no branch reaches
+    # the loop first) and, separately, MEASURED from the run's own ledger after
+    # the run — see ``_acceptance_ordering``. Fails CLOSED: a row that lost the
+    # independence layer is not the product this arm claims to measure, so it is
+    # refused before any dev spend rather than published as if the oracle ran.
+    try:
+        acceptance = _author_bench_acceptance_oracle(
+            problem_statement=inst["problem_statement"],
+            instance_id=instance_id,
+            story=story,
+            app_config=cfg,
+            root=root,
+            db=db,
+            dev_trees=(repo, root / "state" / "worktrees"),
+        )
+    except AcceptanceOracleUnavailable as exc:
+        error = f"acceptance: {exc}"
+        with Session(eng) as s:
+            failed_runs = list(s.exec(select(Run)).all())
+        _copy_audit_trail(root / "state", run_dir / "root" / "state")
+        _write_result(
+            instance_id,
+            "factory",
+            {
+                "arm": "factory",
+                "instance_id": instance_id,
+                "repo": inst["repo"],
+                "base_commit": inst["base_commit"],
+                "problem_statement_sha256": inst["problem_statement_sha256"],
+                "manifest_sha256": _manifest()["manifest_sha256"],
+                "model": nominal_model,
+                **_model_mix(root / "state" / "events", nominal=nominal_model),
+                "ts": datetime.now(UTC).isoformat(),
+                "wall_clock_s": round(time.monotonic() - entered, 1),
+                "final_state": None,  # the dev was never dispatched
+                "error": error,
+                "factory_says_green": False,
+                # The failed author's own spend is still this arm's spend.
+                **_ledger_totals(failed_runs, story_id),
+                "cost_source": "derived-from-price-table",
+                "acceptance": {
+                    "expected": bool(getattr(story, "acceptance_expected", False)),
+                    "ref": getattr(story, "acceptance_test_ref", None),
+                    "authored": False,
+                    "error": str(exc),
+                },
+            },
+        )
+        raise SystemExit(error) from exc
+
     allowed = {"dev", "review"}
     terminal = {
         StoryState.REVIEWER_DONE.value,
@@ -2763,6 +3329,50 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
     # finding and a refused prediction still needs to be auditable.
     _copy_audit_trail(root / "state", run_dir / "root" / "state")
 
+    # The independence layer, CERTIFIED from the artifacts rather than asserted.
+    # Two facts, both re-derivable by a reader from this run's own ledger:
+    #   * the ordering — the authoring call ended before the dev's first call
+    #     started (``runs.ndjson``, the stream ``audit`` certifies);
+    #   * the accounting — the authoring call's Run row is in THIS run's DB, so
+    #     ``_ledger_totals`` is pricing the whole product.
+    # Either failing REFUSES the row, by the same route ``DiffRefused`` takes:
+    # no ``prediction.diff`` is written, so ``grade`` refuses it and it can
+    # never be counted as a resolve.
+    acceptance["ordering"] = _acceptance_ordering(root / "state" / "events")
+    acceptance["authored_before_dev_first_call"] = bool(acceptance["ordering"]["ok"])
+    acceptance["ledger_author_rows"] = _acceptance_author_ledger_rows(runs)
+    acceptance["trail_scan"] = _acceptance_trail_scan(
+        root, Path(acceptance["store_root"])
+    )
+    if not acceptance["ordering"]["ok"]:
+        acceptance_failure: str | None = (
+            f"ordering unverified: {acceptance['ordering']['reason']}"
+        )
+    elif acceptance["ledger_author_rows"] == 0:
+        acceptance_failure = (
+            "the acceptance_author call left no Run row in this run's isolated "
+            "ledger, so its tokens and cost are missing from this arm's totals"
+        )
+    elif acceptance["trail_scan"]["hits"]:
+        acceptance_failure = (
+            "a persona trail references the stored acceptance oracle "
+            f"{acceptance['trail_scan']['hits_per_needle']} — the independence "
+            "layer was visible to the arm, so this row's chain verdict is "
+            "contaminated"
+        )
+    elif acceptance["trail_scan"]["scan_truncated"]:
+        acceptance_failure = (
+            "the trail scan hit its size cap, so 0 hits is an UNDERCOUNT — the "
+            "oracle's invisibility to the arm is unmeasured, not clean"
+        )
+    elif acceptance["trail_scan"]["files_scanned"] == 0:
+        acceptance_failure = (
+            "no persona trail was scannable, so nothing certifies that the "
+            "acceptance oracle stayed invisible to the arm"
+        )
+    else:
+        acceptance_failure = None
+
     (run_dir / "raw.diff").write_text(raw_diff, encoding="utf-8")
     refused: list[str] = []
     try:
@@ -2791,10 +3401,58 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
                 "refused_paths": refused,
                 "factory_says_green": False,
                 "test_readonly": readonly,
+                "acceptance": acceptance,
             },
         )
         raise SystemExit(f"diff refused: {exc.reason}") from exc
     assert_no_test_edits(code_diff)
+
+    # PROPERTY 3, re-checked against the real classification of the real diff:
+    # the independent oracle's file must never be part of the graded patch. It
+    # lives outside every tree the dev can write (property 2, asserted before
+    # spend), so this can only fire if the dev COPIED it in — in which case
+    # ``split_diff`` has already stripped it and it is in ``stripped``, not
+    # ``kept``. Fail closed anyway: a name in ``kept`` means the classifier and
+    # this arm disagree about what the oracle's file is.
+    leaked = [p for p in kept if Path(p).name == _ACCEPTANCE_STORED_NAME]
+    if leaked:
+        acceptance_failure = (
+            f"the independent oracle's filename appears in the GRADED diff {leaked} "
+            "— it was neither stripped nor refused"
+        )
+    acceptance["in_graded_diff"] = leaked
+    acceptance["in_stripped_paths"] = [
+        p for p in stripped if Path(p).name == _ACCEPTANCE_STORED_NAME
+    ]
+
+    if acceptance_failure is not None:
+        # Same refusal route as ``DiffRefused``: no prediction.diff, so `grade`
+        # refuses and no headline can absorb the row. An unverifiable
+        # independence layer is not a measurement of the product.
+        _write_result(
+            instance_id,
+            "factory",
+            {
+                "arm": "factory",
+                "instance_id": instance_id,
+                "repo": inst["repo"],
+                "base_commit": inst["base_commit"],
+                "problem_statement_sha256": inst["problem_statement_sha256"],
+                "manifest_sha256": _manifest()["manifest_sha256"],
+                "model": nominal_model,
+                **_model_mix(root / "state" / "events", nominal=nominal_model),
+                "ts": datetime.now(UTC).isoformat(),
+                "wall_clock_s": round(time.monotonic() - entered, 1),
+                "final_state": final.state,
+                **_ledger_totals(runs, story_id),
+                "cost_source": "derived-from-price-table",
+                "error": f"acceptance: {acceptance_failure}",
+                "factory_says_green": False,
+                "test_readonly": readonly,
+                "acceptance": acceptance,
+            },
+        )
+        raise SystemExit(f"acceptance: {acceptance_failure}")
 
     (run_dir / "prediction.diff").write_text(code_diff, encoding="utf-8")
 
@@ -2848,10 +3506,21 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         # ``refused`` writes the OS rejected, ``bypassed_count`` files whose
         # content changed anyway. See ``lock_test_files`` for the honest limit.
         "test_readonly": readonly,
+        # The chain's independent acceptance oracle: what was authored, from
+        # what, where it was stored, and the LEDGER-MEASURED proof that it was
+        # frozen before the dev's first model call. See the section comment above
+        # ``_ACCEPTANCE_STORED_NAME`` for the four integrity properties.
+        "acceptance": acceptance,
     }
     out = _write_result(instance_id, "factory", result)
     _print_run_summary(result, out)
     print(f"  factory says green : {result['factory_says_green']}")
+    print(
+        "  acceptance oracle  : "
+        f"{acceptance['bytes']}B sha256={acceptance['sha256'][:12]} "
+        f"authored-before-dev={acceptance['authored_before_dev_first_call']} "
+        f"({acceptance['ordering']['reason']})"
+    )
 
 
 def _capture_diff(wt: Path, base: str = "swebench-base") -> str:
@@ -7195,6 +7864,33 @@ def _audit_factory_ledger(
 # ``_write_result(..., merge=True)`` — there is no standalone grade.json);
 # ``audit.json`` is the gate verdict; ``prediction.diff`` is the graded patch.
 _ROW_ARTIFACTS = ("result.json", "audit.json", "prediction.diff")
+
+# ADDITIONAL per-row evidence, copied into the archive when present and NEVER
+# part of the completeness refusal above. Deliberately a separate tuple:
+# ``_ROW_ARTIFACTS`` doubles as the fail-closed "a row missing an artifact is
+# refused" set, checked over live run dirs AND over an archive, so adding a name
+# to it would refuse every existing row and every non-factory arm — i.e. it would
+# retroactively invalidate the committed archives and break ``report --check``.
+#
+# What these are: the ONLY replayable reviewer corpus this repo has. The chain
+# writes the verbatim reviewer prompt and the verbatim reviewer response
+# (carrying ``verdict`` and ``test_quality_score``, sha256-joinable on
+# ``prompt_hash``) into the RUN's isolated state root — which is gitignored
+# scratch that ``_reset_run_artifacts`` deletes at the top of every run. So one
+# re-run of an instance destroys its corpus permanently, with nothing recording
+# that a measurement was destroyed; that is how 0 of the 19 published instances
+# kept the selftest log that certified them. ~130 KB per factory row, ~2.4 MB
+# for a 19-row sweep: committable. Paths are kept, not flattened, so the copy
+# has the same layout the live tree does.
+# Also here: the acceptance oracle's provenance (what the independent author was
+# shown, and the chain's own authoring events). Tiny, and without them a published
+# row's independence claim rests on a sha256 with nothing to check it against.
+_ARCHIVED_ROW_EXTRAS = (
+    "root/state/events/prompt_bodies.ndjson",
+    "root/state/events/response_bodies.ndjson",
+    _ACCEPTANCE_SPEC_NAME,
+    _ACCEPTANCE_EVENTS_NAME,
+)
 _REPORT_META_NAME = "report-meta.json"
 
 # Bumped when the archive gains a field the report reads. An older archive is
@@ -8146,6 +8842,14 @@ def _archive_report_artifacts(
         dest.mkdir(parents=True, exist_ok=True)
         for name in _ROW_ARTIFACTS:
             shutil.copy2(run_dir / name, dest / name)
+        # Best-effort extras (see ``_ARCHIVED_ROW_EXTRAS``): present only on the
+        # factory arm, and a row is never refused for lacking them. Copying them
+        # is what stops the next sweep from destroying the reviewer corpus.
+        for rel in _ARCHIVED_ROW_EXTRAS:
+            src = run_dir / rel
+            if src.is_file():
+                (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest / rel)
     sweeps: list[str] = []
     for arm in arms:
         src = SWE_DIR / f"sweep-{arm}.json"
