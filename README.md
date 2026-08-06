@@ -5,7 +5,7 @@
 | Name                                                   |    Stmts |     Miss |   Cover |   Missing |
 |------------------------------------------------------- | -------: | -------: | ------: | --------: |
 | factory/\_\_init\_\_.py                                |        2 |        0 |    100% |           |
-| factory/app\_config.py                                 |       82 |        5 |     94% |207, 211, 226, 244, 260 |
+| factory/app\_config.py                                 |       82 |        5 |     94% |224, 228, 243, 261, 277 |
 | factory/artifacts/\_\_init\_\_.py                      |        0 |        0 |    100% |           |
 | factory/backpressure/\_\_init\_\_.py                   |        0 |        0 |    100% |           |
 | factory/backpressure/parser.py                         |       67 |        5 |     93% |103-104, 128, 132-133 |
