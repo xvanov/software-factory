@@ -1,0 +1,62 @@
+{
+  "instance_id": "idaholab__montepy-933_interface",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-05T23:47:52.498488+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-05T23:30:34.718504+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 2190,
+      "tokens_out": 173,
+      "cached_input_tokens": 1280,
+      "cost_usd": 0.00519,
+      "duration_s": 2.722,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-05T23:38:28.249706+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1138848,
+      "tokens_out": 8811,
+      "cached_input_tokens": 917504,
+      "cost_usd": 0.6086581940000002,
+      "duration_s": 473.083,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-05T23:47:43.359344+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 2343477,
+      "tokens_out": 25016,
+      "cached_input_tokens": 2227712,
+      "cost_usd": 0.9426623499999999,
+      "duration_s": 554.495,
+      "success": 0,
+      "error": "tests not green after run"
+    }
+  ],
+  "ledger_cost_usd": 1.5565,
+  "ledger_tokens_in": 3484515,
+  "ledger_tokens_out": 34000,
+  "result_cost_usd": 1.5565,
+  "prediction_sha256": "084d381cf22e9b9f98600e752d8da153fead0a97d6330c153ce88eb95bce251a",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "stripped_test_paths": [
+    "tests/test_universe_integration.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

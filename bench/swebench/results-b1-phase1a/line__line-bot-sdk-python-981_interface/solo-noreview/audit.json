@@ -1,0 +1,49 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-06T00:32:13.268671+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-06T00:14:25.203961+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 1962,
+      "tokens_out": 2707,
+      "cached_input_tokens": 1280,
+      "cost_usd": 0.04263,
+      "duration_s": 18.782,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-06T00:32:01.791728+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2119152,
+      "tokens_out": 16450,
+      "cached_input_tokens": 1161984,
+      "cost_usd": 2.097417164,
+      "duration_s": 1056.036,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.14,
+  "ledger_tokens_in": 2121114,
+  "ledger_tokens_out": 19157,
+  "result_cost_usd": 2.14,
+  "prediction_sha256": "cba20fc534aa0e6d467682d63e51ffe4897e311db854d52465d8be83211e5126",
+  "base_commit": "f0d222be1a25553005bff35c2ace82424a683fd9",
+  "stripped_test_paths": [
+    "tests/v3/oauth/test_issue_stateless_channel_token_convenience.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

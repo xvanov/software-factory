@@ -1,0 +1,94 @@
+Checking patch tests/api/test_issue_stateless_channel_token.py...
+Applied patch tests/api/test_issue_stateless_channel_token.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_f4f764c4b9a32588: OK (red as expected)
+Checking patch linebot/v3/oauth/api/async_channel_access_token.py...
+Checking patch linebot/v3/oauth/api/channel_access_token.py...
+Applied patch linebot/v3/oauth/api/async_channel_access_token.py cleanly.
+Applied patch linebot/v3/oauth/api/channel_access_token.py cleanly.
+SWEBENCH_APPLY_f4f764c4b9a32588: OK
+            with ApiClient(configuration) as api_client:
+                api = ChannelAccessToken(api_client)
+                api.line_base_path = httpserver.url_for("/")
+    
+                api_response = api.issue_stateless_channel_token_with_http_info_by_jwt_assertion(
+                    client_assertion,
+                )
+    
+            self.assertEqual(api_response.status_code, 200)
+            response = api_response.data
+            self.assertEqual(response.access_token, 'test_access_token')
+            self.assertEqual(response.expires_in, 900)
+            self.assertEqual(response.token_type, 'Bearer')
+            self.assertEqual(len(httpserver.log), 1)
+    
+            request, _ = httpserver.log[0]
+            encoded_body = parse_qs(request.data.decode('utf-8'))
+            self.assertEqual(encoded_body['grant_type'], ['client_credentials'])
+>           self.assertEqual(encoded_body['client_assertion_type'], [client_assertion_type])
+E           AssertionError: Lists differ: ['urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer'] != ['urn:ietf:params:oauth:client-assertion-type:jwt-bearer']
+E           
+E           First differing element 0:
+E           'urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer'
+E           'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+E           
+E           - ['urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer']
+E           ?      ^^^    ^^^      ^^^     ^^^                     ^^^
+E           
+E           + ['urn:ietf:params:oauth:client-assertion-type:jwt-bearer']
+E           ?      ^    ^      ^     ^                     ^
+
+tests/api/test_issue_stateless_channel_token.py:143: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     werkzeug:_internal.py:97 127.0.0.1 - - [06/Aug/2026 00:32:12] "POST /oauth2/v3/token HTTP/1.1" 200 -
+=========================== short test summary info ============================
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_client_secret
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_client_secret
+FAILED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_jwt_assertion
+FAILED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_jwt_assertion
+2 failed, 2 passed in 0.20s
+SWEBENCH_TALLY_f4f764c4b9a32588: fail_to_pass 2 failed, 2 passed in 0.20s
+[6 node outcomes for fail_to_pass -> grade-nodes.log]
+            with ApiClient(configuration) as api_client:
+                api = ChannelAccessToken(api_client)
+                api.line_base_path = httpserver.url_for("/")
+    
+                api_response = api.issue_stateless_channel_token_with_http_info_by_jwt_assertion(
+                    client_assertion,
+                )
+    
+            self.assertEqual(api_response.status_code, 200)
+            response = api_response.data
+            self.assertEqual(response.access_token, 'test_access_token')
+            self.assertEqual(response.expires_in, 900)
+            self.assertEqual(response.token_type, 'Bearer')
+            self.assertEqual(len(httpserver.log), 1)
+    
+            request, _ = httpserver.log[0]
+            encoded_body = parse_qs(request.data.decode('utf-8'))
+            self.assertEqual(encoded_body['grant_type'], ['client_credentials'])
+>           self.assertEqual(encoded_body['client_assertion_type'], [client_assertion_type])
+E           AssertionError: Lists differ: ['urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer'] != ['urn:ietf:params:oauth:client-assertion-type:jwt-bearer']
+E           
+E           First differing element 0:
+E           'urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer'
+E           'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+E           
+E           - ['urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer']
+E           ?      ^^^    ^^^      ^^^     ^^^                     ^^^
+E           
+E           + ['urn:ietf:params:oauth:client-assertion-type:jwt-bearer']
+E           ?      ^    ^      ^     ^                     ^
+
+tests/api/test_issue_stateless_channel_token.py:143: AssertionError
+------------------------------ Captured log call -------------------------------
+INFO     werkzeug:_internal.py:97 127.0.0.1 - - [06/Aug/2026 00:32:12] "POST /oauth2/v3/token HTTP/1.1" 200 -
+=========================== short test summary info ============================
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_client_secret
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_client_secret
+FAILED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_jwt_assertion
+FAILED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_jwt_assertion
+2 failed, 2 passed in 0.19s
+SWEBENCH_TALLY_f4f764c4b9a32588: pass_to_pass 2 failed, 2 passed in 0.19s
+[6 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_f4f764c4b9a32588: UNRESOLVED

@@ -1,0 +1,175 @@
+{
+  "arm": "solo-noreview",
+  "instance_id": "idaholab__montepy-933_interface",
+  "repo": "idaholab/MontePy",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "problem_statement_sha256": "18f56a6b2c0dd104befdcf7caf0f58fd82cc82d7dc0c96b05a307b064e3b81f1",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/deepseek-v4-pro",
+    "azure/gpt-5.3-codex",
+    "azure/gpt-5.4"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0052
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.6087
+    },
+    {
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "model_tier": "hard",
+      "calls": 1,
+      "cost_usd": 0.9427
+    }
+  ],
+  "model_escalated_calls": 2,
+  "ts": "2026-08-05T23:47:43.808822+00:00",
+  "wall_clock_s": 1039.7,
+  "final_state": "blocked_tests_need_clarification",
+  "dev_retries": 2,
+  "reviewer_cycles": 0,
+  "steps_used": 1,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 3484515,
+  "tokens_out": 34000,
+  "cached_input_tokens": 3146496,
+  "cost_usd": 1.5565,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_universe.py",
+      "tests/test_universe_integration.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> blocked_tests_need_clarification"
+  ],
+  "error": null,
+  "factory_says_green": false,
+  "green_state": "tests_green",
+  "chain_personas": [
+    "dev"
+  ],
+  "files_changed": [
+    "montepy/cell.py",
+    "montepy/data_inputs/universe_input.py",
+    "stories/933-interface.md"
+  ],
+  "test_files_stripped": [
+    "tests/test_universe_integration.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 2565,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 73,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/test_universe_integration.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 3,
+    "refused_samples": [
+      "{\"id\":\"52b866f1-02c8-418f-9f02-f653f79ecf2a\",\"timestamp\":\"2026-08-05T19:34:32.029548\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_637b425a273f446392507932\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/",
+      "{\"id\":\"0c9b0279-5589-4971-b3c6-c139927e574b\",\"timestamp\":\"2026-08-05T19:42:23.528131\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_wAU9JMs0zYknrvc6CxCNNVtA\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/",
+      "{\"id\":\"8d72a571-4496-4682-afea-3c715cfd641f\",\"timestamp\":\"2026-08-05T19:47:30.315343\",\"source\":\"environment\",\"forgotten_event_ids\":[\"a9175c73-a283-4a4c-bcaf-01c340854765\",\"664594f5-abbd-4bd4-84cc-bed7e3df50f4\",\"2c11a4b2-9767-4e52-8bee-9d65a796605e\",\"b2303eb5-237a-4ff9-ab36-242990cec689\",\"47536482-93"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 3
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-idaholab__montepy-933_interface-1wd9ex3h/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-idaholab__montepy-933_interface-1wd9ex3h/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-idaholab__montepy-933_interface-1wd9ex3h",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/idaholab__montepy-933_interface__solo-noreview/root/state/acceptance",
+    "sha256": "420ce28c1ec936560464c2a954d8a159e51c6d41342a6ba8caba3103cdd352e9",
+    "bytes": 504,
+    "authored_at": "2026-08-05T23:30:30.189977+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "1b2af24718550439291fc2a84a49913267c8df8901299ba2e7867d08de9c4a1f",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 2657,
+    "spec_prompt_path": "/home/k/software-factory/.claude/worktrees/agent-a3ef20d90b0fe06cc/bench/swebench/runs/idaholab__montepy-933_interface/solo-noreview/spec_prompt.md",
+    "events_path": "/home/k/software-factory/.claude/worktrees/agent-a3ef20d90b0fe06cc/bench/swebench/runs/idaholab__montepy-933_interface/solo-noreview/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 2,
+      "acceptance_author_ended_at": "2026-08-05T23:30:34.718504+00:00",
+      "dev_first_started_at": "2026-08-05T23:30:35.166694+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-05T23:30:34.718504+00:00, dev's first call started 2026-08-05T23:30:35.166694+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-idaholab__montepy-933_interface-1wd9ex3h",
+        "state/acceptance"
+      ],
+      "files_scanned": 3,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-idaholab__montepy-933_interface-1wd9ex3h": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "solo-noreview",
+    "instance_id": "idaholab__montepy-933_interface",
+    "image": "swerebench/sweb.eval.x86_64.idaholab_1776_montepy-933_interface@sha256:d79f83f33b0f25749596dd0038adecb80e9b443300200890dca0f6d23488567c",
+    "graded_at": "2026-08-05T23:47:44.395880+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 40,
+    "pass_to_pass_declared_count": 40,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 8.0,
+    "log_tail": "verse::test_init\nPASSED tests/test_universe.py::TestUniverse::test_number_setter\nPASSED tests/test_universe.py::TestLattice::test_lattice_init\nPASSED tests/test_universe.py::TestLattice::test_lattice_setter\nPASSED tests/test_universe.py::TestLattice::test_lattice_deleter\nPASSED tests/test_universe.py::TestLattice::test_lattice_merge\nPASSED tests/test_universe.py::TestLattice::test_lattice_cell_format\nPASSED tests/test_universe.py::TestLattice::test_lattice_repr\nPASSED tests/test_universe.py::TestLattice::test_deprecated_lattice\nPASSED tests/test_universe.py::TestFill::test_complex_transform_fill_init\nPASSED tests/test_universe.py::TestFill::test_complicated_lattice_fill_init\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1 0:1 hi-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 hi:1 0:1 hi-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1 0:1 -1-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 1:0 0:1 1 2 3 4 5 6 7 8-ValueError]\nPASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1.5 0:1 1 2 3 4 5 6 7 8-ValueError]\nPASSED tests/test_universe.py::TestFill::test_data_fill_init\nPASSED tests/test_universe.py::TestFill::test_fill_universe_setter\nPASSED tests/test_universe.py::TestFill::test_fill_universes_setter\nPASSED tests/test_universe.py::TestFill::test_fill_str\nPASSED tests/test_universe.py::TestFill::test_fill_merge\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-hi-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-hi-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-value2-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-value3-TypeError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-value4-ValueError]\nPASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-value5-ValueError]\nPASSED tests/test_universe.py::TestFill::test_fill_multi_unis\nPASSED tests/test_universe.py::test_cell_universe_setter_type_error\nPASSED tests/test_universe_integration.py::test_universe_setter\nPASSED tests/test_universe_integration.py::test_fill_setter\nPASSED tests/test_universe_integration.py::test_lattice_setter\nPASSED tests/test_universe_integration.py::test_uni_fill_latt_setter\nPASSED tests/test_universe_integration.py::test_mc_workshop_edge_case\nPASSED tests/test_universe_integration.py::test_no_universe\nPASSED tests/test_universe_integration.py::test_fill_multi_universe_order\nPASSED tests/test_universe_integration.py::test_fill_long_mcnp_str_wrap\n44 passed in 1.14s\nSWEBENCH_TALLY_1f4df86e34142926: pass_to_pass 44 passed in 1.14s\n[46 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_1f4df86e34142926: RESOLVED\n"
+  }
+}

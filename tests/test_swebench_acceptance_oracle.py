@@ -143,6 +143,7 @@ def test_the_authors_input_is_persisted_in_the_run_dir_not_the_store(
     root = tmp_path / "root"
     root.mkdir()
     prov = A._author_bench_acceptance_oracle(
+        arm="factory",
         instance_id="inst-x",
         problem_statement="the widget must lowercase the email",
         story=_story(),
@@ -191,6 +192,7 @@ def test_the_authored_oracle_is_relocated_out_of_the_factory_root(
     story = _story()
 
     prov = A._author_bench_acceptance_oracle(
+        arm="factory",
         instance_id="inst-x",
         problem_statement="fix the widget",
         story=story,
@@ -250,6 +252,7 @@ def test_the_chains_own_acceptance_event_stream_is_moved_out_too(
     root = tmp_path / "root"
     root.mkdir()
     prov = A._author_bench_acceptance_oracle(
+        arm="factory",
         instance_id="inst-y",
         problem_statement="fix the widget",
         story=_story(),
@@ -285,6 +288,7 @@ def test_an_acceptance_named_leftover_in_the_factory_root_refuses(
     monkeypatch.setattr(A.shutil, "move", _move_but_litter)
     with pytest.raises(A.AcceptanceOracleUnavailable, match="leftover|remain"):
         A._author_bench_acceptance_oracle(
+        arm="factory",
             instance_id="inst-z",
             problem_statement="fix it",
             story=_story(),
@@ -562,6 +566,7 @@ def test_a_stored_name_that_would_not_be_stripped_refuses_before_spend(
     called: list[str] = []
     with pytest.raises(A.AcceptanceOracleUnavailable, match="does not classify"):
         A._author_bench_acceptance_oracle(
+        arm="factory",
             instance_id="inst-x",
             problem_statement="x",
             story=_story(),
@@ -583,6 +588,7 @@ def test_a_mismatched_stored_name_refuses_the_row(
     monkeypatch.setattr(A, "_ACCEPTANCE_STORED_NAME", "test_other.py")
     with pytest.raises(A.AcceptanceOracleUnavailable, match="not 'test_other.py'"):
         A._author_bench_acceptance_oracle(
+        arm="factory",
             instance_id="inst-x",
             problem_statement="x",
             story=_story(),
@@ -612,6 +618,7 @@ def test_authoring_failure_refuses_the_row(A: Any, tmp_path: Path) -> None:  # n
 
     with pytest.raises(A.AcceptanceOracleUnavailable, match="produced no test"):
         A._author_bench_acceptance_oracle(
+        arm="factory",
             instance_id="inst-x",
             problem_statement="fix it",
             story=_story(),
@@ -640,6 +647,7 @@ def test_a_non_opted_in_app_refuses_rather_than_silently_skipping(
 
     with pytest.raises(A.AcceptanceOracleUnavailable, match="not opted in"):
         A._author_bench_acceptance_oracle(
+        arm="factory",
             instance_id="inst-x",
             problem_statement="fix it",
             story=_story(),
@@ -836,6 +844,7 @@ def test_the_persisted_spec_prompt_is_the_one_that_was_sent(
     cfg = _opted_in_config()
     cfg.gates.acceptance_harness_hint = "the app lives at /srv/app; import `app`"
     prov = A._author_bench_acceptance_oracle(
+        arm="factory",
         instance_id="inst-h",
         problem_statement="fix the widget",
         story=_story(),

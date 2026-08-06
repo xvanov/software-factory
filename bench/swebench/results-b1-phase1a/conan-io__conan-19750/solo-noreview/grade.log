@@ -1,0 +1,65 @@
+Checking patch test/integration/graph/test_system_tools.py...
+Applied patch test/integration/graph/test_system_tools.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_065c67cbde541b8c: OK (red as expected)
+Checking patch conan/internal/api/profile/profile_loader.py...
+Applied patch conan/internal/api/profile/profile_loader.py cleanly.
+SWEBENCH_APPLY_065c67cbde541b8c: OK
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________________ TestToolRequires.test_platform_requires_error _________________
+
+self = <test.integration.graph.test_system_tools.TestToolRequires object at 0x7621d0c54910>
+
+    def test_platform_requires_error(self):
+        """
+        https://github.com/conan-io/conan/issues/19745
+        """
+        c = TestClient(light=True)
+        profile = textwrap.dedent("""\
+            include(default)
+    
+            [platform_tool_requires]
+            cmake/[*]
+            """)
+        c.save({"conanfile.py": GenConanfile("catch2").with_tool_requires("cmake/[*]"),
+                "profile": profile})
+    
+        c.run("create  --version=3.6.0 -pr=profile", assert_error=True)
+        assert "AssertionError" not in c.out
+>       assert ("ERROR: Error reading 'profile' profile: Profile [platform_requires]/"
+                "[platform_tool_requires] must be exact versions, "
+                "not version ranges: [cmake/[*]]") in c.out
+E       assert "ERROR: Error reading 'profile' profile: Profile [platform_requires]/[platform_tool_requires] must be exact versions, not version ranges: [cmake/[*]]" in "ERROR: Error reading 'profile' profile: [platform_tool_requires] entries must be an exact package reference, not a version range. Got 'cmake/[*]'\n"
+E        +  where "ERROR: Error reading 'profile' profile: [platform_tool_requires] entries must be an exact package reference, not a version range. Got 'cmake/[*]'\n" = <conan.test.utils.tools.TestClient object at 0x7621d0de2510>.out
+
+test/integration/graph/test_system_tools.py:176: AssertionError
+=========================== short test summary info ============================
+FAILED test/integration/graph/test_system_tools.py::TestToolRequires::test_platform_requires_error
+1 failed in 0.18s
+SWEBENCH_TALLY_065c67cbde541b8c: fail_to_pass 1 failed in 0.18s
+[3 node outcomes for fail_to_pass -> grade-nodes.log]
+..................                                                       [100%]
+=========================== short test summary info ============================
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require[]
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require[#myrev]
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require_non_matching
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require_range[]
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require_range[#myrev]
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require_range_non_matching
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_system_tool_require_no_host
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_graph_info_system_tool_require_range
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_consumer_resolved_version
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_consumer_resolved_revision
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_consumer_unresolved_revision
+PASSED test/integration/graph/test_system_tools.py::TestToolRequires::test_require_build_context
+PASSED test/integration/graph/test_system_tools.py::TestToolRequiresLock::test_system_tool_require_range[]
+PASSED test/integration/graph/test_system_tools.py::TestToolRequiresLock::test_system_tool_require_range[#myrev]
+PASSED test/integration/graph/test_system_tools.py::TestGenerators::test_system_tool_require_range
+PASSED test/integration/graph/test_system_tools.py::TestPackageID::test_package_id_modes[recipe_revision_mode]
+PASSED test/integration/graph/test_system_tools.py::TestPackageID::test_package_id_modes[full_package_mode]
+PASSED test/integration/graph/test_system_tools.py::TestPackageID::test_package_id_explicit_revision
+18 passed in 0.69s
+SWEBENCH_TALLY_065c67cbde541b8c: pass_to_pass 18 passed in 0.69s
+[20 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_065c67cbde541b8c: UNRESOLVED

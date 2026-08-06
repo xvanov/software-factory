@@ -1,0 +1,1 @@
+{"ts": "2026-08-05T23:54:09.510042+00:00", "schema_version": 1, "event": "authored", "app": "swebench", "story_id": 1, "direction_id": "swebench", "ref": "state/acceptance/swebench/1/test_acceptance.py", "chain_id": "f1bfd098-0625-40a9-8ccb-2d998cbd66d7", "seq": 1, "prev_hash": null, "entry_hash": "67db0aae42af832ae82a40e0fd38374991f9b7ca1489e140b602303cccf63455"}

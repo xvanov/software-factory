@@ -1,0 +1,9 @@
+=== fail_to_pass ===
+=========================== short test summary info ============================
+ERROR pandas/tests/test_col.py - TypeError: bad operand type for abs(): 'Expr...
+1 error in 3.76s
+=== pass_to_pass ===
+=========================== short test summary info ============================
+ERROR pandas/tests/test_col.py - TypeError: bad operand type for abs(): 'Expr...
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 1.06s

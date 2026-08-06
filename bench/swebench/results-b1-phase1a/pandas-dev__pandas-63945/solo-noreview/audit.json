@@ -1,0 +1,83 @@
+{
+  "instance_id": "pandas-dev__pandas-63945",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-05T23:53:39.722701+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-05T23:30:17.249992+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 2212,
+      "tokens_out": 230,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.00898,
+      "duration_s": 2.646,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-05T23:42:41.863056+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1672750,
+      "tokens_out": 12645,
+      "cached_input_tokens": 1385472,
+      "cost_usd": 0.8259378819999998,
+      "duration_s": 743.773,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-05T23:49:02.677051+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 405569,
+      "tokens_out": 6850,
+      "cached_input_tokens": 380032,
+      "cost_usd": 0.20709534999999998,
+      "duration_s": 380.283,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-05T23:51:32.946464+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 284265,
+      "tokens_out": 5275,
+      "cached_input_tokens": 254080,
+      "cost_usd": 0.17113774999999998,
+      "duration_s": 149.796,
+      "success": 0,
+      "error": "tests not green after run"
+    }
+  ],
+  "ledger_cost_usd": 1.2132,
+  "ledger_tokens_in": 2364796,
+  "ledger_tokens_out": 25000,
+  "result_cost_usd": 1.2132,
+  "prediction_sha256": "acb01239e3e483b277b3ad6d131ecf56b211bd017299dcf87c51f8123c1a0e50",
+  "base_commit": "a4523484f6267501ae0bc240c5baf2108c622373",
+  "stripped_test_paths": [
+    "pandas/tests/io/data/excel/df_mangle_dup_col_dtypes.xlsb",
+    "pandas/tests/io/data/excel/gh-35802.ods",
+    "pandas/tests/io/data/excel/gh-36122.ods",
+    "pandas/tests/io/data/excel/multiindex_no_index_names.xlsx",
+    "pandas/tests/io/data/spss/labelled-num-na.sav",
+    "pandas/tests/io/data/spss/labelled-num.sav",
+    "pandas/tests/io/data/spss/labelled-str.sav",
+    "pandas/tests/io/data/spss/umlauts.sav",
+    "pandas/tests/test_col.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 3,
+  "trails_scanned": 3,
+  "oracle_probe_failures": []
+}

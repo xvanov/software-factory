@@ -252,16 +252,38 @@ def test_a_sweep_writes_one_file_per_arm_and_model(A: Any) -> None:  # noqa: N80
 
 
 def test_a_non_selectable_arm_is_one_to_one_with_its_run_dir(A: Any) -> None:  # noqa: N803
-    """The factory/bare/openhands runners hard-code their own arm name in
-    `_run_dir`, which is only safe while each of those bases has exactly ONE
-    registry entry and no `--model`. Registering a second variant of one of them
-    would silently reintroduce the collision, so assert the invariant."""
+    """A run directory must be a function of the ARM, never of the runner family.
+
+    The bare/openhands runners hard-code their own arm name in `_run_dir`, which
+    is only safe while each of those bases has exactly ONE registry entry and no
+    `--model`. Registering a second variant of one of them would silently
+    reintroduce the collision, so the invariant is asserted.
+
+    The `factory` base is the exception, and it is an exception by CONSTRUCTION:
+    B.1's `solo-noreview` ablation is a second `base="factory"` arm, so
+    `run_factory` takes its arm id and keys every artifact off it. That is
+    checked here rather than assumed — if it ever regressed, the ablation would
+    overwrite the `factory` arm's rows AND its reviewer replay corpus.
+    """
+    import inspect
+
+    src = inspect.getsource(A.run_factory)
+    assert '_run_dir(instance_id, arm)' in src
+    assert '_run_dir(instance_id, "factory")' not in src
+    assert '_work_dir(instance_id, arm' in src
+    parameterized_bases = {"factory"}
+
     bases: dict[str, list[str]] = {}
     for name, spec in A._ARMS.items():
         assert A.run_key(name) == name, f"{name} keys a different directory"
         if not spec.model_selectable:
             bases.setdefault(spec.base, []).append(name)
     for base, names in bases.items():
+        if base in parameterized_bases:
+            # Distinct run keys are all that is required once the runner is
+            # arm-parameterized — and distinctness is what stops a collision.
+            assert len(set(names)) == len(names)
+            continue
         assert names == [base], (
             f"{base} has non-selectable variants {names}; its runner hard-codes "
             f"{base!r} as its run dir, so they would collide"

@@ -1,0 +1,57 @@
+Checking patch tests/test_auth/test_flows.py...
+Applied patch tests/test_auth/test_flows.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_46970e5f3d46f337: OK (red as expected)
+Checking patch src/openharness/auth/flows.py...
+Applied patch src/openharness/auth/flows.py cleanly.
+SWEBENCH_APPLY_46970e5f3d46f337: OK
+            "calc.exe",
+        ],
+    )
+    def test_open_browser_rejects_non_http_scheme(
+        monkeypatch: pytest.MonkeyPatch,
+        popen_calls: list[tuple[tuple[Any, ...], dict[str, Any]]],
+        startfile_calls: list[str],
+        url: str,
+    ) -> None:
+        """Non-http(s) URLs must not reach any platform browser-launcher."""
+        monkeypatch.setattr("openharness.auth.flows.platform.system", lambda: "Windows")
+    
+>       assert DeviceCodeFlow._try_open_browser(url) is False
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_auth/test_flows.py:96: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+url = 'calc.exe'
+
+    @staticmethod
+    def _try_open_browser(url: str) -> bool:
+        """Attempt to open *url* in the default browser; return True if likely succeeded."""
+        # Reject non-http(s) schemes before any platform launcher sees the URL
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+>           raise ValueError(
+                f"Only http and https URLs are allowed for browser open, got: {url!r}"
+            )
+E           ValueError: Only http and https URLs are allowed for browser open, got: 'calc.exe'
+
+src/openharness/auth/flows.py:84: ValueError
+=========================== short test summary info ============================
+PASSED tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell
+FAILED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]
+FAILED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]
+FAILED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]
+FAILED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]
+FAILED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]
+5 failed, 1 passed in 0.04s
+SWEBENCH_TALLY_46970e5f3d46f337: fail_to_pass 5 failed, 1 passed in 0.04s
+[8 node outcomes for fail_to_pass -> grade-nodes.log]
+..                                                                       [100%]
+=========================== short test summary info ============================
+PASSED tests/test_auth/test_flows.py::test_open_browser_macos_uses_open_argv
+PASSED tests/test_auth/test_flows.py::test_open_browser_linux_uses_xdg_open_argv
+2 passed in 0.01s
+SWEBENCH_TALLY_46970e5f3d46f337: pass_to_pass 2 passed in 0.01s
+[4 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_46970e5f3d46f337: UNRESOLVED

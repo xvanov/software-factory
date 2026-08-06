@@ -1,0 +1,279 @@
+diff --git a/_analyze_bc.py b/_analyze_bc.py
+new file mode 100644
+index 0000000..a462055
+--- /dev/null
++++ b/_analyze_bc.py
+@@ -0,0 +1,61 @@
++from vyper import compile_code
++
++code = """
++# @version 0.4.4
++
++event OwnershipTransferred:
++    previousOwner: indexed(address)
++    newOwner: indexed(address)
++
++event RoleMinterChanged:
++    minter: indexed(address)
++    status: bool
++
++owner: public(address)
++
++@deploy
++def __init__():
++    self.owner = msg.sender
++    log OwnershipTransferred(previousOwner=empty(address), newOwner=msg.sender)
++    log RoleMinterChanged(minter=msg.sender, status=True)
++"""
++
++result = compile_code(code, output_formats=["bytecode", "bytecode_runtime"])
++bytecode = result["bytecode"]
++runtime = result["bytecode_runtime"]
++if bytecode.startswith("0x"):
++    bytecode = bytecode[2:]
++if runtime.startswith("0x"):
++    runtime = runtime[2:]
++
++bc = bytes.fromhex(bytecode)
++rt = bytes.fromhex(runtime)
++
++fe_positions = [(i, hex(b)) for i, b in enumerate(bc) if b == 0xfe]
++print("=== Bytecode Analysis ===")
++print(f"INVALID (0xFE) byte positions in full bytecode: {fe_positions}")
++print(f"Full bytecode length: {len(bc)}")
++print(f"Runtime bytecode length: {len(rt)}")
++
++# Find runtime in bytecode
++for i in range(len(bc) - len(rt) + 1):
++    if bc[i:i+len(rt)] == rt:
++        print(f"Runtime code found at offset {i}-{i+len(rt)}")
++
++# Bytes around INVALID
++for fe_pos, _ in fe_positions:
++    start = max(0, fe_pos - 10)
++    end = min(len(bc), fe_pos + 15)
++    print(f"\nBytes around INVALID at position {fe_pos}: {bc[start:end].hex()}")
++    for j in range(start, end):
++        marker = " <<< INVALID" if j == fe_pos else ""
++        print(f"  {j}: 0x{bc[j]:02x}{marker}")
++
++# Full hex dump
++print(f"\n=== Full bytecode hex ===")
++print(bytecode)
++
++# Check if the INVALID is in the init part or runtime part
++print(f"\n=== Runtime bytecode hex ===")
++print(runtime)
++print(f"\nRuntime has INVALID: {any(b == 0xfe for b in rt)}")
+\ No newline at end of file
+diff --git a/_disasm.py b/_disasm.py
+new file mode 100644
+index 0000000..8955b71
+--- /dev/null
++++ b/_disasm.py
+@@ -0,0 +1,204 @@
++from vyper import compile_code
++
++code = """
++# @version 0.4.4
++
++event OwnershipTransferred:
++    previousOwner: indexed(address)
++    newOwner: indexed(address)
++
++event RoleMinterChanged:
++    minter: indexed(address)
++    status: bool
++
++owner: public(address)
++
++@deploy
++def __init__():
++    self.owner = msg.sender
++    log OwnershipTransferred(previousOwner=empty(address), newOwner=msg.sender)
++    log RoleMinterChanged(minter=msg.sender, status=True)
++"""
++
++result = compile_code(code, output_formats=["bytecode", "bytecode_runtime"])
++bytecode = result["bytecode"]
++runtime = result["bytecode_runtime"]
++if bytecode.startswith("0x"):
++    bytecode = bytecode[2:]
++if runtime.startswith("0x"):
++    runtime = runtime[2:]
++
++bc = bytes.fromhex(bytecode)
++rt = bytes.fromhex(runtime)
++
++fe_positions = [(i, hex(b)) for i, b in enumerate(bc) if b == 0xfe]
++print("=== Bytecode Analysis ===")
++print(f"INVALID (0xFE) byte positions in full bytecode: {fe_positions}")
++print(f"Full bytecode length: {len(bc)}")
++print(f"Runtime bytecode length: {len(rt)}")
++
++# Find runtime in bytecode
++runtime_offset = None
++for i in range(len(bc) - len(rt) + 1):
++    if bc[i:i+len(rt)] == rt:
++        runtime_offset = i
++        print(f"Runtime code found at offset {i}-{i+len(rt)}")
++
++# Check if the INVALID is in the init part or runtime part
++for fe_pos, _ in fe_positions:
++    if runtime_offset and fe_pos >= runtime_offset and fe_pos < runtime_offset + len(rt):
++        print(f"INVALID at {fe_pos} is IN runtime code")
++    elif runtime_offset and fe_pos >= runtime_offset + len(rt):
++        print(f"INVALID at {fe_pos} is in METADATA (after runtime)")
++    else:
++        print(f"INVALID at {fe_pos} is in INIT code")
++
++# Simple disassembly of init code
++print("\n=== Init Code Disassembly ===")
++init_end = runtime_offset if runtime_offset else len(bc)
++i = 0
++while i < init_end:
++    op = bc[i]
++    if op == 0x33:
++        print(f"  {i:04x}: CALLER")
++        i += 1
++    elif op == 0x34:
++        print(f"  {i:04x}: CALLVALUE")
++        i += 1
++    elif op == 0x50:
++        print(f"  {i:04x}: POP")
++        i += 1
++    elif op == 0x51:
++        print(f"  {i:04x}: MLOAD")
++        i += 1
++    elif op == 0x52:
++        print(f"  {i:04x}: MSTORE")
++        i += 1
++    elif op == 0x55:
++        print(f"  {i:04x}: SSTORE")
++        i += 1
++    elif op == 0x56:
++        print(f"  {i:04x}: JUMP")
++        i += 1
++    elif op == 0x57:
++        arg = int.from_bytes(bc[i+1:i+3], 'big')
++        print(f"  {i:04x}: JUMPI 0x{arg:04x}")
++        i += 3
++    elif op == 0x5b:
++        print(f"  {i:04x}: JUMPDEST")
++        i += 1
++    elif op == 0x5f:
++        print(f"  {i:04x}: PUSH0")
++        i += 1
++    elif 0x60 <= op <= 0x7f:
++        push_len = op - 0x60 + 1
++        arg = bc[i+1:i+1+push_len]
++        print(f"  {i:04x}: PUSH{push_len} 0x{arg.hex()}")
++        i += 1 + push_len
++    elif op == 0x80:
++        print(f"  {i:04x}: DUP1")
++        i += 1
++    elif op == 0x81:
++        print(f"  {i:04x}: DUP2")
++        i += 1
++    elif op == 0x82:
++        print(f"  {i:04x}: DUP3")
++        i += 1
++    elif op == 0x83:
++        print(f"  {i:04x}: DUP4")
++        i += 1
++    elif op == 0x84:
++        print(f"  {i:04x}: DUP5")
++        i += 1
++    elif op == 0x85:
++        print(f"  {i:04x}: DUP6")
++        i += 1
++    elif op == 0x86:
++        print(f"  {i:04x}: DUP7")
++        i += 1
++    elif op == 0x90:
++        print(f"  {i:04x}: SWAP1")
++        i += 1
++    elif op == 0x91:
++        print(f"  {i:04x}: SWAP2")
++        i += 1
++    elif op == 0x92:
++        print(f"  {i:04x}: SWAP3")
++        i += 1
++    elif op == 0x93:
++        print(f"  {i:04x}: SWAP4")
++        i += 1
++    elif op == 0xa0:
++        print(f"  {i:04x}: LOG0")
++        i += 1
++    elif op == 0xa1:
++        print(f"  {i:04x}: LOG1")
++        i += 1
++    elif op == 0xa2:
++        print(f"  {i:04x}: LOG2")
++        i += 1
++    elif op == 0xa3:
++        print(f"  {i:04x}: LOG3")
++        i += 1
++    elif op == 0xa4:
++        print(f"  {i:04x}: LOG4")
++        i += 1
++    elif op == 0xf3:
++        print(f"  {i:04x}: RETURN")
++        i += 1
++    elif op == 0xfd:
++        print(f"  {i:04x}: REVERT")
++        i += 1
++    elif op == 0xfe:
++        print(f"  {i:04x}: INVALID <--- BUG!")
++        i += 1
++    elif op == 0x00:
++        # Probably part of PUSH argument
++        print(f"  {i:04x}: STOP or PUSH data 0x00")
++        i += 1
++    elif op == 0x01:
++        print(f"  {i:04x}: ADD")
++        i += 1
++    elif op == 0x15:
++        print(f"  {i:04x}: ISZERO")
++        i += 1
++    elif op == 0x19:
++        print(f"  {i:04x}: NOT")
++        i += 1
++    elif op == 0x20:
++        print(f"  {i:04x}: SHA3")
++        i += 1
++    elif op == 0x27:
++        print(f"  {i:04x}: BALANCE")
++        i += 1
++    elif op == 0x38:
++        print(f"  {i:04x}: CODESIZE")
++        i += 1
++    elif op == 0x39:
++        print(f"  {i:04x}: CODECOPY")
++        i += 1
++    elif op == 0x3e:
++        print(f"  {i:04x}: RETURNDATASIZE")
++        i += 1
++    elif op == 0x40:
++        print(f"  {i:04x}: BLOCKHASH")
++        i += 1
++    elif op == 0x42:
++        print(f"  {i:04x}: TIMESTAMP")
++        i += 1
++    elif op == 0x44:
++        print(f"  {i:04x}: DIFFICULTY")
++        i += 1
++    elif op == 0x60:
++        print(f"  {i:04x}: PUSH1 0x{bc[i+1]:02x}")
++        i += 2
++    else:
++        print(f"  {i:04x}: 0x{op:02x}")
++        i += 1
++
++print(f"\n=== Runtime Embedded at {runtime_offset} ===")
++print(runtime)
++
++print(f"\n=== Metadata (after runtime) ===")
++metadata = bc[runtime_offset+len(rt):]
++print(metadata.hex())
+\ No newline at end of file

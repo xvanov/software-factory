@@ -1,0 +1,106 @@
+Checking patch pandas/tests/test_col.py...
+Applied patch pandas/tests/test_col.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_2eb63758e8851e8b: NO_COLLECT_PRE_PATCH (collection fails before the patch; treated as a red baseline)
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_expression_getitem
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_property
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_cached_property
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_qcut
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_where
+
+
+==================================== ERRORS ====================================
+__________________ ERROR collecting pandas/tests/test_col.py ___________________
+pandas/tests/test_col.py:50: in <module>
+    (-pd.col("a"), [-1, -2], "-col('a')"),
+     ^^^^^^^^^^^^
+E   TypeError: bad operand type for unary -: 'Expression'
+=========================== short test summary info ============================
+ERROR pandas/tests/test_col.py - TypeError: bad operand type for unary -: 'Ex...
+16918 tests collected, 1 error in 4.33s
+Checking patch pandas/core/col.py...
+Applied patch pandas/core/col.py cleanly.
+SWEBENCH_APPLY_2eb63758e8851e8b: OK
+SWEBENCH_POST_PATCH_2eb63758e8851e8b: FAIL_TO_PASS_IDS_DO_NOT_COLLECT (even with the patch applied)
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_expression_getitem
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_property
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_cached_property
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_qcut
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_where
+
+
+==================================== ERRORS ====================================
+__________________ ERROR collecting pandas/tests/test_col.py ___________________
+pandas/tests/test_col.py:54: in <module>
+    (abs(pd.col("a")), [1, 2], "abs(col('a'))"),
+     ^^^^^^^^^^^^^^^^
+E   TypeError: bad operand type for abs(): 'Expression'
+=========================== short test summary info ============================
+ERROR pandas/tests/test_col.py - TypeError: bad operand type for abs(): 'Expr...
+16918 tests collected, 1 error in 3.80s
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_getitem
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_setitem
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_loc
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_frame_iloc
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_namespaces
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_namespaces
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_namespaces
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_invalid
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_custom_accessor
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_col_logical_ops
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_expression_getitem
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_property
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_cached_property
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_qcut
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_where
+
+
+==================================== ERRORS ====================================
+__________________ ERROR collecting pandas/tests/test_col.py ___________________
+pandas/tests/test_col.py:54: in <module>
+    (abs(pd.col("a")), [1, 2], "abs(col('a'))"),
+     ^^^^^^^^^^^^^^^^
+E   TypeError: bad operand type for abs(): 'Expression'
+=========================== short test summary info ============================
+ERROR pandas/tests/test_col.py - TypeError: bad operand type for abs(): 'Expr...
+1 error in 3.76s
+SWEBENCH_TALLY_2eb63758e8851e8b: fail_to_pass 1 error in 3.76s
+[3 node outcomes for fail_to_pass -> grade-nodes.log]
+meson-python: building pandas: /usr/bin/ninja
+[1/1] Generating write_version_file with a custom command
+
+==================================== ERRORS ====================================
+__________________ ERROR collecting pandas/tests/test_col.py ___________________
+pandas/tests/test_col.py:54: in <module>
+    (abs(pd.col("a")), [1, 2], "abs(col('a'))"),
+     ^^^^^^^^^^^^^^^^
+E   TypeError: bad operand type for abs(): 'Expression'
+=========================== short test summary info ============================
+ERROR pandas/tests/test_col.py - TypeError: bad operand type for abs(): 'Expr...
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 1.06s
+SWEBENCH_TALLY_2eb63758e8851e8b: pass_to_pass 1 error in 1.06s
+[4 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_2eb63758e8851e8b: UNRESOLVED

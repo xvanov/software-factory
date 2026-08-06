@@ -1,0 +1,63 @@
+Checking patch tests/functional/codegen/features/test_immutable_allocator_overlap.py...
+Checking patch tests/unit/compiler/venom/test_memory_allocator.py...
+Applied patch tests/functional/codegen/features/test_immutable_allocator_overlap.py cleanly.
+Applied patch tests/unit/compiler/venom/test_memory_allocator.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_bf1eb0a8636b80cb: OK (red as expected)
+Checking patch _analyze_bc.py...
+Checking patch _disasm.py...
+Applied patch _analyze_bc.py cleanly.
+Applied patch _disasm.py cleanly.
+SWEBENCH_APPLY_bf1eb0a8636b80cb: OK
+bringing up nodes...
+bringing up nodes...
+
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________________ test_allocate_overlapping_reserved_intervals _________________
+[gw14] linux -- Python 3.12.12 /opt/conda/envs/testbed/bin/python
+
+    def test_allocate_overlapping_reserved_intervals():
+        ctx = IRContext()
+        fn = ctx.create_function("main")
+        bb = fn.entry
+    
+        imm_inst = IRInstruction("alloca", [IRLiteral(480), IRLiteral(1)], outputs=[IRVariable("%imm")])
+        tmp_inst = IRInstruction("alloca", [IRLiteral(96), IRLiteral(2)], outputs=[IRVariable("%tmp")])
+        buf_inst = IRInstruction("alloca", [IRLiteral(96), IRLiteral(3)], outputs=[IRVariable("%buf")])
+        bb.insert_instruction(imm_inst)
+        bb.insert_instruction(tmp_inst)
+        bb.insert_instruction(buf_inst)
+    
+        imm = Allocation(imm_inst)
+        tmp = Allocation(tmp_inst)
+        buf = Allocation(buf_inst)
+    
+        allocator = MemoryAllocator()
+        allocator.start_fn_allocation(fn)
+        allocator.set_position(imm, 0)
+        allocator.set_position(tmp, 160)
+        allocator.reserve(imm)
+        allocator.reserve(tmp)
+    
+>       assert allocator.allocate(buf) == 480
+E       assert 256 == 480
+E        +  where 256 = allocate(Allocation(inst=%buf = alloca 3, 96           ))
+E        +    where allocate = <vyper.venom.memory_allocator.MemoryAllocator object at 0x71eec1c8ef30>.allocate
+
+tests/unit/compiler/venom/test_memory_allocator.py:30: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/compiler/venom/test_memory_allocator.py::test_allocate_overlapping_reserved_intervals
+1 failed in 7.22s
+SWEBENCH_TALLY_bf1eb0a8636b80cb: fail_to_pass 1 failed in 7.22s
+[3 node outcomes for fail_to_pass -> grade-nodes.log]
+bringing up nodes...
+bringing up nodes...
+
+.                                                                        [100%]
+=========================== short test summary info ============================
+PASSED tests/functional/codegen/features/test_immutable_allocator_overlap.py::test_immutable_hashing_overlap_regression
+1 passed in 7.51s
+SWEBENCH_TALLY_bf1eb0a8636b80cb: pass_to_pass 1 passed in 7.51s
+[3 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_bf1eb0a8636b80cb: UNRESOLVED

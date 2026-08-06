@@ -1,0 +1,50 @@
+{
+  "instance_id": "ucfopen__canvasapi-716",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-05T23:30:24.005392+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-05T23:25:38.093463+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 1758,
+      "tokens_out": 322,
+      "cached_input_tokens": 1280,
+      "cost_usd": 0.006345,
+      "duration_s": 3.971,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-05T23:30:16.499401+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 839059,
+      "tokens_out": 6577,
+      "cached_input_tokens": 580096,
+      "cost_usd": 0.618383956,
+      "duration_s": 277.685,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.6247,
+  "ledger_tokens_in": 840817,
+  "ledger_tokens_out": 6899,
+  "result_cost_usd": 0.6247,
+  "prediction_sha256": "7cb4df2d6587ceebeeaf71735716941db1671c4c39006c50b70853f266c05280",
+  "base_commit": "77ff5b248603db987e57f11a104767d4b790265a",
+  "stripped_test_paths": [
+    "tests/fixtures/announcements.json",
+    "tests/test_util.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

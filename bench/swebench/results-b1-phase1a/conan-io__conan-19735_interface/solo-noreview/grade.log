@@ -1,0 +1,88 @@
+Checking patch test/unittests/util/detect_test.py...
+Applied patch test/unittests/util/detect_test.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_9fc32c618589d2bf: OK (red as expected)
+Checking patch conan/internal/api/detect/detect_api.py...
+Applied patch conan/internal/api/detect/detect_api.py cleanly.
+SWEBENCH_APPLY_9fc32c618589d2bf: OK
+...F                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_detect_compiler[detect_emcc_compiler-shared:INFO: (Emscripten: Running sanity checks)\nemcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)-expected_version3] _
+
+function = <function detect_emcc_compiler at 0x7c228f846200>
+version_return = 'shared:INFO: (Emscripten: Running sanity checks)\nemcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)'
+expected_version = ('emcc', 4.0.22, 'emcc')
+
+    @pytest.mark.parametrize("function,version_return,expected_version", [
+        [detect_suncc_compiler, "Sun C 5.13", ('sun-cc', Version("5.13"), 'cc')],
+        [detect_intel_compiler, "Intel C++ Compiler 2025.0", ('intel-cc', Version("2025.0"), 'icx')],
+        [detect_emcc_compiler,
+         "emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)",
+         ('emcc', Version("4.0.22"), 'emcc')],
+        [detect_emcc_compiler,
+         "shared:INFO: (Emscripten: Running sanity checks)\n" +
+         "emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)",
+         ('emcc', Version("4.0.22"), 'emcc')],
+    ])
+    def test_detect_compiler(function, version_return, expected_version):
+        """
+        :type function: Callable
+        """
+        with mock.patch("conan.internal.api.detect.detect_api.detect_runner",
+                        mock.MagicMock(return_value=(0, version_return))):
+            ret = function()
+>           assert ret == expected_version
+E           AssertionError: assert None == ('emcc', 4.0.22, 'emcc')
+
+test/unittests/util/detect_test.py:106: AssertionError
+=========================== short test summary info ============================
+PASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_suncc_compiler-Sun C 5.13-expected_version0]
+PASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_intel_compiler-Intel C++ Compiler 2025.0-expected_version1]
+PASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_emcc_compiler-emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)-expected_version2]
+FAILED test/unittests/util/detect_test.py::test_detect_compiler[detect_emcc_compiler-shared:INFO: (Emscripten: Running sanity checks)\nemcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)-expected_version3]
+1 failed, 3 passed in 0.16s
+SWEBENCH_TALLY_9fc32c618589d2bf: fail_to_pass 1 failed, 3 passed in 0.16s
+[6 node outcomes for fail_to_pass -> grade-nodes.log]
+        :type function: Callable
+        """
+        with mock.patch("conan.internal.api.detect.detect_api.detect_runner",
+                        mock.MagicMock(return_value=(0, version_return))):
+            ret = function()
+>           assert ret == expected_version
+E           AssertionError: assert None == ('emcc', 4.0.22, 'emcc')
+
+test/unittests/util/detect_test.py:106: AssertionError
+=========================== short test summary info ============================
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_empty_arch
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_aix[powerpc-64-7.1.0.0-ppc64]
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_aix[powerpc-32-7.1.0.0-ppc32]
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_aix[rs6000-None-4.2.1.0-ppc32]
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[arm64-armv8]
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[i386-x86]
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[i686-x86]
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[i86pc-x86]
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[amd64-x86_64]
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[aarch64-armv8]
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[sun4v-sparc]
+PASSED test/unittests/util/detect_test.py::TestDetect::test_detect_clang_gcc_toolchain
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe (Rev3, Built by MSYS2 project) 14.1.0-14.1.0]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[g++ (Conan-Build-gcc--binutils-2.42) 14.1.0-14.1.0]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc.exe (x86_64-posix-seh-rev0, Built by MinGW-Builds project) 15.1.0-15.1.0]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc.exe (x86_64-posix-seh-rev0, Built by MinGW-Builds project) 15.15.0-15.15.0]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc (crosstool-NG 1.27.0) 13.3.0-13.3.0]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc (crosstool-NG 1.27.0) 13.3-13.3]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc (GCC) 4.8.1-4.8.1]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[clang version 18.1.0rc (https://github.com/llvm/llvm-project.git 4612...a09e)-18.1.0]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe (Rev3, Built by MSYS2 project) 14.0-14.0]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[clang version 18 (https://github.com/llvm/llvm-project.git 4612...8a09e)-18]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe (Rev3, Built by MSYS2 project) 14-14]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe 14.2-14.2]
+PASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc1 14.2-14.2]
+PASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_suncc_compiler-Sun C 5.13-expected_version0]
+PASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_intel_compiler-Intel C++ Compiler 2025.0-expected_version1]
+PASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_emcc_compiler-emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)-expected_version2]
+FAILED test/unittests/util/detect_test.py::test_detect_compiler[detect_emcc_compiler-shared:INFO: (Emscripten: Running sanity checks)\nemcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)-expected_version3]
+1 failed, 28 passed in 1.24s
+SWEBENCH_TALLY_9fc32c618589d2bf: pass_to_pass 1 failed, 28 passed in 1.24s
+[31 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_9fc32c618589d2bf: UNRESOLVED

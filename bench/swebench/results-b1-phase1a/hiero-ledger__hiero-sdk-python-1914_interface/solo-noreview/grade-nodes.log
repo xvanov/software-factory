@@ -1,0 +1,27 @@
+=== fail_to_pass ===
+=========================== short test summary info ============================
+PASSED tests/unit/account_info_test.py::test_from_proto
+PASSED tests/unit/account_info_test.py::test_to_proto
+PASSED tests/unit/account_info_test.py::test_proto_conversion_with_staking_info
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_setter
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_setter
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_setter
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_setters_preserve_other_staking_fields
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_constructor_legacy_kwargs_deprecated
+FAILED tests/unit/account_info_test.py::test_proto_conversion - AssertionErro...
+FAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_deprecated
+FAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_deprecated
+FAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_deprecated
+4 failed, 8 passed in 0.44s
+=== pass_to_pass ===
+=========================== short test summary info ============================
+PASSED tests/integration/account_create_transaction_e2e_test.py::test_create_account_with_alias_derived_from_non_ecdsa_key
+PASSED tests/integration/account_create_transaction_e2e_test.py::test_create_account_with_alias_from_seperate_non_ecdsa_key
+PASSED tests/unit/account_info_test.py::test_account_info_initialization
+PASSED tests/unit/account_info_test.py::test_account_info_default_initialization
+PASSED tests/unit/account_info_test.py::test_from_proto_with_token_relationships
+PASSED tests/unit/account_info_test.py::test_from_proto_none_raises_error
+PASSED tests/unit/account_info_test.py::test_to_proto_with_none_values
+PASSED tests/unit/account_info_test.py::test_str_and_repr
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_deprecated_properties_return_none_without_staking_info
+9 passed in 0.41s

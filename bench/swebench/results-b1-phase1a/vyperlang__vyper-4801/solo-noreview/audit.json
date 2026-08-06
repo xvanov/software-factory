@@ -1,0 +1,85 @@
+{
+  "instance_id": "vyperlang__vyper-4801",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-06T01:43:17.228942+00:00",
+  "ok": false,
+  "failures": [
+    "oracle-probe: trajectory 1-1-1785978149345.ndjson:27 (ActionEvent) references the harness's oracle/manifest paths ['curl', 'github api/raw'] \u2014 the arm went looking for the answer; the run is invalid"
+  ],
+  "warnings": [
+    "dev: 3 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-05T23:57:27.121343+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 2428,
+      "tokens_out": 923,
+      "cached_input_tokens": 1280,
+      "cost_usd": 0.017035,
+      "duration_s": 8.702,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-06T00:27:28.804015+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 1801.196,
+      "success": 0,
+      "error": "sandbox run timed out after 1800s (likely a stalled LLM call); treating as retryable infrastructure failure"
+    },
+    {
+      "ts": "2026-08-06T01:02:29.355749+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 1800.115,
+      "success": 0,
+      "error": "sandbox run timed out after 1800s (likely a stalled LLM call); treating as retryable infrastructure failure"
+    },
+    {
+      "ts": "2026-08-06T01:37:30.015788+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 1800.23,
+      "success": 0,
+      "error": "sandbox run timed out after 1800s (likely a stalled LLM call); treating as retryable infrastructure failure"
+    }
+  ],
+  "ledger_cost_usd": 0.017,
+  "ledger_tokens_in": 2428,
+  "ledger_tokens_out": 923,
+  "result_cost_usd": 0.017,
+  "prediction_sha256": "4d1ef7631fe861c6fb03a8f5cec0436226ac9b19f8a09f385fe05ee4e0d2e9a6",
+  "base_commit": "7d53bab7f8cce2a5fb037052663d85596d7eb2d1",
+  "stripped_test_paths": [
+    "test_compile.py",
+    "test_debug.py",
+    "test_debug2.py",
+    "test_repro.py",
+    "tests/unit/compiler/venom/test_deploy_regression.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 3,
+  "trails_scanned": 3,
+  "oracle_probe_failures": [
+    "oracle-probe: trajectory 1-1-1785978149345.ndjson:27 (ActionEvent) references the harness's oracle/manifest paths ['curl', 'github api/raw'] \u2014 the arm went looking for the answer; the run is invalid"
+  ]
+}

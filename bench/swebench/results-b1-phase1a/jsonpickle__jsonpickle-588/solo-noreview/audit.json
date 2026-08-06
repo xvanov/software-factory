@@ -1,0 +1,50 @@
+{
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-05T23:57:07.545129+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-05T23:34:43.293932+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 2904,
+      "tokens_out": 529,
+      "cached_input_tokens": 1280,
+      "cost_usd": 0.012315,
+      "duration_s": 4.201,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-05T23:56:56.262676+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 4023282,
+      "tokens_out": 40731,
+      "cached_input_tokens": 2925824,
+      "cost_usd": 2.745151334,
+      "duration_s": 1332.539,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.7575,
+  "ledger_tokens_in": 4026186,
+  "ledger_tokens_out": 41260,
+  "result_cost_usd": 2.7575,
+  "prediction_sha256": "5d25baed10efb6ade2d8fdf6c151832fd37b8d8a15a21db0257378c9153081b9",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "stripped_test_paths": [
+    "tests/benchmark.py",
+    "tests/object_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

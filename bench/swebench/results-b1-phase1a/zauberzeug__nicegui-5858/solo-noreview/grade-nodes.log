@@ -1,0 +1,11 @@
+=== fail_to_pass ===
+=========================== short test summary info ============================
+PASSED tests/test_xterm.py::test_bell_and_data_events
+PASSED tests/test_xterm.py::test_fit_and_resize_event
+2 passed in 7.79s
+=== pass_to_pass ===
+=========================== short test summary info ============================
+PASSED tests/test_xterm.py::test_init
+PASSED tests/test_xterm.py::test_write
+PASSED tests/test_xterm.py::test_run_terminal_method
+3 passed in 7.87s

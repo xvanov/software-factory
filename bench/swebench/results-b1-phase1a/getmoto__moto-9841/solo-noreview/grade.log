@@ -1,0 +1,59 @@
+Checking patch tests/test_kms/test_kms.py...
+Checking patch tests/test_kms/test_kms_cloudformation.py...
+Applied patch tests/test_kms/test_kms.py cleanly.
+Applied patch tests/test_kms/test_kms_cloudformation.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_360e0793b24af54f: OK (red as expected)
+Checking patch moto/kms/models.py...
+Applied patch moto/kms/models.py cleanly.
+SWEBENCH_APPLY_360e0793b24af54f: OK
+..                                                                       [100%]
+=========================== short test summary info ============================
+PASSED tests/test_kms/test_kms.py::test_update_alias_using_arn_as_target_key_id
+PASSED tests/test_kms/test_kms.py::test_update_alias_same_target_key
+2 passed in 0.25s
+SWEBENCH_TALLY_360e0793b24af54f: fail_to_pass 2 passed in 0.25s
+[4 node outcomes for fail_to_pass -> grade-nodes.log]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_3072-RSASSA_PSS_SHA_256]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_3072-RSASSA_PSS_SHA_384]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_3072-RSASSA_PSS_SHA_512]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_3072-RSASSA_PKCS1_V1_5_SHA_256]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_3072-RSASSA_PKCS1_V1_5_SHA_384]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_3072-RSASSA_PKCS1_V1_5_SHA_512]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_4096-RSASSA_PSS_SHA_256]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_4096-RSASSA_PSS_SHA_384]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_4096-RSASSA_PSS_SHA_512]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_4096-RSASSA_PKCS1_V1_5_SHA_256]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_4096-RSASSA_PKCS1_V1_5_SHA_384]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_4096-RSASSA_PKCS1_V1_5_SHA_512]
+PASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_RSA[RSASSA_PSS_SHA_256-RSASSA_PSS_SHA_384]
+PASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_RSA[RSASSA_PSS_SHA_256-RSASSA_PSS_SHA_512]
+PASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_RSA[RSASSA_PSS_SHA_384-RSASSA_PSS_SHA_512]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_NIST_P256-ECDSA_SHA_256]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_SECG_P256K1-ECDSA_SHA_256]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_NIST_P384-ECDSA_SHA_384]
+PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_NIST_P521-ECDSA_SHA_512]
+PASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_NIST_P256-ECDSA_SHA_384-valid_signing_algorithms0]
+PASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_SECG_P256K1-ECDSA_SHA_512-valid_signing_algorithms1]
+PASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_NIST_P384-ECDSA_SHA_256-valid_signing_algorithms2]
+PASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_NIST_P521-ECDSA_SHA_384-valid_signing_algorithms3]
+PASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_NIST_P256-ECDSA_SHA_256]
+PASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_SECG_P256K1-ECDSA_SHA_256]
+PASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_NIST_P384-ECDSA_SHA_384]
+PASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_NIST_P521-ECDSA_SHA_512]
+PASSED tests/test_kms/test_kms.py::test_sign_invalid_key_usage
+PASSED tests/test_kms/test_kms.py::test_sign_invalid_message
+PASSED tests/test_kms/test_kms.py::test_verify_happy[some encodeable plaintext]
+PASSED tests/test_kms/test_kms.py::test_verify_happy[some unencodeable plaintext \xec\x8a\xcf\xb6r\xe9\xb5\xeb\xff\xa23\x16]
+PASSED tests/test_kms/test_kms.py::test_verify_happy[some unicode characters \xf8\u02da\u2206\xf8\u02c6\u02c6\u2206\xdf\xe7\xf8\u02c6\u02c6\xe7\xdf\xf8\u02c6\xa8\xa5]
+PASSED tests/test_kms/test_kms.py::test_verify_happy_with_invalid_signature
+PASSED tests/test_kms/test_kms.py::test_verify_invalid_signing_algorithm
+PASSED tests/test_kms/test_kms.py::test_verify_invalid_message
+PASSED tests/test_kms/test_kms.py::test_verify_empty_signature
+PASSED tests/test_kms/test_kms.py::test_get_public_key
+PASSED tests/test_kms/test_kms.py::test_get_public_key_with_alias
+PASSED tests/test_kms/test_kms.py::test_ensure_key_can_be_verified_manually
+153 passed in 5.12s
+SWEBENCH_TALLY_360e0793b24af54f: pass_to_pass 153 passed in 5.12s
+[155 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_360e0793b24af54f: RESOLVED

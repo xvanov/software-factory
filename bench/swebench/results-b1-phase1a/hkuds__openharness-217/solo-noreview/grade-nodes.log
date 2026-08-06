@@ -1,0 +1,14 @@
+=== fail_to_pass ===
+=========================== short test summary info ============================
+PASSED tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell
+FAILED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]
+FAILED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]
+FAILED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]
+FAILED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]
+FAILED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]
+5 failed, 1 passed in 0.04s
+=== pass_to_pass ===
+=========================== short test summary info ============================
+PASSED tests/test_auth/test_flows.py::test_open_browser_macos_uses_open_argv
+PASSED tests/test_auth/test_flows.py::test_open_browser_linux_uses_xdg_open_argv
+2 passed in 0.01s

@@ -2675,6 +2675,7 @@ def _author_bench_acceptance_oracle(
     *,
     problem_statement: str,
     instance_id: str,
+    arm: str,
     story: Any,
     app_config: Any,
     root: Path,
@@ -2792,7 +2793,7 @@ def _author_bench_acceptance_oracle(
     # written into the store as ``spec_prompt.md`` — which is what the dev's
     # ``find -name "*.md"`` matched. Provenance is preserved (a reader can check
     # exactly what the author saw); the bait is not.
-    spec_out = _run_dir(instance_id, "factory") / _ACCEPTANCE_SPEC_NAME
+    spec_out = _run_dir(instance_id, arm) / _ACCEPTANCE_SPEC_NAME
     spec_out.write_text(spec_prompt, encoding="utf-8")
 
     # Same treatment for the chain's own visibility stream. ``acceptance._emit``
@@ -2802,7 +2803,7 @@ def _author_bench_acceptance_oracle(
     events_out: str | None = None
     src_events = root / "state" / "events" / "acceptance.ndjson"
     if src_events.is_file():
-        dest_events = _run_dir(instance_id, "factory") / _ACCEPTANCE_EVENTS_NAME
+        dest_events = _run_dir(instance_id, arm) / _ACCEPTANCE_EVENTS_NAME
         shutil.move(str(src_events), str(dest_events))
         events_out = str(dest_events)
     leftovers = sorted(
@@ -3022,21 +3023,125 @@ def _acceptance_author_ledger_rows(runs: list[Any]) -> int:
     return sum(1 for r in runs if str(getattr(r, "persona", "")) == "acceptance_author")
 
 
-def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
+# --------------------------------------------------------------------------- #
+# the chain driver's per-arm mode — PLAN.md B.1 Phase 1a, the reviewer ablation
+# --------------------------------------------------------------------------- #
+#
+# ``run_factory`` drives the chain by hand: it seeds a story at ``SM_DONE``,
+# dispatches only the personas in ``personas``, stops on a terminal state, and
+# grades the captured worktree diff. Which personas it will dispatch, and which
+# state counts as the chain's own GREEN claim, are the whole difference between
+# the `factory` arm and the `solo-noreview` ablation. Nothing else differs — same
+# driver, same story bytes, same dev persona, same routes, same sandbox, same
+# gates, same acceptance authoring, same grading. See
+# ``bench/swebench/PRE-REGISTRATION-B1.md``.
+#
+# Kept as a TABLE, and resolved through a FAIL-LOUD lookup, for the reason every
+# other per-arm lookup in this file is: the three that used to fall back silently
+# meant a new arm inherited another arm's budget and produced a row nobody could
+# interpret. A ``base="factory"`` arm with no entry here would silently inherit
+# the reviewer round-trip and be published as an ablation that never happened.
+class FactoryDriverMode(NamedTuple):
+    """Which personas the chain driver dispatches, and what green means."""
+
+    personas: frozenset[str]
+    # Attribute NAME on ``StoryState``, not its value: the enum is imported
+    # lazily inside ``run_factory`` (the factory package is only on sys.path
+    # there), and duplicating the literal string here would let the two drift.
+    green_state_attr: str
+
+
+_FACTORY_DRIVER_MODES: dict[str, FactoryDriverMode] = {
+    "factory": FactoryDriverMode(
+        personas=frozenset({"dev", "review"}),
+        green_state_attr="REVIEWER_DONE",
+    ),
+    # PLAN.md B.1 Phase 1a. The reviewer round-trip removed and NOTHING else:
+    # the driver dispatches dev only and terminates the moment dev's own gates
+    # say the tests are green, which is this arm's chain verdict.
+    "solo-noreview": FactoryDriverMode(
+        personas=frozenset({"dev"}),
+        green_state_attr="TESTS_GREEN",
+    ),
+}
+
+# Every BLOCKED_* sink the dev half of the chain can reach. Identical for both
+# arms on purpose: ``BLOCKED_REVIEW_NONCONVERGENT`` is unreachable without a
+# reviewer, and leaving it in costs nothing while removing it would be a second
+# difference between the arms.
+_FACTORY_BLOCKED_ATTRS = (
+    "BLOCKED_TESTS_NEED_CLARIFICATION",
+    "BLOCKED_REVIEW_NONCONVERGENT",
+    # The dev can declare the story underspecified (ImpossibleBench escape
+    # hatch). A real terminal outcome for either arm, not an anomaly — without
+    # it the driver would exit through the "dispatches None" branch and the row
+    # would read as a harness stop rather than the arm's own answer. It is NOT
+    # green, so it still grades as unresolved.
+    "BLOCKED_UNDERSPECIFIED",
+)
+
+
+def _factory_driver_mode(
+    arm: str, story_state: Any
+) -> tuple[set[str], set[str], str]:
+    """``(allowed personas, terminal states, the green state)`` for one arm.
+
+    FAILS LOUD on a ``base="factory"`` arm with no mode entry, for the same
+    reason ``arm_spec`` does: a silent default here would publish an arm as an
+    ablation while it quietly ran the full chain.
+    """
+    try:
+        mode = _FACTORY_DRIVER_MODES[arm]
+    except KeyError:
+        raise SystemExit(
+            f"arm {arm!r} uses the chain driver but has no _FACTORY_DRIVER_MODES "
+            f"entry. Registered modes: {', '.join(sorted(_FACTORY_DRIVER_MODES))}. "
+            "Add one rather than letting the driver default — a missing entry "
+            "would silently run the full chain and publish it as an ablation."
+        ) from None
+    missing = [
+        a
+        for a in (mode.green_state_attr, *_FACTORY_BLOCKED_ATTRS)
+        if not hasattr(story_state, a)
+    ]
+    if missing:
+        raise SystemExit(
+            f"StoryState has no {missing} — the {arm} arm's terminal set cannot "
+            "be built, so the driver would run to its tick cap and grade a "
+            "half-finished tree"
+        )
+    green = str(getattr(story_state, mode.green_state_attr).value)
+    terminal = {green} | {
+        str(getattr(story_state, a).value) for a in _FACTORY_BLOCKED_ATTRS
+    }
+    return set(mode.personas), terminal, green
+
+
+def run_factory(
+    instance_id: str, *, max_steps: int, timeout_s: int, arm: str = "factory"
+) -> None:
     # Wall clock starts at ENTRY. It used to start after clone + bench-root
     # setup, so reported wall_clock_s silently excluded that work.
     entered = time.monotonic()
+    # Refuse an arm this driver cannot run BEFORE anything is cloned or spent:
+    # ``_factory_driver_mode`` needs ``StoryState``, which is only importable
+    # further down, so the registry half of the check happens here.
+    if arm not in _FACTORY_DRIVER_MODES:
+        raise SystemExit(
+            f"arm {arm!r} has no _FACTORY_DRIVER_MODES entry — the chain driver "
+            "would not know which personas to dispatch"
+        )
     inst = _instance(instance_id)
     # BEFORE anything costs money or time: the oracle store must be able to
     # grade this run, or the whole run is a write-off (the $24.78 class).
     _assert_oracle_store_complete([inst])
-    run_dir = _run_dir(instance_id, "factory")
+    run_dir = _run_dir(instance_id, arm)
     # BEFORE any exit path (image pull, clone, precheck): a stale
     # prediction.diff must never outlive the run that produced it.
     _reset_run_artifacts(run_dir)
     # The LIVE tree lives outside the repo (see `assert_workspace_isolated`);
     # only finished artifacts come back to `run_dir` afterwards.
-    work = _work_dir(instance_id, "factory", fresh=True)
+    work = _work_dir(instance_id, arm, fresh=True)
     if not _ensure_image(inst):
         raise SystemExit(
             f"image for {instance_id} is unavailable; the factory arm needs it for "
@@ -3053,9 +3158,9 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         error = f"prepare: {prep_error}"
         _write_result(
             instance_id,
-            "factory",
+            arm,
             {
-                "arm": "factory",
+                "arm": arm,
                 "instance_id": instance_id,
                 "repo": inst["repo"],
                 "base_commit": inst["base_commit"],
@@ -3089,9 +3194,9 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         error = f"precheck: test command does not collect: {collect_tail[-400:]}"
         _write_result(
             instance_id,
-            "factory",
+            arm,
             {
-                "arm": "factory",
+                "arm": arm,
                 "instance_id": instance_id,
                 "repo": inst["repo"],
                 "base_commit": inst["base_commit"],
@@ -3172,6 +3277,7 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         acceptance = _author_bench_acceptance_oracle(
             problem_statement=inst["problem_statement"],
             instance_id=instance_id,
+            arm=arm,
             story=story,
             app_config=cfg,
             root=root,
@@ -3185,9 +3291,9 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         _copy_audit_trail(root / "state", run_dir / "root" / "state")
         _write_result(
             instance_id,
-            "factory",
+            arm,
             {
-                "arm": "factory",
+                "arm": arm,
                 "instance_id": instance_id,
                 "repo": inst["repo"],
                 "base_commit": inst["base_commit"],
@@ -3213,19 +3319,11 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         )
         raise SystemExit(error) from exc
 
-    allowed = {"dev", "review"}
-    terminal = {
-        StoryState.REVIEWER_DONE.value,
-        StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
-        StoryState.BLOCKED_REVIEW_NONCONVERGENT.value,
-        # The dev can declare the story underspecified (ImpossibleBench escape
-        # hatch). That is a real terminal outcome for this arm, not an anomaly:
-        # without it here the driver would exit through the "dispatches None"
-        # branch and the row would read as a harness stop rather than the arm's
-        # own answer. It is NOT green (``factory_says_green`` keys on
-        # reviewer_done), so it still grades as unresolved.
-        StoryState.BLOCKED_UNDERSPECIFIED.value,
-    }
+    # THE ONE VARIABLE between `factory` and `solo-noreview`: which personas this
+    # driver will dispatch, and which state is this arm's own GREEN claim. Both
+    # come from ``_FACTORY_DRIVER_MODES``, which fails loud on an arm with no
+    # entry — see the table above ``run_factory``.
+    allowed, terminal, green_state = _factory_driver_mode(arm, StoryState)
     # READ-ONLY TEST FILES (ImpossibleBench; see ``lock_test_files``). The dev
     # does not work in ``repo`` — it works in a per-story git worktree the chain
     # creates on the first dispatch, and ``git worktree add`` materialises fresh
@@ -3384,9 +3482,9 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         refused = exc.paths
         _write_result(
             instance_id,
-            "factory",
+            arm,
             {
-                "arm": "factory",
+                "arm": arm,
                 "instance_id": instance_id,
                 "repo": inst["repo"],
                 "base_commit": inst["base_commit"],
@@ -3431,9 +3529,9 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         # independence layer is not a measurement of the product.
         _write_result(
             instance_id,
-            "factory",
+            arm,
             {
-                "arm": "factory",
+                "arm": arm,
                 "instance_id": instance_id,
                 "repo": inst["repo"],
                 "base_commit": inst["base_commit"],
@@ -3458,7 +3556,7 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
 
     # Tokens are the primitive; dollars are derived (see bench/README.md).
     result = {
-        "arm": "factory",
+        "arm": arm,
         "instance_id": instance_id,
         "repo": inst["repo"],
         "base_commit": inst["base_commit"],
@@ -3495,9 +3593,14 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         "precheck": precheck,
         "transitions": transitions[-12:],
         "error": error,
-        # The factory's OWN verdict — what its gates believe. `grade` supplies
-        # the hidden oracle's verdict; the pair is what gate precision means.
-        "factory_says_green": final.state == StoryState.REVIEWER_DONE.value,
+        # The chain's OWN verdict — what its gates believe. `grade` supplies the
+        # hidden oracle's verdict; the pair is what gate precision means. WHICH
+        # state that is differs per arm and is recorded beside the boolean, so a
+        # reader never has to infer which claim was being made: `factory` claims
+        # green at `reviewer_done`, `solo-noreview` at `tests_green`.
+        "factory_says_green": final.state == green_state,
+        "green_state": green_state,
+        "chain_personas": sorted(allowed),
         "files_changed": kept,
         "test_files_stripped": stripped,
         "refused_paths": refused,
@@ -3512,7 +3615,7 @@ def run_factory(instance_id: str, *, max_steps: int, timeout_s: int) -> None:
         # ``_ACCEPTANCE_STORED_NAME`` for the four integrity properties.
         "acceptance": acceptance,
     }
-    out = _write_result(instance_id, "factory", result)
+    out = _write_result(instance_id, arm, result)
     _print_run_summary(result, out)
     print(f"  factory says green : {result['factory_says_green']}")
     print(
@@ -4368,6 +4471,38 @@ _ARMS: dict[str, ArmSpec] = {
         default_hours=0.05,
         trajectories=_TRAJECTORIES_PER_DEV_CALL,
         cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+    ),
+    # PLAN.md B.1 Phase 1a — the reviewer ablation, pre-registered in
+    # ``bench/swebench/PRE-REGISTRATION-B1.md``. The SAME chain driver
+    # (``base="factory"``) with the reviewer round-trip removed and nothing else:
+    # ``_FACTORY_DRIVER_MODES`` gives it ``{dev}`` instead of ``{dev, review}``
+    # and ``tests_green`` instead of ``reviewer_done``. Same story bytes, same
+    # dev persona, same routes, same sandbox, same iteration cap, same wall
+    # clock, same gates, same acceptance authoring, same grading — so the pair
+    # ``factory`` vs ``solo-noreview`` isolates exactly one variable.
+    #
+    # Its own ``harness_id`` on purpose: with ``software-factory`` the report's
+    # Table 3 would print "harness varies? no" and label the pair "nothing — the
+    # arms are the same pair", which is the opposite of what it measures.
+    "solo-noreview": _arm(
+        name="solo-noreview",
+        base="factory",
+        harness="software-factory chain, dev only (no reviewer round-trip)",
+        harness_id="software-factory-noreview",
+        model=None,  # routes.yaml resolves dev/standard; the LEDGER is the record
+        model_selectable=False,
+        max_steps=_FACTORY_STEP_DEFAULT,
+        step_unit="orchestrator ticks",
+        # Deliberately NOT discounted to the ~25% saving the pre-registration
+        # predicts: the spend guard must be conservative, and a projection that
+        # under-estimates is the one that overshoots a cap.
+        default_cost_usd=3.00,
+        default_hours=0.05,
+        trajectories=_TRAJECTORIES_PER_DEV_CALL,
+        cost_source=_COST_PRICE_TABLE,
+        # It still emits a chain verdict — ``tests_green`` rather than
+        # ``reviewer_done`` — so Table 5's precision/recall is defined for it.
         has_chain=True,
     ),
     "openhands": _arm(
@@ -7515,7 +7650,14 @@ def audit(instance_id: str, arm: str, *, show_responses: bool = False) -> None:
     Writes ``audit.json`` next to ``result.json`` either way.
     """
     run_dir = _run_dir(instance_id, arm)
-    state_root = run_dir / "root" if arm == "factory" else run_dir
+    # Keyed off the runner FAMILY, not the arm id: every ``base="factory"`` arm
+    # copies its isolated factory state root to ``<run_dir>/root``, so a new
+    # chain-driver arm (``solo-noreview``) would otherwise have been audited
+    # against an empty state root — i.e. "missing artifact: no Run ledger" on a
+    # perfectly good row. Unknown keys keep the old behaviour.
+    _audit_spec = _ARMS.get(_split_run_key(arm)[0])
+    _audit_base = _audit_spec.base if _audit_spec is not None else arm
+    state_root = run_dir / "root" if _audit_base == "factory" else run_dir
     failures: list[str] = []
 
     result: dict[str, Any] = {}
@@ -10683,12 +10825,24 @@ def main() -> None:
                 model=args.model,
             )
         else:
-            runner = {
-                "bare": run_bare,
-                "openhands": run_openhands,
-            }.get(base, run_factory)
-            assert key == base  # non-selectable arms are 1:1 with their run dir
-            runner(args.instance, max_steps=steps, timeout_s=args.timeout_s)
+            # A non-selectable arm's run key IS its arm id, so the run dir and
+            # the ``--arm`` choice cannot disagree. (Asserted against
+            # ``args.arm``, not ``base``: the chain driver now serves more than
+            # one arm id, and comparing against the BASE would have refused
+            # every ablation arm.)
+            assert key == args.arm
+            if base == "factory":
+                # The chain driver takes its arm, because which personas it
+                # dispatches is per-arm — see ``_FACTORY_DRIVER_MODES``.
+                run_factory(
+                    args.instance,
+                    max_steps=steps,
+                    timeout_s=args.timeout_s,
+                    arm=args.arm,
+                )
+            else:
+                runner = {"bare": run_bare, "openhands": run_openhands}[base]
+                runner(args.instance, max_steps=steps, timeout_s=args.timeout_s)
     elif args.cmd == "run-all":
         refuse_superseded_arm(args.arm)
         run_all(

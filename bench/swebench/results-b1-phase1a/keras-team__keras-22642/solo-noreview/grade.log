@@ -1,0 +1,67 @@
+Checking patch keras/src/layers/attention/grouped_query_attention_test.py...
+Hunk #1 succeeded at 239 (offset 38 lines).
+Applied patch keras/src/layers/attention/grouped_query_attention_test.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_eb38b05289fb9c55: OK (red as expected)
+Checking patch keras/src/layers/attention/grouped_query_attention.py...
+Applied patch keras/src/layers/attention/grouped_query_attention.py cleanly.
+SWEBENCH_APPLY_eb38b05289fb9c55: OK
+E0000 00:00:1785975617.563668     119 cuda_platform.cc:52] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+============================= test session starts ==============================
+platform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- /opt/conda/envs/testbed/bin/python
+cachedir: .pytest_cache
+rootdir: /testbed
+configfile: pyproject.toml
+plugins: jaxtyping-0.3.9, cov-7.1.0, anyio-4.13.0
+collecting ... collected 1 item
+
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_symbolic_shape_with_return_attention_scores PASSED [100%]
+
+=========================== short test summary info ============================
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_symbolic_shape_with_return_attention_scores
+============================== 1 passed in 0.06s ===============================
+SWEBENCH_TALLY_eb38b05289fb9c55: fail_to_pass ============================== 1 passed in 0.06s ===============================
+[3 node outcomes for fail_to_pass -> grade-nodes.log]
+rootdir: /testbed
+configfile: pyproject.toml
+plugins: jaxtyping-0.3.9, cov-7.1.0, anyio-4.13.0
+collecting ... collected 16 items
+
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_basics PASSED [  6%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_proj_gqa PASSED [ 12%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_proj_mha PASSED [ 18%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_value_proj_mqa PASSED [ 25%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_proj_gqa PASSED [ 31%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_proj_mha PASSED [ 37%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_value_proj_mqa PASSED [ 43%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_correctness_disable_flash_attention PASSED [ 50%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_correctness_enable_flash_attention PASSED [ 56%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_initializer PASSED [ 62%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_masking_causal PASSED [ 68%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_masking_not_causal PASSED [ 75%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_query_mask_propagation PASSED [ 81%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_key_value_dim_mismatch PASSED [ 87%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_query_value_dim_mismatch PASSED [ 93%]
+keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_symbolic_shape_without_return_attention_scores PASSED [100%]
+
+=========================== short test summary info ============================
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_basics
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_proj_gqa
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_proj_mha
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_value_proj_mqa
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_proj_gqa
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_proj_mha
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_value_proj_mqa
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_correctness_disable_flash_attention
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_correctness_enable_flash_attention
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_initializer
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_masking_causal
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_masking_not_causal
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_query_mask_propagation
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_key_value_dim_mismatch
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_query_value_dim_mismatch
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_symbolic_shape_without_return_attention_scores
+============================== 16 passed in 0.98s ==============================
+SWEBENCH_TALLY_eb38b05289fb9c55: pass_to_pass ============================== 16 passed in 0.98s ==============================
+[18 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_eb38b05289fb9c55: RESOLVED
