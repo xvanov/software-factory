@@ -17,6 +17,7 @@ from pathlib import Path
 
 from factory.app_config import AppConfig, AppGatesConfig
 from factory.chain.acceptance import (
+    _AUTHOR_ATTEMPTS,
     acceptance_dir,
     author_acceptance_test,
     build_spec_prompt,
@@ -31,6 +32,7 @@ from factory.chain.gates.evaluator import (
 from factory.chain.state_machine import StoryRecord, StoryState
 from factory.chain.worktree import ensure_worktree_for_story, worktree_path
 from factory.directions.parser import Direction
+from tests.oracle_repo import two_commit_repo
 
 # --------------------------------------------------------------------------- #
 # Fixtures / helpers
@@ -94,26 +96,43 @@ _ACCEPTANCE_TEST_SRC = (
 )
 
 
-def _make_app_checkout(repo_root: Path, *, correct: bool) -> None:
-    """A tiny runnable app checkout. ``correct`` decides whether it satisfies
-    the acceptance criterion. When incorrect, the app's OWN unit tests still
-    pass (they assert the buggy behaviour) — the oracle is what catches it."""
-    (repo_root / "conftest.py").write_text("", encoding="utf-8")  # repo on sys.path
-    if correct:
-        impl = "def normalize_email(e):\n    return e.lower()\n"
-    else:
-        # Reward-hack shape: only strips whitespace, never lowercases — but the
-        # dev's own test below asserts exactly this buggy behaviour, so the
-        # dev suite is green.
-        impl = "def normalize_email(e):\n    return e.strip()\n"
-    (repo_root / "mod.py").write_text(impl, encoding="utf-8")
-    (repo_root / "tests").mkdir(exist_ok=True)
+_BUGGY_IMPL = "def normalize_email(e):\n    return e.strip()\n"
+_GOOD_IMPL = "def normalize_email(e):\n    return e.lower()\n"
+
+
+def _make_app_checkout(repo_root: Path, *, correct: bool) -> tuple[str, str]:
+    """A tiny runnable app checkout, as a real git branch off a base commit.
+
+    ``correct`` decides whether HEAD satisfies the acceptance criterion. When
+    incorrect, the app's OWN unit tests still pass (they assert the buggy
+    behaviour) — the oracle is what catches it.
+
+    The BASE commit is always the buggy implementation, because the gate now
+    requires the oracle to be RED at the merge base before it credits a green at
+    HEAD (PLAN A.6): "the oracle passes now" is only evidence if "the oracle
+    failed before" is also true. Returns ``(base_sha, head_sha)``.
+    """
     dev_assert = "'user@example.com'" if correct else "'User@Example.COM'"
-    (repo_root / "tests" / "test_dev_own.py").write_text(
-        "from mod import normalize_email\n"
-        "def test_dev():\n"
-        f"    assert normalize_email('User@Example.COM ') == {dev_assert}\n",
-        encoding="utf-8",
+    return two_commit_repo(
+        repo_root,
+        base={
+            "conftest.py": "",  # repo on sys.path
+            "mod.py": _BUGGY_IMPL,
+            "tests/test_dev_own.py": (
+                "from mod import normalize_email\n"
+                "def test_dev():\n"
+                "    assert normalize_email('User@Example.COM ') == 'User@Example.COM'\n"
+            ),
+        },
+        head={
+            "mod.py": _GOOD_IMPL if correct else _BUGGY_IMPL,
+            "tests/test_dev_own.py": (
+                "from mod import normalize_email\n"
+                "def test_dev():\n"
+                f"    assert normalize_email('User@Example.COM ') == {dev_assert}\n"
+            ),
+            "story_marker.py": "MARKER = 1\n",
+        },
     )
 
 
@@ -124,14 +143,13 @@ def _make_app_checkout(repo_root: Path, *, correct: bool) -> None:
 
 def test_gate_passes_when_code_satisfies_acs(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _make_app_checkout(repo, correct=True)
+    base_sha, head_sha = _make_app_checkout(repo, correct=True)
     root = tmp_path / "factory"
     ref = _write_stored_oracle(root, story_id=7)
 
     pr = PRContext(
         pr_number=1,
-        head_sha="a",
+        head_sha=head_sha,
         base_branch="main",
         story=_story(story_id=7, ref=ref),
         repo_root=repo,
@@ -141,14 +159,17 @@ def test_gate_passes_when_code_satisfies_acs(tmp_path: Path) -> None:
     r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
     assert r.passed, r.reason
     assert r.details["authoritative"] is True
+    # ...and the pass is EVIDENCED: red at the merge base, green at HEAD.
+    assert r.details["verified"] is True
+    assert r.details["base_run"]["verdict"] == "red"
+    assert r.details["base_sha"] == base_sha[:12]
 
 
 def test_gate_fails_on_ac_violation_even_when_dev_tests_green(tmp_path: Path) -> None:
     """The whole point: the dev's OWN suite is green (it asserts the buggy
     behaviour), but the independent oracle fails because an AC is violated."""
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _make_app_checkout(repo, correct=False)
+    _base_sha, head_sha = _make_app_checkout(repo, correct=False)
     # Sanity: the dev's own suite really is green on the buggy code.
     dev_run = subprocess.run(
         ["python", "-m", "pytest", "tests/test_dev_own.py", "-q"],
@@ -160,7 +181,7 @@ def test_gate_fails_on_ac_violation_even_when_dev_tests_green(tmp_path: Path) ->
     ref = _write_stored_oracle(root, story_id=7)
     pr = PRContext(
         pr_number=1,
-        head_sha="a",
+        head_sha=head_sha,
         base_branch="main",
         story=_story(story_id=7, ref=ref),
         repo_root=repo,
@@ -563,7 +584,7 @@ def test_author_retries_transient_failure(tmp_path: Path) -> None:
 
     def _flaky(_spec: str, _st: StoryRecord) -> str:
         attempts["n"] += 1
-        if attempts["n"] < 3:
+        if attempts["n"] < _AUTHOR_ATTEMPTS:
             raise RuntimeError("flaky")
         return _ACCEPTANCE_TEST_SRC
 
@@ -572,20 +593,19 @@ def test_author_retries_transient_failure(tmp_path: Path) -> None:
         dry_run=False, db_path=root / "state" / "factory.db", author_fn=_flaky,
     )
     assert ref is not None
-    assert attempts["n"] == 3
+    assert attempts["n"] == _AUTHOR_ATTEMPTS  # the inner guard is 2, below the cap of 3
 
 
 def test_gate_blocks_then_passes_after_reauthor(tmp_path: Path) -> None:
     """Requirement 7: expected+missing → gate BLOCKS authoritatively; after a
     (spec-only) re-author writes the oracle, the same gate PASSES."""
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _make_app_checkout(repo, correct=True)
+    _base_sha, head_sha = _make_app_checkout(repo, correct=True)
     root = tmp_path / "factory"
 
     story = _story(story_id=7, ref=None, expected=True)
     pr = PRContext(
-        pr_number=1, head_sha="abc", base_branch="main",
+        pr_number=1, head_sha=head_sha, base_branch="main",
         story=story, repo_root=repo, software_factory_root=root, dry_run=False,
     )
     # 1) Authoring failed earlier → gate blocks authoritatively.

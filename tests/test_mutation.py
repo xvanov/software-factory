@@ -573,16 +573,34 @@ def test_the_base_ref_resolver_is_the_chain_s_own(tmp_path: Path) -> None:
     assert mutation._resolve_base_ref(repo, "no-such-branch") is None
 
 
-def test_no_gate_imports_the_mutation_module() -> None:
-    """The structural guarantee that keeps this advisory: there is no path from a
-    merge decision to this code. If a gate ever imports it, that is a deliberate
-    decision an operator must make, not a drive-by edit.
+# The ONLY names a gate may reach in this module. ``check_can_fail`` answers a
+# boolean about ONE check and is used in the safe direction only (True can lift a
+# block; False leaves it in place) — ``gates/acceptance_verified`` calls it as the
+# fallback route to oracle failability. ``select_symbols`` is pure diff→symbol
+# mapping and exists here so the gate does not grow a second copy.
+#
+# Everything else — ``measure``, ``MutationReport``, the score, the cache — stays
+# unreachable from a merge decision. THAT is the advisory guarantee, and it is
+# what this test defends now that the module is no longer gate-free.
+_GATE_ALLOWED_MUTATION_NAMES = frozenset({"check_can_fail", "select_symbols"})
 
-    This test IS the advisory claim, so it is deliberately over-inclusive:
-    recursive over the package (a gate in a subpackage counts), and it parses the
-    AST rather than grepping, so ``import factory.chain.mutation``,
-    ``from factory.chain import mutation`` and ``from ..mutation import x`` are all
-    caught in whatever form they are written.
+
+def test_gates_reach_only_the_failability_seam_of_the_mutation_module() -> None:
+    """No merge decision may reach the mutation SCORE.
+
+    This test used to assert that no gate imports this module at all. That claim
+    died on 2026-08-05, deliberately: ``gates/acceptance_verified`` composes
+    ``check_can_fail`` as the fallback route to "can this oracle fail?" when the
+    merge-base run gives no usable answer. The guarantee worth defending was never
+    "no import", it was **"no gate can turn a mutation score into a merge
+    verdict"** — so the test now enforces an ALLOWLIST of reachable names rather
+    than a ban on the module, and a drive-by ``from ..mutation import measure``
+    still fails here.
+
+    Deliberately over-inclusive in the same ways as before: recursive over the
+    package, and AST-based, so every import spelling is caught. It additionally
+    walks attribute access, because ``mutation.measure(...)`` after a bare
+    ``from factory.chain import mutation`` is the form the allowlist has to catch.
     """
     import ast as _ast
 
@@ -593,50 +611,117 @@ def test_no_gate_imports_the_mutation_module() -> None:
     offenders: list[str] = []
     for path in files:
         tree = _ast.parse(path.read_text(encoding="utf-8"))
+        module_aliases: set[str] = set()
         for node in _ast.walk(tree):
             if isinstance(node, _ast.Import):
-                if any(a.name.endswith("chain.mutation") for a in node.names):
-                    offenders.append(f"{path.name}:{node.lineno}")
+                for a in node.names:
+                    if a.name.endswith("chain.mutation"):
+                        module_aliases.add(a.asname or a.name)
             elif isinstance(node, _ast.ImportFrom):
-                module = node.module or ""
-                hit = module.endswith("chain.mutation") or module.endswith("mutation")
-                # ``from . import mutation`` / ``from ..chain import mutation``
-                hit = hit or any(a.name == "mutation" for a in node.names)
-                if hit:
-                    offenders.append(f"{path.name}:{node.lineno}")
-    assert offenders == [], f"gates importing the mutation measurement: {offenders}"
+                mod = node.module or ""
+                if mod.endswith("mutation"):  # covers ``from ..mutation import x``
+                    # ``from …mutation import X`` — X must be on the allowlist.
+                    offenders.extend(
+                        f"{path.name}:{node.lineno}: from-import {a.name!r}"
+                        for a in node.names
+                        if a.name not in _GATE_ALLOWED_MUTATION_NAMES
+                    )
+                for a in node.names:
+                    if a.name == "mutation":
+                        module_aliases.add(a.asname or "mutation")
+        if not module_aliases:
+            continue
+        # ``mutation.<name>`` — every attribute touched must be on the allowlist.
+        for node in _ast.walk(tree):
+            if (
+                isinstance(node, _ast.Attribute)
+                and isinstance(node.value, _ast.Name)
+                and node.value.id in module_aliases
+                and node.attr not in _GATE_ALLOWED_MUTATION_NAMES
+            ):
+                offenders.append(f"{path.name}:{node.lineno}: mutation.{node.attr}")
+    assert offenders == [], f"gates reaching the mutation measurement: {offenders}"
 
 
-def test_the_gate_import_detector_actually_detects(tmp_path: Path) -> None:
-    """A guard that cannot fail is the bug this whole module treats. Proves the
-    detector's own teeth on each import form, in a fake gates package."""
+def test_the_gates_allowlist_is_not_vacuous() -> None:
+    """The allowlist only means something if the gate really does reach this module
+    — otherwise the test above would pass on an empty set forever, which is how
+    the ``tests-meaningful`` ablation branch sat broken and unnoticed for months.
+    """
     import ast as _ast
 
-    forms = [
-        "import factory.chain.mutation",
-        "from factory.chain.mutation import measure",
-        "from factory.chain import mutation",
-        "from ..mutation import measure",
-        "from . import mutation",
-    ]
+    src = (Path(mutation.__file__).parent / "gates" / "acceptance_verified.py").read_text(
+        encoding="utf-8"
+    )
+    tree = _ast.parse(src)
+    reached = {
+        n.attr
+        for n in _ast.walk(tree)
+        if isinstance(n, _ast.Attribute)
+        and isinstance(n.value, _ast.Name)
+        and n.value.id == "mutation"
+    }
+    assert "check_can_fail" in reached, (
+        "the acceptance gate no longer calls mutation.check_can_fail — either the "
+        "composition was reverted (then delete the allowlist) or it was renamed"
+    )
 
-    def _detects(source: str) -> bool:
+
+def test_the_gate_score_detector_actually_detects(tmp_path: Path) -> None:
+    """A guard that cannot fail is the bug this whole module treats. Proves the
+    detector's teeth on every spelling of a reach at the SCORE, and proves it stays
+    quiet for the two allowlisted seam names."""
+    import ast as _ast
+
+    def _offenders(source: str) -> list[str]:
         tree = _ast.parse(source)
+        found: list[str] = []
+        aliases: set[str] = set()
         for node in _ast.walk(tree):
             if isinstance(node, _ast.Import):
-                if any(a.name.endswith("chain.mutation") for a in node.names):
-                    return True
+                for a in node.names:
+                    if a.name.endswith("chain.mutation"):
+                        aliases.add(a.asname or a.name)
             elif isinstance(node, _ast.ImportFrom):
-                module = node.module or ""
-                if module.endswith("chain.mutation") or module.endswith("mutation"):
-                    return True
-                if any(a.name == "mutation" for a in node.names):
-                    return True
-        return False
+                mod = node.module or ""
+                if mod.endswith("mutation"):  # covers ``from ..mutation import x``
+                    found.extend(
+                        a.name
+                        for a in node.names
+                        if a.name not in _GATE_ALLOWED_MUTATION_NAMES
+                    )
+                for a in node.names:
+                    if a.name == "mutation":
+                        aliases.add(a.asname or "mutation")
+        for node in _ast.walk(tree):
+            if (
+                isinstance(node, _ast.Attribute)
+                and isinstance(node.value, _ast.Name)
+                and node.value.id in aliases
+                and node.attr not in _GATE_ALLOWED_MUTATION_NAMES
+            ):
+                found.append(node.attr)
+        return found
 
-    for form in forms:
-        assert _detects(form), form
-    assert not _detects("from factory.chain.gates.evaluator import GateResult")
+    caught = [
+        "from factory.chain.mutation import measure",
+        "from ..mutation import measure",
+        "from factory.chain import mutation\nmutation.measure(x)",
+        "from . import mutation\nmutation.MutationReport()",
+        "import factory.chain.mutation as m\nm.cache_path(a, b, c)",
+        "from factory.chain import mutation as mu\nmu.measure(x)",
+    ]
+    for form in caught:
+        assert _offenders(form), form
+
+    allowed = [
+        "from factory.chain.mutation import check_can_fail",
+        "from factory.chain import mutation\nmutation.check_can_fail(**kw)",
+        "from factory.chain import mutation\nmutation.select_symbols(a, b, c)",
+        "from factory.chain.gates.evaluator import GateResult",
+    ]
+    for form in allowed:
+        assert _offenders(form) == [], form
 
 
 @pytest.mark.parametrize("status", [STATUS_BASELINE_RED, STATUS_BASELINE_INFRA])
@@ -908,6 +993,105 @@ def test_check_can_fail_requires_a_green_check_first(tmp_path: Path) -> None:
     )
     assert not proven
     assert "not green, BEFORE any mutation" in detail
+
+
+def test_check_can_fail_prepare_hook_can_inject_the_check_being_measured(
+    tmp_path: Path,
+) -> None:
+    """``prepare`` exists because the acceptance oracle is not in the repo at all —
+    it is a hidden file the gate copies into the tree. A check that does not exist
+    until ``prepare`` runs must still be measurable."""
+    repo, head = _repo(tmp_path, exercised=True)
+
+    def _inject(tree: Path) -> None:
+        (tree / "tests" / "test_hidden.py").write_text(
+            "from z_last import target\n\ndef test_h():\n    assert target() == 'new'\n",
+            encoding="utf-8",
+        )
+
+    proven, detail = mutation.check_can_fail(
+        repo_root=repo,
+        head_ref=head,
+        target_path="z_last.py",
+        qualname="target",
+        check_command=f"{PY} -m pytest -q tests/test_hidden.py",
+        timeout_s=120,
+        prepare=lambda tree: _inject(tree),  # type: ignore[func-returns-value]
+    )
+    assert proven, detail
+
+
+def test_check_can_fail_treats_a_failed_or_raising_prepare_as_cannot_prove(
+    tmp_path: Path,
+) -> None:
+    """A setup the caller could not complete is not evidence of failability. Both
+    the reported error and an exception must land on ``False`` — a ``prepare`` that
+    silently no-ops would measure a tree the caller never built."""
+    repo, head = _repo(tmp_path, exercised=True)
+    cmd = f"{PY} -m pytest -q tests/test_all.py::test_target"
+
+    proven, detail = mutation.check_can_fail(
+        repo_root=repo, head_ref=head, target_path="z_last.py", qualname="target",
+        check_command=cmd, timeout_s=120,
+        prepare=lambda _tree: "the collection channels could not be rolled back",
+    )
+    assert not proven
+    assert "could not be set up" in detail
+    assert "rolled back" in detail
+
+    def _boom(_tree: Path) -> str | None:
+        raise RuntimeError("disk gone")
+
+    proven2, detail2 = mutation.check_can_fail(
+        repo_root=repo, head_ref=head, target_path="z_last.py", qualname="target",
+        check_command=cmd, timeout_s=120, prepare=_boom,
+    )
+    assert not proven2
+    assert "RuntimeError: disk gone" in detail2
+
+
+def test_check_can_fail_runs_the_check_in_the_requested_subdirectory(
+    tmp_path: Path,
+) -> None:
+    """An app's harness is usually not rooted at the repo root — sacrifice's lives
+    in ``backend/``. The MUTATION is still written relative to the tree root; only
+    the command's cwd moves."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init(repo)
+    (repo / "backend").mkdir()
+    (repo / "backend" / "mod.py").write_text("def target():\n    return 1\n", encoding="utf-8")
+    (repo / "backend" / "tests").mkdir()
+    (repo / "backend" / "tests" / "test_it.py").write_text(
+        "from mod import target\n\ndef test_t():\n    assert target() == 1\n", encoding="utf-8"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "base")
+    head = _git(repo, "rev-parse", "HEAD").strip()
+
+    proven, detail = mutation.check_can_fail(
+        repo_root=repo, head_ref=head,
+        target_path="backend/mod.py", qualname="target",
+        check_command=f"{PY} -m pytest -q tests/test_it.py",
+        timeout_s=120, run_cwd="backend",
+    )
+    assert proven, detail
+
+
+def test_check_can_fail_refuses_a_run_cwd_that_does_not_resolve(tmp_path: Path) -> None:
+    """A cwd that escapes the clone or does not exist is a ``False``, never a
+    silent fall back to the tree root: running the check somewhere other than
+    where the caller asked measures a different thing, and "measured something
+    else" must not be indistinguishable from "proven failable"."""
+    repo, head = _repo(tmp_path, exercised=True)
+    cmd = f"{PY} -m pytest -q"
+    for bad in ("../escape", "no/such/dir"):
+        proven, detail = mutation.check_can_fail(
+            repo_root=repo, head_ref=head, target_path="z_last.py", qualname="target",
+            check_command=cmd, timeout_s=60, run_cwd=bad,
+        )
+        assert not proven, bad
+        assert "run_cwd" in detail
 
 
 def test_check_can_fail_never_writes_to_the_source_checkout(tmp_path: Path) -> None:

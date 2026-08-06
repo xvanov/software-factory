@@ -61,10 +61,47 @@ treats the directory's `*.md` glob as the registry.
   `acceptance_test_command` tell the gate where to place and how to run the
   test. With the defaults (repo root, factory interpreter) a real app's oracle
   cannot import anything — measured 2026-08-05 against sacrifice. The gate
-  runs the test in the merge-candidate checkout, requires exit 0 AND at least
-  one passing test (an all-skipped run verifies nothing), sweeps its copy —
-  and any compiled `.pyc` of it — out of the tree afterwards, and blocks on
-  any infrastructure error rather than raising.
+  requires exit 0 AND at least one passing test (an all-skipped run verifies
+  nothing), and blocks on any infrastructure error rather than raising.
+- **The oracle's green has to mean something, and three things make it so**
+  (2026-08-05; the flag stayed off until they existed).
+  1. **It runs in a THROWAWAY judge worktree, never the dev's checkout.**
+     Production code comes from HEAD, the whole test surface (every diff path
+     that is not `diff_paths.is_production_path`) is rolled back to the merge
+     base. Otherwise the diff configures its own verdict: a
+     `pytest_runtest_call` hookwrapper, `addopts = "-p _fixup"`, or
+     `backend/tests/__init__.py` rebinding the function under test each forced a
+     pass against a violating implementation. The oracle never lands in the dev's
+     tree at all, which also removes the leak window and the `.pytest_cache`
+     disclosure of its test names.
+     **One documented exception to that rollback set: `pyproject.toml`.** It is a
+     pytest collection channel *and* the dependency manifest the app's acceptance
+     command resolves against (`uv run --extra dev pytest`, cwd `backend`), so
+     reverting it wholesale made every story that ADDS a dependency fail
+     collection and get blamed for it authoritatively. Its two roles are split —
+     `[tool.pytest.*]` from the merge base, every other table from HEAD
+     (`red_green.rollback_pytest_config_only`, verified against `tomllib`, fails
+     safe). Backing that up: an **errors-only** red at HEAD is non-authoritative
+     whenever anything was rolled back, because a collection error after we
+     rewrote the tree may be ours rather than the dev's. Taking dependencies from
+     HEAD necessarily admits a dependency that registers a `pytest11` entry point
+     — the same in-process class as the known-open hole below.
+  2. **A green at HEAD is credited only when failability is established.**
+     Primary: the same oracle is RED at the merge base (`chain/red_green.py`) —
+     "at least one test failed there", never "the whole file was red", because a
+     story implementing one of several criteria legitimately leaves the others
+     green. Fallback, only when the base run is `unknown`: ablate a production
+     symbol the diff touched and require the oracle to notice
+     (`chain/mutation.py::check_can_fail`). The base run is the stronger
+     instrument and its definitive answers are never overturned.
+  3. **The checkout must be the merge candidate** — `pr.head_sha` an ancestor of
+     HEAD *and* HEAD adding nothing over it but the base branch.
+  Anything unverifiable BLOCKS non-authoritatively, is listed in
+  `factory inbox`, and is the only family `factory acceptance-waive` can clear.
+  Independence is still **conventional, not structural**, in one respect: the
+  restored test surface is the app's own previously merged code (sacrifice's
+  conftest overrides `get_db`). What is structural is that THIS story's diff
+  cannot change it.
 - **EARS mode.** `sm` decomposes every verbatim AC into
   `### Testable Claims (EARS)` (`AC<n>.<m>: WHEN … SHALL …`). When EARS
   claims are present, `acceptance_author` encodes them as Hypothesis

@@ -36,6 +36,7 @@ from factory.chain.gates import acceptance_verified
 from factory.chain.gates.evaluator import PRContext
 from factory.chain.state_machine import StoryRecord, StoryState
 from factory.directions.parser import Direction
+from tests.oracle_repo import two_commit_repo
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -258,23 +259,41 @@ _PROPERTY_TEST_SRC = (
 )
 
 
-def _make_app_checkout(repo_root: Path, *, correct: bool) -> None:
-    (repo_root / "conftest.py").write_text("", encoding="utf-8")  # repo on sys.path
-    if correct:
-        impl = "def normalize_email(e):\n    return e.lower()\n"
-    else:
-        # Only strips — never lowercases. The dev's own example test below asserts
-        # exactly this buggy behaviour, so the dev suite is green; the PROPERTY
-        # oracle is what catches it (and shrinks to a minimal uppercase input).
-        impl = "def normalize_email(e):\n    return e.strip()\n"
-    (repo_root / "mod.py").write_text(impl, encoding="utf-8")
-    (repo_root / "tests").mkdir(exist_ok=True)
+# Only strips — never lowercases. The dev's own example test asserts exactly this
+# buggy behaviour, so the dev suite is green; the PROPERTY oracle is what catches
+# it (and shrinks to a minimal uppercase input).
+_BUGGY_IMPL = "def normalize_email(e):\n    return e.strip()\n"
+_GOOD_IMPL = "def normalize_email(e):\n    return e.lower()\n"
+
+
+def _make_app_checkout(repo_root: Path, *, correct: bool) -> tuple[str, str]:
+    """A runnable checkout as a real git branch off a base commit.
+
+    The base commit always carries the buggy implementation: the gate credits a
+    green at HEAD only when the oracle was RED at the merge base (PLAN A.6), and a
+    property oracle is no exception. Returns ``(base_sha, head_sha)``.
+    """
     dev_assert = "'user@example.com'" if correct else "'User@Example.COM'"
-    (repo_root / "tests" / "test_dev_own.py").write_text(
-        "from mod import normalize_email\n"
-        "def test_dev():\n"
-        f"    assert normalize_email('User@Example.COM ') == {dev_assert}\n",
-        encoding="utf-8",
+    return two_commit_repo(
+        repo_root,
+        base={
+            "conftest.py": "",  # repo on sys.path
+            "mod.py": _BUGGY_IMPL,
+            "tests/test_dev_own.py": (
+                "from mod import normalize_email\n"
+                "def test_dev():\n"
+                "    assert normalize_email('User@Example.COM ') == 'User@Example.COM'\n"
+            ),
+        },
+        head={
+            "mod.py": _GOOD_IMPL if correct else _BUGGY_IMPL,
+            "tests/test_dev_own.py": (
+                "from mod import normalize_email\n"
+                "def test_dev():\n"
+                f"    assert normalize_email('User@Example.COM ') == {dev_assert}\n"
+            ),
+            "story_marker.py": "MARKER = 1\n",
+        },
     )
 
 
@@ -287,12 +306,11 @@ def _write_stored_property_oracle(root: Path, *, story_id: int) -> str:
 
 def test_property_oracle_passes_on_correct_code(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _make_app_checkout(repo, correct=True)
+    _base_sha, head_sha = _make_app_checkout(repo, correct=True)
     root = tmp_path / "factory"
     ref = _write_stored_property_oracle(root, story_id=7)
     pr = PRContext(
-        pr_number=1, head_sha="a", base_branch="main",
+        pr_number=1, head_sha=head_sha, base_branch="main",
         story=_story(story_id=7, ref=ref),
         repo_root=repo, software_factory_root=root, dry_run=False,
     )
@@ -303,8 +321,7 @@ def test_property_oracle_passes_on_correct_code(tmp_path: Path) -> None:
 
 def test_property_oracle_fails_on_violation_even_when_dev_tests_green(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _make_app_checkout(repo, correct=False)
+    _base_sha, head_sha = _make_app_checkout(repo, correct=False)
     # Sanity: the dev's own suite is green on the buggy code.
     dev_run = subprocess.run(
         ["python", "-m", "pytest", "tests/test_dev_own.py", "-q"],
@@ -315,7 +332,7 @@ def test_property_oracle_fails_on_violation_even_when_dev_tests_green(tmp_path: 
     root = tmp_path / "factory"
     ref = _write_stored_property_oracle(root, story_id=7)
     pr = PRContext(
-        pr_number=1, head_sha="a", base_branch="main",
+        pr_number=1, head_sha=head_sha, base_branch="main",
         story=_story(story_id=7, ref=ref),
         repo_root=repo, software_factory_root=root, dry_run=False,
     )

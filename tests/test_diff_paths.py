@@ -105,9 +105,40 @@ def test_collection_channels_are_not_production() -> None:
         "vendor/x.pth",
         "my_pytest_plugin.py",
         "pkg/conftest.py",
+        # Added 2026-08-05. Each of these was classified PRODUCTION and each was a
+        # forced pass measured against the acceptance-oracle gate — the "whole test
+        # surface from base" rollback passed them through from HEAD.
+        ".pytest.ini",  # pytest honours the DOT-prefixed inifile, and it OUTRANKS
+        "backend/.pytest.ini",  # pyproject.toml. Every other name is (^|/)-anchored.
+        # importlib.metadata scans every sys.path entry for these and pytest calls
+        # load_setuptools_entrypoints("pytest11") — a plugin with NO config edit.
+        "backend/devhelper-1.0.dist-info/entry_points.txt",
+        "backend/devhelper.egg-info/PKG-INFO",
+        # The runner's own import names. ``python -m pytest`` puts the run cwd at
+        # sys.path[0], so a pytest.py there IS the pytest run.
+        "backend/pytest.py",
+        "backend/_pytest.py",
+        "pluggy.py",
+        "py.py",
     ):
         assert is_collection_channel_path(path), path
         assert not is_production_path(path), path
+
+
+def test_runner_shadowing_matches_the_whole_basename_only() -> None:
+    """The runner-name rule must not swallow ordinary production modules: it is the
+    exact basename that shadows an import, not a substring of one."""
+    for path in (
+        "pkg/path.py",
+        "app/copy.py",
+        "app/pytest_helpers.py",
+        "app/my_py.py",
+        "app/pluggy_client.py",
+        "docs/pytest.md",
+        "app/dist-info.py",
+    ):
+        assert not is_collection_channel_path(path), path
+        assert is_production_path(path), path
 
 
 def test_paths_are_normalized_before_matching() -> None:

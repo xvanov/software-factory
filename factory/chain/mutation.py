@@ -29,10 +29,28 @@ and every merge in the factory:
 
 The branch was deleted rather than re-wired: an advisory branch inside a
 required gate is still one edit away from blocking merges, and there is no
-measured case for gating on this number yet. Nothing in ``factory/chain/gates/``
-imports this module, so **no merge decision can reach this code**. That
-structural fact — not a boolean — is what keeps it advisory. See
-``factory mutation-score`` for the operator entry point.
+measured case for gating on this number yet. See ``factory mutation-score`` for
+the operator entry point.
+
+⚠ WHAT IS AND IS NOT ON THE MERGE PATH (amended 2026-08-05)
+===========================================================
+
+This module's docstring used to claim that nothing in ``factory/chain/gates/``
+imports it, so no merge decision could reach any of this code. **That is no
+longer true, and the distinction matters:**
+
+* the **SCORE** — ``measure`` / ``MutationReport`` / the cache / the CLI — is
+  still reachable only from ``factory mutation-score``. No gate imports it, no
+  merge decision reads a mutation score, and that stays the invariant.
+* :func:`check_can_fail` **is** on the merge path: ``gates/acceptance_verified``
+  calls it as the fallback route to "can this oracle fail at all?" when the
+  merge-base run returns ``unknown``. It is a boolean about ONE check, not a
+  score, and it is used in the safe direction only — ``True`` licenses crediting
+  a green that would otherwise have been blocked; ``False`` leaves the block in
+  place. Nothing that gate does can turn a mutation *score* into a merge verdict.
+
+So the "advisory" property is now about the score, not about the module. Anyone
+adding a second gate caller here must keep both halves of that sentence true.
 
 How each defect is fixed here
 =============================
@@ -78,17 +96,19 @@ green and meaningless, which the toy fixtures could not surface:
 
 Interaction with the acceptance oracle's transient file
 ======================================================
-``gates/acceptance_verified`` copies a hidden, spec-authored oracle test INTO the
-dev's checkout to run it, then sweeps it out — which is why it must stay last in
-``evaluate_all_gates``'s tuple (now asserted by
-``tests/test_gates_evaluation.py::test_H8_acceptance_gate_is_last_in_the_evaluator_tuple``).
-Nothing here can see that window, for two independent reasons:
+``gates/acceptance_verified`` runs a hidden, spec-authored oracle test that exists
+nowhere in the repo — which is why that gate must stay last in
+``evaluate_all_gates``'s tuple (asserted by
+``tests/test_gates_evaluation.py::test_H8_acceptance_gate_is_last_in_the_evaluator_tuple``),
+so ``tests-meaningful`` can never score the oracle as one of the dev's tests.
 
-1. no gate imports this module, so none of this runs during a gate evaluation;
-2. when it does run, it operates on a ``git clone`` at a COMMITTED sha, and
-   selection reads file content through ``git show <ref>:<path>`` rather than off
-   the working tree. An uncommitted file that appears and disappears in the source
-   checkout cannot enter the clone, the symbol selection, or the score.
+The **score** cannot see the oracle at all: it operates on a ``git clone`` at a
+COMMITTED sha, and selection reads file content through ``git show <ref>:<path>``
+rather than off the working tree, so an uncommitted file cannot enter the clone,
+the symbol selection, or the score. :func:`check_can_fail` deliberately CAN see
+it — the gate's ``prepare`` hook copies the oracle into that function's own
+scratch clone, because the whole question there is whether the oracle notices a
+gutted symbol. Both stay outside the source checkout either way.
 
 Cost and the cache
 ==================
@@ -111,7 +131,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1134,6 +1154,8 @@ def check_can_fail(
     qualname: str,
     check_command: str,
     timeout_s: int = _PER_RUN_TIMEOUT_S,
+    prepare: Callable[[Path], str | None] | None = None,
+    run_cwd: str | None = None,
 ) -> tuple[bool, str]:
     """Can ``check_command`` FAIL when ``target_path::qualname`` stops working?
 
@@ -1148,7 +1170,7 @@ def check_can_fail(
     check, which is the cheap case — a single oracle file runs in seconds where
     the factory's suite takes ~380 s.
 
-    It exists as a seam, with no caller yet. The concrete case it was written for:
+    The concrete case it was written for, and now has a caller for:
     an acceptance oracle of ``def test_x(): assert True`` is stored, runs, reports
     "1 passed", and yields an authoritative green against an implementation that
     violates the criterion. Ablate the symbol the criterion is about, require the
@@ -1162,6 +1184,22 @@ def check_can_fail(
     GREEN baseline first — an already-red check "goes red" under any mutation, and
     reporting that as proof would be the fail-open direction on the one call where
     ``True`` is the permissive answer.
+
+    ``prepare`` and ``run_cwd`` exist for the one real caller
+    (``gates.acceptance_verified``), whose check is not "run this repo's own suite
+    at the repo root":
+
+    * ``prepare(tree_dir)`` runs against the materialized clone BEFORE the green
+      baseline. It returns ``None`` on success, or a string explaining why the
+      check cannot be set up — which is a ``False``, never a pass. The acceptance
+      gate uses it to copy the hidden oracle in (the file does not exist in the
+      repo at all) and to roll the diff's COLLECTION CHANNELS back to the merge
+      base, so the tree that judges the diff is not configured by the diff. Any
+      exception out of ``prepare`` is also a ``False``.
+    * ``run_cwd`` is a tree-relative directory to run ``check_command`` in
+      (default: the tree root), because an app's test harness usually is not
+      rooted at the repo root — sacrifice's is ``backend/``. It must resolve
+      inside the clone.
     """
     _reap_stale_trees()
     try:
@@ -1173,14 +1211,27 @@ def check_can_fail(
     try:
         if _materialize_tree(repo_root, head_ref, tree_dir) is None:
             return False, "could not materialize a scratch checkout to mutate"
-        baseline, baseline_out = _run_suite(tree_dir, check_command, timeout_s)
+        if prepare is not None:
+            try:
+                problem = prepare(tree_dir)
+            except Exception as exc:  # noqa: BLE001 - a setup fault is "cannot prove"
+                problem = f"{type(exc).__name__}: {exc}"
+            if problem:
+                return False, f"the check could not be set up in the scratch tree: {problem}"
+        try:
+            work_dir = _resolve_run_cwd(tree_dir, run_cwd)
+        except ValueError as exc:
+            return False, str(exc)
+        baseline, baseline_out = _run_suite(work_dir, check_command, timeout_s)
         if baseline != GREEN:
             return False, (
                 f"the check is {baseline}, not green, BEFORE any mutation — a red "
                 f"check proves nothing about the criterion: {baseline_out.strip()[:200]}"
             )
         sym = Symbol(path=target_path, qualname=qualname, lineno=0, touched_lines=0)
-        outcome, _dirty = _ablate_one(tree_dir, sym, check_command, sentinels, timeout_s)
+        outcome, _dirty = _ablate_one(
+            tree_dir, sym, check_command, sentinels, timeout_s, run_cwd=work_dir
+        )
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
         shutil.rmtree(sentinels, ignore_errors=True)
@@ -1241,16 +1292,39 @@ def _provenance_probe(
     return ("failed" if outcome == GREEN else "ok"), dirty
 
 
+def _resolve_run_cwd(tree_dir: Path, rel: str | None) -> Path:
+    """A tree-relative working directory for the check, refusing to escape the clone.
+
+    ``ValueError`` rather than a silent fall back to the tree root: running the
+    check somewhere other than where the caller asked would silently measure a
+    different thing, and for :func:`check_can_fail` "measured something else" is
+    indistinguishable from "proven failable".
+    """
+    base = Path(tree_dir).resolve()
+    if not rel or not rel.strip():
+        return base
+    target = (base / rel.strip()).resolve()
+    if target != base and base not in target.parents:
+        raise ValueError(f"run_cwd={rel!r} resolves outside the scratch tree ({target})")
+    if not target.is_dir():
+        raise ValueError(f"run_cwd={rel!r} does not exist in the scratch checkout ({target})")
+    return target
+
+
 def _ablate_one(
     tree_dir: Path,
     sym: Symbol,
     test_command: str,
     sentinels: Path,
     per_run_timeout_s: int,
+    *,
+    run_cwd: Path | None = None,
 ) -> tuple[dict[str, str], bool]:
     """Mutate one symbol in the scratch tree, run the suite, classify.
 
-    Returns ``(outcome, tree_left_dirty)``.
+    Returns ``(outcome, tree_left_dirty)``. The mutation is always written
+    relative to ``tree_dir``; ``run_cwd`` only moves where the command runs
+    (default ``tree_dir``), for a harness that is not rooted at the repo root.
 
     * green ⇒ **survived** — the tests do not notice the symbol's body being
       replaced by a raise. Whether the symbol was even reached is recorded
@@ -1288,7 +1362,7 @@ def _ablate_one(
 
     try:
         target.write_text(mutated, encoding="utf-8")
-        outcome, output = _run_suite(tree_dir, test_command, per_run_timeout_s)
+        outcome, output = _run_suite(run_cwd or tree_dir, test_command, per_run_timeout_s)
     except OSError as exc:
         return {"outcome": "skipped", "detail": f"mutation write failed: {exc}"}, True
     finally:

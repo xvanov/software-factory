@@ -112,7 +112,12 @@ gates:
   # oracles will fail collection.
   # Requires the ``sacrifice-db`` container to be up (same prerequisite as the
   # smoke gate) — the backend conftest creates tables against localhost:5433.
-  acceptance_test_command: "uv run --extra dev pytest {test_file} -q"
+  # ``-p no:cacheprovider`` is NOT optional: without it pytest writes
+  # ``backend/.pytest_cache/v/cache/nodeids`` (the hidden oracle's TEST NAMES) and
+  # ``lastfailed`` (which of its assertions failed) into the tree it runs in. The
+  # gate now runs in a throwaway judge worktree, so today those land somewhere
+  # that is deleted — this keeps the config right for any run that is not.
+  acceptance_test_command: "uv run --extra dev pytest {test_file} -q -p no:cacheprovider"
   # Repo-layout facts for the (dev-blind) acceptance author. Without these the
   # author guesses module paths; the first real run produced a test that tried
   # ``sacrifice.main`` / ``main`` / ``app.main`` and errored out.
