@@ -5,6 +5,15 @@
 and **negative** (#237), A.7 blocked, A.5's premise falsified, Phase C reordered.
 The correction log at the end carries the details as entries 20–29.
 
+**Reconciled again 2026-08-05, after five further merges.** A.5 done — but as a
+**deletion** from the required gate, not the rewrite this plan specified (#239).
+A.1's bench half done (#238). A.1c and A.6 done together, and the flag is still
+deliberately off (#242). **B.1 Phase 1a done, and it produced a number**: a new
+`solo-noreview` arm, the chain with the reviewer round-trip removed, **9/18 = 50%
+at $2.83 per resolved** against the archived `factory` arm's 7/19 = 37% at $5.13
+(#243). The headline number set unified across `CLAUDE.md`, `STATUS.md` and the
+bench README (#241). Details as corrections 30–36.
+
 **Rewritten 2026-08-04, after the five-arm benchmark.** The chain shows no
 measurable lift over a single agent on the same model. Every phase below is
 ordered by the evidence for it, cheapest first, and the old ordering
@@ -58,14 +67,17 @@ not the code — re-sync before debugging.
 systemd units inactive and disabled. Mode `normal`. Today's factory-tracked spend
 **$0.00** against the $300 daily cap. Live tree equals `origin/main`.
 
-The units stay off **deliberately**, until A.1's blockers close; then they come up
-**with the acceptance oracle enabled on one app**, so E.5's soak and A.1's soak
-are one cycle and a live tick cannot race an agent's test runs.
+The units stay off **deliberately**. A.1's four named blockers closed in #242, but
+`gates.acceptance_oracle` is still absent from every app config for a *different*
+reason — an in-process hole no file rollback closes (see A.1). Flipping it is an
+operator decision. When it is flipped, the units come up **with the acceptance
+oracle enabled on one app**, so E.5's soak and A.1's soak are one cycle and a live
+tick cannot race an agent's test runs.
 
-**Queued behind the in-flight bench PR** (all four touch
-`bench/swebench_adapter.py`, so they serialize): the §1.6 G aggregate recompute
-(~1 h), the §1.6 G 429-retry (~4 h), C.3's Commit0-Lite plumbing probe, and A.7's
-`model_selectable` change.
+**The bench-side queue** (all four touch `bench/swebench_adapter.py`, so they
+serialize behind any bench PR in flight; #238 and #243 have both landed): the
+§1.6 G aggregate recompute (~1 h), the §1.6 G 429-retry (~4 h), C.3's Commit0-Lite
+plumbing probe, and A.7's `model_selectable` change.
 
 ---
 
@@ -165,6 +177,60 @@ lift comes from using a competent agent loop, not from the chain.**
    `bare` on `hiero-ledger__hiero-sdk-python-1914_interface` ran
    `curl -s https://raw.githubusercontent.com/…/account_info.py`, the upstream
    source of the exact file under test. Zero path-based oracle probes anywhere.
+
+### 1a. A sixth arm, measured 2026-08-05 — the reviewer ablation (B.1 Phase 1a)
+
+**Do not fold this into the five-arm table above.** That table re-derives
+byte-for-byte from a committed archive and `report --check` must stay green, so the
+ablation is published separately: `bench/swebench/RESULTS-B1-PHASE1A.md`, with its
+own evidence directory `bench/swebench/results-b1-phase1a/`. `results.md` and every
+`results-archive/` root are byte-identical to before the run, and `report --check`
+still prints `CHECK OK`. Pre-registered in `bench/swebench/PRE-REGISTRATION-B1.md`
+**before any paid call**. Same 19 pinned instances, same manifest, k=1,
+`attempt: 1` on every row. **Actual spend $25.49.**
+
+| arm | resolved / audited-valid | rate | 95% CI | $ | $ / resolved |
+|---|---:|---:|---|---:|---:|
+| `factory` (archived — the row above) | 7/19 | 37% | [16%, 62%] | 35.94 | 5.13 |
+| **`solo-noreview`** — the chain with the reviewer round-trip removed | **9/18** | **50%** | [26%, 74%] | 25.49 | **2.83** |
+
+Paired McNemar exact, n=18: only-factory **2**, only-solo **4**, **p = 0.688** —
+reported as a descriptive discordance statistic only. `reviewer_cycles` = 0 on all
+19 rows, so the ablation applied everywhere. The pre-committed stop signal
+(only-factory ≥ 5 of 19) **did not fire**, so B.1's premise survives.
+
+**The interpretation limits are as load-bearing as the number.**
+
+1. **The cost win is real; the quality claim is not established.** Δ = +13 pp sits
+   well inside the ±38 pp MDE at this n, and p = 0.688.
+2. **It is not a clean single-variable ablation, and that was recorded in the
+   pre-registration before the data existed** (with 1 of 19 outcomes known). The
+   baseline rows ran 2026-08-03 and the ablation ran on `6662d062`, so **three
+   things differ, not one**: the reviewer, 35 new lines in the dev persona (A.3's
+   underspecified escape hatch), and the acceptance-oracle authoring layer. A.2 and
+   A.5 provably do **not** reach this driver — both sit behind the merge-time gate
+   evaluator, which this driver never calls. Empirical bound on the persona delta:
+   no row in either arm ended in `blocked_underspecified`. **Phase 1b must run both
+   arms in ONE sweep on ONE commit (~$62).**
+3. **`solo-noreview` at $2.83 per resolved is still 1.6× one OpenHands agent's
+   $1.82.** The ablation narrows the chain's deficit against a single agent without
+   closing it.
+4. **The cost mechanism was mispredicted, and the correction is the useful part.**
+   The reviewer's own tokens are **$0.65 of $35.94 = 1.8%** of spend. The 29%
+   saving comes from **9 fewer dev calls (30 vs 39)** and a median story of **1 tick
+   instead of 4** — the reviewer was not expensive, it was causing rework. Optimise
+   for round-trips eliminated, not tokens per persona.
+5. **Both arms certified green on the same zero-byte production diff.** So the
+   reviewer was never what caught that class (§1 #5); the gate that catches it is a
+   merge gate this driver never runs.
+6. One row was published **invalid and not re-run** — its dev fetched a
+   dependency's upstream source over the network. Counting it raw gives 9/19 = 47%,
+   so the exclusion did not manufacture the 50%.
+
+Building the arm surfaced three latent harness bugs that would have corrupted or
+refused any second chain arm: the factory driver hard-coded the arm name in **nine**
+places, `audit` keyed the state root off the arm id, and `main()` asserted the run
+key equalled the base arm.
 
 ---
 
@@ -507,10 +573,11 @@ E.5 remains the only way to generate a *production* body corpus.
 
 ### A.1 — Turn the independent acceptance oracle ON, and put it in the measured path
 
-**Chain half DONE — PR #236, merged `69b75d1e`. `gates.acceptance_oracle` is still
-absent from every app config, deliberately: an adversarial review found the flag
-is not safe to flip yet.** The blockers are listed below, and the fixes are in an
-in-flight PR ("A.1c + A.6"). The bench half is still open.
+**Chain half DONE — PR #236, merged `69b75d1e`. Blockers closed — PR #242
+("A.1c + A.6"). Bench half DONE — PR #238. `gates.acceptance_oracle` is still
+absent from every app config, deliberately** — not because the listed blockers are
+open, but because one hole survives them all: see "Why the flag is still off"
+below. The flip is an operator decision.
 
 - [x] **The countermeasure P7 recommends first is already built here, in a
       stronger form than the paper's.** `factory/chain/acceptance.py:1-22`
@@ -535,12 +602,30 @@ in-flight PR ("A.1c + A.6"). The bench half is still open.
       published factory number — including the externally-graded 37% and the 40%
       chain-verdict precision — was measured with the chain's only independent
       correctness signal absent.**
-- [ ] **And the benchmark cannot see it.** `bench/swebench_adapter.py:2416` runs
-      `allowed = {"dev", "review"}` against a story seeded at `SM_DONE`
-      (`:2404`), while the oracle is authored in `handle_stories_spawned`. So the
-      37% and the 40% chain-verdict precision in §1 were measured **with the
-      chain's only independent oracle absent.** The arm labelled "the product"
-      was not the whole product. **Still open.**
+- [x] **The benchmark could not see it — fixed, PR #238 (A.1b).** The published
+      37% and 40% chain-verdict precision in §1 were measured **with the chain's
+      only independent oracle absent**: the adapter ran `{"dev", "review"}` against
+      a story seeded at `SM_DONE`, downstream of where the oracle is authored, so
+      the arm labelled "the product" was not the whole product. The `factory` arm
+      now authors the oracle from the instance's problem statement **before the
+      dev's first model call**, through the chain's own authoring code, and
+      `result.json` records an `acceptance.ordering` fact a reader **re-derives from
+      the run's own event stream** rather than a boolean the code asserts about
+      itself. Four integrity properties are enforced in code: the hidden grading
+      oracle cannot reach the author, the dev or the reviewer; the authored oracle
+      is not visible to the dev **and the store is not discoverable**; the authored
+      test is stripped from the graded prediction diff, asserted before the author
+      is called; and an authoring failure makes the row **invalid** rather than
+      proceeding with the layer silently absent. Only the `factory` arm changed —
+      the other four arms are asserted byte-identical and the story template is
+      pinned by sha256.
+- [x] **Building it caught a real independence exposure on live data.** With the
+      oracle stored inside the factory root, the dev on a real run ran a filesystem
+      search from one level above its worktree and **the listing named the
+      acceptance store**. The detector fired and **refused the row**. The store is
+      now relocated outside the factory root, the in-root copy is deleted with the
+      deletion asserted, and any acceptance-named leftover refuses the row. This is
+      a measured finding, not a design note.
 - [x] **Made executable — PR #236.** The **first execution ever produced a 100%
       false block**: the author is blind to the implementation *and* the repo
       layout, guessed `sacrifice.main` / `main` / `app.main`, and the gate ran at
@@ -564,47 +649,54 @@ in-flight PR ("A.1c + A.6"). The bench half is still open.
       oracle failed authoritatively on `assert 405 == 200`. **No existing gate
       catches spec-vs-implementation divergence.** Direction 078 passed 4/4. Total
       cost **$0.02**.
-- **What is left:** (1) close the four blockers below, then opt **`sacrifice`** in
-  and watch one story end to end; (2) teach the adapter to author an oracle from
-  the problem statement before the dev dispatch, so the measured arm is the whole
-  product.
+- **What is left:** opt **`sacrifice`** in and watch one story end to end — once
+  the operator decides the surviving hole below is acceptable.
 
-**⚠ The flag is NOT safe to flip yet — adversarial review, 2026-08-05.** These are
-the blocking items; fixes are in the in-flight "A.1c + A.6" PR.
+**The blockers are CLOSED — PR #242 (A.1c, built together with A.6).** Three named
+blockers: **oracle failability**, **dev-controlled collection config**, and
+**merge-candidate provenance** — the last via **ancestry, not SHA equality**,
+because a plain equality check would false-block, since the story worktree merges
+`main` in first. Also closed: the forgeable first-`N passed` match (it now takes the
+**last** summary and refuses to grade on conflicting summaries); the leak sweep that
+**deleted git-tracked files when git could not answer** (it now deletes nothing in
+that case); the unresolvable-direction permanent wedge whose message claimed it
+self-heals; authoring exhaustion being invisible in `factory inbox`; and
+`.pytest_cache` retaining the oracle's test names. Gate ordering is no longer a
+comment: `acceptance_verified` running last is pinned by a test
+(`tests/test_gates_evaluation.py:700`, PR #239).
 
-1. **D1 — nothing verifies the oracle CAN FAIL.** `def test_ac1(): assert True` is
-   stored, runs, reports "1 passed", and yields `passed=True,
-   authoritative=True` against an implementation that violates the criterion. The
-   persona is told every test must be able to fail; nothing checks it. A required
-   gate whose green carries no information is exactly the "gate detached from a
-   real check" `factory/chain/gates/evaluator.py:18-29` forbids.
-2. **H1 — the oracle runs under collection config the DEV controls.** Two
-   *working* forced-pass attacks were demonstrated: a `pytest_runtest_call`
-   hookwrapper in `backend/tests/conftest.py` calling `outcome.force_result(None)`,
-   and `backend/pyproject.toml` `addopts` plus a root plugin.
-   `factory/diff_paths.py:152 is_collection_channel_path()` — the exact classifier
-   `bench/swebench_adapter.py:1251` uses to REFUSE such a prediction — **exists and
-   is unused on the chain side.** Stated honestly: sacrifice's own
-   `backend/tests/conftest.py:147` has an autouse fixture overriding `get_db` and
-   the shipped `acceptance_harness_hint` advertises it, so independence is
-   currently **conventional, not structural**.
-3. **D2 — the gate never verifies it is testing the merge candidate.**
-   `auto_merge.py:2343` resets to `origin/<feature_branch>` only
-   `if fetched.returncode == 0`; on fetch failure the gate can return an
-   authoritative pass against an unrelated checkout. The fix is
-   `git merge-base --is-ancestor` — a plain SHA equality check would false-block,
-   because `_story_worktree` merges `origin/main` in first.
-4. Lower-ranked but real: `_PASSED_RE.search` takes the **first** `(\d+) passed`,
-   so a forged summary beats the vacuity check; the leak sweep **deletes
-   git-tracked files** when git cannot answer (`_git_tracked` returns an empty
-   set), contradicting its own docstring; an unresolvable direction is a permanent
-   wedge that never exhausts and whose block message says "self-heals next tick";
-   oracle-authoring exhaustion appears in **no** `factory inbox` category and stops
-   re-emitting its event; `.pytest_cache` `nodeids` / `lastfailed` retain the
-   oracle's test names in the dev's tree.
-5. **Gate ordering is load-bearing and untested:** `acceptance_verified` must stay
-   **LAST** in `evaluate_all_gates`, or `tests_meaningful` scores the copied oracle
-   as one of the dev's tests. Today that is a comment with no test.
+**Two adversarial passes over two fully-green PRs found 13 defects between them.**
+Three generalise:
+
+1. **An errors-only red at the base laundered a tautology into an authoritative
+   green.** For a story that *adds* a module, an oracle whose only link to the
+   criterion is an import errors at base **whatever it asserts** — and "red" was
+   definitive, so it bypassed the ablation check entirely. That is the **common**
+   story shape, not an edge case. Fixed: errors-only ⇒ `unknown` ⇒ falls through to
+   ablation. A mixed `1 failed, 1 error` stays red.
+2. **`pyproject.toml` is both a pytest collection channel and the dependency
+   manifest.** Rolling it back wholesale authoritatively false-blocked every
+   dependency-adding story. The operator decision was "dependencies from HEAD,
+   pytest config from the factory". The operator's proposed mechanism — run pytest
+   with an empty factory-owned config — was **measured wrong**: it kills
+   `asyncio_mode = auto`, so every `async def` oracle false-blocks on a FastAPI app.
+   Shipped instead: splice out only the `[tool.pytest.*]` tables, re-verified with a
+   TOML parse (which also catches a dotted-key evasion). **`pyproject.toml` is now a
+   documented special case, not the clean complement of the production-path
+   classifier.**
+3. **Standing rule:** an import or collection error at HEAD must be
+   **non-authoritative** whenever the environment rollback set is non-empty. If we
+   perturbed the environment and got an error rather than a failure, we cannot
+   distinguish "the dev's code is wrong" from "we broke it", and a gate must never
+   authoritatively blame the dev for something it may have caused.
+
+**⚠ Why `gates.acceptance_oracle` remains absent from every app config.** An
+in-process hole survives. **Three lines of production code** — reassigning pytest's
+test-runner function to a no-op — forge a genuine-looking red→green, and **no file
+rollback closes it**; it needs an out-of-process behavioural oracle. It is carried
+as an `xfail(strict=True)` whose stated reason is that it is why the flag stays off,
+so a silent "fix" fails the suite. Same class: a HEAD dependency registering a
+pytest plugin entry point via a local-path dependency.
 
 - **⚠ Fail-safe check before flipping the flag.** Required-ness now keys off app
   opt-in rather than `acceptance_expected` (PR #236), so a story whose authoring
@@ -615,17 +707,17 @@ the blocking items; fixes are in the in-flight "A.1c + A.6" PR.
   `azure/gpt-5.4` (`factory/routes.yaml:94`), the same model as `reviewer`
   (`:124`) — acceptable, because what matters is that it is not the dev's model
   (`:130`, `azure/deepseek-v4-pro`). P6 says rank them; A.7 does.
-- **Flip prerequisites, once the blockers close:** `sacrifice` **only**; all three
-  apps currently have **0 non-terminal stories**, so a flip authors nothing
-  retroactively; `sacrifice-db` must be running or the gate false-blocks on
-  `ConnectionRefusedError`; `hypothesis` is missing from sacrifice's backend dev
-  extra, so EARS-form criteria would fail collection; and **never flip
-  `template-probe`** — the oracle is pytest-only and that app is TypeScript.
-- **Done looks like:** one story with a non-null `acceptance_test_ref` that the
-  `acceptance-verified` gate actually ran, plus one benchmark row whose
-  `result.json` shows an oracle authored before the dev's first call.
-- **Effort:** the in-flight PR, then ~2 h to flip and soak one story; ~1 day for
-  the bench half **[OPERATOR-PR-ONLY]**. **Cost:** ~$1 of extra authoring per
+- **Flip prerequisites, unchanged:** `sacrifice` **only**; all apps currently have
+  **0 non-terminal stories**, so a flip authors nothing retroactively; the
+  `sacrifice-db` container must be up or the gate false-blocks; `hypothesis` is
+  missing from sacrifice's backend dev extra, so EARS-form criteria would fail
+  collection; and **never flip `template-probe`**, whose app is TypeScript while the
+  oracle is pytest-only.
+- **Done looks like:** the bench half is done — one benchmark row whose
+  `result.json` shows an oracle authored before the dev's first call (#238). What
+  remains is one story with a non-null `acceptance_test_ref` that the
+  `acceptance-verified` gate actually ran.
+- **Effort:** ~2 h to flip and soak one story. **Cost:** ~$1 of extra authoring per
   story; ~$40 to re-measure 19 instances.
 
 ### A.2 — A production-tree-changed precondition before any green verdict — **DONE**
@@ -738,9 +830,39 @@ iterations.** Artifacts committed under `bench/reviewer-replay/`.
      A.4, and the one multi-agent pattern P3 says has clean same-model gains. This
      is an **observation from three replicates, not a measurement.**
 
-### A.5 — Replace `test_quality_score` with a diff-scoped mutation score
+### A.5 — Get the broken mutation branch out of the required gate — **DONE, as a DELETION**
 
-- [ ] **What it is today: a number the reviewer model asserts about itself.**
+> Retitled 2026-08-05. The old title, "Replace `test_quality_score` with a
+> diff-scoped mutation score", describes something that did **not** happen:
+> `test_quality_score` is still emitted by the reviewer persona and still gates
+> the verdict at `factory/chain/handlers.py:3396`. It was left in place because
+> replacing it was measured to change **0 of 31 verdicts** (correction #28). What
+> shipped was the deletion of the broken ablation branch from the required gate.
+> A title that names an unshipped goal is a trap for the next reader.
+
+**Shipped in `79d3576d`, PR #239, 2026-08-05 — and NOT as this section specified
+it.** The plan said: rewrite the ablation branch *inside* the required
+`tests-meaningful` gate, advisory until measured. That is not what happened.
+
+- **The ablation branch was DELETED from the required gate.** `tests-meaningful` is
+  now the static slop detector and nothing else — it cannot shell out, cannot mutate
+  a checkout, and cannot block for 600 s on a timeout. About **200 lines removed**.
+  This closes the hazard that a single config flag stood between four defects and
+  every merge.
+- **The repaired measurement lives OFF the merge path** — `factory/chain/mutation.py`
+  plus a `factory mutation-score` command. **No gate imports it, and a test enforces
+  that.** Record the reasoning, because it generalises: *advisory-by-constant is one
+  edit from blocking every merge; advisory-by-not-being-imported is not, and a test
+  enforces it.*
+- **A new primitive: `check_can_fail`** — ablate the symbol a criterion is about, run
+  only the check, and require an **attributable** red. `True` only on an attributable
+  red; green, an unattributable red, a timeout and an un-materializable tree are all
+  `False` **with the reason**, because "we could not prove it" is not "it can". A.1c
+  and A.6 consume it as their failability fallback.
+- `gates.mutation_testing` survives as a config field for compatibility and is
+  **inert**.
+
+- [x] **What it is today, still: a number the reviewer model asserts about itself.**
       `test_quality_score` is emitted by the reviewer persona
       (`factory/personas/reviewer.md:38`, `:54`, `:178`, `:203`), read at
       `factory/chain/handlers.py:3318`, and the verdict gate is
@@ -748,7 +870,7 @@ iterations.** Artifacts committed under `bench/reviewer-replay/`.
       LLM's judgement of test strength near chance. **PLAN's earlier line reference
       `:3168` was wrong** — that sits inside the empty-diff short-circuit, whose
       hardcoded `"test_quality_score": 0.0` is at `:3162`.
-- [ ] **⚠ A.5's stated premise is measurably FALSE — do not justify this item as
+- [x] **⚠ A.5's stated premise is measurably FALSE — do not justify this item as
       "the 0.7 threshold is doing damage".** Measured 2026-08-05 over all 31
       verbatim reviewer calls of the graded n=19 sweep: `approve` with
       `score >= 0.7` = **15**, `approve` with `score < 0.7` = **0** (the lowest
@@ -759,7 +881,7 @@ iterations.** Artifacts committed under `bench/reviewer-replay/`.
       the verdict emitted in the same JSON object — a restatement of the decision,
       not an input to it. **Demoting or deleting it changes 0 of 31 verdicts and
       0 of 19 rows.**
-- [ ] **The measurement that should replace it exists and is broken.**
+- [x] **The measurement that should replace it existed and was broken.**
       `factory/chain/gates/tests_meaningful.py:63-138` implements real mutation
       testing (no-op a symbol, re-run the suite, fail if it stays green). It has
       **never run** — `mutation_testing: false` in all three app configs
@@ -767,7 +889,7 @@ iterations.** Artifacts committed under `bench/reviewer-replay/`.
       `apps/template-probe/config.yaml:55`) — while `tests-meaningful` **is** in
       `LOOP4_REQUIRED_GATE_LABELS` (`factory/chain/gates/evaluator.py:46-51`).
       That flag is the only thing between this code and every merge.
-- [ ] **Four verified defects — do not simply flip the flag.**
+- [x] **Four verified defects — the reason the branch was deleted rather than kept.**
   1. **It ablates the wrong symbols.** `_changed_public_symbols` (`:140-172`)
      parses each changed file *whole* and returns every public symbol, not the
      ones the diff touched; with `_MAX_ABLATION_SYMBOLS = 5` and a
@@ -792,56 +914,59 @@ iterations.** Artifacts committed under `bench/reviewer-replay/`.
      `merge_gates_failed` story event **unconditionally, including dry-run** — so
      flipping the flag manufactures false gate-failure events into the exact
      substrate L1→L2→L3 escalate on.
-- **What:** rewrite the ablation branch — diff-hunk-scoped symbol selection, a
-  green baseline with non-green ⇒ `skipped`, timeout/infra distinguished from a
-  real red, mutation in a throwaway copy, per-`(head_sha, symbol)` caching, and
-  **advisory until measured** — then let the score it produces replace the
-  reviewer's self-reported number.
-- **The three justifications that survive the 2026-08-05 measurement.** (a)
-  `tests-meaningful` is in `LOOP4_REQUIRED_GATE_LABELS` while broken four ways,
-  one flag from every merge — a live hazard whichever way it resolves. (b)
-  Chain-verdict precision is 6/15 = **40%**, so the reviewer's *judgement* of test
-  strength needs replacing with a *measurement*. (c) SWE Atlas grades test-writing
-  **by mutation score** (P8), so this buys Phase C comparability for free. P7 still
-  gives the payoff figure (test strength 53% → 89.5% under mutation feedback; LLM
-  suites average ~40% mutation score, one case at 100% coverage / 4% mutation).
-- **Deleting the ablation branch is a legitimate resolution of (a)** — a gate
-  detached from a real check is worse than no gate
-  (`factory/chain/gates/evaluator.py:18-29`). **A rewrite-vs-delete decision is in
-  flight.**
-- **⚠ Never flip `mutation_testing` as an experiment.** It is one flag from
-  breaking every merge. See memory `ablation_gate_dormant_and_broken`.
-- **Effort:** ~2 days. **Cost context:** the full factory suite is 5m36s warm, so
-  five ablations is ~28 min per merge evaluation, re-run every tick per open PR —
-  the cache is not optional.
+- **What shipped:** every repair this bullet asked for — diff-hunk-scoped symbol
+  selection, a green baseline, timeout and infra failure distinguished from a real
+  red, mutation in a throwaway copy, per-`(head_sha, symbol)` caching — landed in
+  `factory/chain/mutation.py`, **off the merge path**, instead of inside the gate.
+  The reviewer's self-reported number is untouched, which per the measurement above
+  changes nothing.
+- **Of the three justifications that survived the 2026-08-05 measurement, (a) is the
+  one that was resolved.** (a) `tests-meaningful` was in `LOOP4_REQUIRED_GATE_LABELS`
+  while broken four ways, one flag from every merge — **closed by deletion**, because
+  a gate detached from a real check is worse than no gate
+  (`factory/chain/gates/evaluator.py:18-29`). (b) Chain-verdict precision is 6/15 =
+  **40%**, so the reviewer's *judgement* of test strength still wants replacing with
+  a *measurement* — the measurement now exists, unwired. (c) SWE Atlas grades
+  test-writing **by mutation score** (P8), so Phase C comparability is bought.
+- **The `mutation_testing` hazard is closed.** The field is inert, so there is no
+  longer a flag that breaks every merge. The history is in memory
+  `ablation_gate_dormant_and_broken`.
+- **Cost context, still true of `factory mutation-score`:** the full factory suite is
+  5m36s warm, so five ablations is ~28 min — which is why the cache is not optional
+  and why this does not belong on a per-tick merge path.
 
-### A.6 — Harness-owned red→green, with a regression-only fallback
+### A.6 — Harness-owned red→green, with a regression-only fallback — **DONE**
 
-**Folded into the in-flight "A.1c + A.6" PR.** "Require the oracle to be red at the
-PR's merge base before crediting a green" **is** harness-owned red→green, so it is
-built once, on the oracle path, alongside A.1's blocker fixes.
+**Shipped in `23d8a871`, PR #242, 2026-08-05, as `factory/chain/red_green.py`.** It
+was **folded into A.1c and built once**, because "require the oracle to be red at the
+merge base before crediting a green" *is* harness-owned red→green.
 
-- [ ] **Evidence:** P7 — red→green doubles patch-stream precision at k=1, and it
+**Its caveat now lives in the module docstring, not only here:** only the
+fails-at-base half is oracle-free; a hard both-halves gate rejects good patches;
+"fails at base" means **at least one test failed or errored**, never "the whole file
+was red"; and an `unknown` falls back to regression-only selection, **never
+"approve"**. The errors-only refinement from the adversarial pass is in A.1c above.
+
+- [x] **Evidence:** P7 — red→green doubles patch-stream precision at k=1, and it
       is a second, independent kill for the §1 #5 zero-byte class.
-- [ ] **Red-first is instructed, not verified.** `factory/personas/dev.md:41`:
+- [x] **Red-first was instructed, not verified.** `factory/personas/dev.md:41`:
       "Tests are red-first: a test that passes before the implementation exists is
       slop." The chain trusts that claim. `PRContext.commit_history` already
       carries `tests_run_red: bool | None` per commit
       (`factory/chain/gates/evaluator.py`), which is the dev's report, not an
       observation.
-- **What:** the harness runs the dev's new tests itself at the pre-dev base SHA
-  and records the result. "Fails at base" becomes the gate; "passes at HEAD" is
-  already `tests-green` (`factory/chain/gates/tests_green.py:69-83` re-derives it
-  at merge time).
-- **⚠ Put the caveat in the code comment, not only here.** Only the fails-at-base
-  half is oracle-free. Agentless measured 213/300 tests reproducing the bug but
-  only 94/300 also flipping green under the gold patch, so a hard both-halves
-  gate rejects good patches. The fallback when the base run cannot be trusted is
-  **regression-only selection — never "approve"**.
-- **Done looks like:** a story whose new test passes at base is blocked with the
-  base-run output attached, and one whose test fails at base and passes at HEAD
-  proceeds.
-- **Effort:** ~1 day. Chain code. Cost: one extra suite run per story.
+- [x] **What shipped:** the harness runs the **oracle** at the PR's merge base and
+      records the result. "Fails at base" is the gate; "passes at HEAD" is already
+      `tests-green` (`factory/chain/gates/tests_green.py:69-83` re-derives it at
+      merge time). Built on the oracle path rather than on the dev's own new tests,
+      which is what makes it independent.
+- [x] **The caveat is in the code, per the instruction above.** Agentless measured
+      213/300 tests reproducing the bug but only 94/300 also flipping green under
+      the gold patch, so a hard both-halves gate rejects good patches — recorded in
+      `red_green.py`'s docstring.
+- **Done looks like — and this is what was demonstrated end to end on the real
+  sacrifice repo:** a spec-derived oracle is credited, and a tautology for the same
+  story is rejected.
 
 ### A.7 — Check whether the reviewer is actually STRONGER than the dev — and cut the loop if not — **BLOCKED**
 
@@ -917,14 +1042,22 @@ them come from splitting the work across SDLC roles. The public anchor is blunt:
 `deepseek-v4-pro` scores **41.4%** in a plain single-agent tools harness, our own
 `openhands` arm scored **53%**, and our chain scored **37%**.
 
-### B.1 — Collapse the code-producing personas into one long-horizon agent
+### B.1 — Collapse the code-producing personas into one long-horizon agent — **Phase 1a DONE, and it has a number**
 
-- [ ] **Evidence:** P1 (no SDLC-role decomposition in the top 20; no sequential
+**Phase 1a shipped in `b5673f17`, PR #243, 2026-08-05: the `solo-noreview` benchmark
+arm, the chain with the reviewer round-trip removed.** The result and every
+interpretation limit are in §1a — read them together, not the number alone. Zero
+production code changed: the arm is bench-side only. **`solo-noreview` 9/18 = 50% at
+$2.83 per resolved, against `factory` 7/19 = 37% at $5.13; the stop signal did not
+fire, so B.1's premise survives.** Phase 1b is the next step and it is a
+measurement, not a build: **both arms in ONE sweep on ONE commit, ~$62.**
+
+- [x] **Evidence:** P1 (no SDLC-role decomposition in the top 20; no sequential
       critic anywhere in it; EPAM *removed* its unit-testing stage and its
       multi-iteration loop and scored 76.8%, joint-highest for its model) and P2
       (the points come from tools, context management and long horizons **inside
       one agent**).
-- [ ] **Our horizon is long enough, and chopped up.** `sandbox_run`'s default is
+- [x] **Our horizon is long enough, and chopped up.** `sandbox_run`'s default is
       `max_iterations = 600` (`factory/runner.py:1643`), with per-persona caps of
       180 for `onboarder` and 300 for `test_implementer` (`PERSONA_ITERATION_CAPS`,
       `factory/runner.py:1621-1630`). So iteration budget is **not** the deficit —
@@ -940,6 +1073,37 @@ them come from splitting the work across SDLC roles. The public anchor is blunt:
 - **Done looks like:** one arm on the same 19 instances, reported beside
   `openhands` and the current `factory`, with the model mix printed per row.
 - **Effort:** ~1 week. **Cost ~$40** to re-measure 19 instances.
+
+**The production design is SETTLED and operator-approved. Do not redesign it.**
+
+- **Most of B.1's collapse already shipped.** The Loop-4 rewrite already removed the
+  separate test-author persona: the dispatch table goes straight from story-written
+  to dev, and the dev persona already states it owns code *and* tests. What remains
+  is only (a) remove the reviewer round-trip and (b) give the dev **one continuous
+  conversation** instead of several fresh ones reading a summary of each other.
+- **Mechanism: one per-app config value `chain_mode: solo`, default `chain`**, read
+  in **exactly one place** (story spawn), which stamps the existing per-story
+  chain-variant field. A story spawned under one mode finishes under it, so
+  **flipping mid-flight has blast radius zero for in-flight stories**. Reverting is
+  deleting one line. Needs **one** new state-machine edge and no new story state.
+- **The horizon change buys no loop budget.** Today 3 fresh conversations × 600
+  iterations = 1800; solo is 1 conversation × 3 rounds × 600 = 1800. Iteration- and
+  attempt-neutral. **One number must move**: the 1800 s sandbox wall clock to 5400 s
+  for solo, or three rounds silently get a third of the horizon each. It is a
+  **timeout**, not a loop cap — and the new round constant must be added to the
+  loop-cap ceiling test **in the same PR**.
+- **Hard coupling: `chain_mode: solo` must refuse to load unless
+  `gates.acceptance_oracle: true`**, enforced at config load. With no reviewer, the
+  oracle is the only signal the dev cannot influence. And because a longer horizon is
+  more turns in which to go looking for the oracle, the leak check must be a
+  **blocking precondition on every solo dispatch**.
+- **⚠ THE RESTRAINT, pre-committed.** A SWE-rebench win licenses solo mode for
+  **issue-shaped work only**. Loop 1 builds an app from a backlog, which is closer to
+  the shape where role decomposition *does* win. **Do not flip the default on loop 1
+  before C.3 (Commit0-Lite) reports.** The reconciliation worth testing: the
+  published multi-agent win decomposes by *work unit* — isolated worktrees,
+  branch-and-merge, which this design keeps entirely — not by *SDLC role within one
+  work unit*, which is the only thing B.1 removes.
 
 ### B.2 — Real navigation tooling inside the one agent
 
@@ -1433,9 +1597,11 @@ they are not re-proposed. Each entry is the refutation, not the proposal.
    counterfactual corpus built from those same contaminated streams scores
    FP = 0 and passes the very case it was designed to catch. And no adjudicator
    is specified for up to 190 observations per detector.
-5. **Turn on the ablation gate** — superseded by A.5. The gate is broken four
-   ways; the flag flip is not the adoption path, and flipping it as an experiment
-   would break every merge.
+5. **Turn on the ablation gate** — superseded by A.5. The gate was broken four
+   ways; the flag flip was not the adoption path, and flipping it as an experiment
+   would have broken every merge. **Moot since 2026-08-05 (#239):** the ablation
+   branch was deleted from the required gate and `gates.mutation_testing` is inert,
+   so there is no longer a flag to flip.
 6. **Property tests in the dev persona** — already ships in a better seam.
    `hypothesis>=6` is a dev dependency, `acceptance_author.md:52-72` authors
    Hypothesis property tests from EARS criteria, and `acceptance.py:101-194`
@@ -1505,6 +1671,8 @@ correcting; the rest verified exactly. Corrections 14–19 were added 2026-08-04
 when the plan was rewritten around the research synthesis. **Corrections 20–29
 were added 2026-08-05**, after the session that shipped A.2/A.3/A.8 (#233), the
 archive commit (#232), C.1 (#235), A.1's chain half (#236) and A.4 (#237).
+**Corrections 30–36 were added later the same day**, after A.5 (#239), A.1b (#238),
+A.1c + A.6 (#242), B.1 Phase 1a (#243) and the docs headline set (#241).
 
 1. **Manager spend share — 52.0%, and the in-repo docstring says 53%.**
    `factory/manager/detectors/fms_yield.py:12` reads
@@ -1727,6 +1895,84 @@ archive commit (#232), C.1 (#235), A.1's chain half (#236) and A.4 (#237).
     `model_selectable=True` on the `openhands` `ArmSpec`, then
     `--arm openhands --model azure/gpt-5.4`; `run_key` (`:3877`) keys the run dir
     `openhands@azure/gpt-5.4`, so it cannot clobber the corpus. ~$18.
+
+30. **A.5 shipped as a DELETION, not the rewrite this section specified.** The
+    ablation branch was removed from the required `tests-meaningful` gate — ~200
+    lines — leaving a static slop detector that cannot shell out, cannot mutate a
+    checkout and cannot block for 600 s on a timeout. The repaired measurement lives
+    off the merge path as `factory/chain/mutation.py` + `factory mutation-score`,
+    imported by no gate, with a test enforcing that. **The reasoning generalises:
+    advisory-by-constant is one edit from blocking every merge; advisory-by-not-being-imported
+    is not.** `gates.mutation_testing` survives as an inert config field. New
+    primitive `check_can_fail` returns `True` only on an **attributable** red; green,
+    an unattributable red, a timeout and an un-materializable tree are all `False`
+    **with the reason**, because "we could not prove it" is not "it can". (The
+    measurement that removed A.5's stated justification is correction #28 — unchanged,
+    still correct.)
+
+31. **A.1's bench half is done, and building it caught a real independence exposure
+    on live data.** The `factory` arm now authors the oracle from the instance's
+    problem statement **before the dev's first model call**, through the chain's own
+    authoring code, and `result.json` records an `acceptance.ordering` fact a reader
+    re-derives from the run's own event stream rather than a boolean the code asserts
+    about itself. With the oracle stored inside the factory root, **the dev on a real
+    run ran a filesystem search from one level above its worktree and the listing
+    named the acceptance store**; the detector fired and **refused the row**. The
+    store is now outside the factory root, the in-root copy is deleted with the
+    deletion asserted, and any acceptance-named leftover refuses the row.
+
+32. **A.6 was folded into A.1c and built once**, because "require the oracle to be red
+    at the merge base before crediting a green" *is* harness-owned red→green
+    (`factory/chain/red_green.py`). Three generalising defects came out of two
+    adversarial passes over two fully-green PRs (13 defects between them): **an
+    errors-only red at the base laundered a tautology into an authoritative green**
+    for the common add-a-module story shape, and "red" being definitive bypassed the
+    ablation check entirely (fixed: errors-only ⇒ `unknown` ⇒ ablation; a mixed
+    `1 failed, 1 error` stays red); **`pyproject.toml` is both a pytest collection
+    channel and the dependency manifest**, so rolling it back wholesale
+    authoritatively false-blocked every dependency-adding story — and the operator's
+    proposed fix, an empty factory-owned pytest config, was **measured wrong** because
+    it kills `asyncio_mode = auto` and false-blocks every `async def` oracle on a
+    FastAPI app, so only the `[tool.pytest.*]` tables are spliced out, re-verified
+    with a TOML parse; and the **standing rule** that an import or collection error at
+    HEAD must be **non-authoritative** whenever the environment rollback set is
+    non-empty, because a gate must never authoritatively blame the dev for something
+    it may have caused. `pyproject.toml` is now a documented special case, not the
+    clean complement of the production-path classifier.
+
+33. **The acceptance oracle's flag is still off, but for a NEW reason — the blockers
+    are closed.** All four A.1 blockers plus the gate-ordering test closed in #242 and
+    #239. What keeps `gates.acceptance_oracle` absent from every app config is an
+    **in-process hole**: three lines of production code reassigning pytest's
+    test-runner function to a no-op forge a genuine-looking red→green, and no file
+    rollback closes it — it needs an out-of-process behavioural oracle. It is carried
+    as an `xfail(strict=True)` whose stated reason is that it is why the flag stays
+    off, so a silent "fix" fails the suite. Same class: a HEAD dependency registering
+    a pytest plugin entry point via a local-path dependency.
+
+34. **B.1 Phase 1a has a number, and the cost mechanism it predicted was wrong.**
+    `solo-noreview` **9/18 = 50%** [26%, 74%] at **$2.83** per resolved against
+    `factory` 7/19 = 37% at $5.13; paired n=18, only-factory 2 / only-solo 4,
+    p = 0.688, descriptive only; `reviewer_cycles` = 0 on all 19 rows; **actual spend
+    $25.49**; the pre-committed stop signal did not fire. **The reviewer's own tokens
+    are $0.65 of $35.94 = 1.8% of spend** — the 29% saving comes from **9 fewer dev
+    calls (30 vs 39)** and a median story of **1 tick instead of 4**. The reviewer was
+    not expensive; it was causing rework. **Optimise for round-trips eliminated, not
+    tokens per persona.** And it is **not** a clean single-variable ablation — three
+    things differ, disclosed in the pre-registration before the data existed. Full
+    limits in §1a.
+
+35. **Correction #20's docs half is CLOSED.** #241 unified the headline set:
+    `CLAUDE.md`, `STATUS.md` and `bench/swebench/README.md` now carry 53% / p=0.375 /
+    2.8× with the provenance travelling alongside, matching `README.md` and `PLAN.md`
+    §1. The repo no longer disagrees with itself about which report run it quotes.
+
+36. **`README.md`'s own `report --check` command pointed at the wrong archive.** It
+    cited `results-archive/2026-08-04T04-18-05.349995Z`, which **prints
+    `CHECK FAILED`** — `results.md` re-derives from
+    `2026-08-04T23-19-24.998844Z`, which prints `CHECK OK`. Both verified by running
+    them 2026-08-05. Fixed in the same PR as this entry. This is a *command*, not a
+    figure; the README's five-arm figures were not touched.
 
 Verified exactly as stated, no correction needed: the 122/118/24 chain counts;
 17-validated/3-rejected staging; 1 open issue / 0 open PRs / 0 blocked; L4's
