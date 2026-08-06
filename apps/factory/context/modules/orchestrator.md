@@ -131,7 +131,7 @@ opens an operator-facing GitHub issue.
   signature.
 
 - **Auto-merge gate order** (`_evaluate_one_pr`): dual-draft loser self-check
-  → real-run short-circuit if already merged → TDD 10-gate check
+  → real-run short-circuit if already merged → TDD 7-gate check
   (`evaluate_all_gates`) or, for docs, just `canonical-paths-only` →
   story-state guard (`_MERGEABLE_STATES`) → blocking-label check
   (`do-not-merge`, `needs-human-verification`, `needs-direction`,

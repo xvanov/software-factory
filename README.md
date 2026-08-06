@@ -80,6 +80,32 @@ difference this sample could reliably detect is roughly ±38 points, so the find
 is "**no measurable lift**", not "the chain hurts". Running each instance 3+ times
 is what would sharpen it.
 
+**A sixth arm, measured a day later: take the reviewer out and nothing measurable
+breaks.** `solo-noreview` is the same chain with the reviewer round-trip removed, run
+on the same 19 instances, pre-registered before any paid call
+([full report](bench/swebench/RESULTS-B1-PHASE1A.md)). It is published separately
+from the table above, which still re-derives byte-for-byte from its own archive.
+
+| harness | solved | rate | total $ | **$ per solved** |
+|---|---:|---:|---:|---:|
+| this factory's chain | 7/19 | 37% | 35.94 | 5.13 |
+| the same chain, **no reviewer** | 9/18 | **50%** | 25.49 | **2.83** |
+
+- **The cost win is real — 29% less in total, 45% less per solved instance — and the
+  mechanism is not the one we predicted.** The reviewer's own tokens are 1.8% of
+  spend. The saving is **9 fewer dev calls and a median story of one tick instead of
+  four**: the reviewer was not expensive, it was causing rework.
+- **The quality claim is not established.** +13 points sits well inside the ±38-point
+  resolution of a 19-instance run (McNemar exact **p=0.688**), so the finding is "no
+  measurable change", never "better without a reviewer".
+- **It is not a clean single-variable ablation**, and that was written down before the
+  data existed: three things differ between those two rows, not one. The next step is
+  running both arms in one sweep on one commit.
+- **Still 1.6× a single agent** — $2.83 per solved against $1.82. The ablation narrows
+  the chain's deficit without closing it.
+- It does **not** license removing the reviewer in production, which runs merge gates
+  this benchmark never touches.
+
 The July 2026 campaign read the other way, but it graded the factory against
 sacrifice's *own* merge gates — tests the factory itself wrote — so it could not
 measure correctness at all. Its numbers are **withdrawn**, not merely superseded:
@@ -160,7 +186,7 @@ Two harnesses. Only one of them is evidence about correctness.
 
 ```bash
 uv run python bench/swebench_adapter.py report \
-  --from-archive bench/swebench/results-archive/2026-08-04T04-18-05.349995Z --check
+  --from-archive bench/swebench/results-archive/2026-08-04T23-19-24.998844Z --check
 ```
 
 **`bench/bench.py` — convergence only.** It grades the factory on sacrifice's own merge gates, i.e. on tests the factory wrote, so it measures whether the chain drives a story to green unattended and what that costs. It is not evidence about correctness, and its July campaign is superseded. Run it: `uv run python bench/bench.py --help` ([protocol + caveats](bench/README.md)).

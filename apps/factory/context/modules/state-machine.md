@@ -280,7 +280,7 @@ dispatch state by hand.
   though the story is actively mid-merge. Any new caller that needs real
   terminality must use the explicit allowlists (`_DEAD_END_DEP_STATES`,
   `tracker_issue._RESOLVED_STORY_STATES`) instead of `is_terminal()`.
-* **Dev↔reviewer non-convergence.** Capped at `_MAX_REVIEW_CYCLES = 6`
+* **Dev↔reviewer non-convergence.** Capped at `_MAX_REVIEW_CYCLES = 3`
   cycles → `BLOCKED_REVIEW_NONCONVERGENT`; auto-recovered to `SM_DONE` at
   most `_MAX_AUTO_RECOVERIES = 2` times, gated on the failure signature
   actually changing between recoveries.
