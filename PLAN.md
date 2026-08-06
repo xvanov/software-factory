@@ -830,7 +830,15 @@ iterations.** Artifacts committed under `bench/reviewer-replay/`.
      A.4, and the one multi-agent pattern P3 says has clean same-model gains. This
      is an **observation from three replicates, not a measurement.**
 
-### A.5 — Replace `test_quality_score` with a diff-scoped mutation score — **DONE, as a DELETION**
+### A.5 — Get the broken mutation branch out of the required gate — **DONE, as a DELETION**
+
+> Retitled 2026-08-05. The old title, "Replace `test_quality_score` with a
+> diff-scoped mutation score", describes something that did **not** happen:
+> `test_quality_score` is still emitted by the reviewer persona and still gates
+> the verdict at `factory/chain/handlers.py:3396`. It was left in place because
+> replacing it was measured to change **0 of 31 verdicts** (correction #28). What
+> shipped was the deletion of the broken ablation branch from the required gate.
+> A title that names an unshipped goal is a trap for the next reader.
 
 **Shipped in `79d3576d`, PR #239, 2026-08-05 — and NOT as this section specified
 it.** The plan said: rewrite the ablation branch *inside* the required
