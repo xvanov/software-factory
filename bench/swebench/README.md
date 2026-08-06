@@ -854,6 +854,28 @@ claim it was making.
 the free checks for this arm are `tests/test_swebench_solo_noreview_arm.py` and
 `run-all --arm solo-noreview --only-working --dry-run`.
 
+**⚠ Operator hazard, not currently guarded in code.** `report` in LIVE mode
+derives its arm list from whatever subdirectories exist under `runs/`. The B.1
+sweep was deliberately run from a git worktree with an empty `runs/`, so no
+`solo-noreview` row has ever been in the main checkout and `results.md` is
+unaffected — verified, `report --check` still prints `CHECK OK`. But if this arm
+is ever run in the MAIN checkout, the next live `report` will emit it as a **sixth
+arm inside `results.md`**, blending an ablation into the five-arm result. Two
+consequences follow, and neither is enforced automatically:
+
+- run any ablation arm from a worktree, or move its rows out of `runs/` before the
+  next live `report`;
+- `solo-noreview`'s evidence lives in
+  [`results-b1-phase1a/`](results-b1-phase1a/), **not** under
+  `results-archive/` — `report --check` re-derives `results.md` from the *latest*
+  directory in `results-archive/`, so minting one there would silently re-point
+  the check at rows `results.md` was never built from.
+
+The `superseded_by` flag is the existing mechanism for segregating an arm's rows
+out of every report table, but it also makes `run`/`run-all` refuse to spend on
+the arm, so it cannot express "measurable, but not part of this headline". That
+gap is real and unclosed.
+
 ## The factory arm carries the chain's independent acceptance oracle
 
 **Every published `factory` row was measured without it.** The chain has exactly
