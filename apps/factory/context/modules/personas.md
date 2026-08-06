@@ -74,6 +74,18 @@ treats the directory's `*.md` glob as the registry.
      pass against a violating implementation. The oracle never lands in the dev's
      tree at all, which also removes the leak window and the `.pytest_cache`
      disclosure of its test names.
+     **One documented exception to that rollback set: `pyproject.toml`.** It is a
+     pytest collection channel *and* the dependency manifest the app's acceptance
+     command resolves against (`uv run --extra dev pytest`, cwd `backend`), so
+     reverting it wholesale made every story that ADDS a dependency fail
+     collection and get blamed for it authoritatively. Its two roles are split —
+     `[tool.pytest.*]` from the merge base, every other table from HEAD
+     (`red_green.rollback_pytest_config_only`, verified against `tomllib`, fails
+     safe). Backing that up: an **errors-only** red at HEAD is non-authoritative
+     whenever anything was rolled back, because a collection error after we
+     rewrote the tree may be ours rather than the dev's. Taking dependencies from
+     HEAD necessarily admits a dependency that registers a `pytest11` entry point
+     — the same in-process class as the known-open hole below.
   2. **A green at HEAD is credited only when failability is established.**
      Primary: the same oracle is RED at the merge base (`chain/red_green.py`) —
      "at least one test failed there", never "the whole file was red", because a

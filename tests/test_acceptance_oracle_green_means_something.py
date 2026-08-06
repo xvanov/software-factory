@@ -697,8 +697,16 @@ def test_H1c_committed_pyproject_addopts_plugin_no_longer_neuters_the_run(
     tmp_path: Path,
 ) -> None:
     """``addopts = "-p _fixup"`` + a root plugin — the channel the bench harness
-    REFUSES a prediction for. ``pyproject.toml`` is restored from the base, so the
-    plugin is never loaded even though ``_fixup.py`` is still in the tree."""
+    REFUSES a prediction for. The plugin is never loaded even though ``_fixup.py`` is
+    still in the tree.
+
+    The MECHANISM changed with B2 and the assertion below moved with it:
+    ``pyproject.toml`` is no longer restored wholesale (that reverted the dependency
+    manifest and false-blocked every story adding a dependency), it is neutralised
+    surgically — pytest tables from the base, dependencies from HEAD. The property
+    under test is unchanged and is the first assertion: the attack does not force a
+    pass.
+    """
     repo, _b, head = _repo(
         tmp_path, base_impl=_BAD_IMPL, head_impl=_BAD_IMPL,
         base_files={"backend/pyproject.toml": "[project]\nname='x'\nversion='0'\n"},
@@ -720,7 +728,12 @@ def test_H1c_committed_pyproject_addopts_plugin_no_longer_neuters_the_run(
     ref = _store(root)
     r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
     assert not r.passed, r.reason
-    assert "backend/pyproject.toml" in r.details["channels_restored"]
+    # The oracle's assertion RAN and disagreed, so this is still a finding against
+    # the story — the errors-only safety net must not have blunted it.
+    assert r.details["authoritative"] is True
+    assert r.details["head_summary"]["failed"] >= 1
+    assert r.details["pytest_config_neutralised"] == ["backend/pyproject.toml"]
+    assert "backend/pyproject.toml" in r.details["rolled_back_to_base"]
 
 
 def test_H1d_an_added_collection_channel_is_deleted_in_the_judge_tree(
@@ -1555,6 +1568,567 @@ def test_H6e_the_cli_lists_and_records_the_operator_decision(
         _pr(root, repo, _story(story_id=row.id, ref=ref), head), _cfg()
     )
     assert not again.passed
+
+
+# =========================================================================== #
+# B2 — ``pyproject.toml`` has TWO roles, and only one of them belongs to the base
+# =========================================================================== #
+#
+# The rollback set is the complement of ``is_production_path``, which puts
+# ``pyproject.toml`` in it as a pytest collection channel. But the same file is the
+# DEPENDENCY MANIFEST, and sacrifice's real oracle command is
+# ``uv run --extra dev pytest {test_file} -q`` with cwd ``backend`` — ``uv``
+# resolves the dependency set from exactly the file we reverted. So a story that
+# ADDS a dependency, with a correct implementation, got ``passed=False,
+# authoritative=True`` and was re-dispatched to dev with an identical failure
+# signature. The fix separates the roles: dependencies from HEAD, pytest
+# configuration from the merge base.
+
+_DEP_ORACLE = (
+    "from app.mod import normalize_email\n"
+    "\n"
+    "def test_ac1_email_is_lowercased():\n"
+    "    assert normalize_email('User@Example.COM') == 'user@example.com'\n"
+)
+
+_BASE_MANIFEST = (
+    "[build-system]\n"
+    'requires = ["setuptools>=75.0"]\n'
+    "\n"
+    "[project]\n"
+    'name = "sacrifice-backend"\n'
+    'version = "0.1.0"\n'
+    "dependencies = [\n"
+    '    "fastapi>=0.115.0",\n'
+    "]\n"
+    "\n"
+    "[project.optional-dependencies]\n"
+    'dev = ["pytest>=8.0.0"]\n'
+    "\n"
+    "[tool.pytest.ini_options]\n"
+    'asyncio_mode = "auto"\n'
+    'markers = ["smoke: fast smoke tests"]\n'
+)
+# What the story's diff does to it: adds a dependency (the whole point) and, in
+# the tests below that care, touches the pytest tables too.
+_HEAD_MANIFEST_NEW_DEP = _BASE_MANIFEST.replace(
+    '    "fastapi>=0.115.0",\n',
+    '    "fastapi>=0.115.0",\n    "leftpad>=1.0.0",\n',
+)
+
+
+def _uv_shim(tmp_path: Path, *, requires: str) -> str:
+    """A stand-in for ``uv run --extra dev pytest`` that resolves deps from disk.
+
+    The defect is about WHICH ``pyproject.toml`` is on disk in the judge tree when
+    the dependency set is resolved, so the test double only has to reproduce that
+    one behaviour: read ``pyproject.toml`` from the run cwd, refuse to run when the
+    story's new dependency is absent — with the collection-error shape ``uv``
+    really produces — and otherwise exec pytest.
+
+    A real ``uv run`` here would need the network and minutes per case, and would
+    test uv rather than the gate.
+    """
+    shim = tmp_path / "uv_shim.py"
+    shim.write_text(
+        "import pathlib, subprocess, sys, tomllib\n"
+        f"REQUIRED = {requires!r}\n"
+        'cfg = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))\n'
+        'deps = list(cfg.get("project", {}).get("dependencies", []))\n'
+        "if not any(d.startswith(REQUIRED) for d in deps):\n"
+        "    print(f'ERROR collecting {sys.argv[1]}')\n"
+        "    print(f\"E   ModuleNotFoundError: No module named '{REQUIRED}'\")\n"
+        '    print("1 error in 0.10s")\n'
+        "    sys.exit(2)\n"
+        "sys.exit(subprocess.run([sys.executable, '-B', '-m', 'pytest', *sys.argv[1:],\n"
+        "                         '-q', '-p', 'no:cacheprovider']).returncode)\n",
+        encoding="utf-8",
+    )
+    return f"{sys.executable} -B {shim} {{test_file}}"
+
+
+def test_B2_a_story_that_ADDS_A_DEPENDENCY_is_not_blamed_for_the_reverted_manifest(
+    tmp_path: Path,
+) -> None:
+    """THE DEFECT, measured. A CORRECT implementation that adds a dependency.
+
+    Before the fix the judge tree reverted ``backend/pyproject.toml`` to the merge
+    base, so the dependency the story declares was not in the resolved set, the
+    oracle died at collection, and the gate returned ``passed=False,
+    authoritative=True, reason="ran independent acceptance oracle exit_code=2"`` —
+    an authoritative accusation against a dev whose code is fine, re-dispatched with
+    an identical failure signature at $2+ per cycle.
+
+    After the fix the manifest's ``[project]`` tables come from HEAD, the oracle
+    resolves its dependency, and the story MERGES.
+    """
+    repo, _base, head = _repo(
+        tmp_path,
+        base_impl=_BAD_IMPL,
+        head_impl=_GOOD_IMPL,
+        base_files={"backend/pyproject.toml": _BASE_MANIFEST},
+        head_files={"backend/pyproject.toml": _HEAD_MANIFEST_NEW_DEP},
+    )
+    root = tmp_path / "factory"
+    ref = _store(root, content=_DEP_ORACLE)
+    r = acceptance_verified.evaluate(
+        _pr(root, repo, _story(ref=ref), head),
+        _cfg(command=_uv_shim(tmp_path, requires="leftpad")),
+    )
+    assert r.passed, f"a correct dep-adding story was blocked: {r.reason}"
+    assert r.details["verified"] is True
+    assert r.details["head_status"] == "pass"
+    # The manifest is still in the set of paths the diff must not decide...
+    assert "backend/pyproject.toml" in r.details["rolled_back_to_base"]
+    # ...but it is neutralised surgically rather than reverted wholesale.
+    assert r.details["pytest_config_neutralised"] == ["backend/pyproject.toml"]
+    assert "backend/pyproject.toml" not in r.details["channels_restored"]
+    # AND the coupling to B5: the merge base cannot resolve a dependency the story
+    # itself adds, so its base run is an errors-only red → ``unknown`` → ABLATION.
+    # Dependency-adding stories therefore live on the expensive route by
+    # construction, which is why that route's proof is now cached.
+    assert r.details["base_run"]["verdict"] == "unknown"
+    assert r.details["failability_route"] == "ablation"
+
+
+def test_B2b_the_judge_tree_manifest_has_HEAD_deps_and_BASE_pytest_config(
+    tmp_path: Path,
+) -> None:
+    """The artifact, asserted directly: one file, two roles, two sources.
+
+    ``rollback_pytest_config_only`` is the whole of B2's fix, so it gets a test that
+    reads the bytes it produced rather than only inferring them from a gate verdict.
+    """
+    repo, base, _head = _repo(
+        tmp_path,
+        base_files={"backend/pyproject.toml": _BASE_MANIFEST},
+        head_files={
+            "backend/pyproject.toml": (
+                _HEAD_MANIFEST_NEW_DEP.replace(
+                    'asyncio_mode = "auto"', 'addopts = "-p _fixup"'
+                )
+            )
+        },
+    )
+    ok, why = red_green.rollback_pytest_config_only(repo, base, "backend/pyproject.toml")
+    assert ok, why
+    import tomllib
+
+    doc = tomllib.loads((repo / "backend" / "pyproject.toml").read_text(encoding="utf-8"))
+    # HEAD: the dependency the story added, and every other manifest table.
+    assert "leftpad>=1.0.0" in doc["project"]["dependencies"]
+    assert doc["project"]["optional-dependencies"]["dev"] == ["pytest>=8.0.0"]
+    assert doc["build-system"]["requires"] == ["setuptools>=75.0"]
+    # BASE: the pytest configuration, and NOT the diff's ``addopts`` attack.
+    assert doc["tool"]["pytest"]["ini_options"] == {
+        "asyncio_mode": "auto",
+        "markers": ["smoke: fast smoke tests"],
+    }
+
+
+def test_B2c_a_diff_that_ADDS_the_pytest_tables_has_them_removed_not_kept(
+    tmp_path: Path,
+) -> None:
+    """The base file carries no ``[tool.pytest.*]`` at all, so there is nothing to
+    restore — the diff's tables must be DELETED, exactly as ``restore_paths_from``
+    deletes an added collection channel."""
+    no_pytest = (
+        "[project]\nname = 'x'\nversion = '0'\ndependencies = []\n"
+    )
+    repo, base, _head = _repo(
+        tmp_path,
+        base_files={"backend/pyproject.toml": no_pytest},
+        head_files={
+            "backend/pyproject.toml": (
+                no_pytest + '\n[tool.pytest.ini_options]\naddopts = "-p _fixup"\n'
+            )
+        },
+    )
+    ok, why = red_green.rollback_pytest_config_only(repo, base, "backend/pyproject.toml")
+    assert ok, why
+    import tomllib
+
+    doc = tomllib.loads((repo / "backend" / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "pytest" not in doc.get("tool", {})
+    assert doc["project"]["name"] == "x"
+
+
+def test_B2d_base_pytest_config_still_governs_the_judge_run(tmp_path: Path) -> None:
+    """WHY THE FIX IS NOT ``pytest -c <empty factory ini>``.
+
+    MEASURED 2026-08-05: ``-c`` does neutralise the repo's
+    ``[tool.pytest.ini_options]`` — including the ``addopts = "-p _fixup"`` attack —
+    but an EMPTY factory-owned ini also throws away ``asyncio_mode = "auto"``, and
+    pytest then reports "async def functions are not natively supported" for every
+    ``async def`` test. sacrifice is a FastAPI app whose shipped
+    ``acceptance_harness_hint`` tells the (dev-blind) acceptance author in so many
+    words that ``asyncio_mode = auto`` is set and ``async def`` tests need no
+    decorator, so that is a false block on the app's normal oracle shape.
+
+    So the base's pytest configuration is PRESERVED, not discarded: here the diff
+    tries to turn ``asyncio_mode`` to ``strict`` while adding its dependency, and the
+    async oracle must still run.
+    """
+    head_manifest = _HEAD_MANIFEST_NEW_DEP.replace(
+        'asyncio_mode = "auto"', 'asyncio_mode = "strict"'
+    )
+    repo, _base, head = _repo(
+        tmp_path,
+        base_impl=_BAD_IMPL,
+        head_impl=_GOOD_IMPL,
+        base_files={"backend/pyproject.toml": _BASE_MANIFEST},
+        head_files={"backend/pyproject.toml": head_manifest},
+    )
+    root = tmp_path / "factory"
+    ref = _store(root, content=(
+        "from app.mod import normalize_email\n"
+        "\n"
+        "async def test_ac1_email_is_lowercased():\n"
+        "    assert normalize_email('User@Example.COM') == 'user@example.com'\n"
+    ))
+    r = acceptance_verified.evaluate(
+        _pr(root, repo, _story(ref=ref), head),
+        _cfg(command=f"{sys.executable} -B -m pytest {{test_file}} -q -p no:cacheprovider"),
+    )
+    assert r.passed, f"the base's asyncio_mode was lost: {r.details.get('output_tail')}"
+    assert r.details["tests_passed"] == 1
+    assert r.details["base_run"]["verdict"] == "red"
+
+
+def test_B2e_the_manifest_splice_is_verified_and_fails_SAFE(tmp_path: Path) -> None:
+    """A splice we cannot prove correct must block, never ship.
+
+    ``rollback_pytest_config_only`` re-parses what it wrote and refuses unless the
+    pytest tables now equal the base's AND every other table still equals HEAD's. An
+    unparseable manifest is the simplest way to reach that refusal, and the caller
+    must turn it into a NON-authoritative block: we perturbed the environment, so a
+    failure here is ours to explain, not the dev's to answer for.
+    """
+    repo, base, head = _repo(
+        tmp_path,
+        base_files={"backend/pyproject.toml": _BASE_MANIFEST},
+        head_files={"backend/pyproject.toml": "[project\nthis is not toml\n"},
+    )
+    ok, why = red_green.rollback_pytest_config_only(repo, base, "backend/pyproject.toml")
+    assert not ok
+    assert "toml" in why.lower()
+
+    root = tmp_path / "factory"
+    ref = _store(root, content=_DEP_ORACLE)
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+    assert not r.passed
+    assert r.details["authoritative"] is False
+    assert r.details["unverifiable_kind"] == "channel_restore_failed"
+
+
+def test_B2i_pytest_config_hidden_as_DOTTED_KEYS_is_caught_not_spliced_past(
+    tmp_path: Path,
+) -> None:
+    """The hole in a text-level splice, from the adversarial pass on this fix.
+
+    ``[tool.pytest.ini_options]`` is not the only way to write that table.
+    ``[tool]`` followed by ``pytest.ini_options.addopts = "-p _fixup"`` is the same
+    document to any TOML parser, and it carries no ``[tool.pytest…]`` header for a
+    table scanner to find. Rather than grow the scanner, the splice RE-PARSES what it
+    produced and refuses unless ``tool.pytest`` now equals the base's — so the
+    scanner is allowed to be imperfect and the failure mode is a block, never a
+    forced pass.
+    """
+    repo, base, head = _repo(
+        tmp_path,
+        base_impl=_BAD_IMPL,
+        head_impl=_BAD_IMPL,
+        base_files={"backend/pyproject.toml": "[project]\nname='x'\nversion='0'\n"},
+        head_files={
+            "backend/pyproject.toml": (
+                "[project]\nname='x'\nversion='0'\n"
+                "\n[tool]\n"
+                'pytest.ini_options.addopts = "-p _fixup"\n'
+            ),
+            "backend/_fixup.py": _FORCE_PASS_PLUGIN,
+        },
+    )
+    ok, why = red_green.rollback_pytest_config_only(repo, base, "backend/pyproject.toml")
+    assert not ok, "dotted-key pytest config was spliced past"
+    assert "not the merge base's" in why
+
+    root = tmp_path / "factory"
+    ref = _store(root)
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+    assert not r.passed, r.reason
+    assert r.details["unverifiable_kind"] == "channel_restore_failed"
+    assert r.details["verified"] is False
+
+
+def test_B2j_a_multiline_string_that_looks_like_a_table_header_is_not_a_table(
+    tmp_path: Path,
+) -> None:
+    """The other side of the same scanner: a legal manifest must not be corrupted.
+
+    ``description = \"\"\"…[tool.pytest.ini_options]…\"\"\"`` is a STRING containing
+    something header-shaped at column 0. Treating it as a table would eat part of
+    ``[project]`` — a dependency-losing corruption dressed up as a rollback.
+    """
+    base_manifest = (
+        "[project]\nname='x'\nversion='0'\ndependencies = []\n"
+        "\n[tool.pytest.ini_options]\nasyncio_mode = 'auto'\n"
+    )
+    head_manifest = (
+        "[project]\nname='x'\nversion='0'\n"
+        'description = """\n'
+        "[tool.pytest.ini_options]\n"
+        'addopts = "-p _fixup"\n'
+        '"""\n'
+        "dependencies = ['leftpad>=1.0.0']\n"
+        "\n[tool.pytest.ini_options]\nasyncio_mode = 'strict'\n"
+    )
+    repo, base, _head = _repo(
+        tmp_path,
+        base_files={"backend/pyproject.toml": base_manifest},
+        head_files={"backend/pyproject.toml": head_manifest},
+    )
+    ok, why = red_green.rollback_pytest_config_only(repo, base, "backend/pyproject.toml")
+    assert ok, why
+    import tomllib
+
+    doc = tomllib.loads((repo / "backend" / "pyproject.toml").read_text(encoding="utf-8"))
+    assert doc["project"]["dependencies"] == ["leftpad>=1.0.0"]  # HEAD, intact
+    assert "[tool.pytest" in doc["project"]["description"]  # the string is untouched
+    assert doc["tool"]["pytest"]["ini_options"] == {"asyncio_mode": "auto"}  # BASE
+
+
+def test_B2k_a_manifest_that_is_a_SYMLINK_is_refused_not_followed(
+    tmp_path: Path,
+) -> None:
+    """Found by the adversarial pass on this fix.
+
+    ``read_text`` and ``write_text`` both follow a symlink. A manifest committed AS a
+    link would have taken the judge run's dependency set from a file that is not part
+    of the merge candidate — possibly outside the checkout altogether — and written
+    the spliced result through the link. Both halves are refused: this gate's D2
+    property is "grade the merge candidate or grade nothing".
+    """
+    outside = tmp_path / "outside.toml"
+    original = "[project]\nname='victim'\nversion='0'\n"
+    outside.write_text(original, encoding="utf-8")
+    repo, base, head = _repo(
+        tmp_path, base_files={"backend/pyproject.toml": _BASE_MANIFEST}
+    )
+    link = repo / "backend" / "pyproject.toml"
+    link.unlink()
+    link.symlink_to(outside)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "manifest as a symlink")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    ok, why = red_green.rollback_pytest_config_only(repo, base, "backend/pyproject.toml")
+    assert not ok
+    assert "SYMLINK" in why
+    assert outside.read_text(encoding="utf-8") == original, "wrote through the link"
+
+    root = tmp_path / "factory"
+    ref = _store(root, content=_DEP_ORACLE)
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+    assert not r.passed
+    assert r.details["unverifiable_kind"] == "channel_restore_failed"
+    assert r.details["authoritative"] is False
+
+
+def test_B2l_a_symlink_at_the_oracle_destination_cannot_exfiltrate_it(
+    tmp_path: Path,
+) -> None:
+    """Second symlink finding from the adversarial pass, and this one is a
+    DISCLOSURE rather than a forced pass.
+
+    ``shutil.copyfile`` follows a symlink at the destination. The oracle's filename is
+    ``test_acceptance_oracle_<story id>.py`` and the story id is guessable, so a diff
+    that commits that path as an ABSOLUTE symlink into the dev's own worktree would
+    have the gate write the hidden oracle there — and dev-blindness, the property this
+    whole gate exists to provide, would be gone from the next dispatch onward. Nothing
+    upstream refuses it: a git-TRACKED file matching the prefix is deliberately not
+    treated as a leak, because blocking on one was a permanent wedge (H41c).
+    """
+    target = tmp_path / "exfiltrated.py"
+    repo, _base, head = _repo(tmp_path)
+    plant = repo / "backend" / "tests" / f"{ORACLE_COPY_PREFIX}7.py"
+    plant.symlink_to(target)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "a helpful symlink")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    root = tmp_path / "factory"
+    ref = _store(root)
+    acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+    assert not target.exists(), "the hidden oracle was written through the symlink"
+
+
+# =========================================================================== #
+# B2 safety net — we perturbed the environment, so an errors-only red is OURS
+# =========================================================================== #
+
+
+_BROKEN_ORACLE = (
+    "from app.does_not_exist import missing\n"
+    "\n"
+    "def test_ac1():\n"
+    "    assert missing() == 1\n"
+)
+
+
+def test_B2f_an_errors_only_red_at_HEAD_is_NOT_authoritative_after_a_rollback(
+    tmp_path: Path,
+) -> None:
+    """THE SAFETY NET, and it is deliberately wider than B2's own fix.
+
+    Whenever we rolled anything back we changed the environment the oracle runs in.
+    A COLLECTION/IMPORT error rather than a test failure is then indistinguishable
+    between "the dev's code is wrong" and "we broke the environment" — and a gate
+    must never authoritatively blame the developer for something it may have caused
+    itself. So the block stands (fail-safe) but it is non-authoritative: waivable,
+    and it does not re-dispatch with an identical signature.
+    """
+    repo, _base, head = _repo(
+        tmp_path,
+        head_files={"backend/tests/conftest.py": "# added by the story\n"},
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    root = tmp_path / "factory"
+    ref = _store(root, content=_BROKEN_ORACLE)
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+    assert not r.passed
+    assert r.details["head_status"] == "fail"
+    assert r.details["head_summary"]["errors"] >= 1
+    assert r.details["head_summary"]["failed"] == 0
+    assert r.details["authoritative"] is False
+    assert r.details["unverifiable_kind"] == "head_errors_after_environment_rollback"
+    assert r.details["rolled_back_to_base"]
+
+
+def test_B2g_an_errors_only_red_stays_AUTHORITATIVE_when_nothing_was_rolled_back(
+    tmp_path: Path,
+) -> None:
+    """The bound on the net above: with an EMPTY rollback set we perturbed nothing,
+    so the error is the artifact's own and the dev is the right party to tell. A net
+    that swallowed this case would make every broken oracle unattributable."""
+    repo, _base, head = _repo(tmp_path)
+    root = tmp_path / "factory"
+    ref = _store(root, content=_BROKEN_ORACLE)
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+    assert not r.passed
+    assert r.details["rolled_back_to_base"] == []
+    assert r.details["head_summary"]["errors"] >= 1
+    assert r.details["authoritative"] is True
+
+
+def test_B2h_a_real_test_FAILURE_stays_authoritative_even_after_a_rollback(
+    tmp_path: Path,
+) -> None:
+    """The net must not blunt the gate. An assertion that RAN and disagreed is
+    evidence about the dev's code whatever we did to the environment."""
+    repo, _base, head = _repo(
+        tmp_path, base_impl=_BAD_IMPL, head_impl=_BAD_IMPL,
+        head_files={"backend/tests/conftest.py": _FORCE_PASS_CONFTEST},
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    root = tmp_path / "factory"
+    ref = _store(root)
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+    assert not r.passed
+    assert r.details["head_summary"]["failed"] >= 1
+    assert r.details["authoritative"] is True
+
+
+# =========================================================================== #
+# B5 — the ablation proof is cached, like the base verdict already is
+# =========================================================================== #
+
+
+def test_B5_a_proven_ablation_is_cached_per_head_sha_oracle_and_command(
+    tmp_path: Path,
+) -> None:
+    """The ablation route measured 1.45 s cold / 1.43 s warm — i.e. not cached at
+    all, because only ``red``/``green`` BASE verdicts were. B2's fix pushes more
+    stories onto that route (a dep-adding story's base run cannot resolve its own
+    dependency, so it is ``unknown``), and it re-runs on every tick of every open
+    PR — 15-30 s in a fresh clone, more for an app with a DB container.
+
+    ``(head sha, oracle content, command)`` are all immutable, which is the same
+    argument the ``red`` base cache already rests on.
+    """
+    repo, head = _no_base_harness_repo(tmp_path)
+    root = tmp_path / "factory"
+    ref = _store(root)
+
+    from factory.chain import mutation as mutation_mod
+
+    calls = {"n": 0}
+    real = mutation_mod.check_can_fail
+
+    def _counted(**kwargs: object) -> tuple[bool, str]:
+        calls["n"] += 1
+        return real(**kwargs)  # type: ignore[arg-type]
+
+    mutation_mod.check_can_fail = _counted  # type: ignore[assignment]
+    try:
+        first = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+        second = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+    finally:
+        mutation_mod.check_can_fail = real  # type: ignore[assignment]
+
+    assert first.passed, first.reason
+    assert second.passed, second.reason
+    assert first.details["failability_ablation"].get("cached") is not True
+    assert second.details["failability_ablation"]["cached"] is True
+    assert calls["n"] == 1, "the ablation re-ran instead of reading its cached proof"
+    assert second.details["failability_route"] == "ablation"
+
+
+def test_B5b_an_UNPROVEN_ablation_is_never_cached(tmp_path: Path) -> None:
+    """Same rule the base cache follows: only a DEFINITIVE result is cacheable. A
+    ``False`` can be a timeout or an exhausted budget, and freezing that would make
+    a fixable environment fault permanent."""
+    repo, head = _no_base_harness_repo(tmp_path)
+    root = tmp_path / "factory"
+    ref = _store(root, content=_TAUTOLOGY)
+
+    from factory.chain import mutation as mutation_mod
+
+    calls = {"n": 0}
+    real = mutation_mod.check_can_fail
+
+    def _counted(**kwargs: object) -> tuple[bool, str]:
+        calls["n"] += 1
+        return real(**kwargs)  # type: ignore[arg-type]
+
+    mutation_mod.check_can_fail = _counted  # type: ignore[assignment]
+    try:
+        for _ in range(2):
+            r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+            assert not r.passed
+    finally:
+        mutation_mod.check_can_fail = real  # type: ignore[assignment]
+
+    assert calls["n"] == 2
+
+
+def test_B5c_the_ablation_cache_is_keyed_on_the_ORACLE_not_just_the_commit(
+    tmp_path: Path,
+) -> None:
+    """Re-authoring the oracle must invalidate the proof: the old proof was about a
+    different file. A cache keyed on the commit alone would credit a tautology with
+    the previous oracle's ablation."""
+    repo, head = _no_base_harness_repo(tmp_path)
+    root = tmp_path / "factory"
+    good = _store(root)
+    first = acceptance_verified.evaluate(_pr(root, repo, _story(ref=good), head), _cfg())
+    assert first.passed
+
+    tautology = _store(root, content=_TAUTOLOGY)
+    second = acceptance_verified.evaluate(
+        _pr(root, repo, _story(ref=tautology), head), _cfg()
+    )
+    assert not second.passed, "a re-authored oracle inherited the old proof"
+    assert second.details["failability_ablation"].get("cached") is not True
 
 
 # =========================================================================== #

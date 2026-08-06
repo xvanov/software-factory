@@ -92,6 +92,30 @@ executable:
    defined as the exact complement of ``factory.diff_paths.is_production_path``, so
    widening either underlying classifier widens it for free.
 
+   ⚠ ONE DOCUMENTED EXCEPTION TO THAT COMPLEMENT: ``pyproject.toml``
+   (2026-08-05). It is in the set as a pytest collection channel, and it is ALSO
+   the dependency manifest the app's acceptance command resolves its environment
+   from — sacrifice runs ``uv run --extra dev pytest`` with cwd ``backend``, and
+   ``uv`` reads that exact file. Reverting it wholesale meant a story that ADDS a
+   dependency, with a CORRECT implementation, got ``passed=False,
+   authoritative=True`` for a collection error this gate caused itself, then got
+   re-dispatched with an identical failure signature. So the file's two roles are
+   split: **pytest tables from the merge base, every other table from HEAD**
+   (``red_green.rollback_pytest_config_only``, which verifies both halves against
+   ``tomllib`` and fails safe on any mismatch). The cost is real and is the reason
+   this paragraph exists: the rollback set is no longer the clean complement of one
+   predicate, so a reader widening either classifier must remember that this one
+   file has its own handler.
+
+   Backing that up, because a residual case nobody thought of is the likelier
+   failure than the one that was measured: an **errors-only red at HEAD is
+   NON-authoritative whenever anything was rolled back**. A collection/import
+   error after we rewrote the tree cannot be attributed — "the dev's code is wrong"
+   and "we broke the environment" look identical — and a gate must never
+   authoritatively blame the developer for what it may have done itself. It still
+   blocks; it is just waivable and does not re-dispatch. An assertion that RAN and
+   disagreed stays authoritative.
+
    Still CONVENTIONAL, not structural: what gets restored is the app's own
    PREVIOUSLY MERGED test surface, which is dev-authored history — sacrifice's
    ``backend/tests/conftest.py:147`` overrides ``get_db`` with an autouse fixture
@@ -168,11 +192,14 @@ Resolution
       ``unknown``, an ablation of the diff's own production symbols that turned the
       oracle red (``failability_route="ablation"``). ``authoritative=True``,
       ``verified=True``.
-    - **block**: the HEAD run failed or was vacuous. ``authoritative=True``.
+    - **block**: the HEAD run failed a test assertion, or was vacuous.
+      ``authoritative=True``.
     - **skipped-with-reason**: provenance unverified, no judge tree, no merge
       base, a collection channel we could not restore, conflicting summaries, an
-      unreadable runner, an oracle that already passes at base, or a base run we
-      cannot trust. ``passed=False``, ``authoritative=False``, ``verified=False``
+      unreadable runner, an oracle that already passes at base, a base run we
+      cannot trust, or an ERRORS-ONLY red at HEAD after we rolled anything back
+      (``head_errors_after_environment_rollback`` — we perturbed the environment,
+      so the error may be ours). ``passed=False``, ``authoritative=False``, ``verified=False``
       — it blocks (fail-safe), does not blame the dev, is recorded for
       ``factory inbox``, and is the only family an operator waiver can clear
       (``acceptance.read_waiver`` — never a red HEAD run, never tampering,
@@ -218,9 +245,11 @@ from factory.chain.red_green import (
     extra_commits_beyond,
     head_contains_sha,
     head_sha,
+    is_dependency_manifest,
     judge_worktree,
     resolve_base_sha,
     restore_paths_from,
+    rollback_pytest_config_only,
     run_key,
 )
 from factory.diff_paths import is_collection_channel_path, is_production_path
@@ -366,6 +395,17 @@ def _place_oracle(
     dest_dir = _resolve_subdir(tree, gates.acceptance_test_dir, what="acceptance_test_dir")
     run_cwd = _resolve_subdir(tree, gates.acceptance_test_cwd, what="acceptance_test_cwd")
     dest = dest_dir / dest_name
+    if dest.is_symlink():
+        # ORACLE DISCLOSURE, found by the adversarial pass on the B2 fix (2026-08-05).
+        # ``shutil.copyfile`` follows a symlink at the DESTINATION, so a diff that
+        # commits ``<test_dir>/test_acceptance_oracle_<story id>.py`` as an ABSOLUTE
+        # symlink into the dev's own worktree would have this gate write the hidden
+        # oracle there — and the story id is guessable. A tracked file matching the
+        # prefix is deliberately NOT treated as a leak (an app may legitimately commit
+        # ``test_acceptance_oracle_smoke.py``; blocking on it was a permanent wedge),
+        # so nothing upstream refuses this. Unlink first: the dev-blindness guarantee
+        # is the whole point of the gate, and ``tree`` is always a throwaway.
+        dest.unlink()
     shutil.copyfile(stored, dest)
     return dest, run_cwd
 
@@ -381,6 +421,48 @@ def _run_oracle_in(
     return _OracleRun(
         exit_code=exit_code, output=output, command=cmd,
         cwd=str(run_cwd), test_file=rel_for_cmd,
+    )
+
+
+@dataclass
+class _Rollback:
+    """What the environment rollback did to one tree.
+
+    ``failed`` non-empty is *cannot verify*: a path we did not neutralise is still
+    under the diff's control, and the caller must block on it non-authoritatively.
+    """
+
+    restored: list[str]
+    removed: list[str]
+    neutralised: list[str]
+    failed: list[str]
+
+
+def _roll_back_environment(
+    tree: Path, base_sha: str, plain: list[str], manifests: list[str]
+) -> _Rollback:
+    """PRODUCTION CODE FROM HEAD, THE WHOLE TEST SURFACE FROM BASE — in one place.
+
+    Called for BOTH judging trees (the judge worktree and the ablation clone), which
+    is the point of the helper: when only the judge tree got a rollback fix, the
+    ablation route silently ran under the diff's own collection config, and the
+    fallback was weaker than the path it stands in for.
+
+    ``manifests`` are the paths that are ALSO the dependency manifest
+    (``pyproject.toml``). They get the surgical treatment — pytest tables from the
+    base, dependencies from HEAD — because reverting them wholesale broke every
+    story that adds a dependency. See ``red_green.rollback_pytest_config_only``.
+    """
+    restored, removed, failed = restore_paths_from(tree, base_sha, plain)
+    neutralised: list[str] = []
+    for rel in manifests:
+        ok, why = rollback_pytest_config_only(tree, base_sha, rel)
+        if ok:
+            neutralised.append(rel)
+        else:
+            failed.append(f"{rel} ({why})")
+    return _Rollback(
+        restored=restored, removed=removed, neutralised=neutralised, failed=failed
     )
 
 
@@ -736,6 +818,17 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
     details["collection_channels_in_diff"] = [
         c for c in rollbacks if is_collection_channel_path(c)
     ]
+    # ...except that ONE member of that set may not be reverted wholesale.
+    # ``pyproject.toml`` is both a pytest collection channel and the DEPENDENCY
+    # MANIFEST the app's acceptance command resolves its environment from, so
+    # reverting it made every dependency-adding story fail collection and get blamed
+    # for it. Its pytest tables come from the base; its dependencies come from HEAD.
+    # This is the one documented exception to "the rollback set is the exact
+    # complement of ``is_production_path``" — see
+    # ``red_green.rollback_pytest_config_only`` for the measurement and the cost.
+    manifests = [c for c in rollbacks if is_dependency_manifest(c)]
+    plain = [c for c in rollbacks if not is_dependency_manifest(c)]
+    details["dependency_manifests_in_diff"] = manifests
 
     # (2) Run at HEAD in a THROWAWAY tree whose collection channels are rolled
     # back to the merge base, so the diff cannot decide its own verdict.
@@ -750,15 +843,16 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
                 ),
                 waiver_sha=oracle_sha,
             )
-        restored, removed, failed = restore_paths_from(judge, base_sha, rollbacks)
-        details["channels_restored"] = restored
-        details["channels_removed"] = removed
-        if failed:
+        rolled = _roll_back_environment(judge, base_sha, plain, manifests)
+        details["channels_restored"] = rolled.restored
+        details["channels_removed"] = rolled.removed
+        details["pytest_config_neutralised"] = rolled.neutralised
+        if rolled.failed:
             return _unverifiable(
                 pr, details, kind="channel_restore_failed",
                 why=(
-                    f"could not restore collection channel(s) {failed!r} from the merge base; "
-                    "the diff would still control how the oracle is collected"
+                    f"could not restore collection channel(s) {rolled.failed!r} from the merge "
+                    "base; the diff would still control how the oracle is collected"
                 ),
                 waiver_sha=oracle_sha,
             )
@@ -785,6 +879,41 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
         details["head_summary"] = summary.as_dict()
 
     if status == "fail":
+        # THE SAFETY NET (2026-08-05). We just rewrote the tree the oracle runs in —
+        # the whole test surface reverted to the merge base, the manifest's pytest
+        # tables with it. If the result is a COLLECTION/IMPORT error rather than a
+        # test FAILURE, we cannot tell "the dev's code is wrong" from "we broke the
+        # environment": an errors-only red is exactly what the reverted dependency
+        # manifest produced, and an authoritative verdict there re-dispatched a dev
+        # whose code was fine with an identical failure signature until the story
+        # sank. So the block STANDS (fail-safe) but stops being an accusation — it is
+        # waivable and it does not re-dispatch.
+        #
+        # Deliberately conditioned on a NON-EMPTY rollback set: with nothing rolled
+        # back we perturbed nothing, the error is the artifact's own, and the dev is
+        # the right party to tell. And an assertion that RAN and disagreed
+        # (``summary.failed >= 1``) stays authoritative whatever we changed — that is
+        # evidence about the code, not about the environment.
+        #
+        # This is belt-and-braces over the manifest fix above, not a substitute for
+        # it: it bounds the residual cases nobody has thought of yet.
+        errors_only = (
+            summary is not None and summary.failed == 0 and summary.errors >= 1
+        )
+        if errors_only and rollbacks:
+            return _unverifiable(
+                pr, details, kind="head_errors_after_environment_rollback",
+                why=(
+                    f"the oracle run at HEAD is red ENTIRELY from {summary.errors if summary else 0}"
+                    " error(s) and no test failure "
+                    f"(exit_code={head_run.exit_code}), and this gate rolled "
+                    f"{len(rollbacks)} path(s) back to the merge base to get an "
+                    "independent verdict — so we cannot distinguish a wrong "
+                    "implementation from an environment we perturbed ourselves. "
+                    "Blocking, but NOT as a finding against the story"
+                ),
+                waiver_sha=oracle_sha,
+            )
         return GateResult(
             label=_LABEL,
             passed=False,
@@ -866,7 +995,8 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
         proven, abl_reason, abl_details = _ablation_can_fail(
             gates, stored, dest_name,
             repo_root=repo_root, head_ref=local_head,
-            base_sha=base_sha, rollbacks=rollbacks,
+            base_sha=base_sha, plain=plain, manifests=manifests,
+            cache_path=_cache_path(pr, "ablation_proofs.json"), oracle_sha=oracle_sha,
         )
         details["failability_ablation"] = abl_details
         if not proven:
@@ -895,6 +1025,15 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
     )
 
 
+def _cache_path(pr: PRContext, name: str) -> Path | None:
+    """Where a per-story cache file lives, or ``None`` when there is no story dir."""
+    root = pr.software_factory_root
+    story = pr.story
+    if root is None or story is None:
+        return None
+    return acceptance_dir(Path(root), story.app, story.id) / name
+
+
 def _ablation_can_fail(
     gates: AppGatesConfig,
     stored: Path,
@@ -903,7 +1042,10 @@ def _ablation_can_fail(
     repo_root: Path,
     head_ref: str,
     base_sha: str,
-    rollbacks: list[str],
+    plain: list[str],
+    manifests: list[str],
+    cache_path: Path | None = None,
+    oracle_sha: str = "",
 ) -> tuple[bool, str, dict[str, object]]:
     """SECOND route to failability: gut the story's own code, require the oracle to notice.
 
@@ -926,12 +1068,50 @@ def _ablation_can_fail(
     weaker than the path it stands in for, and a dev who could steer the gate into
     ``unknown`` would have found a way in.
 
+    CACHED on ``(head sha, oracle content, command, base sha)`` — B5. Every part is
+    immutable, which is the same argument the ``red`` base-verdict cache already
+    rests on: the graded commit does not change under a given sha, and the oracle is
+    frozen. Without it the route re-ran on every tick of every open PR (measured
+    1.45 s cold / 1.43 s warm on a toy repo, 15-30 s in a fresh clone and more for an
+    app with a DB container) — and the manifest fix above pushes MORE stories here,
+    because a dependency-adding story's base run cannot resolve the dependency it
+    adds and therefore comes back ``unknown``.
+
+    ``base_sha`` is in the key although the docstring's headline triple does not name
+    it: the rollback set and the ``prepare`` hook are both computed against the base,
+    so a proof is only about the tree that base produced. It costs no hit rate — a
+    checkout whose base moved has a different HEAD too.
+
+    Only a PROOF is cached. A ``False`` can be a timeout or an exhausted budget, and
+    freezing that would turn a fixable environment fault into a permanent block —
+    the same reason an ``unknown`` base verdict is never cached.
+
     Returns ``(proven, reason, details)``. Every non-proof is ``False``.
     """
     from factory.chain import mutation
 
     attempts: list[dict[str, object]] = []
     out: dict[str, object] = {"route": "ablation", "attempts": attempts}
+
+    command = _fmt_command(
+        _command_template(gates), test_file=_oracle_test_file(gates, dest_name)
+    )
+    out["command"] = command
+
+    # ``dir``/``cwd`` join the key for the same reason ``_base_run``'s key carries
+    # them: two configs can produce an identical relative ``{test_file}`` while
+    # running in different directories (dir=``a/tests``,cwd=``a`` and
+    # dir=``b/tests``,cwd=``b`` both yield ``tests/<name>``), and a proof is only
+    # about the harness that produced it.
+    key = run_key(
+        head_ref, oracle_sha, command, base_sha,
+        gates.acceptance_test_dir or "", gates.acceptance_test_cwd or "",
+    )
+    if cache_path is not None:
+        hit = cache_get(cache_path, key)
+        if hit is not None and hit.get("proven") is True:
+            reason = f"{hit.get('reason', '')} [cached]"
+            return True, reason, {**hit, "reason": reason, "cached": True}
 
     selection = mutation.select_symbols(
         repo_root, base_sha, head_ref, max_symbols=_MAX_ABLATION_TARGETS
@@ -952,11 +1132,6 @@ def _ablation_can_fail(
         out["reason"] = why
         return False, why, out
 
-    command = _fmt_command(
-        _command_template(gates), test_file=_oracle_test_file(gates, dest_name)
-    )
-    out["command"] = command
-
     def _prepare(tree: Path) -> str | None:
         # ``mutation._materialize_tree`` falls back to copying the WORKING TREE when
         # it cannot clone, and a copy carries the dev's UNTRACKED files (a stray
@@ -972,11 +1147,11 @@ def _ablation_can_fail(
                 f"{head_ref[:12]} — it is a working-tree copy or a wrong checkout, "
                 "and its collection config is not the merge candidate's"
             )
-        _restored, _removed, failed = restore_paths_from(tree, base_sha, rollbacks)
-        if failed:
+        rolled = _roll_back_environment(tree, base_sha, plain, manifests)
+        if rolled.failed:
             return (
-                f"could not restore collection channel(s) {failed!r} from the merge base — "
-                "the diff would still control how the oracle is collected"
+                f"could not restore collection channel(s) {rolled.failed!r} from the merge "
+                "base — the diff would still control how the oracle is collected"
             )
         try:
             _place_oracle(tree, gates, stored, dest_name)
@@ -1004,6 +1179,19 @@ def _ablation_can_fail(
         if proven:
             out["proven_by"] = sym.key
             out["reason"] = detail
+            if cache_path is not None:
+                cache_put(
+                    cache_path,
+                    key,
+                    {
+                        "proven": True,
+                        "reason": detail[:300],
+                        "proven_by": sym.key,
+                        "route": "ablation",
+                        "head_ref": head_ref[:12],
+                        "base_sha": base_sha[:12],
+                    },
+                )
             return True, detail, out
 
     why = (
@@ -1037,13 +1225,7 @@ def _base_run(
     would freeze a transient infra fault into a block that fixing the environment
     could never clear.
     """
-    root = pr.software_factory_root
-    story = pr.story
-    cache_path = (
-        acceptance_dir(Path(root), story.app, story.id) / "base_runs.json"
-        if root is not None and story is not None
-        else None
-    )
+    cache_path = _cache_path(pr, "base_runs.json")
     key = run_key(
         base_sha, oracle_sha, cmd_template,
         gates.acceptance_test_dir or "", gates.acceptance_test_cwd or "",

@@ -534,6 +534,271 @@ def restore_paths_from(
 
 
 # --------------------------------------------------------------------------- #
+# pyproject.toml — a pytest ini source AND the dependency manifest
+# --------------------------------------------------------------------------- #
+#
+# THE ONE FILE THE ROLLBACK MUST NOT REVERT WHOLESALE (2026-08-05)
+#
+# ``restore_paths_from`` reverts every path in the rollback set — the complement
+# of ``is_production_path`` — to the merge base, and ``pyproject.toml`` is in that
+# set because ``[tool.pytest.ini_options] addopts`` is a real forced-pass channel.
+# But the same file is the DEPENDENCY MANIFEST, and an app's acceptance command
+# resolves its environment from it: sacrifice runs
+# ``uv run --extra dev pytest {test_file} -q`` with cwd ``backend``, and ``uv``
+# reads exactly the file we reverted.
+#
+# MEASURED CONSEQUENCE: a story that adds a dependency, with a CORRECT
+# implementation, produced ``passed=False, authoritative=True,
+# reason="ran independent acceptance oracle exit_code=2"`` — the oracle died at
+# collection on the dependency the story itself declares. ``authoritative`` means
+# the gate blames the dev and re-dispatches with an identical failure signature, at
+# $2+ per cycle, which is the non-convergence loop the gate's own comments warn
+# about. The whole-file rollback INTRODUCED that: before it, the oracle ran in the
+# dev's worktree where HEAD's dependencies were present.
+#
+# THE OPERATOR DECISION: separate the file's two roles. **Dependencies come from
+# HEAD; pytest configuration comes from the merge base.** ``[project]``,
+# ``[project.optional-dependencies]``, ``[tool.uv]``, ``[build-system]`` and every
+# other table stay at HEAD; only ``[tool.pytest.*]`` is rolled back.
+#
+# ⚠ THE COST, STATED PLAINLY: the rollback set is no longer the clean complement
+# of ``is_production_path``. ``pyproject.toml`` is a DOCUMENTED SPECIAL CASE, and
+# that loss of uniformity is the price of the fix — a future reader widening either
+# path classifier gets the rest of the set for free but must remember this file has
+# its own handler.
+#
+# WHY NOT ``pytest -c <factory-owned ini>``, the more uniform-looking option.
+# Measured 2026-08-05 against the real attack from the review: ``-c`` DOES fully
+# neutralise the repo's ``[tool.pytest.ini_options]`` — ``addopts = "-p _fixup"``
+# stops loading the plugin and the forced pass dies — and a conftest under the run
+# cwd still loads. But an EMPTY factory-owned ini also discards
+# ``asyncio_mode = "auto"``, and pytest then reports "async def functions are not
+# natively supported" for every ``async def`` test. sacrifice is a FastAPI app whose
+# shipped ``acceptance_harness_hint`` tells the dev-blind acceptance author that
+# ``asyncio_mode = auto`` is set and ``async def`` tests need no decorator, so that
+# is a false block on the app's normal oracle shape — the exact class of substrate
+# mismatch that made this subsystem false-block 100% of stories the first time it
+# ran. Filling the ``-c`` file from the merge base instead of leaving it empty does
+# work (measured: ``mode=Mode.AUTO`` preserved, rootdir unchanged when the file sits
+# beside the real one), but it buys the same semantics as the splice below for
+# strictly more machinery: an ``env``/command channel threaded through
+# ``evaluator._run_command`` AND ``mutation._run_suite`` so both routes get the
+# flag, a dependence on the APP's pytest being new enough to accept ``-c`` with a
+# ``.toml``, and a silent no-op for any app whose command is not a direct pytest
+# invocation. The splice needs none of that and is verified against ``tomllib``
+# before it is trusted.
+#
+# ⚠ WHAT TAKING DEPENDENCIES FROM HEAD NECESSARILY ADMITS. A dependency is code,
+# and pytest auto-loads any installed distribution advertising a ``pytest11`` entry
+# point. So ``dependencies = ["evil @ file:./tools/evil"]`` at HEAD is a forced-pass
+# channel that no rollback of this file can close, and ``-c`` would not close it
+# either (entry-point autoload does not read the ini). It is the same class as the
+# in-process hole documented in ``gates/acceptance_verified``'s docstring and pinned
+# by ``test_KNOWN_OPEN_production_code_can_patch_pytest_in_process``: dev-controlled
+# code executing in the interpreter that computes the verdict. It is one more reason
+# ``gates.acceptance_oracle`` stays OFF.
+
+DEP_MANIFEST_NAME = "pyproject.toml"
+_PYTEST_TABLE_PREFIX = "tool.pytest"
+
+
+def is_dependency_manifest(path: str) -> bool:
+    """True for a rollback path that is also the dependency manifest.
+
+    Only ``pyproject.toml``. ``setup.cfg`` and ``tox.ini`` can carry dependency
+    metadata too, but no app in this repo resolves an acceptance command's
+    environment from them, and widening this predicate widens the surface that
+    keeps HEAD's content — the permissive direction. Add to it only with a
+    measurement.
+    """
+    return Path(path.strip().replace("\\", "/")).name == DEP_MANIFEST_NAME
+
+
+def _advance_toml_string_state(line: str, state: str | None) -> str | None:
+    """Track whether a TOML multi-line string is open at the END of ``line``.
+
+    A ``[header]`` at column 0 inside ``description = \"\"\"…\"\"\"`` is legal TOML
+    content, not a table, so the table scanner has to know where strings are. Not a
+    complete TOML lexer — ``rollback_pytest_config_only`` re-parses its own output
+    with ``tomllib`` and refuses to trust a result this scanner got wrong, so the
+    failure mode is a fail-safe block rather than a bad splice.
+    """
+    i, n = 0, len(line)
+    while i < n:
+        if state is not None:
+            j = line.find(state, i)
+            if j == -1:
+                return state
+            i, state = j + 3, None
+            continue
+        ch = line[i]
+        if ch == "#":
+            return None
+        if line.startswith('"""', i) or line.startswith("'''", i):
+            state = line[i : i + 3]
+            i += 3
+            continue
+        if ch in ('"', "'"):
+            quote, i = ch, i + 1
+            while i < n:
+                if quote == '"' and line[i] == "\\":
+                    i += 2
+                    continue
+                if line[i] == quote:
+                    i += 1
+                    break
+                i += 1
+            continue
+        i += 1
+    return state
+
+
+def _toml_table_spans(text: str) -> list[tuple[str, int, int]]:
+    """``(header, first_line, last_line_exclusive)`` for each top-level TOML table."""
+    lines = text.splitlines(keepends=True)
+    starts: list[tuple[str, int]] = []
+    state: str | None = None
+    for idx, raw in enumerate(lines):
+        if state is None:
+            stripped = raw.lstrip()
+            if stripped.startswith("["):
+                if stripped.startswith("[["):
+                    end = stripped.find("]]")
+                    name = stripped[2:end].strip() if end != -1 else ""
+                else:
+                    end = stripped.find("]")
+                    name = stripped[1:end].strip() if end != -1 else ""
+                if name:
+                    starts.append((name, idx))
+        state = _advance_toml_string_state(raw, state)
+    spans: list[tuple[str, int, int]] = []
+    for pos, (name, start) in enumerate(starts):
+        stop = starts[pos + 1][1] if pos + 1 < len(starts) else len(lines)
+        spans.append((name, start, stop))
+    return spans
+
+
+def _is_pytest_table(header: str) -> bool:
+    h = header.strip().replace('"', "").replace("'", "").replace(" ", "")
+    return h == _PYTEST_TABLE_PREFIX or h.startswith(f"{_PYTEST_TABLE_PREFIX}.")
+
+
+def _split_pytest_tables(text: str) -> tuple[str, str]:
+    """``(text without its [tool.pytest.*] tables, just those tables)``."""
+    lines = text.splitlines(keepends=True)
+    drop: set[int] = set()
+    taken: list[str] = []
+    for header, start, stop in _toml_table_spans(text):
+        if _is_pytest_table(header):
+            drop.update(range(start, stop))
+            taken.append("".join(lines[start:stop]))
+    kept = "".join(line for idx, line in enumerate(lines) if idx not in drop)
+    return kept, "".join(taken)
+
+
+def _pytest_config(doc: dict[str, object]) -> object:
+    tool = doc.get("tool")
+    return tool.get("pytest") if isinstance(tool, dict) else None
+
+
+def _without_pytest_config(doc: dict[str, object]) -> dict[str, object]:
+    """``doc`` minus ``tool.pytest``, with an emptied ``tool`` table dropped.
+
+    Dropping the emptied table matters: a manifest whose only ``[tool.*]`` entry is
+    ``[tool.pytest.ini_options]`` parses to no ``tool`` key at all once the tables
+    are removed, and comparing that against ``{"tool": {}}`` would fail the
+    verification below on a perfectly good splice.
+    """
+    out = {k: v for k, v in doc.items() if k != "tool"}
+    tool = doc.get("tool")
+    if isinstance(tool, dict):
+        rest = {k: v for k, v in tool.items() if k != "pytest"}
+        if rest:
+            out["tool"] = rest
+    return out
+
+
+def rollback_pytest_config_only(tree: Path, sha: str, rel: str) -> tuple[bool, str]:
+    """Roll back ONLY ``[tool.pytest.*]`` inside ``rel``; keep the rest at HEAD.
+
+    ``(True, what-happened)`` / ``(False, why-not)``. A ``False`` is *cannot
+    verify* — the caller must block on it, non-authoritatively, exactly as it does
+    for a channel it failed to restore.
+
+    The result is VERIFIED before it is written back: the new document's pytest
+    configuration must equal the base's, and every other table must still equal
+    HEAD's. Both halves matter and they fail in opposite directions — the first
+    catches a neutralisation that did not happen (``[tool]`` with dotted
+    ``pytest.ini_options.addopts`` keys walks past the table scanner), the second
+    catches a splice that ate a dependency. Anything the scanner got wrong shows up
+    as a mismatch and blocks, so a text-level edit is safe to make here.
+    """
+    import tomllib
+
+    target = Path(tree) / rel
+    if target.is_symlink():
+        # REFUSED, not followed. ``read_text`` and ``write_text`` both follow a
+        # symlink: reading one would take the judge run's dependency set from a file
+        # that is not part of the merge candidate (the link may point outside the tree
+        # entirely), and writing one would put the spliced manifest there. "Grade the
+        # merge candidate or grade nothing" is this gate's D2 property; a symlinked
+        # manifest is neither, and no real project ships one.
+        return False, (
+            f"{rel} is a SYMLINK in the judge tree — its dependency set is not "
+            "demonstrably part of the merge candidate, and splicing it would write "
+            "through the link"
+        )
+    if not target.exists():
+        # The diff DELETES the manifest. There is no HEAD pytest config left to
+        # neutralise, and restoring the base's would resurrect a file the story
+        # removed on purpose.
+        return True, f"{rel} does not exist at HEAD (deleted by the diff); nothing to do"
+    try:
+        head_text = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not read {rel} in the judge tree ({exc})"
+
+    code, base_text, _err = _git(tree, "show", f"{sha}:{rel}")
+    base_exists = code == 0
+    if not base_exists:
+        base_text = ""
+
+    kept, _head_tables = _split_pytest_tables(head_text)
+    _base_kept, base_tables = _split_pytest_tables(base_text)
+    spliced = kept if kept.endswith("\n") or not kept else kept + "\n"
+    spliced += base_tables
+
+    try:
+        head_doc = tomllib.loads(head_text)
+        base_doc = tomllib.loads(base_text) if base_exists else {}
+        new_doc = tomllib.loads(spliced)
+    except tomllib.TOMLDecodeError as exc:
+        return False, f"{rel} is not parseable TOML, so its two roles cannot be split ({exc})"
+
+    if _pytest_config(new_doc) != _pytest_config(base_doc):
+        return False, (
+            f"{rel}: the pytest configuration after the splice is not the merge base's "
+            "(config expressed as dotted keys in another table?), so the diff would "
+            "still decide how the oracle is collected"
+        )
+    if _without_pytest_config(new_doc) != _without_pytest_config(head_doc):
+        return False, (
+            f"{rel}: splicing the base's pytest tables in changed something else in the "
+            "manifest, so the dependency set is no longer HEAD's"
+        )
+
+    try:
+        target.write_text(spliced, encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not write the split {rel} ({exc})"
+    return True, (
+        f"{rel}: [tool.pytest.*] from {sha[:12]}, every other table from HEAD"
+        if base_tables
+        else f"{rel}: [tool.pytest.*] removed (absent at {sha[:12]}), every other table from HEAD"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # a tiny keyed cache (a base run is pure in (base sha, test source, command))
 # --------------------------------------------------------------------------- #
 
@@ -583,6 +848,7 @@ def cache_put(path: Path, key: str, value: dict[str, object], *, keep: int = 10)
 
 
 __all__ = [
+    "DEP_MANIFEST_NAME",
     "TIMEOUT_EXIT_CODE",
     "BaseVerdict",
     "PytestSummary",
@@ -595,9 +861,11 @@ __all__ = [
     "extra_commits_beyond",
     "head_contains_sha",
     "head_sha",
+    "is_dependency_manifest",
     "judge_worktree",
     "parse_pytest_summary",
     "resolve_base_sha",
     "restore_paths_from",
+    "rollback_pytest_config_only",
     "run_key",
 ]
