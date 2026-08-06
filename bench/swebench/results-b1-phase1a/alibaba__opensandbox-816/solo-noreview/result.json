@@ -1,0 +1,185 @@
+{
+  "arm": "solo-noreview",
+  "instance_id": "alibaba__opensandbox-816",
+  "repo": "alibaba/OpenSandbox",
+  "base_commit": "fb78091f947f62ae2c71a372af42425a764aacee",
+  "problem_statement_sha256": "2d0a06e6d3d0277d9bff355f199f869a0558e8daf526044b57417b59abf658cf",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/deepseek-v4-pro",
+    "azure/gpt-5.4"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0048
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 2,
+      "cost_usd": 1.0477
+    }
+  ],
+  "model_escalated_calls": 1,
+  "ts": "2026-08-05T23:28:16.183023+00:00",
+  "wall_clock_s": 1380.5,
+  "final_state": "tests_green",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "steps_used": 2,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 1373729,
+  "tokens_out": 8682,
+  "cached_input_tokens": 924160,
+  "cost_usd": 1.0525,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.8,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "server/tests/test_docker_service.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> dev_retry",
+    "dev: dev_retry -> tests_green"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "tests_green",
+  "chain_personas": [
+    "dev"
+  ],
+  "files_changed": [
+    "server/opensandbox_server/services/validators.py"
+  ],
+  "test_files_stripped": [
+    "components/egress/tests/bench-dns-nft.sh",
+    "components/egress/tests/bench-mitm-overhead.sh",
+    "components/egress/tests/egress-in-webhook.sh",
+    "components/egress/tests/smoke-dns-upstream-probe.sh",
+    "components/egress/tests/smoke-dns.sh",
+    "components/egress/tests/smoke-dynamic-ip.sh",
+    "components/egress/tests/smoke-nft.sh",
+    "components/execd/tests/jupyter.sh",
+    "components/execd/tests/sigterm_forward.sh",
+    "components/execd/tests/smoke.sh",
+    "server/tests/smoke.sh",
+    "server/tests/test_validators.py",
+    "tests/java/gradlew"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 3734,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 316,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "server/tests/test_validators.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 1,
+    "refused_samples": [
+      "{\"id\":\"95a93ca9-5766-49b4-b5a3-dd32915669a2\",\"timestamp\":\"2026-08-05T19:10:35.823571\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_dab6ae6904ff42c8b1e9f4b2\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 3
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-alibaba__opensandbox-816-1rdk3g4t/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-alibaba__opensandbox-816-1rdk3g4t/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-alibaba__opensandbox-816-1rdk3g4t",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/alibaba__opensandbox-816__solo-noreview/root/state/acceptance",
+    "sha256": "bd1504f80c5765bd625dace949c934c6b80d15eb329ebb347f95b15b68bbb6ce",
+    "bytes": 806,
+    "authored_at": "2026-08-05T23:05:30.238407+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "188d71ded23b294141daf9fce8bb9af81775dedd87d788c4615a9a1f35f2f2f0",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 1560,
+    "spec_prompt_path": "/home/k/software-factory/.claude/worktrees/agent-a3ef20d90b0fe06cc/bench/swebench/runs/alibaba__opensandbox-816/solo-noreview/spec_prompt.md",
+    "events_path": "/home/k/software-factory/.claude/worktrees/agent-a3ef20d90b0fe06cc/bench/swebench/runs/alibaba__opensandbox-816/solo-noreview/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 2,
+      "acceptance_author_ended_at": "2026-08-05T23:05:35.003213+00:00",
+      "dev_first_started_at": "2026-08-05T23:05:35.702330+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-05T23:05:35.003213+00:00, dev's first call started 2026-08-05T23:05:35.702330+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-alibaba__opensandbox-816-1rdk3g4t",
+        "state/acceptance"
+      ],
+      "files_scanned": 3,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-alibaba__opensandbox-816-1rdk3g4t": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "solo-noreview",
+    "instance_id": "alibaba__opensandbox-816",
+    "image": "swerebench/sweb.eval.x86_64.alibaba_1776_opensandbox-816@sha256:eb2223e2f7957ad3f8bf3a69946fed4ca7b9abc309ec9c14f388786785d02ea0",
+    "graded_at": "2026-08-05T23:28:16.902853+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 108,
+    "pass_to_pass_declared_count": 108,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_volume_symlink_bypass_rejected: node(s) FAILED/ERROR: ['server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_volume_symlink_bypass_rejected']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "server/opensandbox_server/services/docker.py"
+    ],
+    "touched_files": [
+      "server/opensandbox_server/services/validators.py"
+    ],
+    "gold_files_overlap": [],
+    "oracle_resolved": false,
+    "outcome": "wrong_place",
+    "exit_code": 0,
+    "grade_wall_s": 19.2,
+    "log_tail": "_config_contains_required_lines\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_ossfs_volume_binds_passed_to_docker\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_prepare_ossfs_mounts_reuses_mount_key\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_prepare_ossfs_mounts_rolls_back_on_partial_failure\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_delete_sandbox_releases_ossfs_mount\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_release_ossfs_mount_untracked_key_does_not_unmount\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_restore_existing_sandboxes_rebuilds_ossfs_refs\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_delete_one_sandbox_after_restart_keeps_shared_mount\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_restore_manual_cleanup_sandbox_rebuilds_ossfs_refs\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_volume_inspect_failure_returns_500\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_volume_binds_passed_to_docker\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_volume_readonly_binds_passed_to_docker\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_subpath_non_local_driver_rejected\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_subpath_symlink_escape_rejected\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_subpath_binds_resolved_to_mountpoint\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_path_not_found_rejected\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_path_not_in_allowlist_rejected\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_no_volumes_passes_validation\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_volume_binds_passed_to_docker\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_file_bind_passes_validation\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_volume_with_subpath_resolved_correctly\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_subpath_auto_created\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_empty_allowlist_rejects_host_path\nPASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_no_volumes_omits_binds_from_host_config\nPASSED server/tests/test_docker_service.py::test_docker_get_endpoint_rejects_expires\n108 passed, 21 warnings in 0.24s\nSWEBENCH_TALLY_7c337155fbcc32f3: pass_to_pass 108 passed, 21 warnings in 0.24s\n[110 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_7c337155fbcc32f3: UNRESOLVED\n"
+  }
+}

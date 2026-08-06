@@ -1,0 +1,62 @@
+{
+  "instance_id": "tox-dev__tox-3931",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-05T23:26:42.627703+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-05T23:05:30.261284+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 1825,
+      "tokens_out": 720,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.015362500000000001,
+      "duration_s": 6.439,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-05T23:23:45.547284+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2673774,
+      "tokens_out": 23320,
+      "cached_input_tokens": 1889024,
+      "cost_usd": 1.9080159640000005,
+      "duration_s": 1094.793,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-05T23:26:35.540427+00:00",
+      "persona": "dev",
+      "model": "azure/gpt-5.3-codex",
+      "story_id": 1,
+      "tokens_in": 877250,
+      "tokens_out": 9602,
+      "cached_input_tokens": 840960,
+      "cost_usd": 0.34510349999999995,
+      "duration_s": 169.576,
+      "success": 0,
+      "error": "tests not green after run"
+    }
+  ],
+  "ledger_cost_usd": 2.2685,
+  "ledger_tokens_in": 3552849,
+  "ledger_tokens_out": 33642,
+  "result_cost_usd": 2.2685,
+  "prediction_sha256": "d8876e81d7218d78a83c5f5efce9fd56acb4f891c6b388c20a97211821246215",
+  "base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+  "stripped_test_paths": [
+    "tests/session/cmd/test_schema.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

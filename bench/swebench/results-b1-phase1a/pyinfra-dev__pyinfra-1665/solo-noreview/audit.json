@@ -1,0 +1,64 @@
+{
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-05T23:19:15.229585+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 2 call(s) but only 1 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-05T23:05:32.001371+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 2958,
+      "tokens_out": 768,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.018915,
+      "duration_s": 8.108,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-05T23:12:41.688906+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 429.136,
+      "success": 0,
+      "error": "sandbox run raised: ConversationRunError('Conversation run failed for id=9ef0cfdd-95bb-49f8-8acc-21f48327bff4: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\\n\\nConversation logs are stored at: /tmp/factory-oh-traj-[REDACTED]\\n\\nTo help debug this issue, please file a bug report at:\\n  https://github.com/OpenHands/software-agent-sdk/issues/new\\nand attach the conversation logs from the directory above.')"
+    },
+    {
+      "ts": "2026-08-05T23:19:08.104234+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1085625,
+      "tokens_out": 9623,
+      "cached_input_tokens": 833536,
+      "cost_usd": 0.6575871559999998,
+      "duration_s": 386.026,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.6765,
+  "ledger_tokens_in": 1088583,
+  "ledger_tokens_out": 10391,
+  "result_cost_usd": 0.6765,
+  "prediction_sha256": "422e516918d6c03bd27e34501df0d22cc7dcf70e9e4f45507b3e32246507a351",
+  "base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+  "stripped_test_paths": [
+    "tests/test_connectors/test_util.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

@@ -1,0 +1,92 @@
+{
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-06T00:08:32.997432+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 4 call(s) but only 1 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-05T23:26:53.503345+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 5809,
+      "tokens_out": 447,
+      "cached_input_tokens": 1280,
+      "cost_usd": 0.0183475,
+      "duration_s": 4.217,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-05T23:33:32.790112+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 398.698,
+      "success": 0,
+      "error": "sandbox run raised: ConversationRunError('Conversation run failed for id=25e85385-e34a-44d0-ad38-610ab190d6d4: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\\n\\nConversation logs are stored at: /tmp/factory-oh-traj-[REDACTED]\\n\\nTo help debug this issue, please file a bug report at:\\n  https://github.com/OpenHands/software-agent-sdk/issues/new\\nand attach the conversation logs from the directory above.')"
+    },
+    {
+      "ts": "2026-08-05T23:41:33.872063+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 480.504,
+      "success": 0,
+      "error": "sandbox run raised: ConversationRunError('Conversation run failed for id=77d75dca-c45f-48ff-b729-d280a6197ec8: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\\n\\nConversation logs are stored at: /tmp/factory-oh-traj-[REDACTED]\\n\\nTo help debug this issue, please file a bug report at:\\n  https://github.com/OpenHands/software-agent-sdk/issues/new\\nand attach the conversation logs from the directory above.')"
+    },
+    {
+      "ts": "2026-08-05T23:56:28.020495+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 893.8,
+      "success": 0,
+      "error": "sandbox run raised: ConversationRunError('Conversation run failed for id=49595ca1-f3a9-4c1f-a955-a814c44d3629: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\\n\\nConversation logs are stored at: /tmp/factory-oh-traj-rxqkmy_[REDACTED]\\n\\nTo help debug this issue, please file a bug report at:\\n  https://github.com/OpenHands/software-agent-sdk/issues/new\\nand attach the conversation logs from the directory above.')"
+    },
+    {
+      "ts": "2026-08-06T00:08:25.429380+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1621467,
+      "tokens_out": 9609,
+      "cached_input_tokens": 939520,
+      "cost_usd": 1.5042229,
+      "duration_s": 717.019,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.5226,
+  "ledger_tokens_in": 1627276,
+  "ledger_tokens_out": 10056,
+  "result_cost_usd": 1.5226,
+  "prediction_sha256": "b03b327857166acfdb8c04f0631ec8cc84d0baeec8675a0e10a4efb9e61005ce",
+  "base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+  "stripped_test_paths": [
+    "tests/integrations/test_aider.sh",
+    "tests/test_reasoning_parsers.py",
+    "tests/test_smoke_matrix.sh"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 4,
+  "trails_scanned": 4,
+  "oracle_probe_failures": []
+}

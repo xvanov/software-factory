@@ -1,0 +1,14 @@
+=== fail_to_pass ===
+=========================== short test summary info ============================
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_client_secret
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_client_secret
+FAILED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_jwt_assertion
+FAILED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_jwt_assertion
+2 failed, 2 passed in 0.20s
+=== pass_to_pass ===
+=========================== short test summary info ============================
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_client_secret
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_client_secret
+FAILED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_jwt_assertion
+FAILED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_jwt_assertion
+2 failed, 2 passed in 0.19s

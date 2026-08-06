@@ -1,0 +1,16 @@
+=== fail_to_pass ===
+=========================== short test summary info ============================
+PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input
+PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain
+============================== 2 passed in 0.04s ===============================
+=== pass_to_pass ===
+=========================== short test summary info ============================
+PASSED keras/src/ops/function_test.py::FunctionTest::test_define_and_call
+PASSED keras/src/ops/function_test.py::FunctionTest::test_dict_io
+PASSED keras/src/ops/function_test.py::FunctionTest::test_dynamic_shape_inference
+PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_inputs
+PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_outputs
+PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs
+PASSED keras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error
+PASSED keras/src/ops/function_test.py::FunctionTest::test_serialization
+============================== 8 passed in 0.10s ===============================

@@ -1,0 +1,78 @@
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..eb1e421 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -4,6 +4,7 @@
+ #
+ # This software is licensed as described in the file COPYING, which
+ # you should have received as part of this distribution.
++import collections
+ import decimal
+ import inspect
+ import itertools
+@@ -708,6 +709,33 @@ class Pickler:
+                 data = str(obj)  # type: ignore[assignment]
+             return data
+ 
++        if type(obj) is collections.defaultdict and util._is_type(
++            obj.default_factory
++        ):
++            # Use __reduce__ for defaultdict with a type factory to avoid
++            # key collision with the 'default_factory' attribute name.
++            # For non-type factories (lambdas etc.), fall through to
++            # _flatten_dict_obj which handles them via inspect.
++            # We only do this for defaultdict itself, not subclasses, because
++            # subclasses may have custom __init__ signatures incompatible
++            # with calling Subclass(factory) as __reduce__/__new__ would do.
++            data.pop(tags.OBJECT, None)
++            reduce_val = obj.__reduce__()
++            rv_as_list = list(reduce_val)
++            insufficiency = 5 - len(rv_as_list)
++            if insufficiency:
++                rv_as_list += [None] * insufficiency
++            if rv_as_list[3]:
++                rv_as_list[3] = tuple(rv_as_list[3])
++            if rv_as_list[4]:
++                rv_as_list[4] = tuple(rv_as_list[4])
++            reduce_args = list(map(self._flatten, rv_as_list))
++            last_index = len(reduce_args) - 1
++            while last_index >= 2 and reduce_args[last_index] is None:
++                last_index -= 1
++            data[tags.REDUCE] = reduce_args[: last_index + 1]
++            return data
++
+         if util._is_dictionary_subclass(obj):
+             self._flatten_dict_obj(obj, data, exclude=exclude)
+             return data
+@@ -856,7 +884,12 @@ class Pickler:
+                     # Break the cycle by emitting a reference.
+                     # in this case it's Dict[str, int]
+                     value: Dict[str, int] = self._getref(factory)  # type: ignore[no-redef]
+-            data["default_factory"] = value
++            if "default_factory" in data:
++                # A dict key named 'default_factory' exists. Store the factory
++                # under a reserved key to avoid overwriting it.
++                data["py/dflt_factory"] = value
++            else:
++                data["default_factory"] = value
+ 
+         # Sub-classes of dict
+         if hasattr(obj, "__dict__") and self.unpicklable and obj != obj.__dict__:
+diff --git a/jsonpickle/unpickler.py b/jsonpickle/unpickler.py
+index 7a6f2ba..7b8115e 100644
+--- a/jsonpickle/unpickler.py
++++ b/jsonpickle/unpickler.py
+@@ -615,7 +615,12 @@ class Unpickler:
+         try:
+             default_factory = obj["default_factory"]
+         except KeyError:
+-            return None
++            try:
++                default_factory = obj["py/dflt_factory"]
++            except KeyError:
++                return None
++            del obj["py/dflt_factory"]
++            return self._restore(default_factory)
+         del obj["default_factory"]
+         return self._restore(default_factory)
+ 

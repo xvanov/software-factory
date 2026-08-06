@@ -1,0 +1,50 @@
+{
+  "instance_id": "zauberzeug__nicegui-5858",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-06T00:13:57.103978+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-06T00:05:26.772324+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 2175,
+      "tokens_out": 709,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0160725,
+      "duration_s": 8.992,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-06T00:13:05.635978+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 677981,
+      "tokens_out": 9042,
+      "cached_input_tokens": 467456,
+      "cost_usd": 0.516204526,
+      "duration_s": 458.102,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.5323,
+  "ledger_tokens_in": 680156,
+  "ledger_tokens_out": 9751,
+  "result_cost_usd": 0.5323,
+  "prediction_sha256": "c819caf7fb588286c4bb9c29481c9fe6c5adac975fc0679f32239e6e41095fad",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "stripped_test_paths": [
+    "test_startup.sh",
+    "tests/test_xterm.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

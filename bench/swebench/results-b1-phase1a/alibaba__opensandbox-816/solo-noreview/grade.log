@@ -1,0 +1,92 @@
+Checking patch server/tests/test_docker_service.py...
+Applied patch server/tests/test_docker_service.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_7c337155fbcc32f3: OK (red as expected)
+Checking patch server/opensandbox_server/services/validators.py...
+Applied patch server/opensandbox_server/services/validators.py cleanly.
+SWEBENCH_APPLY_7c337155fbcc32f3: OK
+server/opensandbox_server/api/schema.py:526
+  /testbed/server/opensandbox_server/api/schema.py:526: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class PaginationRequest(BaseModel):
+
+server/opensandbox_server/api/schema.py:554
+  /testbed/server/opensandbox_server/api/schema.py:554: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class PaginationInfo(BaseModel):
+
+server/opensandbox_server/api/schema.py:580
+  /testbed/server/opensandbox_server/api/schema.py:580: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class RenewSandboxExpirationRequest(BaseModel):
+
+server/opensandbox_server/api/schema.py:594
+  /testbed/server/opensandbox_server/api/schema.py:594: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class RenewSandboxExpirationResponse(BaseModel):
+
+server/opensandbox_server/api/schema.py:612
+  /testbed/server/opensandbox_server/api/schema.py:612: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class Endpoint(BaseModel):
+
+server/opensandbox_server/api/schema.py:652
+  /testbed/server/opensandbox_server/api/schema.py:652: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class PoolCapacitySpec(BaseModel):
+
+server/opensandbox_server/api/schema.py:685
+  /testbed/server/opensandbox_server/api/schema.py:685: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class CreatePoolRequest(BaseModel):
+
+server/opensandbox_server/api/schema.py:715
+  /testbed/server/opensandbox_server/api/schema.py:715: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UpdatePoolRequest(BaseModel):
+
+server/opensandbox_server/api/schema.py:742
+  /testbed/server/opensandbox_server/api/schema.py:742: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class PoolResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_volume_symlink_bypass_rejected
+1 failed, 21 warnings in 0.11s
+SWEBENCH_TALLY_7c337155fbcc32f3: fail_to_pass 1 failed, 21 warnings in 0.11s
+[3 node outcomes for fail_to_pass -> grade-nodes.log]
+PASSED server/tests/test_docker_service.py::TestBuildVolumeBinds::test_multiple_host_volumes
+PASSED server/tests/test_docker_service.py::TestBuildVolumeBinds::test_single_pvc_volume_rw
+PASSED server/tests/test_docker_service.py::TestBuildVolumeBinds::test_single_pvc_volume_ro
+PASSED server/tests/test_docker_service.py::TestBuildVolumeBinds::test_pvc_volume_with_subpath
+PASSED server/tests/test_docker_service.py::TestBuildVolumeBinds::test_pvc_volume_with_subpath_readonly
+PASSED server/tests/test_docker_service.py::TestBuildVolumeBinds::test_mixed_host_and_pvc_volumes
+PASSED server/tests/test_docker_service.py::TestBuildVolumeBinds::test_ossfs_volume_with_subpath
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_volume_not_found_rejected
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_volume_auto_created_when_not_found
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_ossfs_inline_credentials_missing_rejected
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_ossfs_mount_failure_rejected
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_ossfs_windows_host_not_supported
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_ossfs_v1_mount_command_uses_o_options
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_ossfs_v2_mount_command_uses_config_file
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_ossfs_v2_config_contains_required_lines
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_ossfs_volume_binds_passed_to_docker
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_prepare_ossfs_mounts_reuses_mount_key
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_prepare_ossfs_mounts_rolls_back_on_partial_failure
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_delete_sandbox_releases_ossfs_mount
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_release_ossfs_mount_untracked_key_does_not_unmount
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_restore_existing_sandboxes_rebuilds_ossfs_refs
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_delete_one_sandbox_after_restart_keeps_shared_mount
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_restore_manual_cleanup_sandbox_rebuilds_ossfs_refs
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_volume_inspect_failure_returns_500
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_volume_binds_passed_to_docker
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_volume_readonly_binds_passed_to_docker
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_subpath_non_local_driver_rejected
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_subpath_symlink_escape_rejected
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_pvc_subpath_binds_resolved_to_mountpoint
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_path_not_found_rejected
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_path_not_in_allowlist_rejected
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_no_volumes_passes_validation
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_volume_binds_passed_to_docker
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_file_bind_passes_validation
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_volume_with_subpath_resolved_correctly
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_subpath_auto_created
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_empty_allowlist_rejects_host_path
+PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_no_volumes_omits_binds_from_host_config
+PASSED server/tests/test_docker_service.py::test_docker_get_endpoint_rejects_expires
+108 passed, 21 warnings in 0.24s
+SWEBENCH_TALLY_7c337155fbcc32f3: pass_to_pass 108 passed, 21 warnings in 0.24s
+[110 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_7c337155fbcc32f3: UNRESOLVED

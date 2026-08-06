@@ -1,0 +1,76 @@
+{
+  "instance_id": "alibaba__opensandbox-816",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-05T23:28:36.337962+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 2 call(s) but only 1 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-05T23:05:35.003213+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 1787,
+      "tokens_out": 214,
+      "cached_input_tokens": 1280,
+      "cost_usd": 0.0047975000000000005,
+      "duration_s": 3.114,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-05T23:17:13.564846+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.0,
+      "duration_s": 697.863,
+      "success": 0,
+      "error": "sandbox run raised: ConversationRunError('Conversation run failed for id=a3c11650-171b-45f7-b9b7-9f78497658a0: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\\n\\nConversation logs are stored at: /tmp/factory-oh-traj-[REDACTED]\\n\\nTo help debug this issue, please file a bug report at:\\n  https://github.com/OpenHands/software-agent-sdk/issues/new\\nand attach the conversation logs from the directory above.')"
+    },
+    {
+      "ts": "2026-08-05T23:28:15.737552+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1371942,
+      "tokens_out": 8468,
+      "cached_input_tokens": 922880,
+      "cost_usd": 1.0477057799999998,
+      "duration_s": 661.801,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.0525,
+  "ledger_tokens_in": 1373729,
+  "ledger_tokens_out": 8682,
+  "result_cost_usd": 1.0525,
+  "prediction_sha256": "f411596239a10b23ce9f6bafd7d7e1d2fb26b1c27a4dae57e02d7795eacb959d",
+  "base_commit": "fb78091f947f62ae2c71a372af42425a764aacee",
+  "stripped_test_paths": [
+    "components/egress/tests/bench-dns-nft.sh",
+    "components/egress/tests/bench-mitm-overhead.sh",
+    "components/egress/tests/egress-in-webhook.sh",
+    "components/egress/tests/smoke-dns-upstream-probe.sh",
+    "components/egress/tests/smoke-dns.sh",
+    "components/egress/tests/smoke-dynamic-ip.sh",
+    "components/egress/tests/smoke-nft.sh",
+    "components/execd/tests/jupyter.sh",
+    "components/execd/tests/sigterm_forward.sh",
+    "components/execd/tests/smoke.sh",
+    "server/tests/smoke.sh",
+    "server/tests/test_validators.py",
+    "tests/java/gradlew"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

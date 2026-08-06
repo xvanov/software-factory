@@ -1,0 +1,23 @@
+=== fail_to_pass ===
+=========================== short test summary info ============================
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_symbolic_shape_with_return_attention_scores
+============================== 1 passed in 0.06s ===============================
+=== pass_to_pass ===
+=========================== short test summary info ============================
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_basics
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_proj_gqa
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_proj_mha
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_value_proj_mqa
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_proj_gqa
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_proj_mha
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_value_proj_mqa
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_correctness_disable_flash_attention
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_correctness_enable_flash_attention
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_initializer
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_masking_causal
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_masking_not_causal
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_query_mask_propagation
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_key_value_dim_mismatch
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_query_value_dim_mismatch
+PASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_symbolic_shape_without_return_attention_scores
+============================== 16 passed in 0.98s ==============================

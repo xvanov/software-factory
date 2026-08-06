@@ -1,0 +1,23 @@
+Checking patch tests/session/cmd/test_schema.py...
+Applied patch tests/session/cmd/test_schema.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_71175ef12f9d853c: OK (red as expected)
+Checking patch src/tox/session/cmd/schema.py...
+Checking patch src/tox/tox.schema.json...
+Applied patch src/tox/session/cmd/schema.py cleanly.
+Applied patch src/tox/tox.schema.json cleanly.
+SWEBENCH_APPLY_71175ef12f9d853c: OK
+.                                                                        [100%]
+=========================== short test summary info ============================
+PASSED tests/session/cmd/test_schema.py::test_schema_allows_deps_array
+1 passed in 0.02s
+SWEBENCH_TALLY_71175ef12f9d853c: fail_to_pass 1 passed in 0.02s
+[3 node outcomes for fail_to_pass -> grade-nodes.log]
+..                                                                       [100%]
+=========================== short test summary info ============================
+PASSED tests/session/cmd/test_schema.py::test_show_schema_empty_dir
+PASSED tests/session/cmd/test_schema.py::test_schema_freshness
+2 passed in 0.06s
+SWEBENCH_TALLY_71175ef12f9d853c: pass_to_pass 2 passed in 0.06s
+[4 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_71175ef12f9d853c: RESOLVED

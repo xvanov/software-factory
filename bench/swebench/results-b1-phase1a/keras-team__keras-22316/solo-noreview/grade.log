@@ -1,0 +1,54 @@
+Checking patch keras/src/ops/function_test.py...
+Applied patch keras/src/ops/function_test.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_becb6590ab92fe84: OK (red as expected)
+Checking patch keras/src/ops/function.py...
+Applied patch keras/src/ops/function.py cleanly.
+SWEBENCH_APPLY_becb6590ab92fe84: OK
+============================= test session starts ==============================
+platform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- /opt/conda/envs/testbed/bin/python
+cachedir: .pytest_cache
+rootdir: /testbed
+configfile: pyproject.toml
+plugins: jaxtyping-0.3.9, cov-7.1.0
+collecting ... collected 2 items
+
+keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input PASSED [ 50%]
+keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain PASSED [100%]
+
+=========================== short test summary info ============================
+PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input
+PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain
+============================== 2 passed in 0.04s ===============================
+SWEBENCH_TALLY_becb6590ab92fe84: fail_to_pass ============================== 2 passed in 0.04s ===============================
+[4 node outcomes for fail_to_pass -> grade-nodes.log]
+============================= test session starts ==============================
+platform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- /opt/conda/envs/testbed/bin/python
+cachedir: .pytest_cache
+rootdir: /testbed
+configfile: pyproject.toml
+plugins: jaxtyping-0.3.9, cov-7.1.0
+collecting ... collected 8 items
+
+keras/src/ops/function_test.py::FunctionTest::test_define_and_call PASSED [ 12%]
+keras/src/ops/function_test.py::FunctionTest::test_dict_io PASSED        [ 25%]
+keras/src/ops/function_test.py::FunctionTest::test_dynamic_shape_inference PASSED [ 37%]
+keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_inputs PASSED [ 50%]
+keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_outputs PASSED [ 62%]
+keras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs PASSED [ 75%]
+keras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error PASSED [ 87%]
+keras/src/ops/function_test.py::FunctionTest::test_serialization PASSED  [100%]
+
+=========================== short test summary info ============================
+PASSED keras/src/ops/function_test.py::FunctionTest::test_define_and_call
+PASSED keras/src/ops/function_test.py::FunctionTest::test_dict_io
+PASSED keras/src/ops/function_test.py::FunctionTest::test_dynamic_shape_inference
+PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_inputs
+PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_outputs
+PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs
+PASSED keras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error
+PASSED keras/src/ops/function_test.py::FunctionTest::test_serialization
+============================== 8 passed in 0.10s ===============================
+SWEBENCH_TALLY_becb6590ab92fe84: pass_to_pass ============================== 8 passed in 0.10s ===============================
+[10 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_becb6590ab92fe84: RESOLVED

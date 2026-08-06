@@ -1,0 +1,164 @@
+{
+  "arm": "solo-noreview",
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "repo": "jsonpickle/jsonpickle",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "problem_statement_sha256": "e7d6a3edc32ba6f4ef4ebc10a28b9b9118eda5058b8cc3450bb5e4940970d124",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/deepseek-v4-pro",
+    "azure/gpt-5.4"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0123
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 2.7452
+    }
+  ],
+  "model_escalated_calls": 1,
+  "ts": "2026-08-05T23:56:56.562536+00:00",
+  "wall_clock_s": 1347.6,
+  "final_state": "tests_green",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "steps_used": 1,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 4026186,
+  "tokens_out": 41260,
+  "cached_input_tokens": 2927104,
+  "cost_usd": 2.7575,
+  "persona_calls": 2,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.5,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/object_test.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "tests_green",
+  "chain_personas": [
+    "dev"
+  ],
+  "files_changed": [
+    "jsonpickle/pickler.py",
+    "jsonpickle/unpickler.py"
+  ],
+  "test_files_stripped": [
+    "tests/benchmark.py",
+    "tests/object_test.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 3321,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 21,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/object_test.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 1,
+    "refused_samples": [
+      "{\"id\":\"5ca42fda-09a3-4f5a-813a-bfd1141a259c\",\"timestamp\":\"2026-08-05T19:40:16.135959\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_7af80206180841c0aa60357f\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 2
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-r2bw80jt/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-r2bw80jt/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-r2bw80jt",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/jsonpickle__jsonpickle-588__solo-noreview/root/state/acceptance",
+    "sha256": "098d960ef29a670facd4776a4b0c24fb36e889928e266d4da18992ce2ee607e1",
+    "bytes": 1857,
+    "authored_at": "2026-08-05T23:34:37.507656+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "9598824e4a7d78fc83f12a86f6a18837cdac3b5041281c67c99308abca804f7c",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 6133,
+    "spec_prompt_path": "/home/k/software-factory/.claude/worktrees/agent-a3ef20d90b0fe06cc/bench/swebench/runs/jsonpickle__jsonpickle-588/solo-noreview/spec_prompt.md",
+    "events_path": "/home/k/software-factory/.claude/worktrees/agent-a3ef20d90b0fe06cc/bench/swebench/runs/jsonpickle__jsonpickle-588/solo-noreview/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 1,
+      "acceptance_author_ended_at": "2026-08-05T23:34:43.293932+00:00",
+      "dev_first_started_at": "2026-08-05T23:34:43.723887+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-05T23:34:43.293932+00:00, dev's first call started 2026-08-05T23:34:43.723887+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-r2bw80jt",
+        "state/acceptance"
+      ],
+      "files_scanned": 2,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-r2bw80jt": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "solo-noreview",
+    "instance_id": "jsonpickle__jsonpickle-588",
+    "image": "swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588@sha256:0eae843824198c5cfb0b6bb25b5c9b50c1b415ea7295867a314a3a8ce65c7fb4",
+    "graded_at": "2026-08-05T23:56:57.175155+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 82,
+    "pass_to_pass_declared_count": 82,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 10.2,
+    "log_tail": " OK (red as expected)\nChecking patch jsonpickle/pickler.py...\nChecking patch jsonpickle/unpickler.py...\nApplied patch jsonpickle/pickler.py cleanly.\nApplied patch jsonpickle/unpickler.py cleanly.\nSWEBENCH_APPLY_fdb1513edd255e29: OK\n.                                                                        [100%]\n=========================== short test summary info ============================\nPASSED tests/object_test.py::test_defaultdict_preserves_default_factory_key\n1 passed in 0.04s\nSWEBENCH_TALLY_fdb1513edd255e29: fail_to_pass 1 passed in 0.04s\n[3 node outcomes for fail_to_pass -> grade-nodes.log]\nPASSED tests/object_test.py::test_defaultdict_subclass_with_class_as_default_factory\nPASSED tests/object_test.py::test_posix_stat_result\nPASSED tests/object_test.py::test_repr_using_jsonpickle\nPASSED tests/object_test.py::test_broken_repr_dict_key\nPASSED tests/object_test.py::test_ordered_dict_python3\nPASSED tests/object_test.py::test_ordered_dict\nPASSED tests/object_test.py::test_ordered_dict_unpicklable\nPASSED tests/object_test.py::test_ordered_dict_reduces\nPASSED tests/object_test.py::test_int_keys_in_object_with_getstate_only\nPASSED tests/object_test.py::test_ordered_dict_int_keys\nPASSED tests/object_test.py::test_ordered_dict_nested\nPASSED tests/object_test.py::test_deque_roundtrip\nPASSED tests/object_test.py::test_namedtuple_roundtrip\nPASSED tests/object_test.py::test_counter_roundtrip\nPASSED tests/object_test.py::test_counter_roundtrip_with_keys\nPASSED tests/object_test.py::test_list_with_fd\nPASSED tests/object_test.py::test_thing_with_fd\nPASSED tests/object_test.py::test_dict_with_fd\nPASSED tests/object_test.py::test_thing_with_lamda\nPASSED tests/object_test.py::test_newstyleslots\nPASSED tests/object_test.py::test_newstyleslots_inherited\nPASSED tests/object_test.py::test_newstyleslots_inherited_deleted_attr\nPASSED tests/object_test.py::test_newstyleslots_with_children\nPASSED tests/object_test.py::test_newstyleslots_with_children_inherited\nPASSED tests/object_test.py::test_newstyleslots_iterable\nPASSED tests/object_test.py::test_newstyleslots_string_slot\nPASSED tests/object_test.py::test_enum34_nested\nPASSED tests/object_test.py::test_enum_references\nPASSED tests/object_test.py::test_enum_unpicklable\nPASSED tests/object_test.py::test_enum_int_key_and_value\nPASSED tests/object_test.py::test_enum_string_key_and_value\nPASSED tests/object_test.py::test_int_enum_with_auto_value\nPASSED tests/object_test.py::test_multiple_string_enums_when_make_refs_is_false\nPASSED tests/object_test.py::test_unicode_mixin\nPASSED tests/object_test.py::test_datetime_with_tz_copies_refs\nPASSED tests/object_test.py::test_with_exclude\nPASSED tests/object_test.py::test_contained_exclusion\nPASSED tests/object_test.py::test_exclude_slots\nPASSED tests/object_test.py::test_exclude_getstate_from_slots\n82 passed in 0.11s\nSWEBENCH_TALLY_fdb1513edd255e29: pass_to_pass 82 passed in 0.11s\n[84 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_fdb1513edd255e29: RESOLVED\n"
+  }
+}

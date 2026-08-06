@@ -1,0 +1,25 @@
+diff --git a/src/pyinfra/connectors/util.py b/src/pyinfra/connectors/util.py
+index ab9d15b..797cc55 100644
+--- a/src/pyinfra/connectors/util.py
++++ b/src/pyinfra/connectors/util.py
+@@ -235,12 +235,18 @@ def write_stdin(stdin, buffer):
+ def remove_any_sudo_askpass_file(host) -> None:
+     sudo_askpass_path = host.connector_data.get("sudo_askpass_path")
+     if sudo_askpass_path:
+-        host.run_shell_command(StringCommand("rm", "-f", QuoteString(sudo_askpass_path)))
++        try:
++            host.run_shell_command(StringCommand("rm", "-f", QuoteString(sudo_askpass_path)))
++        except Exception:
++            pass
+         host.connector_data["sudo_askpass_path"] = None
+ 
+     su_askpass_path = host.connector_data.get("su_askpass_path")
+     if su_askpass_path:
+-        host.run_shell_command(StringCommand("rm", "-f", QuoteString(su_askpass_path)))
++        try:
++            host.run_shell_command(StringCommand("rm", "-f", QuoteString(su_askpass_path)))
++        except Exception:
++            pass
+         host.connector_data["su_askpass_path"] = None
+ 
+ 

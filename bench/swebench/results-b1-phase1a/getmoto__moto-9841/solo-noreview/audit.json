@@ -1,0 +1,51 @@
+{
+  "instance_id": "getmoto__moto-9841",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-06T00:17:02.015811+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-06T00:08:51.906334+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 2039,
+      "tokens_out": 904,
+      "cached_input_tokens": 1280,
+      "cost_usd": 0.0157775,
+      "duration_s": 7.574,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-06T00:16:44.663339+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1488575,
+      "tokens_out": 13735,
+      "cached_input_tokens": 1233664,
+      "cost_usd": 0.743203184,
+      "duration_s": 471.947,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.759,
+  "ledger_tokens_in": 1490614,
+  "ledger_tokens_out": 14639,
+  "result_cost_usd": 0.759,
+  "prediction_sha256": "845525b58fb02d5018f243b9830634d92c2223e7de6922a0643103fd71a29db1",
+  "base_commit": "830a798c567bcdded2447efb7e98ca6d89b6a8c5",
+  "stripped_test_paths": [
+    "scripts/dependency_test.sh",
+    "tests/test_kms/test_kms.py",
+    "tests/test_kms/test_kms_cloudformation.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

@@ -1,0 +1,49 @@
+{
+  "instance_id": "hkuds__openharness-217",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-05T23:14:42.740922+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-05T23:05:29.067506+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/gpt-5.4",
+      "story_id": 1,
+      "tokens_in": 2215,
+      "tokens_out": 547,
+      "cached_input_tokens": 1280,
+      "cost_usd": 0.0108625,
+      "duration_s": 5.87,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-05T23:14:35.422971+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 887124,
+      "tokens_out": 9167,
+      "cached_input_tokens": 631296,
+      "cost_usd": 0.6304963060000001,
+      "duration_s": 545.889,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.6414,
+  "ledger_tokens_in": 889339,
+  "ledger_tokens_out": 9714,
+  "result_cost_usd": 0.6414,
+  "prediction_sha256": "ee3bb84082dd041af7623cfa50e35882b7aeea4180ae9047e390c42169007462",
+  "base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+  "stripped_test_paths": [
+    "tests/test_auth/test_flows.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

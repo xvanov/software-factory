@@ -1,0 +1,68 @@
+=== fail_to_pass ===
+=========================== short test summary info ============================
+PASSED tests/test_util.py::TestUtil::test_obj_or_str_str
+FAILED tests/test_util.py::TestUtil::test_obj_or_str_invalid_obj_type - Asser...
+1 failed, 1 passed in 0.06s
+=== pass_to_pass ===
+=========================== short test summary info ============================
+PASSED tests/test_util.py::TestUtil::test_clean_headers_authorization_stripped
+PASSED tests/test_util.py::TestUtil::test_clean_headers_does_not_mutate_original_dict
+PASSED tests/test_util.py::TestUtil::test_clean_headers_no_authorization
+PASSED tests/test_util.py::TestUtil::test_clean_headers_strips_malformed_keys_correctly
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_dict_list_dict
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_empty
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_multiple_dicts
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_multiple_mixed
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_multiple_nested_dicts
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_nested_dict
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_single
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_single_dict
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_single_generator_empty
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_single_generator_multiple_items
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_single_generator_single_item
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_single_list_empty
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_single_list_multiple_items
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_single_list_single_item
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_super_nested_dict
+PASSED tests/test_util.py::TestUtil::test_combine_kwargs_the_gauntlet
+PASSED tests/test_util.py::TestUtil::test_file_or_path_file
+PASSED tests/test_util.py::TestUtil::test_file_or_path_invalid_path
+PASSED tests/test_util.py::TestUtil::test_file_or_path_valid_path
+PASSED tests/test_util.py::TestUtil::test_get_institution_url
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_bool
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_bytes
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_chain
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_dict
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_items
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_iter
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_keys
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_values
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_generator_call
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_generator_expr
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_integer
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_list
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_list_iter
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_set
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_set_iter
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_str
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_tuple
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_tuple_iter
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_unicode
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_zip
+PASSED tests/test_util.py::TestUtil::test_normalize_bool_boolean
+PASSED tests/test_util.py::TestUtil::test_normalize_bool_str_invalid
+PASSED tests/test_util.py::TestUtil::test_normalize_bool_str_lower
+PASSED tests/test_util.py::TestUtil::test_normalize_bool_str_upper
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_int
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_multiple_objs
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_nonuser_self
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_obj
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_obj_no_id
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_str_invalid
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_str_valid
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_user_self
+PASSED tests/test_util.py::TestUtil::test_obj_or_str_invalid_attr_parameter
+PASSED tests/test_util.py::TestUtil::test_obj_or_str_mult_obj
+PASSED tests/test_util.py::TestUtil::test_obj_or_str_obj_attr
+PASSED tests/test_util.py::TestUtil::test_obj_or_str_obj_no_attr
+60 passed in 0.08s

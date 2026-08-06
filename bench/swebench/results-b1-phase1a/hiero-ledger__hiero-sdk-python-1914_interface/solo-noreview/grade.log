@@ -1,0 +1,71 @@
+Checking patch tests/integration/account_create_transaction_e2e_test.py...
+Checking patch tests/integration/account_update_transaction_e2e_test.py...
+Checking patch tests/unit/account_info_test.py...
+/tmp/test_patch.diff:300: new blank line at EOF.
++
+Applied patch tests/integration/account_create_transaction_e2e_test.py cleanly.
+Applied patch tests/integration/account_update_transaction_e2e_test.py cleanly.
+Applied patch tests/unit/account_info_test.py cleanly.
+warning: 1 line adds whitespace errors.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_d096fa444d62efe9: OK (red as expected)
+Checking patch src/hiero_sdk_python/account/account_info.py...
+Applied patch src/hiero_sdk_python/account/account_info.py cleanly.
+SWEBENCH_APPLY_d096fa444d62efe9: OK
+        info = self._make_info()
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            val = info.staked_node_id
+        assert val is None
+>       assert issubclass(w[0].category, DeprecationWarning)
+                          ^^^^
+E       IndexError: list index out of range
+
+tests/unit/account_info_test.py:303: IndexError
+_______ TestDeprecatedProperties.test_decline_staking_reward_deprecated ________
+
+self = <tests.unit.account_info_test.TestDeprecatedProperties object at 0x79c0565ed5b0>
+
+    def test_decline_staking_reward_deprecated(self):
+        import warnings
+        info = self._make_info()
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            val = info.decline_staking_reward
+        assert val is True
+>       assert issubclass(w[0].category, DeprecationWarning)
+                          ^^^^
+E       IndexError: list index out of range
+
+tests/unit/account_info_test.py:312: IndexError
+=========================== short test summary info ============================
+PASSED tests/unit/account_info_test.py::test_from_proto
+PASSED tests/unit/account_info_test.py::test_to_proto
+PASSED tests/unit/account_info_test.py::test_proto_conversion_with_staking_info
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_setter
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_setter
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_setter
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_setters_preserve_other_staking_fields
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_constructor_legacy_kwargs_deprecated
+FAILED tests/unit/account_info_test.py::test_proto_conversion - AssertionErro...
+FAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_deprecated
+FAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_deprecated
+FAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_deprecated
+4 failed, 8 passed in 0.44s
+SWEBENCH_TALLY_d096fa444d62efe9: fail_to_pass 4 failed, 8 passed in 0.44s
+[14 node outcomes for fail_to_pass -> grade-nodes.log]
+.........                                                                [100%]
+=========================== short test summary info ============================
+PASSED tests/integration/account_create_transaction_e2e_test.py::test_create_account_with_alias_derived_from_non_ecdsa_key
+PASSED tests/integration/account_create_transaction_e2e_test.py::test_create_account_with_alias_from_seperate_non_ecdsa_key
+PASSED tests/unit/account_info_test.py::test_account_info_initialization
+PASSED tests/unit/account_info_test.py::test_account_info_default_initialization
+PASSED tests/unit/account_info_test.py::test_from_proto_with_token_relationships
+PASSED tests/unit/account_info_test.py::test_from_proto_none_raises_error
+PASSED tests/unit/account_info_test.py::test_to_proto_with_none_values
+PASSED tests/unit/account_info_test.py::test_str_and_repr
+PASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_deprecated_properties_return_none_without_staking_info
+9 passed in 0.41s
+SWEBENCH_TALLY_d096fa444d62efe9: pass_to_pass 9 passed in 0.41s
+[11 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_d096fa444d62efe9: UNRESOLVED
