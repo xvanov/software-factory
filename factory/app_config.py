@@ -123,6 +123,23 @@ class AppGatesConfig(BaseModel):
     # ``acceptance_test_dir`` / ``acceptance_test_cwd`` / ``acceptance_test_command``
     # so the authored test can actually import the app, and
     # ``acceptance_harness_hint`` so the author knows where the app lives.
+    #
+    # ⚠ DO NOT FLIP THIS YET (as of 2026-08-05), and the reason is NOT the rollout
+    # mechanics above. A KNOWN IN-PROCESS FORGERY HOLE survives: three lines of
+    # production code that reassign pytest's test-runner function to a no-op forge a
+    # genuine-looking red-at-base -> green-at-HEAD, so the gate's green would carry
+    # no information. No file-level rollback closes it (the acceptance gate already
+    # rolls the dev's collection channels back to base); it needs an OUT-OF-PROCESS
+    # behavioural oracle. Same class: a HEAD dependency that registers a ``pytest11``
+    # entry point via a local-path dep.
+    #
+    # The hole is pinned by an ``xfail(strict=True)`` in
+    # ``tests/test_acceptance_oracle_green_means_something.py`` whose reason states
+    # it is why this flag is off — so a silent "fix" fails the suite. Read that test
+    # before flipping this. Every OTHER blocker closed in PR #242 (failability via
+    # ``factory/chain/red_green.py``, dev-controlled collection config, and
+    # merge-candidate provenance). ``apps/sacrifice/config.yaml`` already carries the
+    # four prerequisite settings, so this looks flippable and is not.
     acceptance_oracle: bool = False
     # Command template the acceptance gate runs, with ``{test_file}`` substituted
     # for the copied-in test's path (relative to ``acceptance_test_cwd``).
