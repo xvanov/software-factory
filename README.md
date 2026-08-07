@@ -150,12 +150,15 @@ and a halted factory refuses to burn spend until an operator runs
 self-edit (operator PR only).
 
 The four-tier LLM pipeline that used to sit above this (L1 Watcher → L2
-Summarizer → L3 Diagnostician → L4 Apply) is **scheduled for deletion by
-operator decision (2026-08-07)**: it consumed 52% of all-time LLM spend, filed
-one GitHub issue, and applied zero fixes (L4: 0 PRs in 163 attempts). Its
-replacement is deterministic: the pure-Python detectors fire on facts, file
-deduplicated directions into the normal chain, and the firing detector itself is
-the acceptance criterion. See `STATUS.md` and the Exteroception v1 direction.
+Summarizer → L3 Diagnostician → L4 Apply) was **deleted by operator decision
+(2026-08-07)**: it consumed 52% of all-time LLM spend, filed one GitHub issue,
+and applied zero fixes (L4: 0 PRs in 163 attempts). Its replacement is
+deterministic: the pure-Python detectors fire on facts, file deduplicated
+directions into the normal chain, and the firing detector itself is the
+acceptance criterion — though as of this deletion the detectors have zero
+production callers (the deleted L1 Watcher was the only invoker); direction
+019 (AC7) rewires them into the chain tick. See `STATUS.md` and the
+Exteroception v1 direction.
 
 ## Quickstart
 
@@ -172,7 +175,7 @@ uv run factory pm-sync --app <app>   # triage directions into stories
 uv run factory tick --app <app>      # one full pipeline pass
 ```
 
-Continuous operation runs on two systemd user units: `factory-tick@<app>.timer` (pipeline heartbeat, 5 min) and `factory-manager.service` (FMS L1 daemon). Models and API keys are configured in `factory/routes.yaml` + `.env` (`.env.example` documents every key; Azure OpenAI, DeepSeek, and OpenRouter routing supported out of the box).
+Continuous operation runs on the `factory-tick@<app>.timer` systemd user unit (pipeline heartbeat, 5 min). There is no manager daemon anymore — `factory-manager.service` (the FMS L1 daemon) was retired 2026-08-07 along with the four LLM tiers. Models and API keys are configured in `factory/routes.yaml` + `.env` (`.env.example` documents every key; Azure OpenAI, DeepSeek, and OpenRouter routing supported out of the box).
 
 Day-to-day operator surface:
 
@@ -201,7 +204,7 @@ uv run python bench/swebench_adapter.py report \
 ```
 factory/           the orchestrator
   chain/           state machine, handlers, gates, auto-merge, worktrees
-  manager/         staging twin, recovery, detectors, signals/halt (LLM tiers scheduled for deletion)
+  manager/         staging twin, recovery, circuit breaker, signals/halt, detectors (the four LLM tiers were deleted 2026-08-07)
   personas/        prompt-defined roles (pm, sm, dev, reviewer, …)
   routes.yaml      per-persona model routing — the single model-choice seam
 apps/<app>/        per-app config, directions (work orders), stories

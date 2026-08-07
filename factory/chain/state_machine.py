@@ -126,8 +126,9 @@ class StoryState(StrEnum):
     # app-side blocker is fixed; an operator may also re-open the PR and move the
     # story back to a live dispatch state. Set via DIRECT state assignment (like
     # ``SUPERSEDED_BY_SIBLING``), not an EVENT_* edge. Classified as resolved for
-    # tracker-issue closing (``tracker_issue._RESOLVED_STORY_STATES``) and surfaced
-    # to the FMS (``factory_improver._terminally_blocked_stories``).
+    # tracker-issue closing (``tracker_issue._RESOLVED_STORY_STATES``). Used to
+    # also be surfaced to the FMS via ``factory_improver._terminally_blocked_stories``,
+    # deleted 2026-08-07 with the rest of the self-improvement tiers.
     BLOCKED_CI_UNRESOLVED = "blocked_ci_unresolved"
     # Dependency-deadlock sink. The dependency-ordering gate defers a story until
     # every lower-id sibling in its direction reaches ``deployed`` (id order == SM

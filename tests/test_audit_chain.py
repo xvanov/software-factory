@@ -454,7 +454,7 @@ def test_integrity_paths_are_forbidden_to_the_self_improver(path: str) -> None:
     Note the YAML model would NOT have been caught by the existing
     ``factory/manager/.+\\.py$`` patterns — they only match Python.
     """
-    from factory.manager.apply import _any_path_is_forbidden_in_patch
+    from factory.manager.forbidden_paths import _any_path_is_forbidden_in_patch
 
     patch = (
         f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,1 +1,1 @@\n-old\n+new\n"
@@ -463,10 +463,10 @@ def test_integrity_paths_are_forbidden_to_the_self_improver(path: str) -> None:
 
 
 def test_creating_an_integrity_file_is_also_forbidden() -> None:
-    """The detector carve-out lets L3 CREATE new files under manager
-    subdirectories. That must not become a way to introduce a competing,
-    weaker verifier."""
-    from factory.manager.apply import _any_path_is_forbidden_in_patch
+    """CREATING a new file at an integrity path must not become a way to
+    introduce a competing, weaker verifier — forbidden regardless of whether
+    the patch modifies an existing file or creates a new one."""
+    from factory.manager.forbidden_paths import _any_path_is_forbidden_in_patch
 
     path = "factory/observability/audit_chain.py"
     patch = (
@@ -480,11 +480,34 @@ def test_creating_an_integrity_file_is_also_forbidden() -> None:
     assert _any_path_is_forbidden_in_patch([path], patch)
 
 
+def test_creating_a_new_manager_detector_file_is_forbidden() -> None:
+    """Regression pin (2026-08-07 review round): a patch CREATING a new file
+    under ``factory/manager/detectors/`` used to be carved out here so it
+    could be handed to ``_validate_detector_tool`` in the L4 apply tier. That
+    validator (and the L3 Diagnostician that authored detector proposals) is
+    deleted, so the carve-out is gone too — a self-edit adding a new detector
+    file must be forbidden exactly like modifying an existing one. CLAUDE.md:
+    ``factory/manager/**`` is operator-PR-only, no exceptions."""
+    from factory.manager.forbidden_paths import _any_path_is_forbidden_in_patch
+
+    path = "factory/manager/detectors/new_check.py"
+    patch = (
+        f"diff --git a/{path} b/{path}\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        f"+++ b/{path}\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+def new_check(root):\n"
+        "+    return []\n"
+    )
+    assert _any_path_is_forbidden_in_patch([path], patch)
+
+
 def test_unrelated_observability_files_stay_editable() -> None:
     """The lock-down is targeted: only the tracer and verifiers. Broadening it to
     all of factory/observability/ would needlessly block legitimate
     self-improvement of the TUI queries and estimator."""
-    from factory.manager.apply import _any_path_is_forbidden_in_patch
+    from factory.manager.forbidden_paths import _any_path_is_forbidden_in_patch
 
     path = "factory/observability/queries.py"
     patch = f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-a\n+b\n"

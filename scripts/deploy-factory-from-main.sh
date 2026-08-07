@@ -25,18 +25,17 @@
 #     files restored, deleted files restored) and nothing is committed —
 #     the tree is verified clean afterwards, so a broken module never
 #     reaches the running factory.
-#   * Restarts factory-manager only AFTER a clean commit, then verifies
-#     it stays active across two checks (chain code is picked up by the
-#     next tick regardless; the restart is for shared modules the
-#     long-lived manager already imported).
+#   * Chain code (factory/chain/**, etc.) is picked up by the next tick —
+#     no daemon restart is needed. (Before 2026-08-07 this also restarted
+#     the FMS L1 manager daemon; that daemon was deleted along with the
+#     other three LLM tiers, so there is nothing long-lived left to restart.)
 #   * Idempotent (in-sync tree = clean no-op), locked, --dry-run preview.
 #
 # USAGE
 #   deploy-factory-from-main.sh            # apply
 #   deploy-factory-from-main.sh --dry-run  # report only, mutate nothing
 #
-# TEST SEAMS (env): IMPORT_GATE_CMD overrides the import gate;
-#   SKIP_MANAGER_RESTART=1 skips the systemctl restart. Used only by
+# TEST SEAMS (env): IMPORT_GATE_CMD overrides the import gate. Used only by
 #   tests/test_factory_self_deploy.py — never set in production.
 # ──────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -44,7 +43,6 @@ set -euo pipefail
 FACTORY_DIR="${FACTORY_DIR:-/home/k/software-factory}"
 GIT_REMOTE="${GIT_REMOTE:-origin}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
-MANAGER_UNIT="${MANAGER_UNIT:-factory-manager.service}"
 LOCK_FILE="${LOCK_FILE:-/tmp/factory-self-deploy.lock}"
 LOCK_STALE_MINUTES="${LOCK_STALE_MINUTES:-30}"
 DRY_RUN=0
@@ -62,6 +60,12 @@ log()   { echo "$LOG_PREFIX $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 # written to production telemetry — the same class as the sm-truncation
 # escalations that were really test pollution (2026-06). The test seams already
 # tell us we are under test; reuse them rather than inventing a new flag.
+#
+# SKIP_MANAGER_RESTART used to also skip the systemctl restart of the FMS L1
+# manager daemon; that daemon was deleted 2026-08-07 (along with the other
+# three LLM tiers) so there is nothing left to restart, but the var stays as
+# the test-mode signal tests/test_factory_self_deploy.py already sets on
+# every invocation.
 _under_test() {
   [ -n "${IMPORT_GATE_CMD:-}" ] || [ "${SKIP_MANAGER_RESTART:-0}" = "1" ] || [ -n "${PYTEST_CURRENT_TEST:-}" ]
 }
@@ -260,28 +264,6 @@ git commit --quiet \
   -- "${APPLY[@]}"
 log "committed $(git rev-parse --short HEAD)"
 
-# ── Restart the long-lived manager (chain code is picked up next tick;
-#    restart is for shared modules the manager already imported) ──────
-if [ "${SKIP_MANAGER_RESTART:-0}" = "1" ]; then
-  log "SKIP_MANAGER_RESTART=1 — skipping restart (test mode)"
-  log "self-deploy complete"
-  exit 0
-fi
-
-if ! systemctl --user restart "$MANAGER_UNIT" 2>/dev/null; then
-  alert "failed to restart $MANAGER_UNIT after committing $(git rev-parse --short HEAD). The code IS canonical (== origin/main); recover with: systemctl --user restart $MANAGER_UNIT"
-  exit 1
-fi
-# Confirm it stays active across two checks (catch a delayed crash).
-sleep 2
-_active1="$(systemctl --user is-active "$MANAGER_UNIT" 2>/dev/null || true)"
-sleep 4
-_active2="$(systemctl --user is-active "$MANAGER_UNIT" 2>/dev/null || true)"
-if [ "$_active1" = "active" ] && [ "$_active2" = "active" ]; then
-  log "restarted $MANAGER_UNIT (active)"
-else
-  alert "$MANAGER_UNIT not stably active after restart (t+2s=$_active1 t+6s=$_active2) on $(git rev-parse --short HEAD) — operator attention needed"
-  exit 1
-fi
-
+# No daemon restart: chain code is picked up by the next tick regardless, and
+# the FMS L1 manager daemon this used to restart was deleted 2026-08-07.
 log "self-deploy complete"

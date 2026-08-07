@@ -9,7 +9,11 @@ Coverage:
   * a re-fired SAME-id escalation does NOT open a duplicate (local dedup)
   * an already-open matching issue (gh-side dedup) is reused, not re-created
   * a gh failure does NOT crash L4 and is still visible on the alert stream
-  * end-to-end through apply_manager_proposals: escalation issue is opened
+
+The end-to-end-through-apply_manager_proposals test that used to live here
+was removed 2026-08-07 along with ``factory/manager/apply.py`` (the L4 apply
+tier) — see STATUS.md and the Exteroception v1 direction, P0. This file now
+covers ``notify_escalation`` directly.
 """
 
 from __future__ import annotations
@@ -20,7 +24,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from factory.manager.apply import apply_manager_proposals
 from factory.manager.escalation import ESCALATION_LABEL, notify_escalation
 
 
@@ -380,54 +383,3 @@ def test_no_repo_still_alerts(tmp_path: Path) -> None:
     assert not [c for c in calls if c[:3] == ["gh", "issue", "create"]]
     assert any(a.get("kind") == "fms_escalation" for a in _alerts(tmp_path))
 
-
-# ---------------------------------------------------------------------------
-# A. End-to-end through apply_manager_proposals
-# ---------------------------------------------------------------------------
-
-
-def test_apply_escalation_opens_issue_end_to_end(tmp_path: Path) -> None:
-    """An escalate_to_human proposal processed by the L4 apply loop opens a gh
-    issue via the escalation channel (not a silent history append)."""
-    import subprocess
-
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / "README.md").write_text("# Factory\n")
-    for args in (
-        ["git", "init", "-q", "-b", "main"],
-        ["git", "config", "user.email", "t@e.com"],
-        ["git", "config", "user.name", "T"],
-        ["git", "add", "."],
-        ["git", "commit", "-q", "-m", "init"],
-    ):
-        subprocess.run(args, cwd=str(repo), check=True, capture_output=True)
-
-    proposals_dir = repo / "state" / "manager_proposals"
-    proposals_dir.mkdir(parents=True)
-    proposal = _proposal()
-    (proposals_dir / "esc.json").write_text(json.dumps(proposal))
-
-    gh_calls: list[list[str]] = []
-
-    def _runner(args: list[str], **kwargs: Any) -> Any:
-        gh_calls.append(list(args))
-        if args[:3] == ["gh", "issue", "list"]:
-            return _Completed(returncode=0, stdout="[]")
-        if args[:3] == ["gh", "issue", "create"]:
-            return _Completed(
-                returncode=0, stdout="https://github.com/owner/repo/issues/900\n"
-            )
-        if args[:3] == ["gh", "label", "create"]:
-            return _Completed(returncode=0)
-        kwargs.pop("check", None)
-        return subprocess.run(args, **kwargs)
-
-    result = apply_manager_proposals(
-        root=repo,
-        dry_run=False,
-        runner=_runner,
-        repo="owner/repo",
-    )
-    assert result["escalated_human"] == 1
-    assert [c for c in gh_calls if c[:3] == ["gh", "issue", "create"]]

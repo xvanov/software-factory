@@ -7,9 +7,15 @@ by manager-authored commits.  When a regression is detected:
 2. Auto-reverts it on a new branch ``factory-manager-revert/<ts>``.
 3. Opens a PR for the revert (operator must merge — no auto-merge).
 4. Writes ``state/circuit_breaker.json`` with a 24h halt window.
-5. While the breaker is tripped, ``apply_manager_proposals`` refuses to
-   apply any safe proposals (logged as
-   ``status=apply_pipeline_halted_by_circuit_breaker``).
+
+Before 2026-08-07, a 5th step gated the L4 apply pipeline
+(``apply_manager_proposals`` refused any safe auto-apply while tripped,
+logged as ``status=apply_pipeline_halted_by_circuit_breaker``). That pipeline
+was deleted along with the other three FMS LLM tiers — see STATUS.md and the
+Exteroception v1 direction, P0. The breaker itself (revert + trip state +
+``factory manager circuit-breaker status``) still stands: there is currently
+no auto-apply surface left for it to gate, but tripping still records the
+regression and reverts the commit.
 
 Design principles
 -----------------

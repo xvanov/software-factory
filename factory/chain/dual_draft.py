@@ -308,8 +308,9 @@ def _close_loser_pr(pr_number: int, repo: str, runner: Any) -> None:
     A *closed* PR cannot auto-merge, so this is what actually prevents the
     double-merge (the loser used to keep its own auto-merge-enabled PR and
     shipped a redundant second interpretation ~minutes after the winner —
-    e.g. direction 007 landed BOTH PR #67 and #69). Mirrors the shell-out in
-    ``factory_improver_apply._comment_and_close_pr``. Never raises — this is
+    e.g. direction 007 landed BOTH PR #67 and #69). Mirrors the shell-out that
+    used to live in ``factory_improver_apply._comment_and_close_pr`` (deleted
+    2026-08-07 with the L2/L4 self-improvement tiers). Never raises — this is
     bookkeeping and must not break the merge worker. ``gh pr close`` on an
     already-closed/merged PR is a harmless no-op (``check=False``), so a
     re-run is safe.

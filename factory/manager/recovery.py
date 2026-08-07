@@ -2,25 +2,31 @@
 
 Problem this closes
 --------------------
-The L3 Diagnostician (``factory/manager/diagnostician.py``) proposes fixes to
-factory CODE (prompts, persona settings, dispatch code, detectors). But most
-of what actually goes wrong in production is OPERATIONAL: a story got stuck
-in a blocked state after a transient PR conflict resolved itself, a story's
-branch/PR never got created and the row is now an orphan, an app's
-``deploy.enabled`` flag got flipped on before the deploy artifacts existed,
-or a single deploy failure auto-flipped the whole factory into ``fix-only``
-mode and nothing ever flipped it back. No code diff fixes any of that — it
-needs an ACTION (reset a DB row, flip a config flag, flip the mode back).
-Because L3's action-space was code-diffs-only, every one of
-these landed as ``target_class: escalate_to_human`` (100% of 124 proposals in
-production, 0 fixes applied). This module adds a rule-based recovery
-executor that performs the action directly, for a short, hand-audited list of
-playbooks, instead of dumping the fix on a human every time.
+The L3 Diagnostician (``factory/manager/diagnostician.py`` — deleted
+2026-08-07 along with the other three FMS LLM tiers; see STATUS.md and the
+Exteroception v1 direction, P0) proposed fixes to factory CODE (prompts,
+persona settings, dispatch code, detectors). But most of what actually goes
+wrong in production is OPERATIONAL: a story got stuck in a blocked state
+after a transient PR conflict resolved itself, a story's branch/PR never got
+created and the row is now an orphan, an app's ``deploy.enabled`` flag got
+flipped on before the deploy artifacts existed, or a single deploy failure
+auto-flipped the whole factory into ``fix-only`` mode and nothing ever
+flipped it back. No code diff fixes any of that — it needs an ACTION (reset a
+DB row, flip a config flag, flip the mode back). Because L3's action-space
+was code-diffs-only, every one of these landed as
+``target_class: escalate_to_human`` (100% of 124 proposals in production, 0
+fixes applied). This module adds a rule-based recovery executor that performs
+the action directly, for a short, hand-audited list of playbooks, instead of
+dumping the fix on a human every time.
 
-Design mirrors ``factory/manager/apply.py``'s classifier philosophy: this is
-the one part of the recovery path that is DETERMINISTIC and LLM-free,
-because mutating live story/deploy state requires hard guarantees an LLM
-cannot provide. Structure:
+This module OUTLIVED the diagnostician it was built to complement: L3's
+code-diff proposals are gone, but the operational faults it recovers from are
+unrelated to L3 and still happen. Design originally mirrored
+``factory/manager/apply.py``'s classifier philosophy (also deleted
+2026-08-07; see ``factory/manager/forbidden_paths.py`` for the one piece of
+it that survives): this is the one part of the recovery path that is
+DETERMINISTIC and LLM-free, because mutating live story/deploy state requires
+hard guarantees an LLM cannot provide. Structure:
 
   * PRECONDITION detectors (``detect_*``) — pure functions. They read the
     stories DB and (read-only) ``gh``/``git`` state and return a list of

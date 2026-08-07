@@ -2391,10 +2391,12 @@ def _handle_dev_once(
     # most stories should land first-pass. A retry means something upstream
     # of dev needs work — test_implementer wrote ambiguous tests, the persona
     # prompts missed context, the harness was subtly off, etc. Emit a
-    # ``factory_needs_redesign`` event on EACH retry so the factory_improver
-    # persona sees the pattern early instead of waiting for exhaustion.
-    # ``kind: dev_retry_observed`` distinguishes this from the exhaustion
-    # event the improver also consumes.
+    # ``factory_needs_redesign`` event on EACH retry so it's visible early
+    # (via ``factory trace`` / the state event log) instead of waiting for
+    # exhaustion. ``kind: dev_retry_observed`` distinguishes this from the
+    # exhaustion event below. (Before 2026-08-07 this stream also fed the
+    # factory_improver persona; that consumer is gone, but the event is still
+    # the operator-visible early-warning signal.)
     if not dry_run:
         log_story_event(
             story.id,

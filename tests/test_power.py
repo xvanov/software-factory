@@ -5,6 +5,14 @@ disabled, failed, half-up), and must shut down CLEANLY: timers first so no new
 work starts, then drain an in-flight tick, then the daemons.
 
 ``systemctl`` is injected so these tests never touch real units.
+
+Note on ``_SERVICE_UNITS``: production ``factory.power._SERVICE_UNITS`` is an
+empty tuple since 2026-08-07 (the FMS L1 manager daemon it used to name was
+deleted along with the other three LLM tiers — see ``factory.manager`` and
+STATUS.md). power.py keeps its service-stop/service-start code path for a
+future long-running service, so several tests here ``monkeypatch`` a fake
+service name into ``_SERVICE_UNITS`` to keep that path under real coverage
+without hardcoding a unit that no longer exists.
 """
 
 from __future__ import annotations
@@ -14,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+import factory.power as power_module
 from factory.power import (
     discover_units,
     power_off,
@@ -22,8 +31,12 @@ from factory.power import (
     unit_state,
 )
 
+# A fake long-running service, injected into ``_SERVICE_UNITS`` by the tests
+# that need to exercise power.py's service (not just timer) handling.
+_FAKE_SERVICE = "fake-manager.service"
+
 _INSTALLED = (
-    "factory-tick@.timer\nfactory-tick@.service\nfactory-manager.service\n"
+    "factory-tick@.timer\nfactory-tick@.service\n" + _FAKE_SERVICE + "\n"
     "factory-self-deploy.timer\nsacrifice-redeploy-main.timer\n"
 )
 
@@ -35,6 +48,13 @@ def root(tmp_path: Path) -> Path:
         d.mkdir(parents=True)
         (d / "config.yaml").write_text("name: x\nrepo: a/b\n", encoding="utf-8")
     return tmp_path
+
+
+@pytest.fixture
+def fake_service(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Inject one fake service unit into ``_SERVICE_UNITS`` for this test."""
+    monkeypatch.setattr(power_module, "_SERVICE_UNITS", (_FAKE_SERVICE,))
+    return _FAKE_SERVICE
 
 
 class FakeSystemctl:
@@ -122,18 +142,32 @@ class FakeSystemctl:
 # --------------------------------------------------------------------------- #
 
 
-def test_discovers_per_app_and_global_units(root: Path) -> None:
+def test_discovers_per_app_and_global_units(root: Path, fake_service: str) -> None:
     fake = FakeSystemctl()
     names = {u.name for u in discover_units(root=root, runner=fake)}
     assert "factory-tick@sacrifice.timer" in names
     assert "factory-tick@factory.timer" in names, "per-app units come from apps/*/config.yaml"
-    assert "factory-manager.service" in names
+    assert fake_service in names
     assert "factory-self-deploy.timer" in names
     assert "sacrifice-redeploy-main.timer" in names
 
 
+def test_discovers_only_timers_when_no_service_units_registered(root: Path) -> None:
+    """Production default: ``_SERVICE_UNITS`` is empty, so no service unit is ever
+    a candidate — half-up detection still works with timers alone."""
+    fake = FakeSystemctl()
+    units = discover_units(root=root, runner=fake)
+    assert all(u.kind == "timer" for u in units)
+    assert {u.name for u in units} == {
+        "factory-tick@sacrifice.timer",
+        "factory-tick@factory.timer",
+        "factory-self-deploy.timer",
+        "sacrifice-redeploy-main.timer",
+    }
+
+
 def test_uninstalled_units_are_skipped(root: Path) -> None:
-    """A machine without the manager unit must not error on it."""
+    """A machine without an optional unit must not error on it."""
     fake = FakeSystemctl(unit_files="factory-tick@.timer\n")
     names = {u.name for u in discover_units(root=root, runner=fake)}
     assert names == {"factory-tick@sacrifice.timer", "factory-tick@factory.timer"}
@@ -150,17 +184,17 @@ def test_no_units_installed_is_not_an_error(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_off_stops_timers_before_services(root: Path) -> None:
+def test_off_stops_timers_before_services(root: Path, fake_service: str) -> None:
     """Order is the whole point: no new work may start while we drain."""
-    fake = FakeSystemctl(active={"factory-manager.service": "active"})
+    fake = FakeSystemctl(active={fake_service: "active"})
     power_off(root=root, runner=fake, wait=False)
 
     stops = fake.order_of("stop")
-    assert "factory-manager.service" in stops
-    manager_at = stops.index("factory-manager.service")
+    assert fake_service in stops
+    service_at = stops.index(fake_service)
     timer_idxs = [i for i, n in enumerate(stops) if n.endswith(".timer")]
     assert timer_idxs, "timers should have been stopped"
-    assert max(timer_idxs) < manager_at, "every timer must stop before the daemon"
+    assert max(timer_idxs) < service_at, "every timer must stop before the daemon"
 
 
 def test_off_is_idempotent_when_already_off(root: Path) -> None:
@@ -170,13 +204,13 @@ def test_off_is_idempotent_when_already_off(root: Path) -> None:
     assert not [s for s in report["units"] if s.running]
 
 
-def test_off_clears_sticky_failed_state(root: Path) -> None:
+def test_off_clears_sticky_failed_state(root: Path, fake_service: str) -> None:
     """A unit left ``failed`` must read ``inactive`` afterwards, not ``failed``."""
-    fake = FakeSystemctl(active={"factory-manager.service": "failed"})
+    fake = FakeSystemctl(active={fake_service: "failed"})
     report = power_off(root=root, runner=fake, wait=False)
-    assert "reset-failed" in fake.verbs_for("factory-manager.service")
+    assert "reset-failed" in fake.verbs_for(fake_service)
     states = {s.name: s.active for s in report["units"]}
-    assert states["factory-manager.service"] == "inactive"
+    assert states[fake_service] == "inactive"
 
 
 def test_off_waits_for_inflight_tick_then_confirms_stopped(root: Path) -> None:
@@ -227,33 +261,33 @@ def test_off_disables_so_a_reboot_does_not_restart_it(root: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_on_starts_services_before_timers(root: Path) -> None:
-    """The manager should be watching before the ticks that feed it."""
+def test_on_starts_services_before_timers(root: Path, fake_service: str) -> None:
+    """A long-running service should be watching before the ticks that feed it."""
     fake = FakeSystemctl()
     power_on(root=root, runner=fake)
 
     starts = fake.order_of("start")
-    assert "factory-manager.service" in starts
-    svc_at = starts.index("factory-manager.service")
+    assert fake_service in starts
+    svc_at = starts.index(fake_service)
     timer_idxs = [i for i, n in enumerate(starts) if n.endswith(".timer")]
     assert min(timer_idxs) > svc_at
 
 
-def test_on_recovers_from_failed_state(root: Path) -> None:
+def test_on_recovers_from_failed_state(root: Path, fake_service: str) -> None:
     """The 'it won't come back up' case: a failed unit must still start."""
-    fake = FakeSystemctl(active={"factory-manager.service": "failed"})
+    fake = FakeSystemctl(active={fake_service: "failed"})
     report = power_on(root=root, runner=fake)
 
-    verbs = fake.verbs_for("factory-manager.service")
+    verbs = fake.verbs_for(fake_service)
     assert verbs.index("reset-failed") < verbs.index("start"), "must clear failure BEFORE starting"
     assert report["failed"] == []
     assert all(s.running for s in report["units"])
 
 
-def test_on_is_idempotent_when_already_on(root: Path) -> None:
+def test_on_is_idempotent_when_already_on(root: Path, fake_service: str) -> None:
     fake = FakeSystemctl(
         active={
-            "factory-manager.service": "active",
+            fake_service: "active",
             "factory-tick@sacrifice.timer": "active",
             "factory-tick@factory.timer": "active",
             "factory-self-deploy.timer": "active",
@@ -265,16 +299,16 @@ def test_on_is_idempotent_when_already_on(root: Path) -> None:
     assert all(s.running for s in report["units"])
 
 
-def test_on_reports_a_unit_that_refuses_to_start(root: Path) -> None:
-    fake = FakeSystemctl(start_fails={"factory-manager.service"})
+def test_on_reports_a_unit_that_refuses_to_start(root: Path, fake_service: str) -> None:
+    fake = FakeSystemctl(start_fails={fake_service})
     report = power_on(root=root, runner=fake)
-    assert [n for n, _ in report["failed"]] == ["factory-manager.service"]
+    assert [n for n, _ in report["failed"]] == [fake_service]
     assert "boom" in report["failed"][0][1]
 
 
-def test_off_then_on_round_trips(root: Path) -> None:
+def test_off_then_on_round_trips(root: Path, fake_service: str) -> None:
     fake = FakeSystemctl(
-        active={"factory-manager.service": "active", "factory-tick@sacrifice.timer": "active"}
+        active={fake_service: "active", "factory-tick@sacrifice.timer": "active"}
     )
     off = power_off(root=root, runner=fake, wait=False)
     assert not [s for s in off["units"] if s.running]
@@ -285,8 +319,8 @@ def test_off_then_on_round_trips(root: Path) -> None:
     assert all(s.enabled == "enabled" for s in on["units"])
 
 
-def test_half_up_state_is_visible(root: Path) -> None:
-    fake = FakeSystemctl(active={"factory-manager.service": "active"})
+def test_half_up_state_is_visible(root: Path, fake_service: str) -> None:
+    fake = FakeSystemctl(active={fake_service: "active"})
     states = power_status(root=root, runner=fake)
     running = [s for s in states if s.running]
     assert len(running) == 1 and len(states) > 1, "half-up must be distinguishable from on/off"

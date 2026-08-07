@@ -155,12 +155,17 @@ class TestKeyAwareDegradation:
         # Guard: with only AZURE_API_KEY set (the real .env state), every
         # production azure-block route resolves WITHOUT degradation — i.e.
         # the ladder never silently collapses under the shipped config.
+        #
+        # Was manager_watcher/manager_diagnostician (deleted 2026-08-07 with
+        # the FMS LLM tiers) exercising the cheap/code-specialist tiers;
+        # test_implementer and factory_self_context cover the same two
+        # model ids (deepseek-v4-pro, gpt-5.4) from the surviving personas.
         monkeypatch.setenv("FACTORY_PROVIDER", "azure")
         monkeypatch.setenv("AZURE_API_KEY", "test-key")
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        assert route("manager_watcher") == "azure/deepseek-v4-pro"
-        assert route("manager_diagnostician") == "azure/gpt-5.3-codex"
+        assert route("test_implementer") == "azure/deepseek-v4-pro"
+        assert route("factory_self_context") == "azure/gpt-5.4"
         assert route("reviewer") == "azure/gpt-5.4"
         assert route("security") == "azure/gpt-5.3-codex"
         assert route("dev", "hard") == "azure/gpt-5.3-codex"

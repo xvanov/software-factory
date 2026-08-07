@@ -52,6 +52,7 @@ interpreted as "promote anyway".
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -60,7 +61,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from factory.chain.factory_improver_apply import _diff_target_paths, _slugify
+from factory.diff_paths import _diff_target_paths
 from factory.manager.signals import write_alert_event, write_event
 
 # ---------------------------------------------------------------------------
@@ -168,9 +169,9 @@ def is_self_edit(paths: list[str]) -> bool:
     """Return True if any target path is under ``factory/`` (a self-edit).
 
     Uses the same notion of "target path" as the forbidden-path guard in
-    ``factory.manager.apply`` (both consume ``_diff_target_paths``). An app-repo
-    change (paths under ``apps/`` or elsewhere) is NOT a self-edit and bypasses
-    staging.
+    ``factory.manager.forbidden_paths`` (both consume ``_diff_target_paths``).
+    An app-repo change (paths under ``apps/`` or elsewhere) is NOT a self-edit
+    and bypasses staging.
     """
     return any(p == "factory" or p.startswith("factory/") for p in paths)
 
@@ -178,6 +179,16 @@ def is_self_edit(paths: list[str]) -> bool:
 def self_edit_paths(patch: str) -> list[str]:
     """Convenience: the target paths of *patch* that are self-edits."""
     return [p for p in _diff_target_paths(patch) if p == "factory" or p.startswith("factory/")]
+
+
+def _slugify(text: str, *, max_len: int = 40) -> str:
+    """Lowercase, collapse non-alnum runs into ``-``, trim, clip.
+
+    Moved from ``factory/chain/factory_improver_apply.py`` (deleted
+    2026-08-07); this module is its only surviving consumer.
+    """
+    s = re.sub(r"[^A-Za-z0-9]+", "-", text or "").strip("-").lower()
+    return (s[:max_len] or "improvement").rstrip("-")
 
 
 def _extract_patch(proposal: dict[str, Any]) -> str:

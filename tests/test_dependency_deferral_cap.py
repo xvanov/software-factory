@@ -540,10 +540,6 @@ def test_tick_output_reports_deferrals_instead_of_no_in_flight_stories(
     root = _cli_root(tmp_path)
     monkeypatch.setenv("COLUMNS", "240")
     monkeypatch.setattr(
-        "factory.chain.factory_improver.should_fire_improver",
-        lambda *a, **kw: (False, "test"),
-    )
-    monkeypatch.setattr(
         "factory.chain.orchestrator.tick",
         lambda *a, **kw: O.TickSummary(
             app="sacrifice",

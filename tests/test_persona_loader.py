@@ -49,7 +49,14 @@ def _write(directory: Path, name: str, text: str) -> Path:
 
 def test_every_shipped_persona_loads() -> None:
     names = available_personas(personas_dir=_REAL_PERSONAS)
-    assert len(names) >= 20, names
+    # Structural, not a magic number: every ``*.md`` on disk must come back
+    # from available_personas() (no silent drops), and vice versa. Was a bare
+    # ``>= 20`` floor; 4 persona files (the deleted FMS LLM tiers + the
+    # factory_improver) were removed 2026-08-07 — see the Exteroception v1
+    # direction, P0 — dropping the real count from 22 to 18.
+    on_disk = {p.stem for p in _REAL_PERSONAS.glob("*.md")}
+    assert set(names) == on_disk, (set(names), on_disk)
+    assert len(names) >= 15, names
     for name in names:
         persona = load_persona(name, personas_dir=_REAL_PERSONAS)
         assert persona.body.strip(), f"{name} has an empty body"
@@ -299,56 +306,9 @@ def test_a_persona_with_no_route_is_a_warning_not_an_error() -> None:
     assert report.ok, "routing drift must not fail the gate"
 
 
-# --------------------------------------------------------------------------- #
-# The FMS classifier must route frontmatter edits by the right rules
-# --------------------------------------------------------------------------- #
+# The "FMS classifier must route frontmatter edits by the right rules" tests
+# that used to live here tested ``_diff_touches_persona_frontmatter`` /
+# ``_validate_prompt_edit`` — both from ``factory/manager/apply.py``, deleted
+# 2026-08-07 along with the L4 apply tier. See STATUS.md and the
+# Exteroception v1 direction, P0.
 
-
-def test_frontmatter_edit_is_validated_as_settings_not_prose() -> None:
-    """A ``model:``/``temperature:`` change is a settings change wearing a prose
-    change's clothes. The prompt-edit rules (heading preserved, line counts) say
-    nothing useful about it; the numeric clamps say exactly the right thing."""
-    from factory.manager.apply import _diff_touches_persona_frontmatter
-
-    patch = (
-        "diff --git a/factory/personas/dev.md b/factory/personas/dev.md\n"
-        "--- a/factory/personas/dev.md\n"
-        "+++ b/factory/personas/dev.md\n"
-        "@@ -1,2 +1,5 @@\n"
-        "+---\n"
-        "+name: dev\n"
-        "+temperature: 0.2\n"
-        "+---\n"
-        " # Dev persona — `dev`\n"
-    )
-    assert _diff_touches_persona_frontmatter(patch)
-
-
-def test_a_normal_prose_edit_is_not_treated_as_frontmatter() -> None:
-    from factory.manager.apply import _diff_touches_persona_frontmatter, _validate_prompt_edit
-
-    patch = (
-        "diff --git a/factory/personas/dev.md b/factory/personas/dev.md\n"
-        "--- a/factory/personas/dev.md\n"
-        "+++ b/factory/personas/dev.md\n"
-        "@@ -5,3 +5,4 @@\n"
-        " Some existing line.\n"
-        "+Be more careful about error handling.\n"
-    )
-    assert not _diff_touches_persona_frontmatter(patch)
-    assert _validate_prompt_edit(patch, Path("."))
-
-
-def test_the_diff_header_dashes_are_not_mistaken_for_frontmatter() -> None:
-    """``--- a/file`` and ``+++ b/file`` are diff syntax, not YAML delimiters."""
-    from factory.manager.apply import _diff_touches_persona_frontmatter
-
-    patch = (
-        "diff --git a/factory/personas/dev.md b/factory/personas/dev.md\n"
-        "--- a/factory/personas/dev.md\n"
-        "+++ b/factory/personas/dev.md\n"
-        "@@ -1 +1 @@\n"
-        "-old\n"
-        "+new\n"
-    )
-    assert not _diff_touches_persona_frontmatter(patch)
