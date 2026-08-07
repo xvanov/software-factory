@@ -594,10 +594,20 @@ def pm_sync(
                         app_config,
                         github_client,
                         pm_result=pm_result,
+                        detail_lines=validation.issues,
                     )
                     merge_state(
                         direction,
-                        {"pm_result": pm_result, "validation_issues": validation.issues},
+                        {
+                            "pm_result": pm_result,
+                            "validation_issues": validation.issues,
+                            # Top-level (not just the mark_direction_status audit
+                            # entry) so state.yaml carries the named reason —
+                            # including "vacuous_criteria" when the vacuity gate
+                            # (019 AC1) blocked — at a glance, mirroring
+                            # ``validation_issues`` above.
+                            "missing": validation.missing,
+                        },
                     )
                     mark_direction_status(
                         direction,
@@ -618,12 +628,21 @@ def pm_sync(
                 pm_result = _call_pm_persona(direction, app_repo_path, root)
                 merge_state(direction, {"pm_result": pm_result})
                 assert app_config is not None and github_client is not None
+                # Some-vacuous-some-positive (Flow A step 4): triage proceeds,
+                # but the vacuous criteria still surface as warnings on the
+                # tracker issue rather than vanishing silently.
+                extra_sections = (
+                    ["## Warnings\n\n" + "\n".join(f"- {w}" for w in validation.structural_issues)]
+                    if validation.structural_issues
+                    else None
+                )
                 open_or_update_tracker_issue(
                     direction,
                     app_config,
                     github_client,
                     pm_result=pm_result,
                     software_factory_root=root,
+                    extra_sections=extra_sections,
                 )
                 mark_direction_status(
                     direction,

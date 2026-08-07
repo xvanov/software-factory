@@ -102,6 +102,7 @@ def open_or_update_tracker_issue(
     pm_result: dict[str, Any] | None = None,
     child_issue_numbers: list[int] | None = None,
     software_factory_root: Path | None = None,
+    extra_sections: list[str] | None = None,
 ) -> int:
     """Idempotently open or update the Direction Tracker issue.
 
@@ -140,6 +141,7 @@ def open_or_update_tracker_issue(
         pm_summary=pm_body,
         child_issue_numbers=child_issue_numbers,
         direction_chain=chain,
+        extra_sections=extra_sections,
     )
     labels = _build_labels(direction, pm_labels)
 
@@ -228,11 +230,18 @@ def record_needs_direction(
     github_client: Any,
     *,
     pm_result: dict[str, Any] | None = None,
+    detail_lines: list[str] | None = None,
 ) -> int:
     """Open/update the tracker issue with the ``needs-direction`` label + comment.
 
     Direction status stays ``created`` / ``needs-direction`` so the watcher
     picks it up again after the user updates the on-disk direction.
+
+    ``detail_lines`` (typically ``ValidationResult.issues``) is appended
+    verbatim below the generic "Missing: ..." line. This is how the vacuity
+    gate (019 AC1) gets the actual vacuous criteria text and a rewritten
+    example onto the tracker comment, not just the bare ``vacuous_criteria``
+    token in ``missing``.
     """
     pm_result = pm_result or {}
     extra_labels = list(pm_result.get("labels") or [])
@@ -258,6 +267,8 @@ def record_needs_direction(
         "criteria) to the direction directory and the factory will re-validate "
         "on the next pm-sync."
     )
+    if detail_lines:
+        comment_body += "\n\n" + "\n".join(detail_lines)
     # Idempotent: re-validating an unchanged direction must not append the
     # same comment again — repeated pm-sync passes were spamming one
     # identical comment per pass onto every needs-direction tracker issue.

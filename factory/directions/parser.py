@@ -87,9 +87,19 @@ def _parse_acceptance(body: str) -> list[str]:
 
     Accepts ``- [ ]`` / ``- [x]`` / plain ``- `` bullets. Stops at the next
     heading line.
+
+    A bullet's *continuation lines* — indented text that wraps a criterion
+    onto multiple physical lines, as this repo's own directions do (see
+    ``019-exteroception-v1-close-the-sensing-gap/direction.md`` AC1) — are
+    joined onto the bullet with a single space. A new bullet, a heading, a
+    blank line, or an un-indented line terminates the join, so a criterion's
+    full text (not just its first line) reaches downstream consumers like the
+    vacuity classifier, which needs the whole sentence to tell a bare status
+    assertion from a positive-observable one.
     """
     out: list[str] = []
     in_section = False
+    accumulating = False
     for line in body.splitlines():
         stripped = line.strip()
         if stripped.startswith("#"):
@@ -98,6 +108,7 @@ def _parse_acceptance(body: str) -> list[str]:
             heading_text = stripped.lstrip("#").strip().lower()
             if heading_text.startswith("acceptance criteria") or heading_text == "acceptance":
                 in_section = True
+            accumulating = False
             continue
         if not in_section:
             continue
@@ -106,6 +117,17 @@ def _parse_acceptance(body: str) -> list[str]:
             text = m.group(1).strip()
             if text:
                 out.append(text)
+                accumulating = True
+            else:
+                accumulating = False
+            continue
+        is_indented = line[:1] in (" ", "\t")
+        if accumulating and stripped and is_indented:
+            out[-1] = f"{out[-1]} {stripped}"
+            continue
+        # Blank line, un-indented text, or anything else that isn't a
+        # continuation: the current bullet is closed.
+        accumulating = False
     return out
 
 

@@ -12,6 +12,7 @@ may still override if the structural check is overly strict for an edge case
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +22,10 @@ from factory.backpressure.parser import (
     has_meaningful_api_spec,
     has_meaningful_flow,
 )
+from factory.backpressure.vacuity import VacuityAssessment, assess_direction
 from factory.directions.parser import Direction
+
+logger = logging.getLogger(__name__)
 
 _HTTP_METHOD_RE = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b", re.IGNORECASE)
 _PATH_RE = re.compile(r"(?:^|\s)/[A-Za-z0-9_\-./{}]+")
@@ -44,6 +48,10 @@ class ValidationResult:
     has_api_spec: bool = False
     has_acceptance: bool = False
     explore_tag: bool = False
+    # Vacuity gate (019 AC1 / Flow A). ``None`` when acceptance is empty (the
+    # gate has nothing to classify) or the classifier crashed and degraded to
+    # "no verdict" — see ``factory.backpressure.vacuity.assess_direction``.
+    vacuity: VacuityAssessment | None = None
 
 
 def _read_or_empty(path: Path) -> str:
@@ -125,6 +133,59 @@ def validate_direction(direction: Direction) -> ValidationResult:
         if not rep.has_acceptance:
             missing.append("acceptance_criteria")
 
+    # Vacuity gate (019 AC1 / Flow A step 2-4): run only when there ARE
+    # acceptance criteria to classify — an empty set is already reported as
+    # missing ``acceptance_criteria`` above and the gate has nothing to say
+    # about it. Wrapped so an internal classifier exception can never block a
+    # direction: ``assess_direction`` itself already degrades to "no verdict"
+    # on a crash, but we log here too since this is the only call site that
+    # knows it's on the triage-blocking path.
+    vacuity: VacuityAssessment | None = None
+    if direction.acceptance:
+        try:
+            vacuity = assess_direction(direction.acceptance)
+        except Exception as exc:  # noqa: BLE001 - fail-safe: never block on a crash
+            logger.warning(
+                "vacuity classifier crashed for direction %s; degrading to no verdict: %r",
+                direction.id_slug,
+                exc,
+            )
+            vacuity = None
+
+        if vacuity is not None and vacuity.error is not None:
+            logger.warning(
+                "vacuity classifier crashed for direction %s; degrading to no verdict: %s",
+                direction.id_slug,
+                vacuity.error,
+            )
+
+        if vacuity is not None and vacuity.all_vacuous and not rep.explore_tag:
+            # Blocking path — but NEVER for an explore-tagged direction (F2/F3):
+            # `explore: true` exists precisely so machine-filed repair/finding
+            # directions (scheduled personas, ci_health.py, scheduled_tasks.py)
+            # aren't wedged at needs-direction when their acceptance criteria
+            # are terse (the 2026-07-06 incident this tag was introduced to
+            # fix). An explore-tagged all-vacuous direction still gets the
+            # warnings below, just not blocked.
+            is_sufficient = False
+            if "vacuous_criteria" not in missing:
+                missing.append("vacuous_criteria")
+            names = "; ".join(f'"{c}"' for c in vacuity.vacuous)
+            example = vacuity.suggestion(vacuity.vacuous[0]) if vacuity.vacuous else ""
+            issues.append(
+                "All acceptance criteria are vacuous-satisfiable (a fixed-response "
+                f"no-op would pass every one): {names}. Rewrite at least one to "
+                f"name a positive observable outcome. Example rewrite: {example}"
+            )
+        elif vacuity is not None and vacuity.vacuous:
+            # Either some-vacuous-some-positive, OR an explore-tagged
+            # all-vacuous direction (demoted from blocking to warning, F2/F3).
+            for criterion in vacuity.vacuous:
+                structural_issues.append(
+                    f'acceptance criterion is vacuous-satisfiable (a no-op would '
+                    f'pass it): "{criterion}" — {vacuity.suggestion(criterion)}'
+                )
+
     if not is_sufficient:
         severity = "blocking"
     elif structural_issues:
@@ -142,4 +203,5 @@ def validate_direction(direction: Direction) -> ValidationResult:
         has_api_spec=has_api_spec,
         has_acceptance=rep.has_acceptance,
         explore_tag=rep.explore_tag,
+        vacuity=vacuity,
     )
