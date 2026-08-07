@@ -136,6 +136,98 @@ def test_state_yaml_status_read(tmp_path: Path) -> None:
     assert direction.state["tracker_issue"] == 42
 
 
+def test_acceptance_multiline_bullet_joins_continuation_lines(tmp_path: Path) -> None:
+    """A bullet whose text wraps onto indented continuation lines (this
+    repo's own direction.md style — see 019 AC1) must be joined into one
+    criterion string, not truncated at the first physical line. Downstream
+    consumers (the vacuity classifier) need the whole sentence."""
+    d = tmp_path / "007-multiline"
+    d.mkdir()
+    body = """---
+title: Multiline
+type: feature
+priority: p2
+explore: false
+---
+
+# Multiline
+
+## Why
+
+Because reasons.
+
+## Acceptance Criteria
+
+- [ ] **Vacuity gate at triage.** Given a direction whose acceptance criteria
+  are all satisfiable by a fixed-response no-op, the direction goes to
+  needs-direction.
+- [ ] A second, single-line criterion.
+"""
+    (d / "direction.md").write_text(body, encoding="utf-8")
+    direction = parse_direction_dir("sacrifice", d)
+    assert len(direction.acceptance) == 2
+    assert direction.acceptance[0] == (
+        "**Vacuity gate at triage.** Given a direction whose acceptance criteria "
+        "are all satisfiable by a fixed-response no-op, the direction goes to "
+        "needs-direction."
+    )
+    assert direction.acceptance[1] == "A second, single-line criterion."
+
+
+def test_acceptance_continuation_stops_at_blank_line(tmp_path: Path) -> None:
+    """A blank line between a bullet and a freestanding paragraph must NOT
+    pull that paragraph into the bullet — matches the pre-existing behavior
+    for un-indented trailing prose."""
+    d = tmp_path / "008-blank-stop"
+    d.mkdir()
+    body = """---
+title: Blank stop
+type: feature
+priority: p2
+explore: false
+---
+
+# Blank stop
+
+## Acceptance Criteria
+
+- [ ] First criterion, single line.
+
+Some unrelated freestanding paragraph that is not a bullet.
+
+- [ ] Second criterion.
+"""
+    (d / "direction.md").write_text(body, encoding="utf-8")
+    direction = parse_direction_dir("sacrifice", d)
+    assert direction.acceptance == ["First criterion, single line.", "Second criterion."]
+
+
+def test_acceptance_continuation_stops_at_next_heading(tmp_path: Path) -> None:
+    d = tmp_path / "009-heading-stop"
+    d.mkdir()
+    body = """---
+title: Heading stop
+type: feature
+priority: p2
+explore: false
+---
+
+# Heading stop
+
+## Acceptance Criteria
+
+- [ ] Only criterion, wraps onto
+  this continuation line.
+
+## Out of scope
+
+- Not an acceptance criterion.
+"""
+    (d / "direction.md").write_text(body, encoding="utf-8")
+    direction = parse_direction_dir("sacrifice", d)
+    assert direction.acceptance == ["Only criterion, wraps onto this continuation line."]
+
+
 def test_next_direction_id_empty(tmp_path: Path) -> None:
     # No apps/<app>/directions/ at all
     assert next_direction_id("sacrifice", tmp_path) == "001"

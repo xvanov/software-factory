@@ -134,3 +134,120 @@ def test_validator_severity_field(
         f"got {result.severity!r} structural_issues={result.structural_issues!r} "
         f"missing={result.missing!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Vacuity gate (019 AC1 / Flow A) wired into validate_direction
+# ---------------------------------------------------------------------------
+
+
+def test_all_vacuous_acceptance_blocks_even_with_flow_and_api(tmp_path: Path) -> None:
+    """An all-vacuous criteria set must block regardless of flow/api-spec
+    sufficiency — Flow A step 3: 'is_sufficient=False regardless of
+    flow/api-spec'."""
+    flow = "1. User taps `Reset`.\n2. User sees the confirmation screen.\n"
+    d = _write_direction(
+        tmp_path,
+        flow=flow,
+        acceptance=["returns 202", "the token is not in the response body", "no error is raised"],
+    )
+    direction = parse_direction_dir("sacrifice", d)
+    result = validate_direction(direction)
+    assert result.is_valid is False
+    assert result.severity == "blocking"
+    assert "vacuous_criteria" in result.missing
+    assert result.vacuity is not None
+    assert result.vacuity.all_vacuous is True
+    assert any("returns 202" in issue for issue in result.issues)
+    # Names each vacuous criterion and shows a rewritten example.
+    assert any("Rewrite" in issue or "rewrite" in issue for issue in result.issues)
+
+
+def test_one_positive_criterion_passes_with_warnings(tmp_path: Path) -> None:
+    """At least one positive-observable criterion -> triage proceeds; the
+    vacuous ones are recorded as warnings, not blockers — Flow A step 4."""
+    flow = "1. User taps `Reset`.\n2. User sees the confirmation screen.\n"
+    d = _write_direction(
+        tmp_path,
+        flow=flow,
+        acceptance=[
+            "returns 202",
+            "an email arrives containing a link that opens a working reset form",
+        ],
+    )
+    direction = parse_direction_dir("sacrifice", d)
+    result = validate_direction(direction)
+    assert result.is_valid is True
+    assert "vacuous_criteria" not in result.missing
+    assert result.vacuity is not None
+    assert result.vacuity.all_vacuous is False
+    assert any("returns 202" in issue for issue in result.structural_issues)
+    assert result.severity == "warning"
+
+
+def test_all_positive_criteria_has_no_vacuity_warnings(tmp_path: Path) -> None:
+    flow = "1. User taps `Reset`.\n2. User sees the confirmation screen.\n"
+    d = _write_direction(
+        tmp_path,
+        flow=flow,
+        acceptance=["an email arrives containing a link"],
+    )
+    direction = parse_direction_dir("sacrifice", d)
+    result = validate_direction(direction)
+    assert result.is_valid is True
+    assert result.structural_issues == []
+    assert result.severity == "ok"
+
+
+def test_empty_acceptance_skips_vacuity_gate(tmp_path: Path) -> None:
+    """No criteria to classify -> the gate has nothing to say; the existing
+    'acceptance_criteria' missing-marker behavior is unaffected."""
+    d = _write_direction(tmp_path, explore=True, acceptance=[])
+    direction = parse_direction_dir("sacrifice", d)
+    result = validate_direction(direction)
+    assert result.vacuity is None
+    assert "vacuous_criteria" not in result.missing
+
+
+# ---------------------------------------------------------------------------
+# F2/F3 — explore-tagged directions must NEVER be blocked on vacuity.
+# ``explore: true`` exists precisely so machine-filed repair/finding
+# directions (scheduled personas — see ci_health.py, scheduled_tasks.py)
+# aren't wedged at needs-direction when their acceptance criteria are terse
+# (the 2026-07-06 incident). An all-vacuous explore-tagged direction is
+# demoted to a warning, not blocked.
+# ---------------------------------------------------------------------------
+
+
+def test_explore_tagged_all_vacuous_direction_is_not_blocked(tmp_path: Path) -> None:
+    d = _write_direction(
+        tmp_path,
+        explore=True,
+        acceptance=["returns 202", "does not leak the token", "no error is raised"],
+    )
+    direction = parse_direction_dir("sacrifice", d)
+    result = validate_direction(direction)
+    assert result.is_valid is True, result.issues
+    assert "vacuous_criteria" not in result.missing
+    assert result.vacuity is not None
+    assert result.vacuity.all_vacuous is True
+    # Demoted to a warning, not silently dropped.
+    assert any("returns 202" in w for w in result.structural_issues)
+    assert result.severity == "warning"
+
+
+def test_non_explore_all_vacuous_direction_still_blocks(tmp_path: Path) -> None:
+    """Regression guard: the explore exemption must be narrowly scoped —a
+    non-explore direction with the same all-vacuous criteria set must still
+    block exactly as before."""
+    flow = "1. User taps `Reset`.\n2. User sees the confirmation screen.\n"
+    d = _write_direction(
+        tmp_path,
+        flow=flow,
+        acceptance=["returns 202", "does not leak the token", "no error is raised"],
+    )
+    direction = parse_direction_dir("sacrifice", d)
+    result = validate_direction(direction)
+    assert result.is_valid is False
+    assert "vacuous_criteria" in result.missing
+    assert result.severity == "blocking"

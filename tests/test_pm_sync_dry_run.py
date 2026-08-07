@@ -121,6 +121,63 @@ def test_pm_sync_dry_run_two_complete_one_vague(tmp_path: Path) -> None:
     assert n == 0, f"dry-run persisted {n} dispatchable stories — must be a pure preview"
 
 
+def test_pm_sync_dry_run_all_vacuous_routes_to_needs_direction(tmp_path: Path) -> None:
+    """The vacuity gate (019 AC1 / Flow A) must route an all-vacuous direction
+    to needs-direction WITHOUT ever calling the PM persona — dry-run stays a
+    pure, deterministic preview, no LLM call involved in the classification."""
+    _seed_app_config(tmp_path)
+
+    # Has a real flow.md (otherwise it would be blocked for THAT reason) but
+    # every acceptance criterion is satisfiable by a fixed-response no-op —
+    # the password-reset incident's own trio.
+    create_direction(
+        app="sacrifice",
+        title="Password reset",
+        type_tag="feature",
+        why="Users who forget their password need a way back in.",
+        has_ui=True,
+        flow_steps=[
+            "User requests a password reset",
+            "User receives a reset email",
+            "User submits a new password",
+        ],
+        has_api=False,
+        api_spec_lines=None,
+        acceptance=[
+            "returns 202",
+            "the token is not in the response body",
+            "no error is raised",
+        ],
+        explore=False,
+        attach_files=None,
+        software_factory_root=tmp_path,
+    )
+
+    state_db = tmp_path / "state" / "factory.db"
+    summary = pm_sync(
+        app="sacrifice",
+        software_factory_root=tmp_path,
+        dry_run=True,
+        state_db_path=state_db,
+    )
+
+    assert summary.processed == 1
+    assert summary.validated == 0
+    assert summary.needs_direction == 1
+    assert summary.errors == []
+
+    # No StoryRecord rows spawned — the PM persona (and therefore any
+    # story-spawn path) was never reached.
+    import sqlite3
+
+    conn = sqlite3.connect(str(state_db))
+    try:
+        n = conn.execute("SELECT COUNT(*) FROM stories").fetchone()[0]
+    finally:
+        conn.close()
+    assert n == 0, "all-vacuous direction must never reach story spawn"
+
+
 def test_pm_sync_gc_pass_closes_stale_scheduled_direction(tmp_path: Path) -> None:
     """pm_sync's end-of-pass GC (factory.directions.gc) closes a scheduler-filed
     direction that's been stuck at needs-direction well past the threshold —
