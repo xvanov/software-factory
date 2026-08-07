@@ -15,6 +15,22 @@ Registry
     Maps detector name → docstring (via ``inspect.getdoc``).  Agents
     render these as tool descriptions so the LLM knows what each
     detector surfaces without reading the source.
+
+Zero production callers as of 2026-08-07
+-----------------------------------------
+The L1 Watcher — deleted 2026-08-07 along with the other three FMS LLM tiers
+(summarizer/diagnostician/apply; see STATUS.md and the Exteroception v1
+direction, P0) — was the only production invoker of ``DETECTORS``. These
+functions are still pure, still tested, and still correct; nothing currently
+calls them outside tests. Direction 019 (AC7) rewires them into the chain
+tick directly, without an LLM in the loop. Until then, treat a detector as
+dormant infrastructure, not a running check.
+
+One consequence already visible: ``fms_yield`` reads
+``state/.manager_apply_history.json``, which nothing writes anymore (that
+file was written by the now-deleted ``factory/manager/apply.py``). It will
+report a permanently frozen history rather than crashing — a degrade, not a
+failure — but its numbers describe history, not the present.
 """
 
 from __future__ import annotations

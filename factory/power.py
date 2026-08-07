@@ -23,7 +23,8 @@ Clean shutdown, in order, because the order is the whole point:
      interrupted mid-handler leaves a story in an ``*_in_progress`` state that
      the next run has to recover via the stale-threshold path. Letting it drain
      is the difference between "stopped" and "stopped cleanly".
-  3. Stop the long-running services (the L1 manager daemon).
+  3. Stop the long-running services, if any (``_SERVICE_UNITS`` is empty since
+     the FMS L1 manager daemon was deleted 2026-08-07 — see ``factory.manager``).
   4. ``reset-failed`` everything, so a unit that had died leaves a clean
      ``inactive`` rather than a sticky ``failed`` that makes the next status read
      look alarming.
@@ -49,7 +50,13 @@ DEFAULT_DRAIN_TIMEOUT_S = 300
 _DRAIN_POLL_S = 2.0
 
 # Long-running daemons — stopped LAST (after timers, after the drain).
-_SERVICE_UNITS: tuple[str, ...] = ("factory-manager.service",)
+#
+# Empty since 2026-08-07: the FMS L1 watcher daemon (factory-manager.service)
+# was deleted along with the other three LLM tiers (operator decision — see
+# STATUS.md and the Exteroception v1 direction, P0). The tuple stays so a
+# future long-running service has a slot to register in without touching the
+# power_on/power_off iteration logic below.
+_SERVICE_UNITS: tuple[str, ...] = ()
 
 # Timer units that are not per-app.
 _GLOBAL_TIMER_UNITS: tuple[str, ...] = ("factory-self-deploy.timer",)

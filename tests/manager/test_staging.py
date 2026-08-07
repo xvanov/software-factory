@@ -9,12 +9,15 @@ Coverage:
     StagingInfraError.
   * gate_self_edit fail-safe: healthy → promote; unhealthy → not promoted;
     infra error → not promoted (never raises); events emitted.
-  * apply.py wiring: a self-edit routes through staging (healthy → promotes,
-    unhealthy/infra → NOT promoted + no real-factory branch); an app-repo
-    change bypasses staging; a forbidden proposal is still blocked.
 
 All heavy subprocess work (nested uv sync / pytest / clone) is MOCKED — the
 suite never actually runs a nested factory.
+
+The ``apply.py`` end-to-end wiring tests (a self-edit proposal routing
+through staging via ``apply_manager_proposals``) were removed 2026-08-07
+along with ``factory/manager/apply.py`` (the L4 apply tier) — see STATUS.md
+and the Exteroception v1 direction, P0. This file now covers
+``factory.manager.staging`` directly.
 """
 
 from __future__ import annotations
@@ -29,7 +32,6 @@ from typing import Any
 import pytest
 
 from factory.manager import staging as staging_mod
-from factory.manager.apply import apply_manager_proposals
 from factory.manager.staging import (
     StagingInfraError,
     StagingResult,
@@ -179,7 +181,7 @@ def _rename_into_factory_patch(dest: str = "factory/evil.py") -> str:
 
 
 def test_diff_target_paths_extracts_rename_destination() -> None:
-    from factory.chain.factory_improver_apply import _diff_target_paths
+    from factory.diff_paths import _diff_target_paths
 
     paths = _diff_target_paths(_rename_into_factory_patch("factory/evil.py"))
     # BOTH the source (a/) and the rename destination (b/) must appear.
@@ -188,18 +190,26 @@ def test_diff_target_paths_extracts_rename_destination() -> None:
 
 
 def test_rename_into_factory_is_detected_as_self_edit() -> None:
-    from factory.chain.factory_improver_apply import _diff_target_paths
+    from factory.diff_paths import _diff_target_paths
 
     patch = _rename_into_factory_patch("factory/evil.py")
     assert is_self_edit(_diff_target_paths(patch)) is True
 
 
 def test_rename_into_manager_is_classified_forbidden() -> None:
-    from factory.manager.apply import _classify_manager_proposal
+    """Regression: a pure rename into factory/manager/ (no +++ header, the
+    destination lives ONLY on the ``diff --git`` line) must still be caught.
+
+    This used to go through the broader ``_classify_manager_proposal``
+    (``factory/manager/apply.py``, deleted 2026-08-07 with the L4 apply tier).
+    The actual safety property — the moved ``forbidden_paths`` classifier
+    still catches a rename-evasion attempt — is worth keeping covered
+    directly against the surviving module.
+    """
+    from factory.manager.forbidden_paths import _any_path_is_forbidden_in_patch
 
     patch = _rename_into_factory_patch("factory/manager/evil.py")
-    proposal = _proposal(patch, target_class="prompt_edit", pid="rename-forbid")
-    assert _classify_manager_proposal(proposal, Path(".")) == "forbidden"
+    assert _any_path_is_forbidden_in_patch(["factory/manager/evil.py"], patch) is True
 
 
 # ---------------------------------------------------------------------------
@@ -437,235 +447,3 @@ def test_gate_infra_failure_does_not_promote_and_never_raises(tmp_path: Path) ->
     events = _read_events(tmp_path, staging_mod.STAGING_STREAM)
     assert any(e["event"] == "staging_infra_failed" and e["promoted"] is False for e in events)
 
-
-# ---------------------------------------------------------------------------
-# apply.py wiring
-# ---------------------------------------------------------------------------
-
-
-def _make_apply_runner(*, pr_number: int = 55) -> tuple[Callable[..., Any], list[list[str]]]:
-    """Runner for the REAL-factory apply path (promotion)."""
-    calls: list[list[str]] = []
-
-    def _runner(args: list[str], **kwargs: Any) -> Any:
-        calls.append(list(args))
-        if args[:1] == ["uv"] and "pytest" in args:
-            return _Completed(returncode=0, stdout="ok")
-        if args[:2] == ["git", "push"]:
-            return _Completed(returncode=0)
-        if args[:3] == ["gh", "pr", "create"]:
-            return _Completed(returncode=0, stdout=f"https://github.com/o/r/pull/{pr_number}\n")
-        if args[:3] == ["gh", "pr", "merge"]:
-            return _Completed(returncode=0)
-        if args[:3] == ["gh", "label", "create"]:
-            return _Completed(returncode=0)
-        kwargs.pop("check", None)
-        return subprocess.run(args, **kwargs)
-
-    return _runner, calls
-
-
-def _make_repo(tmp_path: Path, files: dict[str, str]) -> Path:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    for rel, content in files.items():
-        p = repo / rel
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding="utf-8")
-    for args in (
-        ["git", "init", "-q", "-b", "main"],
-        ["git", "config", "user.email", "t@e.com"],
-        ["git", "config", "user.name", "T"],
-        ["git", "config", "commit.gpgsign", "false"],
-        ["git", "add", "."],
-        ["git", "commit", "-q", "-m", "init"],
-    ):
-        subprocess.run(args, cwd=str(repo), check=True, capture_output=True)
-    return repo
-
-
-def _plant(repo: Path, proposal: dict[str, Any], name: str) -> Path:
-    d = repo / "state" / "manager_proposals"
-    d.mkdir(parents=True, exist_ok=True)
-    p = d / name
-    p.write_text(json.dumps(proposal), encoding="utf-8")
-    return p
-
-
-def test_apply_self_edit_healthy_promotes(tmp_path: Path) -> None:
-    """A self-edit that stages healthy proceeds to the real PR/auto-merge path."""
-    repo = _make_repo(tmp_path, {"factory/personas/sm.md": "# SM Persona\nbody line\n"})
-    _plant(repo, _proposal(_self_edit_patch(), pid="ok-1"), "p.json")
-    runner, calls = _make_apply_runner(pr_number=91)
-
-    def _healthy_gate(proposal: dict[str, Any], proposal_path: str, **kwargs: Any) -> Any:
-        from factory.manager.staging import StagingDecision
-
-        return StagingDecision(promote=True, status="staging_validated", branch="staging/ok-1")
-
-    result = apply_manager_proposals(
-        root=repo,
-        dry_run=False,
-        runner=runner,
-        repo="owner/repo",
-        push=True,
-        staging_gate=_healthy_gate,
-    )
-    assert result["safe_applied"] == 1
-    assert any(c[:3] == ["gh", "pr", "create"] for c in calls)
-
-
-def test_apply_broadened_factory_py_self_edit_routes_through_staging(tmp_path: Path) -> None:
-    """WS3.1: a dispatch_code patch on factory/*.py — previously RISKY — is now
-    classified SAFE and, because it is a self-edit, routes through the staging
-    gate. On a healthy (mocked) gate it auto-applies (safe → PR + auto-merge)."""
-    repo = _make_repo(tmp_path, {"factory/chain/orchestrator.py": "# orchestrator\n"})
-    patch = (
-        "diff --git a/factory/chain/orchestrator.py b/factory/chain/orchestrator.py\n"
-        "--- a/factory/chain/orchestrator.py\n"
-        "+++ b/factory/chain/orchestrator.py\n"
-        "@@ -1,1 +1,2 @@\n"
-        " # orchestrator\n"
-        "+# WS3.1 self-fix\n"
-    )
-    _plant(repo, _proposal(patch, target_class="dispatch_code", pid="disp-1"), "p.json")
-    runner, calls = _make_apply_runner(pr_number=94)
-
-    gate_invoked = {"n": 0}
-
-    def _healthy_gate(proposal: dict[str, Any], proposal_path: str, **kwargs: Any) -> Any:
-        gate_invoked["n"] += 1
-        from factory.manager.staging import StagingDecision
-
-        return StagingDecision(promote=True, status="staging_validated", branch="staging/disp-1")
-
-    result = apply_manager_proposals(
-        root=repo,
-        dry_run=False,
-        runner=runner,
-        repo="owner/repo",
-        push=True,
-        staging_gate=_healthy_gate,
-    )
-    assert gate_invoked["n"] == 1, "factory/*.py self-edit must route through staging"
-    assert result["safe_applied"] == 1
-    # Auto-merge attempted (safe class).
-    assert any(c[:3] == ["gh", "pr", "merge"] for c in calls)
-
-
-def test_apply_self_edit_unhealthy_not_promoted(tmp_path: Path) -> None:
-    """An unhealthy self-edit is NOT promoted: no branch, no PR on real factory."""
-    repo = _make_repo(tmp_path, {"factory/personas/sm.md": "# SM Persona\nbody line\n"})
-    _plant(repo, _proposal(_self_edit_patch(), pid="bad-1"), "p.json")
-    runner, calls = _make_apply_runner()
-
-    def _reject_gate(proposal: dict[str, Any], proposal_path: str, **kwargs: Any) -> Any:
-        from factory.manager.staging import StagingDecision
-
-        return StagingDecision(
-            promote=False, status="staging_rejected", stage_failed="pytest", logs_tail="red"
-        )
-
-    result = apply_manager_proposals(
-        root=repo,
-        dry_run=False,
-        runner=runner,
-        repo="owner/repo",
-        push=True,
-        staging_gate=_reject_gate,
-    )
-    assert result["safe_applied"] == 0
-    assert result["staging_rejected"] == 1
-    # Real factory never touched: no gh pr create, no branch checkout.
-    assert not any(c[:3] == ["gh", "pr", "create"] for c in calls)
-    branches = subprocess.run(
-        ["git", "branch", "--list", "factory-manager/*"],
-        cwd=str(repo), capture_output=True, text=True, check=True,
-    )
-    assert branches.stdout.strip() == ""
-
-
-def test_apply_self_edit_infra_failure_not_promoted(tmp_path: Path) -> None:
-    """Staging infra failure → not promoted, manager cycle continues (no raise)."""
-    repo = _make_repo(tmp_path, {"factory/personas/sm.md": "# SM Persona\nbody line\n"})
-    _plant(repo, _proposal(_self_edit_patch(), pid="infra-1"), "p.json")
-    runner, calls = _make_apply_runner()
-
-    def _infra_gate(proposal: dict[str, Any], proposal_path: str, **kwargs: Any) -> Any:
-        from factory.manager.staging import StagingDecision
-
-        return StagingDecision(promote=False, status="staging_infra_failed", logs_tail="unreachable")
-
-    result = apply_manager_proposals(
-        root=repo,
-        dry_run=False,
-        runner=runner,
-        repo="owner/repo",
-        push=True,
-        staging_gate=_infra_gate,
-    )
-    assert result["staging_infra_failed"] == 1
-    assert result["safe_applied"] == 0
-    assert not any(c[:3] == ["gh", "pr", "create"] for c in calls)
-
-
-def test_apply_app_edit_bypasses_staging(tmp_path: Path) -> None:
-    """An app-repo change (not under factory/) does NOT invoke the staging gate."""
-    repo = _make_repo(tmp_path, {"apps/sacrifice/README.md": "# readme\n"})
-    # dispatch_code so it's classified risky (well-formed, opens a review PR).
-    prop = _proposal(_app_patch(), target_class="dispatch_code", pid="app-1")
-    _plant(repo, prop, "p.json")
-    runner, calls = _make_apply_runner()
-
-    gate_invoked = {"n": 0}
-
-    def _spy_gate(*a: Any, **k: Any) -> Any:
-        gate_invoked["n"] += 1
-        from factory.manager.staging import StagingDecision
-
-        return StagingDecision(promote=False, status="staging_rejected")
-
-    result = apply_manager_proposals(
-        root=repo,
-        dry_run=False,
-        runner=runner,
-        repo="owner/repo",
-        push=True,
-        staging_gate=_spy_gate,
-    )
-    assert gate_invoked["n"] == 0, "app-repo change must bypass staging"
-    assert result["risky_opened"] == 1
-
-
-def test_apply_forbidden_still_blocked_before_staging(tmp_path: Path) -> None:
-    """A forbidden self-edit (manager/*.py) is blocked and never reaches staging."""
-    repo = _make_repo(tmp_path, {"factory/manager/apply.py": "# x\n"})
-    patch = (
-        "diff --git a/factory/manager/apply.py b/factory/manager/apply.py\n"
-        "--- a/factory/manager/apply.py\n"
-        "+++ b/factory/manager/apply.py\n"
-        "@@ -1,1 +1,2 @@\n"
-        " # x\n"
-        "+# evil\n"
-    )
-    _plant(repo, _proposal(patch, target_class="prompt_edit", pid="forbid-1"), "p.json")
-    runner, _ = _make_apply_runner()
-
-    gate_invoked = {"n": 0}
-
-    def _spy_gate(*a: Any, **k: Any) -> Any:
-        gate_invoked["n"] += 1
-        from factory.manager.staging import StagingDecision
-
-        return StagingDecision(promote=True, status="staging_validated")
-
-    result = apply_manager_proposals(
-        root=repo,
-        dry_run=False,
-        runner=runner,
-        repo="owner/repo",
-        push=True,
-        staging_gate=_spy_gate,
-    )
-    assert result["forbidden"] == 1
-    assert gate_invoked["n"] == 0, "forbidden proposal must not reach staging"

@@ -194,3 +194,45 @@ def is_production_path(path: str) -> bool:
 def production_paths(paths: list[str]) -> list[str]:
     """The subset of ``paths`` that is production code, order preserved."""
     return [p for p in paths if is_production_path(p)]
+
+
+def _diff_target_paths(patch: str) -> list[str]:
+    """Extract the list of file paths a unified diff touches.
+
+    Strips the ``a/`` / ``b/`` prefixes ``git diff`` emits, and dedupes
+    while preserving order so callers can present a stable list to the
+    operator.
+
+    Moved from ``factory/chain/factory_improver_apply.py`` (deleted
+    2026-08-07 along with the L2/L4 self-improvement tiers) — this is the one
+    remaining place that turns a raw unified diff into a path list, consumed
+    by ``factory.manager.staging`` and the ``auto_merge`` self-edit guard.
+    """
+    paths: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw: str) -> None:
+        p = raw
+        if p.startswith("a/") or p.startswith("b/"):
+            p = p[2:]
+        if p and p != "/dev/null" and p not in seen:
+            seen.add(p)
+            paths.append(p)
+
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            # ``diff --git a/path/to/file b/path/to/file``
+            # Extract BOTH the a/ (source) AND b/ (destination) sides. A pure
+            # 100%-similarity rename carries NO ``+++`` hunk header, so the
+            # destination path lives ONLY on this line — e.g. a rename INTO
+            # factory/ (``diff --git a/apps/x.py b/factory/evil.py``) would
+            # otherwise be seen only as ``apps/x.py`` and evade the self-edit /
+            # forbidden-path detection that both the staging gate and the
+            # forbidden guard rely on.
+            parts = line.split()
+            if len(parts) >= 4:
+                _add(parts[2])  # a/ (source)
+                _add(parts[3])  # b/ (destination — the rename/copy target)
+        elif line.startswith("+++ ") and not line.startswith("+++ /dev/null"):
+            _add(line[4:].strip())
+    return paths

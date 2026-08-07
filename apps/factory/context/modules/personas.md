@@ -1,3 +1,5 @@
+<!-- STALE as of 2026-08-07: the four manager LLM tiers and factory_improver described below were deleted (op/019-p0). Regeneration pending. -->
+
 # Personas — contracts, model tiers, and breakpoints
 
 ## Overview

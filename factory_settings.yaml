@@ -36,12 +36,6 @@ rate_limits:
   bug_hunter_runs_per_day: 6
   security_runs_per_day: 2
   ux_auditor_runs_per_day: 1  # throttled 2026-07-24 (was 4); see schedules: ux_audit
-  # Factory self-improver. Now event-triggered — ``factory tick``
-  # fires the improver whenever a fresh ``factory_needs_redesign``
-  # event arrives (debounced ~10 min, capped daily). 12/day is the
-  # circuit-breaker: enough headroom for normal event bursts while
-  # still bounding LLM spend if the persona starts misfiring.
-  factory_improver_runs_per_day: 12
 modes:
   default: normal
   available: [normal, fix-only, drain-reviews, paused, exploratory, deploy-frozen, ux-audit-only]
@@ -137,14 +131,8 @@ schedules:
     cron: "0 9 * * *"
     persona: security
     rate_limit_key: security_runs_per_day
-  # Factory self-improver is NOT a cron-scheduled persona anymore —
-  # ``factory tick`` calls ``should_fire_improver`` on every pass and
-  # dispatches ``run_factory_improver`` whenever a new
-  # ``factory_needs_redesign`` event has landed since the last run
-  # (debounced ~10 min, capped at ``factory_improver_runs_per_day``).
-  # Output is still persisted to ``state/improvements/<ts>.json`` and
-  # surfaced on the pinned ``factory-improvements`` GH issue; the L2
-  # apply pass opens PRs on ``xvanov/software-factory`` per proposal.
+  # factory_improver (event-triggered self-improvement) was retired
+  # 2026-08-07 (operator decision: 1 commit landed in 196 proposals).
 
 # In-tick run-until-green dev convergence (see DevConvergenceConfig).
 # ENABLED 2026-07-17 after the benchmark campaign exercised the loop across

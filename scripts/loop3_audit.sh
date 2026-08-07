@@ -34,5 +34,5 @@ uv run factory budget 2>/dev/null | awk -F'│' '/today_spend_usd|hour_spend_usd
 
 # loops alive
 n=$(ps -eo pid,args | grep '[d]rive_chain\.sh sacrifice' | wc -l)
-echo "LOOPS drive_chain=$n watch=$(pgrep -fc 'factory manager watch')"
+echo "LOOPS drive_chain=$n"
 echo "TIME now=${now}Z deadline=${deadline_utc}Z"

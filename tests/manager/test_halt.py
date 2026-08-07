@@ -21,20 +21,16 @@ test_clear_halt_archives_to_history
 test_request_halt_idempotent_archives_previous
     Request halt twice; second call archives the first state.
 
-test_diagnostician_request_halt_writes_halt_file
-    Mock L3 LLM to return request_halt=true, halt_reason="...".
-    Run run_diagnostician_once. Verify halt file written + proposal
-    shows halt_requested=true.
-
-test_diagnostician_request_halt_requires_reason
-    L3 returns request_halt=true, halt_reason=null.
-    Halt is NOT triggered (silently dropped).
-
 test_tick_skips_dispatch_when_halted
     Request halt, run tick, verify no text_run calls.
 
 test_resume_clears_halt
     Request halt, call clear_halt, verify is_halted is False.
+
+The L3-Diagnostician-integration tests that used to live here (mocking the
+L3 LLM to request a halt) were removed 2026-08-07 along with
+``factory/manager/diagnostician.py`` — see STATUS.md and the Exteroception
+v1 direction, P0. This file now covers ``factory.manager.halt`` directly.
 """
 
 from __future__ import annotations
@@ -313,153 +309,6 @@ class TestResumeGrace:
             root=tmp_path, concern_title="second", proposal_path=None, reason=_REASON
         )
         assert out is None  # still inside the grace window
-
-
-# ---------------------------------------------------------------------------
-# Diagnostician integration tests
-# ---------------------------------------------------------------------------
-
-_CANNED_CONCERN = {
-    "schema_version": 1,
-    "title": _CONCERN_TITLE,
-    "description": "Three SM failures; runaway cost.",
-    "evidence": [
-        {"kind": "run", "id": 100, "ts": "2026-05-26T11:51:00+00:00", "excerpt": "sm failure"},
-    ],
-    "proposed_area": "persona_settings",
-    "urgency": "halt",
-    "escalate_to_l3": True,
-    "escalation_reason": "Sustained cost spiral, no self-healing.",
-}
-
-
-def _write_concern(root: Path, concern: dict[str, Any] | None = None) -> Path:
-    concerns_dir = root / "state" / "concerns"
-    concerns_dir.mkdir(parents=True, exist_ok=True)
-    doc = concern if concern is not None else dict(_CANNED_CONCERN)
-    path = concerns_dir / f"20260526T115500-{_CONCERN_TITLE}.json"
-    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-    return path
-
-
-def _make_mock_llm(response: dict[str, Any]):
-    def _mock(persona: str, prompt: str, model_id: str, schema: Any = None, **kwargs: Any) -> dict:
-        return response
-
-    return _mock
-
-
-def _patch_llm_infra(monkeypatch: pytest.MonkeyPatch, response: dict[str, Any]) -> None:
-    monkeypatch.setattr("factory.manager.diagnostician.text_run", _make_mock_llm(response))
-    monkeypatch.setattr(
-        "factory.manager.diagnostician._read_persona_prompt",
-        lambda persona: f"# {persona} mock",
-    )
-    import factory.model_router as mr
-
-    monkeypatch.setattr(mr, "route", lambda *a, **kw: "anthropic/claude-opus-4-7")
-    monkeypatch.setattr(mr, "max_output_tokens_for", lambda *a, **kw: 32768)
-
-
-_L3_HALT_RESPONSE = {
-    "concern_title": _CONCERN_TITLE,
-    "diagnosis": "Runaway cost spiral with no self-healing.",
-    "proposal": {
-        "kind": "persona_settings",
-        "target": "factory/personas/sm.md",
-        "rationale": "Lower max_tokens.",
-        "suggested_patch": "",
-        "verification": "uv run pytest",
-        "confidence": "low",
-    },
-    "target_class": "escalate_to_human",
-    "escalate_to_human": True,
-    "escalation_reason": "Cannot fix; halting to stop burn.",
-    "request_halt": True,
-    "halt_reason": _REASON,
-}
-
-_L3_HALT_NO_REASON_RESPONSE = {
-    **_L3_HALT_RESPONSE,
-    "halt_reason": None,
-}
-
-_L3_NO_HALT_RESPONSE = {
-    "concern_title": _CONCERN_TITLE,
-    "diagnosis": "SM max_tokens exceeded.",
-    "proposal": {
-        "kind": "persona_settings",
-        "target": "factory/routes.yaml",
-        "rationale": "Lower max_tokens.",
-        "suggested_patch": "diff --git a/factory/routes.yaml b/factory/routes.yaml\n",
-        "verification": "uv run pytest",
-        "confidence": "medium",
-    },
-    "target_class": "persona_settings",
-    "escalate_to_human": False,
-    "escalation_reason": None,
-    "request_halt": False,
-    "halt_reason": None,
-}
-
-
-class TestDiagnosticianHaltRequest:
-    def test_request_halt_writes_halt_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _write_concern(tmp_path)
-        _patch_llm_infra(monkeypatch, _L3_HALT_RESPONSE)
-
-        from factory.manager.diagnostician import run_diagnostician_once
-
-        result = run_diagnostician_once(root=tmp_path, now=NOW)
-        assert result is not None
-
-        # Halt file should exist.
-        assert is_halted(root=tmp_path), "halt state file should be set"
-        state = get_halt_state(root=tmp_path)
-        assert state is not None
-        assert state["concern_title"] == _CONCERN_TITLE
-        assert state["reason"] == _REASON
-
-        # Proposal should record halt_requested=True.
-        assert result.get("halt_requested") is True
-
-        # Proposal file should also have halt_requested=True.
-        proposal_path = Path(result["proposal_path"])
-        written = json.loads(proposal_path.read_text())
-        assert written.get("halt_requested") is True
-
-    def test_request_halt_requires_reason(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """request_halt=true with halt_reason=null → halt NOT triggered."""
-        _write_concern(tmp_path)
-        _patch_llm_infra(monkeypatch, _L3_HALT_NO_REASON_RESPONSE)
-
-        from factory.manager.diagnostician import run_diagnostician_once
-
-        result = run_diagnostician_once(root=tmp_path, now=NOW)
-        assert result is not None
-
-        # Halt file must NOT exist.
-        assert not is_halted(root=tmp_path), "halt must NOT be set when halt_reason is null"
-
-        # Proposal should record halt_requested=False.
-        assert result.get("halt_requested") is False
-
-    def test_no_halt_request_does_not_write_halt_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _write_concern(tmp_path)
-        _patch_llm_infra(monkeypatch, _L3_NO_HALT_RESPONSE)
-
-        from factory.manager.diagnostician import run_diagnostician_once
-
-        result = run_diagnostician_once(root=tmp_path, now=NOW)
-        assert result is not None
-        assert not is_halted(root=tmp_path)
-        assert result.get("halt_requested") is False
 
 
 # ---------------------------------------------------------------------------

@@ -571,9 +571,9 @@ def _evaluate_self_edit_gate(
 
     root = Path(root) if root is not None else Path.cwd()
 
-    from factory.chain.factory_improver_apply import _diff_target_paths
+    from factory.diff_paths import _diff_target_paths
     from factory.manager import staging
-    from factory.manager.apply import _any_path_is_forbidden_in_patch
+    from factory.manager.forbidden_paths import _any_path_is_forbidden_in_patch
 
     if patch_provider is None:
         import functools

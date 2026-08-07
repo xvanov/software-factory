@@ -1,7 +1,32 @@
 """Tests for tick_cmd halt-check (Phase 8).
 
 Verifies that when the factory is halted, ``factory tick`` exits cleanly
-without invoking the factory_improver or scheduled personas.
+without dispatching any work.
+
+The factory_improver sentinel this file used to monkeypatch
+(``factory.chain.factory_improver.should_fire_improver`` /
+``run_factory_improver``) was deleted 2026-08-07 along with
+``factory/chain/factory_improver.py`` — see STATUS.md and the Exteroception
+v1 direction, P0. The halted-tick-dispatches-nothing behavior survives (it's
+enforced in ``factory.cli.tick_cmd`` before the scheduled-personas block), so
+these tests sentinel on THREE surviving dispatch points instead:
+
+  * ``factory.chain.scheduled_tasks.run_scheduled_persona`` — the
+    cron-scheduled-persona loop, right after the halt check.
+  * ``factory.chain.idle.maybe_generate_idle_work`` — the idle-work
+    generator, gated ``if not dry_run`` further down.
+  * ``factory.chain.orchestrator.tick`` — the story-chain dispatch, last.
+
+A regression that moves the halt check below EITHER of the first two would
+stay green if only ``orchestrator.tick`` were pinned (2026-08-07 review
+round: the previous version of this file pinned only ``tick``, missing that
+gap). ``factory.scheduler.cron.due_schedules`` is also patched to return one
+concretely-due schedule — otherwise, with no ``schedules:`` block in the
+test's minimal ``factory_settings.yaml``-less root, the default schedule list
+resolves against a DB that doesn't exist, and a regressed halt check might
+crash before ever reaching ``run_scheduled_persona`` rather than tripping the
+sentinel. A crash is still a red test, but not a *precise* one, so the fixture
+below makes the loop body definitely reachable.
 """
 
 from __future__ import annotations
@@ -57,28 +82,56 @@ def _get_cli(root: Path):  # type: ignore[return]
     return CliRunner(), cli_mod
 
 
+def _one_due_schedule():  # type: ignore[no-untyped-def]
+    """A single concretely-due schedule, so the scheduled-persona loop body
+    (and therefore ``run_scheduled_persona``) is definitely reachable if the
+    halt check ever regresses below it."""
+    from factory.scheduler.cron import DueSchedule, Schedule
+
+    return [
+        DueSchedule(
+            schedule=Schedule(
+                name="ralph", cron_expr="0 * * * *", persona="ralph", rate_limit_key=None
+            ),
+            reason="test",
+            rate_limit_hit=False,
+        )
+    ]
+
+
+def _install_dispatch_sentinels(monkeypatch: pytest.MonkeyPatch) -> dict[str, bool]:
+    """Loud sentinels on every dispatch point between the halt check and the
+    end of tick_cmd. Returns a dict of call flags the test can assert on."""
+    called = {"scheduled_persona": False, "idle_work": False, "tick": False}
+
+    def _loud(name: str):  # type: ignore[no-untyped-def]
+        def _fn(*args: Any, **kwargs: Any) -> Any:
+            called[name] = True
+            raise AssertionError(f"{name} must NOT be called when halted")
+
+        return _fn
+
+    monkeypatch.setattr(
+        "factory.scheduler.cron.due_schedules", lambda *a, **kw: _one_due_schedule()
+    )
+    monkeypatch.setattr(
+        "factory.chain.scheduled_tasks.run_scheduled_persona", _loud("scheduled_persona")
+    )
+    monkeypatch.setattr("factory.chain.idle.maybe_generate_idle_work", _loud("idle_work"))
+    monkeypatch.setattr("factory.chain.orchestrator.tick", _loud("tick"))
+    return called
+
+
 def test_tick_cmd_skips_improver_when_halted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When halted, tick_cmd prints halt state and exits 0 without calling improver."""
+    """When halted, tick_cmd prints halt state and exits 0 without dispatching
+    to ANY of the three surviving dispatch points (scheduled personas, idle
+    work generation, or the story chain)."""
     root = _make_root(tmp_path)
     _set_halt(root)
 
-    improver_called = False
-
-    def _loud_improver(*args: Any, **kwargs: Any) -> Any:
-        nonlocal improver_called
-        improver_called = True
-        raise AssertionError("factory_improver must NOT be called when halted")
-
-    monkeypatch.setattr(
-        "factory.chain.factory_improver.should_fire_improver",
-        lambda *a, **kw: (False, "halted"),
-    )
-    monkeypatch.setattr(
-        "factory.chain.factory_improver.run_factory_improver",
-        _loud_improver,
-    )
+    called = _install_dispatch_sentinels(monkeypatch)
 
     runner, cli_mod = _get_cli(root)
     # The tick_cmd checks halt BEFORE calling anything, so it should exit 0.
@@ -89,12 +142,49 @@ def test_tick_cmd_skips_improver_when_halted(
         f"tick should exit 0 when halted, got {result.exit_code}. "
         f"Output:\n{result.stdout}"
     )
-    # Improver must not have been invoked.
-    assert not improver_called, "factory_improver must not be called when factory is halted"
+    # No dispatch point must have been invoked.
+    assert not any(called.values()), (
+        f"no dispatch point may be called when factory is halted, got {called}"
+    )
     # Halt notice should appear in output.
     assert "HALTED" in result.stdout or "halted" in result.stdout.lower(), (
         f"Expected halt notice in output. Got:\n{result.stdout}"
     )
+
+
+def test_tick_cmd_skips_all_dispatch_when_halted_real_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same guarantee as above, but WITHOUT ``--dry-run`` — so the
+    ``if not dry_run`` idle-work block in tick_cmd is on the exercised path
+    too (the dry-run test above never reaches that gate). A real (non-dry)
+    invocation needs an LLM provider key to get past tick_cmd's own
+    precondition check; the halt check fires before any of that key is
+    actually used, so no LLM call happens and no state file is written."""
+    root = _make_root(tmp_path)
+    _set_halt(root)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-used")
+
+    called = _install_dispatch_sentinels(monkeypatch)
+
+    runner, cli_mod = _get_cli(root)
+    result = runner.invoke(cli_mod.app, ["tick", "--app", "sacrifice"])
+
+    assert result.exit_code == 0, (
+        f"tick should exit 0 when halted (real run), got {result.exit_code}. "
+        f"Output:\n{result.stdout}"
+    )
+    assert not any(called.values()), (
+        f"no dispatch point may be called when factory is halted, got {called}"
+    )
+    assert "HALTED" in result.stdout or "halted" in result.stdout.lower(), (
+        f"Expected halt notice in output. Got:\n{result.stdout}"
+    )
+    # Halt fires before any event-writing code runs — no events directory,
+    # no idle/context_refresh/etc streams, should exist under this root.
+    events_dir = root / "state" / "events"
+    written = list(events_dir.glob("*.ndjson")) if events_dir.exists() else []
+    assert written == [], f"halt must write no event stream, found: {written}"
 
 
 def test_tick_cmd_proceeds_when_not_halted(
@@ -103,12 +193,6 @@ def test_tick_cmd_proceeds_when_not_halted(
     """When not halted, tick_cmd proceeds normally (no early exit)."""
     root = _make_root(tmp_path)
     # No halt file.
-
-    # Mock out the heavy parts so the test is fast.
-    monkeypatch.setattr(
-        "factory.chain.factory_improver.should_fire_improver",
-        lambda *a, **kw: (False, "dry-run"),
-    )
 
     runner, cli_mod = _get_cli(root)
     result = runner.invoke(cli_mod.app, ["tick", "--app", "sacrifice", "--dry-run"])
@@ -144,10 +228,6 @@ def test_tick_cmd_exit_zero_when_only_skipped_rows(
     """
     root = _make_root(tmp_path)
     monkeypatch.setattr(
-        "factory.chain.factory_improver.should_fire_improver",
-        lambda *a, **kw: (False, "test"),
-    )
-    monkeypatch.setattr(
         "factory.chain.orchestrator.tick",
         lambda *a, **kw: _summary_with(
             root, skipped=[("poisoned", "invalid state 'abandoned'; story skipped (non-fatal)")]
@@ -171,10 +251,6 @@ def test_tick_cmd_exit_one_when_real_error(
 ) -> None:
     """A real error still fails the tick (exit 1) — the skip fix must not over-broaden."""
     root = _make_root(tmp_path)
-    monkeypatch.setattr(
-        "factory.chain.factory_improver.should_fire_improver",
-        lambda *a, **kw: (False, "test"),
-    )
     monkeypatch.setattr(
         "factory.chain.orchestrator.tick",
         lambda *a, **kw: _summary_with(

@@ -7,12 +7,12 @@ Coverage:
   - check_and_trip: failure + manager commit at HEAD → trips.
   - is_tripped: within halt window → True.
   - is_tripped: after halt window → False.
-  - apply refuses when tripped.
   - reset archives to history.
-  - classify: manager persona edit → risky.
-  - classify: existing manager subdir file → forbidden.
-  - classify: new detector file (carve-out) → safe.
-  - classify: factory/manager/halt.py → forbidden.
+
+The apply-refuses-when-tripped and proposal-classification tests that used to
+live here were removed 2026-08-07 along with ``factory/manager/apply.py`` (the
+L4 apply tier) — see STATUS.md and the Exteroception v1 direction, P0. This
+file now covers only circuit_breaker.py itself.
 """
 
 from __future__ import annotations
@@ -22,12 +22,10 @@ import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch as _patch
 
 import pytest
 
-from factory.manager.apply import _classify_manager_proposal, apply_manager_proposals
 from factory.manager.circuit_breaker import (
     _load_manager_commits,
     check_and_trip,
@@ -286,39 +284,6 @@ def test_is_tripped_false_when_no_state(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# apply_manager_proposals refuses when tripped
-# ---------------------------------------------------------------------------
-
-
-def test_apply_refuses_when_tripped(tmp_path: Path) -> None:
-    """With a tripped circuit breaker, apply_manager_proposals returns halted_by_circuit_breaker."""
-    root = tmp_path / "root"
-    root.mkdir()
-    _write_tripped_state(root, halt_until=FUTURE_HALT)
-
-    # Plant a proposal that would otherwise be processed.
-    proposals_dir = root / "state" / "manager_proposals"
-    proposals_dir.mkdir(parents=True)
-    proposal = {
-        "schema_version": 1,
-        "concern_title": "test",
-        "proposal": {
-            "kind": "prompt_edit",
-            "suggested_patch": "diff --git a/factory/personas/sm.md b/factory/personas/sm.md\n--- a/factory/personas/sm.md\n+++ b/factory/personas/sm.md\n@@ -1,2 +1,3 @@\n # SM\n body\n+new line\n",
-        },
-        "target_class": "prompt_edit",
-        "escalate_to_human": False,
-    }
-    (proposals_dir / "20260526T120000-test.json").write_text(json.dumps(proposal), encoding="utf-8")
-
-    result = apply_manager_proposals(root=root)
-
-    assert result.get("halted_by_circuit_breaker") is True
-    assert result.get("halt_until") == FUTURE_HALT
-    assert result.get("processed", 0) == 0
-
-
-# ---------------------------------------------------------------------------
 # reset archives to history
 # ---------------------------------------------------------------------------
 
@@ -360,131 +325,3 @@ def test_reset_raises_when_no_state(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         reset(root=root)
 
-
-# ---------------------------------------------------------------------------
-# Classification tests (Phase 8 additions)
-# ---------------------------------------------------------------------------
-
-
-def _make_proposal_for_path(path: str, *, is_new_file: bool = False) -> dict[str, Any]:
-    """Build a minimal proposal whose patch touches exactly one file."""
-    if is_new_file:
-        patch = (
-            f"diff --git a/{path} b/{path}\n"
-            f"--- /dev/null\n"
-            f"+++ b/{path}\n"
-            "@@ -0,0 +1,3 @@\n"
-            "+\"\"\"New detector.\"\"\"\n"
-            "+\n"
-            "+def check(): return []\n"
-        )
-    else:
-        patch = (
-            f"diff --git a/{path} b/{path}\n"
-            f"--- a/{path}\n"
-            f"+++ b/{path}\n"
-            "@@ -1,2 +1,3 @@\n"
-            " existing line\n"
-            "+new line\n"
-        )
-    return {
-        "schema_version": 1,
-        "concern_title": "test",
-        "proposal": {
-            "kind": "prompt_edit",
-            "suggested_patch": patch,
-        },
-        "target_class": "prompt_edit",
-        "escalate_to_human": False,
-    }
-
-
-def test_classify_manager_persona_edit_is_risky(tmp_path: Path) -> None:
-    """A proposal touching factory/personas/manager_watcher.md → risky."""
-    proposal = _make_proposal_for_path("factory/personas/manager_watcher.md")
-    result = _classify_manager_proposal(proposal, tmp_path)
-    assert result == "risky", (
-        f"manager persona edit should be risky, got {result!r}"
-    )
-
-
-def test_classify_manager_persona_edit_summarizer_is_risky(tmp_path: Path) -> None:
-    """factory/personas/manager_summarizer.md → risky."""
-    proposal = _make_proposal_for_path("factory/personas/manager_summarizer.md")
-    result = _classify_manager_proposal(proposal, tmp_path)
-    assert result == "risky", f"Expected risky, got {result!r}"
-
-
-def test_classify_manager_subdir_modify_is_forbidden(tmp_path: Path) -> None:
-    """Modifying an existing factory/manager/detectors/cost_spike.py → forbidden."""
-    proposal = _make_proposal_for_path(
-        "factory/manager/detectors/cost_spike.py", is_new_file=False
-    )
-    result = _classify_manager_proposal(proposal, tmp_path)
-    assert result == "forbidden", (
-        f"Modifying existing manager subdir file should be forbidden, got {result!r}"
-    )
-
-
-def test_classify_new_detector_file_still_safe_after_subdir_lockdown(tmp_path: Path) -> None:
-    """Adding a NEW factory/manager/detectors/new_check.py → should pass to detector_tool validator.
-
-    The carve-out allows new detector files.  A new pure-function detector
-    that passes _validate_detector_tool should be classified 'safe'.
-    """
-    # A new detector file that compiles cleanly.
-    path = "factory/manager/detectors/new_check.py"
-    patch = (
-        f"diff --git a/{path} b/{path}\n"
-        "--- /dev/null\n"
-        f"+++ b/{path}\n"
-        "@@ -0,0 +1,3 @@\n"
-        '+"""New detector — detects something.\"\"\"\n'
-        "+\n"
-        "+\n"
-        "+def new_check(root):\n"
-        "+    return []\n"
-    )
-    proposal = {
-        "schema_version": 1,
-        "concern_title": "test",
-        "proposal": {
-            "kind": "detector_tool",
-            "suggested_patch": patch,
-        },
-        "target_class": "detector_tool",
-        "escalate_to_human": False,
-    }
-    # The detector_tool validator will call py_compile on the new file.
-    # Since it's a simple valid Python file, it should compile fine and be safe.
-    result = _classify_manager_proposal(proposal, tmp_path)
-    assert result == "safe", (
-        f"New detector file should be safe (carve-out), got {result!r}"
-    )
-
-
-def test_classify_halt_module_is_forbidden(tmp_path: Path) -> None:
-    """A proposal patching factory/manager/halt.py → forbidden."""
-    proposal = _make_proposal_for_path(
-        "factory/manager/halt.py", is_new_file=False
-    )
-    result = _classify_manager_proposal(proposal, tmp_path)
-    assert result == "forbidden", (
-        f"factory/manager/halt.py must be forbidden, got {result!r}"
-    )
-
-
-def test_classify_manager_apply_is_forbidden(tmp_path: Path) -> None:
-    """factory/manager/apply.py → forbidden."""
-    proposal = _make_proposal_for_path("factory/manager/apply.py", is_new_file=False)
-    result = _classify_manager_proposal(proposal, tmp_path)
-    assert result == "forbidden", f"Expected forbidden, got {result!r}"
-
-
-def test_classify_manager_diagnostician_is_forbidden(tmp_path: Path) -> None:
-    """factory/manager/diagnostician.py → forbidden (any depth, Phase 8 extension)."""
-    proposal = _make_proposal_for_path(
-        "factory/manager/diagnostician.py", is_new_file=False
-    )
-    result = _classify_manager_proposal(proposal, tmp_path)
-    assert result == "forbidden", f"Expected forbidden, got {result!r}"

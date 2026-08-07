@@ -58,12 +58,11 @@ routes:
   ralph: deepseek/deepseek-chat
   bug_hunter: deepseek/deepseek-chat
   security: azure/gpt-5.3-codex
-  factory_improver: deepseek/deepseek-chat
-  # FMS ladder (direct block mirrors the azure ladder — azure/ ids resolve by
-  # prefix regardless of the active block).
-  manager_watcher: azure/deepseek-v4-pro
-  manager_summarizer: azure/gpt-5.4
-  manager_diagnostician: azure/gpt-5.3-codex
+  # factory_self_context (factory/manager/self_context.py, ``factory manager
+  # refresh-context``) used to borrow the manager_summarizer route entry
+  # purely as a mid-tier model-id lookup; that entry was deleted 2026-08-07
+  # with the L2 Summarizer tier. Give it its own entry instead.
+  factory_self_context: azure/gpt-5.4
 
 # Azure OpenAI / Cognitive Services deployments at mv-coding-agent-foundry
 # (deployment list verified live 2026-07-16 — exactly these three exist):
@@ -77,11 +76,6 @@ routes:
 #                        than gpt-5.4 in our own runs ledger: $0.51 vs $1.97
 #                        per Mtok, measured 2026-07-16)
 #
-# Cost note: the L1 watcher fires every 60s and produced ~88% of all run rows
-# (~$1,000 of $1,556 total at gpt-5.4 rates) — it sits on deepseek-v4-pro for
-# the ~4x cut. If a genuinely cheap deployment (gpt-5.4-mini / DeepSeek V4
-# Flash class) is ever added to the Foundry resource, point manager_watcher
-# at it and the saving compounds.
 azure_routes:
   # Structured-text personas → gpt-5.4 (general purpose, JSON-friendly)
   pm: azure/gpt-5.4
@@ -97,20 +91,7 @@ azure_routes:
   ralph: azure/gpt-5.4
   bug_hunter: azure/gpt-5.4
   release_manager: azure/gpt-5.4
-  factory_improver: azure/gpt-5.4
-
-  # FMS ladder: cheap → mid → code-specialist. A REAL cost ladder again (it
-  # had collapsed to gpt-5.4 across all three tiers).
-  # L1 Watcher: 60s cadence, structured JSON triage — the cheapest deployed
-  # model. JSON mode verified live on this deployment (2026-07-16); if the
-  # deepseek malformed-JSON behavior (see sm comment) ever reappears here,
-  # revert this one line to azure/gpt-5.4.
-  manager_watcher: azure/deepseek-v4-pro
-  # L2 Summarizer: mid-tier structured analysis.
-  manager_summarizer: azure/gpt-5.4
-  # L3 Diagnostician: escalation-only root-cause + unified-diff proposals —
-  # the code specialist.
-  manager_diagnostician: azure/gpt-5.3-codex
+  factory_self_context: azure/gpt-5.4
 
   # Reviewer independence must hold at BOTH dev tiers, so the reviewer cannot
   # be gpt-5.3-codex: dev.hard is gpt-5.3-codex, and the hard tier is exactly

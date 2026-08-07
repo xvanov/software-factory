@@ -125,17 +125,21 @@ _MODULE_SPEC: dict[str, dict[str, Any]] = {
     },
     "manager": {
         "topic": (
-            "The Factory Management System (FMS): L1 Watcher → L2 Summarizer → "
-            "L3 Diagnostician → L4 Apply pipeline, circuit breaker, halt authority. "
-            "The factory reads this module about itself — the loop closure."
+            "The Factory Management System (FMS): the deterministic pieces that "
+            "survive operator decision 2026-08-07, which deleted the four LLM "
+            "tiers (L1 Watcher, L2 Summarizer, L3 Diagnostician, L4 Apply — "
+            "$1,028.58 spend, 0 applied fixes). Signals, halt authority, "
+            "staging (canary self-edit validation), the circuit breaker, and "
+            "the forbidden-path classifier. The factory reads this module "
+            "about itself — the loop closure."
         ),
         "globs": [
-            "manager/watcher.py",
-            "manager/summarizer.py",
-            "manager/diagnostician.py",
-            "manager/apply.py",
+            "manager/signals.py",
             "manager/halt.py",
+            "manager/staging.py",
             "manager/circuit_breaker.py",
+            "manager/forbidden_paths.py",
+            "manager/recovery.py",
         ],
     },
 }
@@ -470,7 +474,12 @@ def refresh_factory_context(
     else:
         modules_to_refresh = list(ALL_MODULES)
 
-    model_id = route("manager_summarizer")  # mid-tier: Sonnet/gpt-5.4
+    # Was ``route("manager_summarizer")`` (a borrowed tier-selector, not this
+    # module's own persona) — that route entry was deleted 2026-08-07 with
+    # the L2 Summarizer tier. This module's own persona is
+    # ``factory_self_context`` (the prompt read below); give it its own
+    # route entry instead of piggy-backing on a deleted one.
+    model_id = route("factory_self_context")  # mid-tier: gpt-5.4
     max_tokens = max_output_tokens_for(model_id)
 
     results: list[dict[str, Any]] = []

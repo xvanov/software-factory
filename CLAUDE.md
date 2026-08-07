@@ -47,16 +47,19 @@ YAML file (`factory/routes.yaml`) — a config value, not code.
 Loop 2 self-edits pass the **staging twin** (`factory/manager/staging.py`): the
 diff is applied to a clone, the clone is actually run, and only a healthy clone
 is promoted. Loop 2 works. Do not confuse it with the FMS **L4 apply** tier,
-which is dead — see `STATUS.md`.
+which was deleted 2026-08-07 — see `STATUS.md`.
 
-Between you and the factory sits the **FMS manager daemon**
+Between you and the factory used to sit the **FMS manager daemon**
 (`factory/manager/`): L1 Watcher (60 s, reads event streams) → L2 Summarizer →
-L3 Diagnostician (root cause + diff) → L4 Apply. Plus `recovery.py`, which
-auto-fixes known operational faults. **Operator decision 2026-08-07: the four
-LLM tiers (watcher/summarizer/diagnostician/apply, ~4,704 LOC) are scheduled
-for deletion** — they cost 52% of all-time spend and shipped 0 fixes; the
-deterministic detectors, `signals`, `halt`, `staging` and `recovery` stay. See
-the Exteroception direction, P0.
+L3 Diagnostician (root cause + diff) → L4 Apply. **Operator decision
+2026-08-07: the four LLM tiers (watcher/summarizer/diagnostician/apply,
+~4,704 LOC) were deleted** — they cost 52% of all-time spend and shipped 0
+fixes. What survives in `factory/manager/`: the deterministic detectors,
+`signals`, `halt`, `staging`, `recovery`, `circuit_breaker`, and
+`forbidden_paths` (the shared self-edit path classifier, moved out of the
+deleted `apply.py`). Detectors currently have zero production callers — the
+deleted L1 Watcher was the only invoker; direction 019 (AC7) rewires them
+into the chain tick. See the Exteroception direction, P0.
 
 **Your job is the class of failure the FMS cannot fix itself:** it crashes,
 loops without converging, detects-but-never-remediates, or needs a fix in code
@@ -115,7 +118,7 @@ live in `.env` (`.env.example` documents every one).
 ## Operator command surface
 
 ```bash
-factory on / off / power            # whole-factory kill switch (timers + FMS daemon)
+factory on / off / power            # whole-factory kill switch (timers; the FMS daemon slot is empty since 2026-08-07)
 factory pm-sync --app X             # triage directions → stories  (--dry-run is a PURE preview)
 factory approve-direction           # gate on MACHINE-FILED directions
 factory tick --app X                # drive every in-flight story one step
@@ -126,13 +129,14 @@ factory audit --app X               # per-unit cost/token/time rollups
 factory mode <name>                 # normal | fix-only | drain-reviews | paused | …
 factory resume                      # clear an FMS halt — OPERATOR ONLY
 factory tui                         # live dashboard
-factory manager watch|diagnose|apply
+factory manager circuit-breaker|refresh-context|signals
 factory reconcile-issues            # close issues left open by completed work
 factory new-direction               # interactive; or the `new-direction` skill
 ```
 
 Continuous operation = systemd **user** units. Chain code is picked up next
-tick; **manager code needs a service restart**.
+tick. There is no manager daemon anymore to restart — `factory-manager.service`
+was retired 2026-08-07 along with the four LLM tiers.
 
 ## The loop-3 playbook
 

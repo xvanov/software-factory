@@ -208,8 +208,8 @@ def test_each_dev_retry_emits_factory_needs_redesign_event(
     temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Each (non-exhausted) dev retry emits a ``factory_needs_redesign``
-    event with ``kind: dev_retry_observed`` so the factory_improver sees
-    the failure signal early instead of waiting for full retry exhaustion."""
+    event with ``kind: dev_retry_observed`` — an early operator-visible
+    warning signal instead of waiting for full retry exhaustion."""
     story = _story_at(StoryState.SM_DONE, temp_root)
     db = temp_root / "state" / "factory.db"
 

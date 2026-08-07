@@ -19,17 +19,11 @@ test_refresh_atomic_writes
 test_dry_run_does_not_call_llm
     Confirm dry_run=True never calls text_run.
 
-test_diagnostician_loads_relevant_context_modules_for_proposed_area
-    Five variants (one per proposed_area). For each, plant the relevant module
-    files + an irrelevant one; run diagnostician with capturing mock; assert
-    the prompt contains the relevant module content and does NOT contain the
-    irrelevant one (for areas with selective loading).
-
-test_diagnostician_skips_missing_context_modules
-    No context modules exist; diagnostician still runs successfully.
-
-test_diagnostician_unknown_area_loads_all_modules
-    proposed_area="unknown" → all 6 modules included.
+The ``_pre_load_source`` selective-context-loading tests that used to live
+here tested ``factory.manager.diagnostician._pre_load_source`` itself, not
+this module — they were deleted 2026-08-07 along with
+``factory/manager/diagnostician.py`` — see STATUS.md and the Exteroception
+v1 direction, P0. This file now covers only ``factory.manager.self_context``.
 """
 
 from __future__ import annotations
@@ -41,7 +35,6 @@ from typing import Any
 
 import pytest
 
-from factory.manager.diagnostician import _pre_load_source
 from factory.manager.self_context import (
     ALL_MODULES,
     _context_refresh_event_path,
@@ -64,16 +57,6 @@ _CANNED_MD = "# {module}\n\nThis is a canned context module for {module}.\n"
 
 def _make_canned_response(module: str) -> str:
     return _CANNED_MD.format(module=module)
-
-
-def _plant_context_modules(modules_dir: Path, module_names: list[str]) -> None:
-    """Write placeholder context modules to modules_dir."""
-    modules_dir.mkdir(parents=True, exist_ok=True)
-    for name in module_names:
-        (modules_dir / f"{name}.md").write_text(
-            f"# {name}\n\nContent of {name} context module.\n",
-            encoding="utf-8",
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -260,119 +243,3 @@ def test_unknown_module_name_returns_error(
     result = refresh_factory_context(root=tmp_path, module="not-a-real-module")
     assert result["failed"] == 1
     assert not llm_called[0]
-
-
-# ---------------------------------------------------------------------------
-# Diagnostician context-module loading tests
-# ---------------------------------------------------------------------------
-
-
-def _make_factory_dir_with_modules(
-    tmp_path: Path, module_names: list[str]
-) -> Path:
-    """Create a minimal factory dir structure + context modules.
-
-    Returns factory_dir (tmp_path/factory/).
-    """
-    factory_dir = tmp_path / "factory"
-    factory_dir.mkdir(parents=True)
-    # Create minimal sub-dirs so _pre_load_source doesn't choke.
-    (factory_dir / "personas").mkdir()
-    (factory_dir / "chain").mkdir()
-    (factory_dir / "manager" / "detectors").mkdir(parents=True)
-
-    # Plant context modules.
-    modules_dir = tmp_path / "apps" / "factory" / "context" / "modules"
-    _plant_context_modules(modules_dir, module_names)
-
-    return factory_dir
-
-
-@pytest.mark.parametrize(
-    "proposed_area, relevant_modules, irrelevant_module",
-    [
-        ("prompt", ["personas"], "orchestrator"),
-        ("prompt_edit", ["personas"], "dispatch"),
-        ("persona_settings", ["personas"], "observability"),
-        ("dispatch_code", ["orchestrator", "state-machine", "dispatch"], "personas"),
-        ("observability", ["observability", "manager"], "personas"),
-    ],
-)
-def test_diagnostician_loads_relevant_context_modules_for_proposed_area(
-    tmp_path: Path,
-    proposed_area: str,
-    relevant_modules: list[str],
-    irrelevant_module: str,
-) -> None:
-    """For each proposed_area, confirm relevant modules are loaded and
-    the irrelevant_module is NOT in the bundle (selective loading)."""
-    factory_dir = _make_factory_dir_with_modules(
-        tmp_path, relevant_modules + [irrelevant_module]
-    )
-
-    bundle = _pre_load_source(proposed_area, factory_dir=factory_dir, root=tmp_path)
-
-    # All relevant modules should appear in the bundle keys.
-    bundle_keys = list(bundle.keys())
-    for mod_name in relevant_modules:
-        key = f"[context-module:{mod_name}]"
-        assert key in bundle_keys, (
-            f"Expected context-module:{mod_name} in bundle for area={proposed_area!r}. "
-            f"Bundle keys: {bundle_keys}"
-        )
-        assert f"Content of {mod_name}" in bundle[key], (
-            f"Content of {mod_name} not in bundle value"
-        )
-
-    # The irrelevant module should NOT be in the bundle.
-    irrelevant_key = f"[context-module:{irrelevant_module}]"
-    assert irrelevant_key not in bundle_keys, (
-        f"Irrelevant module {irrelevant_module!r} should NOT be in bundle for "
-        f"area={proposed_area!r}. Bundle keys: {bundle_keys}"
-    )
-
-
-def test_diagnostician_skips_missing_context_modules(tmp_path: Path) -> None:
-    """No context modules exist → diagnostician runs without them in the bundle."""
-    factory_dir = tmp_path / "factory"
-    factory_dir.mkdir(parents=True)
-    (factory_dir / "personas").mkdir()
-    (factory_dir / "chain").mkdir()
-    (factory_dir / "manager" / "detectors").mkdir(parents=True)
-    # No context modules dir at all.
-
-    bundle = _pre_load_source("observability", factory_dir=factory_dir, root=tmp_path)
-
-    # Should not crash; no context-module keys.
-    context_keys = [k for k in bundle.keys() if k.startswith("[context-module:")]
-    assert context_keys == [], (
-        f"No context modules should be loaded when dir missing. Got: {context_keys}"
-    )
-
-
-def test_diagnostician_unknown_area_loads_all_modules(tmp_path: Path) -> None:
-    """proposed_area='unknown' → all 6 modules included."""
-    factory_dir = _make_factory_dir_with_modules(tmp_path, ALL_MODULES)
-
-    bundle = _pre_load_source("unknown", factory_dir=factory_dir, root=tmp_path)
-
-    for mod_name in ALL_MODULES:
-        key = f"[context-module:{mod_name}]"
-        assert key in bundle, (
-            f"Module {mod_name!r} should be in bundle for unknown area. "
-            f"Bundle keys: {list(bundle.keys())}"
-        )
-
-
-def test_diagnostician_skips_context_modules_for_unknown_area_when_dir_missing(
-    tmp_path: Path,
-) -> None:
-    """If context/modules dir doesn't exist, unknown area still works (no crash)."""
-    factory_dir = tmp_path / "factory"
-    factory_dir.mkdir(parents=True)
-    (factory_dir / "personas").mkdir()
-
-    bundle = _pre_load_source("unknown", factory_dir=factory_dir, root=tmp_path)
-    # Should not crash — context-module keys just won't be present.
-    context_keys = [k for k in bundle.keys() if k.startswith("[context-module:")]
-    assert context_keys == []
