@@ -16,11 +16,14 @@ instance. Claude Code resolves 79%. Those figures are the later of two `report`
 runs over this one sweep (`results-archive/2026-08-04T23-19-24.998844Z/`, the
 archive the committed `results.md` re-derives from byte-for-byte); the earlier
 `…T04-18-05.349995Z/` reports `openhands` 44% / p=0.625 / 2.3×, because three
-rows lost to Azure 429s were re-run there as `attempt: 2`. **The conclusion is
+rows lost to Azure 429s were excluded there; the later archive re-ran them as
+`attempt: 2`. **The conclusion is
 the same under either report** — the chain sits below one agent on the same
 model, at p > 0.3 — and at MDE ≈ ±38 pp that is "no measurable lift", **not**
 "the chain hurts". Do not write docs or directions that assume the chain's value
-is established; see `STATUS.md` and `PLAN.md` §1.
+is established; see `STATUS.md`. The forward plan is the **Exteroception v1
+direction** (`apps/factory/directions/`, newest); the old `PLAN.md` is retired
+at `docs/archive/PLAN-2026-08-07-retired.md`.
 
 ```
 direction.md  →  PM (triage/split)  →  SM (story files)  →  Dev (OpenHands sandbox:
@@ -49,7 +52,11 @@ which is dead — see `STATUS.md`.
 Between you and the factory sits the **FMS manager daemon**
 (`factory/manager/`): L1 Watcher (60 s, reads event streams) → L2 Summarizer →
 L3 Diagnostician (root cause + diff) → L4 Apply. Plus `recovery.py`, which
-auto-fixes known operational faults.
+auto-fixes known operational faults. **Operator decision 2026-08-07: the four
+LLM tiers (watcher/summarizer/diagnostician/apply, ~4,704 LOC) are scheduled
+for deletion** — they cost 52% of all-time spend and shipped 0 fixes; the
+deterministic detectors, `signals`, `halt`, `staging` and `recovery` stay. See
+the Exteroception direction, P0.
 
 **Your job is the class of failure the FMS cannot fix itself:** it crashes,
 loops without converging, detects-but-never-remediates, or needs a fix in code
@@ -71,8 +78,10 @@ uv run factory budget
 Then read the memory index at
 `/home/k/.claude/projects/-home-k-software-factory/memory/MEMORY.md` — the
 changelog of every failure class already diagnosed. Check it before
-re-diagnosing anything. Then `STATUS.md` (what works, measured) and `PLAN.md`
-(the work queue). Verify with the commands above rather than trusting either.
+re-diagnosing anything. Then `STATUS.md` (what works, measured, and the
+operator decisions) and the **Exteroception v1 direction** under
+`apps/factory/directions/` (the work queue). Verify with the commands above
+rather than trusting either.
 
 ## Environment
 
@@ -179,7 +188,12 @@ tick; **manager code needs a service restart**.
 6. **env/PATH and test-pollution mirages** — a "systemic" failure that is
    really a missing `uv` on the systemd PATH, or tests writing to production
    telemetry.
-7. **rewritten fetched text** — the org-level `DESIGN → ENGINEERING` rewrite rule
+7. **"fixed and verified" without a commit** — a session's final summary is a
+   self-report. The 2026-08-06 session reported two sacrifice bugs fixed with
+   green tests; its own environment-restore discarded the work, and the bugs
+   stayed live until re-fixed in PR #378. Trust a fix only when you can name
+   its commit SHA or merged PR.
+8. **rewritten fetched text** — the org-level `DESIGN → ENGINEERING` rewrite rule
    is applied to *fetched web content*, not only to prose you author. Research
    agents have read abstracts as "software ENGINEERING" where the source says
    "software design". It silently corrupts proper nouns in any retrieved source.
@@ -204,6 +218,7 @@ Keep prose for rationale. Optimize for clear, easy-to-diff docs.
 | external SOTA literature | `SOTA-RESEARCH-2026-07.md` |
 | generated subsystem deep-dives | `apps/factory/context/modules/*.md` |
 | how to write a direction | `.claude/skills/new-direction/` |
+| the retired plan + its correction ledger (history only) | `docs/archive/PLAN-2026-08-07-retired.md` |
 | **the measured five-arm result** (the chain shows no lift — read before claiming otherwise) | `bench/swebench/results.md`, `bench/swebench/README.md` |
 | convergence harness on the app's own gates (not evidence about correctness) | `bench/README.md` |
 
