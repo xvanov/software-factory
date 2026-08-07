@@ -50,7 +50,7 @@ def test_text_run_dry_run_leaves_app_level_attribution_partial(tmp_path: Path) -
     story_id/direction_id are legitimately NULL, not a bug."""
     db = tmp_path / "state" / "factory.db"
     text_run(
-        persona="ralph",
+        persona="security",
         prompt="irrelevant",
         model_id="stub/model",
         dry_run=True,

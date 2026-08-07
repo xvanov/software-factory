@@ -42,7 +42,7 @@ def test_finding_without_suggested_direction_is_skipped(tmp_path: Path) -> None:
             {"tool": "semgrep", "rule_id": "x", "severity": "low"},  # no suggested_direction
         ]
     }
-    out = run_scheduled_persona("bug_hunter", "sacrifice", root, dry_run=True, fixture_output=fx)
+    out = run_scheduled_persona("security", "sacrifice", root, dry_run=True, fixture_output=fx)
     assert out.findings_count == 1
     assert out.directions_filed == []
 
@@ -69,7 +69,7 @@ def test_multi_finding_fixture_files_multiple_directions(tmp_path: Path) -> None
             },
         ]
     }
-    out = run_scheduled_persona("bug_hunter", "sacrifice", root, dry_run=True, fixture_output=fx)
+    out = run_scheduled_persona("security", "sacrifice", root, dry_run=True, fixture_output=fx)
     assert out.findings_count == 2
     assert len(out.directions_filed) == 2
     # IDs must be unique.
@@ -97,7 +97,7 @@ def test_scheduled_directions_are_explore_enabled_so_they_clear_backpressure(
         ]
     }
     out = run_scheduled_persona(
-        "bug_hunter", "sacrifice", root, dry_run=True, fixture_output=fx
+        "security", "sacrifice", root, dry_run=True, fixture_output=fx
     )
     assert len(out.directions_filed) == 1
     # Find the written direction.md under the dry-run scratch tree and confirm

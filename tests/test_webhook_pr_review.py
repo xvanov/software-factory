@@ -7,7 +7,6 @@ Covers:
   * ``changes_requested`` review on a story at REVIEWER_IN_PROGRESS ->
     story transitions to REVIEWER_REQUESTED_CHANGES.
   * Review on an unmatched PR number returns acted=False.
-  * Review events are persisted to the ``review_events`` table.
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ import pytest
 from sqlmodel import Session, create_engine, select
 
 from factory.chain.handlers import persist_story
-from factory.chain.review_events import ReviewEvent
 from factory.chain.state_machine import StoryRecord, StoryState
 
 
@@ -95,20 +93,6 @@ def test_changes_requested_transitions_to_reviewer_requested_changes(temp_root: 
         story = s.exec(select(StoryRecord).where(StoryRecord.github_pr_number == 43)).first()
     assert story is not None
     assert story.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
-
-
-def test_review_event_row_is_persisted(temp_root: Path) -> None:
-    _make_story(temp_root, pr_number=44, state=StoryState.TESTS_GREEN)
-    gh = _reload_webhook(temp_root)
-    gh._handle_pull_request_review(_payload(44, "approved"))  # type: ignore[attr-defined]
-
-    db = temp_root / "state" / "factory.db"
-    eng = create_engine(f"sqlite:///{db}", echo=False)
-    with Session(eng) as s:
-        rows = s.exec(select(ReviewEvent).where(ReviewEvent.pr_number == 44)).all()
-    assert len(rows) == 1
-    assert rows[0].state == "approved"
-    assert rows[0].reviewer == "alice"
 
 
 def test_unknown_pr_returns_acted_false(temp_root: Path) -> None:

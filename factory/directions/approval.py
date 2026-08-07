@@ -2,8 +2,8 @@
 
 The treadmill this closes
 -------------------------
-A scheduled scanner persona (``ralph``, ``bug_hunter``, ``security``,
-``ux_auditor``) can file its own work orders: every run it looks for
+A scheduled scanner persona (``security``, ``ux_auditor``) can file its own
+work orders: every run it looks for
 something to complain about, and it always finds something. On 2026-07-24 the
 UX auditor filed D114/115/116 in ~2h (~$145 projected EOD spend); on
 2026-07-30 it filed 015/016/017 — every one of them asking for *better inputs

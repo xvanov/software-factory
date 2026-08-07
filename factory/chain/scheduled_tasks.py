@@ -7,7 +7,7 @@ What the function does:
 
   1. Loads the persona prompt from ``factory/personas/<persona>.md``.
   2. Composes a context prelude (current-state + module map).
-  3. Invokes ``runner.text_run`` (ralph/bug_hunter/security) or
+  3. Invokes ``runner.text_run`` (security) or
      ``runner.sandbox_run`` (ux_auditor — needs the browser tool).
   4. Parses the structured JSON output.
   5. For each finding/drift, calls
@@ -90,17 +90,14 @@ class ScheduledRunOutput:
 
 # Personas Phase 6 knows about and the JSON key under which they emit
 # findings/drifts. Drives both the dry-run fixture and the live parser.
+# (ralph/bug_hunter deleted 2026-08-07 — 019 AC5.)
 _PERSONA_FINDINGS_KEY: dict[str, str] = {
-    "ralph": "drifts",
-    "bug_hunter": "findings",
     "security": "findings",
     "ux_auditor": "findings",
 }
 
-# Strict cap on output tokens — Ralph runs hourly and must stay cheap.
+# Strict cap on output tokens per persona.
 _OUTPUT_TOKEN_CAP: dict[str, int] = {
-    "ralph": 1024,
-    "bug_hunter": 2048,
     "security": 3000,
     "ux_auditor": 3000,
 }
@@ -118,56 +115,6 @@ def _dry_run_fixture(persona: str, app: str) -> dict[str, Any]:
     direction-creator and DB-record code paths exercise the same shapes
     they would on a real run.
     """
-    if persona == "ralph":
-        return {
-            "drifts": [
-                {
-                    "kind": "spec",
-                    "target": "backend/api/healthz.py",
-                    "description": (
-                        f"Fixture: PRD says GET /healthz returns "
-                        f"{{version, status}} but the test "
-                        f"test_healthz_returns_version is failing for {app}."
-                    ),
-                    "suggested_direction": {
-                        "title": "fix /healthz returns version+status",
-                        "type": "bug",
-                        "why": (
-                            f"Ralph dry-run fixture: PRD-mandated behavior is broken on {app}."
-                        ),
-                        "acceptance": [
-                            "GET /healthz returns 200 with {version: str, status: 'ok'}",
-                        ],
-                    },
-                }
-            ],
-            "runs_completed": ["test_command:dry_run"],
-            "duration_s": 0.01,
-        }
-    if persona == "bug_hunter":
-        return {
-            "findings": [
-                {
-                    "tool": "semgrep",
-                    "rule_id": "python.lang.security.audit.subprocess-shell-true",
-                    "severity": "high",
-                    "files": ["backend/services/exec.py:12"],
-                    "summary": (
-                        "Fixture: subprocess invoked with shell=True on user-controlled input."
-                    ),
-                    "suggested_direction": {
-                        "title": "fix subprocess shell=True in exec.py",
-                        "type": "security",
-                        "why": ("Bug-hunter dry-run fixture: shell injection risk."),
-                        "acceptance": [
-                            "exec.py invocations no longer use shell=True on user input",
-                        ],
-                    },
-                }
-            ],
-            "runs_completed": ["semgrep:dry_run"],
-            "duration_s": 0.01,
-        }
     if persona == "security":
         return {
             "threat_model_summary": (
@@ -240,7 +187,7 @@ def _slugify_title(title: str) -> str:
     import re
 
     s = re.sub(r"[^A-Za-z0-9]+", "-", title.strip().lower()).strip("-")
-    return (s[:40] or "ralph-finding").strip("-") or "ralph-finding"
+    return (s[:40] or "scheduled-finding").strip("-") or "scheduled-finding"
 
 
 # Statuses that mean a direction is finished/abandoned — a new duplicate for
@@ -467,7 +414,7 @@ def _file_finding_as_direction(
         has_api=False,
         api_spec_lines=None,
         acceptance=acceptance,
-        # Scheduled personas (bug_hunter/ralph/security) file findings the
+        # Scheduled personas (security/ux_auditor) file findings the
         # factory itself should investigate and fix. They have no
         # user_flow/api_spec — a bug report isn't a feature spec — so with
         # explore=False they ALWAYS failed the backpressure gate and produced
@@ -536,8 +483,8 @@ def run_scheduled_persona(
             db_path=db,
         )
 
-    # Rate-limit gate. Phase 6 personas (ralph/bug_hunter/security/
-    # ux_auditor) each have a per-day cap in
+    # Rate-limit gate. Phase 6 personas (security/ux_auditor) each have a
+    # per-day cap in
     # ``factory_settings.yaml.rate_limits``; ``can_dispatch`` returns
     # ``rejected_reason="<persona>_rate_limit_exceeded"`` when the cap is
     # hit. Runs that are refused are recorded with status="rejected" so
@@ -875,7 +822,7 @@ def _build_ux_auditor_context(app: str, software_factory_root: Path) -> str:
 def _live_run(persona: str, app: str, software_factory_root: Path) -> dict[str, Any]:
     """Compose context + persona prompt + dispatch via runner.
 
-    Ralph/bug_hunter/security/ux_auditor all use ``text_run`` for v1; the
+    Security/ux_auditor both use ``text_run`` for v1; the
     sandbox path (browser tool) is reserved for a future ux_auditor
     enhancement when the live deploy URL exists.
     """
@@ -914,7 +861,7 @@ def _live_run(persona: str, app: str, software_factory_root: Path) -> dict[str, 
         model,
         schema={"type": "object"},
         max_tokens=max_tokens,
-        # These app-level personas (ralph/bug_hunter/security/ux_auditor) run
+        # These app-level personas (security/ux_auditor) run
         # ahead of any story, so story_id/direction_id are legitimately
         # unknown here — but ``app`` IS known and must be stamped so
         # ``factory audit`` can roll spend up per app instead of leaving it

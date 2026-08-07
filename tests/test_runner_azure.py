@@ -301,7 +301,6 @@ def test_route_returns_azure_model_under_default_provider(
     for persona in (
         "pm",
         "analyst",
-        "architect",
         "sm",
         "tech_writer",
         "onboarder",
@@ -346,10 +345,6 @@ def test_route_text_personas_use_gpt_5_4(monkeypatch: pytest.MonkeyPatch) -> Non
         "sm",
         "tech_writer",
         "onboarder",
-        "architect",
-        "ralph",
-        "bug_hunter",
-        "release_manager",
         "test_designer",  # unrouted → azure_fallback
     ):
         assert model_router.route(persona) == "azure/gpt-5.4", persona

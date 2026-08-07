@@ -32,7 +32,6 @@ default_provider: azure
 routes:
   pm: deepseek/deepseek-chat
   analyst: deepseek/deepseek-chat
-  architect: azure/gpt-5.4
   # SM emits a structured JSON plan; deepseek-chat intermittently returns a
   # tiny malformed body falsely flagged finish_reason=length (operator-approved
   # 2026-05-29). Use gpt-5.4 (JSON-reliable) here too so SM is consistent
@@ -51,12 +50,8 @@ routes:
   # model — reinforces independence. gpt-5.4 is JSON-reliable (schema mode).
   acceptance_author: azure/gpt-5.4
   tech_writer: deepseek/deepseek-chat
-  release_manager: deepseek/deepseek-chat
   onboarder: azure/gpt-5.4
-  ux_designer: azure/gpt-5.4
   ux_auditor: azure/gpt-5.4
-  ralph: deepseek/deepseek-chat
-  bug_hunter: deepseek/deepseek-chat
   security: azure/gpt-5.3-codex
   # factory_self_context (factory/manager/self_context.py, ``factory manager
   # refresh-context``) used to borrow the manager_summarizer route entry
@@ -83,14 +78,9 @@ azure_routes:
   sm: azure/gpt-5.4
   tech_writer: azure/gpt-5.4
   onboarder: azure/gpt-5.4
-  architect: azure/gpt-5.4
   # WS1.2 independent acceptance oracle — see the direct block for rationale.
   acceptance_author: azure/gpt-5.4
-  ux_designer: azure/gpt-5.4
   ux_auditor: azure/gpt-5.4
-  ralph: azure/gpt-5.4
-  bug_hunter: azure/gpt-5.4
-  release_manager: azure/gpt-5.4
   factory_self_context: azure/gpt-5.4
 
   # Reviewer independence must hold at BOTH dev tiers, so the reviewer cannot

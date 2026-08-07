@@ -22,13 +22,14 @@ def _runner_invoke(args: list[str], **kwargs: Any) -> Any:
     return CliRunner().invoke(cli_app, args, **kwargs)
 
 
-def test_factory_schedules_lists_four_default_schedules() -> None:
+def test_factory_schedules_lists_two_default_schedules() -> None:
     # rich's Table truncates long names; assert on a prefix that
-    # uniquely identifies each schedule.
+    # uniquely identifies each schedule. ralph/bug_hunt were deleted
+    # 2026-08-07 (019 AC5); two scheduled personas survive.
     res = _runner_invoke(["schedules"])
     assert res.exit_code == 0, res.stdout + res.stderr
     out = res.stdout
-    for prefix in ("ralph", "bug_hunt", "ux_audit", "security_"):
+    for prefix in ("ux_audit", "security_"):
         assert prefix in out, f"missing {prefix} in:\n{out}"
 
 
@@ -50,30 +51,6 @@ def _patch_root_to_tmp(monkeypatch: Any, tmp_path: Path) -> Path:
     (tmp_path / "state").mkdir(exist_ok=True)
     monkeypatch.setattr("factory.cli._FACTORY_ROOT", tmp_path)
     return tmp_path
-
-
-def test_ralph_now_dry_run_succeeds(tmp_path: Path, monkeypatch: Any) -> None:
-    _patch_root_to_tmp(monkeypatch, tmp_path)
-    res = _runner_invoke(["ralph-now", "--app", "sacrifice", "--dry-run"])
-    assert res.exit_code == 0, res.stdout + res.stderr
-    assert "dry_run" in res.stdout
-    # One direction was filed.
-    # Phase 7: dry-run direction writes go to state/dry_run_scratch/.
-    dirs = list(
-        (tmp_path / "state" / "dry_run_scratch" / "apps" / "sacrifice" / "directions").iterdir()
-    )
-    assert len(dirs) == 1
-
-
-def test_bug_hunt_now_dry_run_succeeds(tmp_path: Path, monkeypatch: Any) -> None:
-    _patch_root_to_tmp(monkeypatch, tmp_path)
-    res = _runner_invoke(["bug-hunt-now", "--app", "sacrifice", "--dry-run"])
-    assert res.exit_code == 0, res.stdout + res.stderr
-    # Phase 7: dry-run direction writes go to state/dry_run_scratch/.
-    dirs = list(
-        (tmp_path / "state" / "dry_run_scratch" / "apps" / "sacrifice" / "directions").iterdir()
-    )
-    assert len(dirs) == 1
 
 
 def test_ux_audit_now_dry_run_succeeds(tmp_path: Path, monkeypatch: Any) -> None:

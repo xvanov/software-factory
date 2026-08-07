@@ -1,7 +1,7 @@
 """Persona-prompt tests for the Security (``security``) persona — P7.0 cleanup.
 
-Mirrors the shape of ``test_persona_{ralph,bug_hunter,ux_auditor}.py``:
-verifies the persona's markdown prompt declares its Operating contract
+Mirrors the shape of ``test_persona_ux_auditor.py``: verifies the persona's
+markdown prompt declares its Operating contract
 and requires structured JSON output. The Phase-6 behavioral tests for
 the security scheduled run live in ``test_security.py``; this file is
 purely the prompt-content audit.

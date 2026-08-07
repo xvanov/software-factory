@@ -32,8 +32,6 @@ queues:
   failing_ci_pause_threshold: 3
 rate_limits:
   pm_invocations_per_hour: 4
-  ralph_runs_per_day: 24
-  bug_hunter_runs_per_day: 6
   security_runs_per_day: 2
   ux_auditor_runs_per_day: 1  # throttled 2026-07-24 (was 4); see schedules: ux_audit
 modes:
@@ -88,14 +86,9 @@ ci_health:
 # limits referenced by ``rate_limit_key`` look up the same-named field in
 # ``rate_limits:`` above.
 schedules:
-  - name: ralph
-    cron: "0 * * * *"
-    persona: ralph
-    rate_limit_key: ralph_runs_per_day
-  - name: bug_hunt
-    cron: "0 */4 * * *"
-    persona: bug_hunter
-    rate_limit_key: bug_hunter_runs_per_day
+  # ralph and bug_hunt schedules (and their bug_hunter.py / ralph.md /
+  # bug_hunter.md personas) were deleted 2026-08-07 — 019 AC5. Zero human-
+  # visible outcomes ever attributed to either scanner.
   - name: ux_audit
     # DISABLED 2026-07-30 (second occurrence). Throttled 2026-07-24 from 4/day to
     # weekly after it auto-filed D114/115/116 in ~2h and drove ~$145 projected EOD

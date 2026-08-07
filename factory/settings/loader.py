@@ -41,8 +41,6 @@ class QueuesConfig(BaseModel):
 
 class RateLimitsConfig(BaseModel):
     pm_invocations_per_hour: int = 4
-    ralph_runs_per_day: int = 24
-    bug_hunter_runs_per_day: int = 2
     security_runs_per_day: int = 1
     ux_auditor_runs_per_day: int = 2
 
@@ -145,7 +143,7 @@ class AutoPMSyncConfig(BaseModel):
 
     When ``enabled``, ``factory tick`` runs the pm-sync pipeline whenever
     directions with status ``created``/``needs-direction`` exist, so work
-    filed by the scheduled personas (ralph, bug_hunter, ux_auditor, …) or
+    filed by the scheduled personas (security, ux_auditor, …) or
     by ``factory tell`` flows into stories without an operator remembering
     to run ``factory pm-sync``. Bounded by
     ``rate_limits.pm_invocations_per_hour`` (counted from real ``pm`` rows

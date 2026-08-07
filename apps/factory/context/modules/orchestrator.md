@@ -22,11 +22,11 @@ are already satisfied.
 open PRs (real, via `github_client`, or synthesized from `StoryRecord`s in a
 mergeable state), it evaluates gates, merges, recovers CI failures by feeding
 them back to dev, rebuilds genuinely conflicting PRs on a fresh branch, and
-refuses factory self-edits that fail staging validation. `ci_health.py` and
-`idle.py` are two smaller tick-adjacent modules: the first watches `main` for
-a required check that turned red *after* merge; the second detects a fully
-drained app and both refills its own backlog and (via a separate CLI command)
-opens an operator-facing GitHub issue.
+refuses factory self-edits that fail staging validation. `ci_health.py` is a
+smaller tick-adjacent module that watches `main` for a required check that
+turned red *after* merge. `idle.py` (idle detection + on-demand backlog
+refill) was deleted 2026-08-07 (019 AC5) — it fired ~957 times and produced
+zero human-visible outcomes; see "Idle detection was deleted" below.
 
 ## Key concepts
 
@@ -179,17 +179,22 @@ opens an operator-facing GitHub issue.
   `(sorted required-check names, main head sha)` — the flaky log-digest fetch
   is deliberately excluded from that signature.
 
-- **Idle detection and backlog refill** (`idle.py`). `detect_idle()` returns a
-  snapshot only when the app has zero non-terminal stories, zero scheduled-
-  persona findings, and zero deploys within `since_hours` (default 2).
-  `factory tick`'s CLI command calls this after the cron-scheduler loop and,
-  if idle, calls `maybe_generate_idle_work()`, which round-robins
-  `_IDLE_GENERATORS = (bug_hunter, ux_auditor, security)` with a 6-hour
-  per-app cooldown, skipping any persona already at its daily cap. A separate
-  `factory idle-check --app X` CLI command (for a periodic cron, not the
-  5-minute tick) calls `detect_idle` + `open_idle_issue` to open/update a
-  `factory-idle` GitHub issue. Both self-tick-guard against firing on the
-  factory's own repo unless `self_tick_enabled`.
+- **Idle detection was deleted (019 AC5, 2026-08-07).** `factory/chain/idle.py`
+  (`detect_idle()`, `maybe_generate_idle_work()`, `open_idle_issue()`) and the
+  `if not dry_run:` block in `tick_cmd` that called it, plus the CLI's
+  `factory idle-check` command and the `inbox_cmd` "idle apps" table, are gone.
+  The old behavior: on a fully-drained app (zero non-terminal stories, zero
+  scheduled-persona findings, zero deploys within 2h) it emitted an
+  `app_idle` event AND, once a day's rotation through
+  `(bug_hunter, ux_auditor, security)` wasn't fully rate-capped, dispatched an
+  on-demand scanner run — the mechanism the direction measured at "957 fires,
+  zero human-visible outcomes." **Interim gap**: `manager/detectors/
+  stalled_stories.py` reads `state/events/idle.ndjson` for `app_idle` to
+  compute `healthy_drain` (suppresses an aged-backlog escalation during a
+  legitimate drain); with no writer left, `healthy_drain` is permanently
+  `False` until 019 AC6 ships an idle→ping replacement that re-emits
+  `app_idle`. That failure direction is deliberate: it means MORE alarms
+  (noise), never a suppressed real stall (silence).
 
 - **`pm_sync()` is triage, called separately from `tick()`** — `factory
   tick`'s CLI command calls `maybe_auto_pm_sync()`. Machine-filed directions
@@ -231,8 +236,6 @@ opens an operator-facing GitHub issue.
   `_evaluate_self_edit_gate()`, `_sibling_already_shipped()`.
 - `factory/chain/ci_health.py` — `main_ci_health_tick()`,
   `query_main_ci_status()`, `CiHealthResult`.
-- `factory/chain/idle.py` — `detect_idle()`, `maybe_generate_idle_work()`,
-  `open_idle_issue()`.
 - `factory/chain/pm_sync.py` — `pm_sync()`, `maybe_auto_pm_sync()`,
   `_validate_pm_story_sizes()`.
 - `factory/chain/step_events.py` — `emit_chain_step()`,
@@ -315,7 +318,10 @@ opens an operator-facing GitHub issue.
   `halt_check_module_error` alert so the break gets fixed.
 - **Post-merge CI-health red** self-files a `ci-health` direction into the
   normal PM-sync → SM → dev → review → merge chain rather than notifying an
-  operator directly. **An idle app** either self-files a work-generating
-  persona run, or, via `factory idle-check`, opens a `factory-idle` GitHub
-  issue for the operator to act on (`factory new-direction`, `factory tell`,
-  or a GitHub issue labeled `direction`).
+  operator directly. **An idle app** used to either self-file a
+  work-generating persona run or, via `factory idle-check`, open a
+  `factory-idle` GitHub issue; both were deleted 2026-08-07 (019 AC5) with
+  `idle.py` — see "Idle detection was deleted" above. Until 019 AC6 ships its
+  idle→ping replacement, a drained app surfaces no operator-facing signal at
+  all (`factory new-direction`/`factory tell`/a GitHub issue labeled
+  `direction` are still the way to feed it work in the meantime).

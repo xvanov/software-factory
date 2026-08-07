@@ -70,7 +70,8 @@ def test_resolve_job_kind_unknown_direction_no_suffix() -> None:
 
 def test_resolve_job_kind_bug_scope_appends_suffix() -> None:
     """Even when the direction is missing/feature-typed, a bug-scoped story
-    still routes as a bug fix. Lets ralph-filed bug stories route correctly."""
+    still routes as a bug fix. Lets scheduled-persona-filed bug stories
+    route correctly."""
     story = _fake_story(scope="bug")
     direction = _fake_direction(type_tag="feature")
     assert _resolve_job_kind(story, direction, "dev") == "dev-bug"

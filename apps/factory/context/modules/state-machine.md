@@ -243,14 +243,16 @@ dispatch state by hand.
   / `_MIN_DEP_STALL_SECONDS` (the dependency-deferral cap),
   `_AUTO_RECOVERABLE_STATES` / `_recover_blocked_stories` (blocked-state
   auto-recovery), `reconcile_closed_trackers` (sets `CLOSED_BY_OPERATOR`).
-* `factory/chain/rollback.py` — a separate post-merge safety net, NOT part
-  of the `StoryState` machine: `rollback_watch_tick()` reads recent rows
-  from `merge_actions` (written by `auto_merge.py`), checks main-branch CI
-  for each recent merge, and on red opens a revert PR (`gh pr revert`),
-  files a `priority/p0` regression issue, and flips the factory mode to
-  `fix-only` via `factory.settings.modes.set_mode`. Every decision is
-  recorded in `state/factory.db.rollback_actions`
-  (`RollbackActionRecord`: `action_type` is `"revert"` or `"no_op"`).
+* `factory/chain/rollback.py` — **deleted 2026-08-07 (019 AC5)**, dead code
+  with tests that only guarded it. It was a separate post-merge safety net,
+  NOT part of the `StoryState` machine: `rollback_watch_tick()` read recent
+  rows from `merge_actions` (written by `auto_merge.py`), checked
+  main-branch CI for each recent merge, and on red opened a revert PR
+  (`gh pr revert`), filed a `priority/p0` regression issue, and flipped the
+  factory mode to `fix-only` via `factory.settings.modes.set_mode`. Its
+  decisions were recorded in `state/factory.db.rollback_actions`
+  (`RollbackActionRecord`). The CLI's `factory rollback-watch` command was
+  removed with it.
 * `factory/chain/dual_draft.py` — `should_spawn_dual_draft`,
   `produce_interpretations`, `link_alternatives` (idempotent tracker
   comment via `LINK_ALTERNATIVES_SENTINEL`), `close_abandoned_draft_sibling`

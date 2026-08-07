@@ -1,4 +1,4 @@
-<!-- STALE as of 2026-08-07: the four manager LLM tiers and factory_improver described below were deleted (op/019-p0). Regeneration pending. -->
+<!-- STALE as of 2026-08-07: the four manager LLM tiers and factory_improver described below were deleted (op/019-p0). A second batch — bug_hunter, ralph, architect, release_manager, ux_designer, and their schedules/rate-limits/routes — was deleted the same day (019 AC5); every reference to those five personas below (Key concepts, Key files, Failure modes, Escalation paths, and their Persona-inventory entries) is dead. The persona corpus is now 13 files, not 20. Regeneration pending. -->
 
 # Personas — contracts, model tiers, and breakpoints
 

@@ -136,8 +136,10 @@ Six playbooks, registered declaratively in `build_recovery_registry`:
 5. **`recover-stuck-fixonly-mode`** — factory mode is `fix-only` AND every
    in-scope app has `deploy.enabled=False` (nothing live could be regressing)
    → set mode back to `normal`. `fix-only` is set by
-   `factory/deploy/orchestrator.py`/`factory/chain/rollback.py` on a deploy
-   failure but nothing else ever flips it back.
+   `factory/deploy/orchestrator.py` on a deploy failure but nothing else ever
+   flips it back. (`factory/chain/rollback.py` — the `factory rollback-watch`
+   post-merge CI-revert worker — also used to set `fix-only` on a revert; it
+   was deleted 2026-08-07, 019 AC5, so that second setter is gone too.)
 6. **`quarantine-invalid-enum-story`** — a story row whose `state` string is
    outside the `StoryState` enum (a "poisoned" row from a bad manual/manager
    write) → move it to the terminal `quarantined_invalid_state` sink,

@@ -124,7 +124,7 @@ def test_unattributed_counts_chain_persona_runs_with_null_story_id(tmp_path: Pat
             {"persona": "sm", "story_id": None, "cost_usd": 0.05},
             # App-level scheduled persona with a legitimately-NULL story_id —
             # NOT a chain persona, so it must NOT count as unattributed.
-            {"persona": "ralph", "story_id": None, "app": "sacrifice", "cost_usd": 0.30},
+            {"persona": "security", "story_id": None, "app": "sacrifice", "cost_usd": 0.30},
             # docs_enforcer is excluded from CHAIN_PERSONAS even if a stray
             # row existed with that persona name.
             {"persona": "docs_enforcer", "story_id": None, "cost_usd": 0.40},

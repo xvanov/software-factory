@@ -232,10 +232,10 @@ def _handle_check(payload: dict[str, Any]) -> dict[str, Any]:
 def _handle_pull_request_review(payload: dict[str, Any]) -> dict[str, Any]:
     """Handle ``pull_request_review.submitted``.
 
-    On ``state == approved`` we record a review event and (in a future tick)
-    the orchestrator will advance the matching StoryRecord through the
-    reviewer-approve transition. On ``state == changes_requested`` we
-    transition the matching StoryRecord to REVIEWER_REQUESTED_CHANGES.
+    On ``state == approved`` the orchestrator advances the matching
+    StoryRecord through the reviewer-approve transition. On
+    ``state == changes_requested`` we transition the matching StoryRecord
+    to REVIEWER_REQUESTED_CHANGES.
 
     All state writes go through the local state.db; we do NOT mutate
     GitHub from inside the webhook handler. The orchestrator's next tick
@@ -247,7 +247,6 @@ def _handle_pull_request_review(payload: dict[str, Any]) -> dict[str, Any]:
     pr = payload.get("pull_request") or {}
     pr_number = int(pr.get("number") or 0)
     state = str(review.get("state") or "").lower()
-    reviewer = (review.get("user") or {}).get("login") or "<unknown>"
 
     if pr_number == 0:
         return {"acted": False, "reason": "missing pull_request.number"}
@@ -255,7 +254,6 @@ def _handle_pull_request_review(payload: dict[str, Any]) -> dict[str, Any]:
     from sqlmodel import Session, create_engine, select
 
     from factory.chain.handlers import _engine  # ensures migrations run
-    from factory.chain.review_events import ReviewEvent
     from factory.chain.state_machine import (
         EVENT_REVIEWER_APPROVE,
         EVENT_REVIEWER_REQUEST_CHANGES,
@@ -277,14 +275,6 @@ def _handle_pull_request_review(payload: dict[str, Any]) -> dict[str, Any]:
             return {"acted": False, "reason": f"no story matched PR #{pr_number}"}
         story = rows[0]
         story_id_local: int = story.id or 0
-
-        event_row = ReviewEvent(
-            story_id=story_id_local,
-            pr_number=pr_number,
-            reviewer=reviewer,
-            state=state,
-        )
-        session.add(event_row)
 
         next_event: str | None = None
         if state == "approved":
@@ -308,7 +298,7 @@ def _handle_pull_request_review(payload: dict[str, Any]) -> dict[str, Any]:
             except IllegalTransitionError:
                 # Tolerate webhooks arriving when the story is in a state
                 # that doesn't accept this transition (e.g. a human approved
-                # an old PR after auto-merge). Just record the event row.
+                # an old PR after auto-merge). No-op.
                 transitioned_to = None
         session.commit()
 

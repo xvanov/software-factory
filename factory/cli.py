@@ -358,7 +358,7 @@ def approve_direction_cmd(
     """Approve (or --reject) a MACHINE-FILED direction so the chain may build it.
 
     Directions the factory filed for itself — every ``scheduled-<persona>``
-    source (ralph, bug_hunter, security, ux_auditor), any other machine filer,
+    source (security, ux_auditor), any other machine filer,
     and any direction whose source cannot be determined — are NOT auto-triaged
     into stories. They park until an operator approves them here. Run with no
     arguments to list everything waiting (also shown by ``factory inbox``).
@@ -953,55 +953,16 @@ def tick_cmd(
             (due.schedule.name, out.status, out.findings_count, len(out.directions_filed))
         )
 
-    # Idle -> generate work (Ceiling A: keep the factory productively busy).
-    # Detect_idle runs AFTER the cron scheduler loop above: if a scheduled
-    # persona already filed findings this tick the app isn't idle, so we don't
-    # double-generate. When the app IS drained (no in-flight stories, no recent
-    # findings, no recent deploys) we (a) emit the ``app_idle`` event for FMS /
-    # operator visibility and (b) dispatch a work-generating persona on demand
-    # (rotating bug_hunter/ux_auditor/security, respecting each persona's daily
-    # cap + a multi-hour cooldown) so a well-maintained app that has drained
-    # refills its OWN backlog instead of idling and manufacturing stall-noise.
-    # Runs BEFORE auto_pm_sync so any direction filed here is decomposed into
-    # stories on this very tick — closing finding->direction->story with no
-    # operator. Never fails the tick.
-    if not dry_run:
-        try:
-            from factory.chain.idle import detect_idle, maybe_generate_idle_work
-            from factory.manager.signals import write_event
-
-            idle_snap = detect_idle(app_name, _FACTORY_ROOT, since_hours=2)
-            if idle_snap is not None:
-                write_event(
-                    "idle",
-                    {
-                        "event": "app_idle",
-                        "app": app_name,
-                        "idle_since": idle_snap.idle_since.isoformat(),
-                        "recent_direction_count": len(idle_snap.recent_directions),
-                    },
-                    software_factory_root=_FACTORY_ROOT,
-                )
-                scheduled_results.append(("idle_detector", "idle", 0, 0))
-                gen = maybe_generate_idle_work(
-                    app_name,
-                    _FACTORY_ROOT,
-                    dry_run=dry_run,
-                    idle_snapshot=idle_snap,
-                )
-                if gen.fired:
-                    scheduled_results.append(
-                        (
-                            f"idle_generate ({gen.persona})",
-                            gen.status or "ok",
-                            gen.findings_count,
-                            gen.directions_filed,
-                        )
-                    )
-                else:
-                    scheduled_results.append(("idle_generate", f"skipped:{gen.reason}", 0, 0))
-        except Exception as exc:  # noqa: BLE001 - never fail the tick
-            scheduled_results.append(("idle_generate", f"errored:{exc!r}"[:60], 0, 0))
+    # Idle -> generate work was deleted 2026-08-07 (019 AC5): the detector
+    # fired ~957 times and generated zero human-visible outcomes, and
+    # ``maybe_generate_idle_work`` rotated through scanner personas
+    # (bug_hunter/ralph) that are themselves deleted in this same change.
+    # Interim gap: ``factory/manager/detectors/stalled_stories.py`` reads
+    # ``state/events/idle.ndjson`` for its ``app_idle`` / healthy_drain
+    # suppression; with no writer left, stall findings lose that suppression
+    # until 019 AC6 ships an idle->ping that re-emits ``app_idle``. That fails
+    # toward MORE alarms (noise), never toward silently missing a real stall,
+    # so it is the safe direction to fail in while AC6 is pending.
 
     # Auto intake: convert NEW user-filed GitHub issues (label ``user-report``)
     # into directions, so a user reporting a bug/feature flows all the way to a
@@ -1542,29 +1503,9 @@ def inbox_cmd(
     else:
         console.print("[dim]No scheduled persona runs in the last 24h.[/dim]")
 
-    # Phase 7: idle pings — apps with no in-flight work, no recent
-    # findings, no recent deploys (the same predicate ``factory-idle``
-    # uses). These are surfaced in the inbox so the operator sees them
-    # without needing to wait for the cron tick to open a GH issue.
-    from factory.chain.idle import detect_idle
-
-    idle_table = Table(title="idle apps (no work in flight)")
-    idle_table.add_column("app")
-    idle_table.add_column("idle since")
-    idle_table.add_column("recent directions")
-    have_idle = False
-    for a in apps:
-        try:
-            snap = detect_idle(a, _FACTORY_ROOT, since_hours=2)
-        except Exception:
-            continue
-        if snap is None:
-            continue
-        directions_str = ", ".join(d.slug for d in snap.recent_directions[:3]) or "(none)"
-        idle_table.add_row(a, snap.idle_since.isoformat()[:19], directions_str)
-        have_idle = True
-    if have_idle:
-        console.print(idle_table)
+    # NOTE (019 AC5): the "idle apps" table that lived here (Phase 7) was
+    # removed with ``factory/chain/idle.py``. AC6 replaces it with an
+    # operator-ping section driven by the idle->ping rewrite.
 
     # Phase 7: pinned ``factory-status`` issue numbers (one per app).
     # These are the operators' single GH-side entry point for live state.
@@ -2669,55 +2610,6 @@ def mutation_score_cmd(
         console.print(Panel.fit(report.baseline_output[-1500:], title="baseline output (tail)"))
 
 
-@app.command("rollback-watch")
-def rollback_watch_cmd(
-    app_name: str = typer.Option(..., "--app", help="App name"),
-    dry_run: bool = typer.Option(True, "--dry-run/--real-run", help="Dry-run (default)"),
-    window_minutes: int = typer.Option(
-        15, "--window-minutes", help="How far back to look for recent merges"
-    ),
-) -> None:
-    """Run one rollback-watch tick: look at recent merges; revert if main CI is red."""
-    load_dotenv()
-    load_dotenv(_FACTORY_ROOT / ".env", override=False)
-
-    from factory.chain.rollback import rollback_watch_tick
-
-    gh: Any = None
-    if not dry_run:
-        gh = _ensure_github_client()
-
-    actions = rollback_watch_tick(
-        _FACTORY_ROOT,
-        app_name,
-        dry_run=dry_run,
-        github_client=gh,
-        window_minutes=window_minutes,
-    )
-
-    if not actions:
-        console.print(
-            Panel.fit(
-                f"No recent merges to evaluate for [bold]{app_name}[/bold] "
-                f"(last {window_minutes} min).",
-                title="rollback-watch",
-            )
-        )
-        return
-
-    table = Table(title=f"rollback-watch — app={app_name} dry_run={dry_run}")
-    table.add_column("pr")
-    table.add_column("action")
-    table.add_column("reason")
-    for a in actions:
-        table.add_row(
-            f"#{a.pr_number}",
-            a.action_type,
-            a.reason[:80],
-        )
-    console.print(table)
-
-
 @app.command("deploy")
 def deploy_cmd(
     app_name: str = typer.Option(..., "--app", help="App name"),
@@ -3018,26 +2910,6 @@ def _scheduled_persona_now(
         raise typer.Exit(code=1)
 
 
-@app.command("ralph-now")
-def ralph_now_cmd(
-    app_name: str = typer.Option(..., "--app", help="App name"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="No LLM/GitHub/repo writes"),
-) -> None:
-    """Force-fire the Ralph (continuous-improvement) persona once."""
-    _scheduled_persona_now(persona="ralph", app_name=app_name, dry_run=dry_run, label="ralph")
-
-
-@app.command("bug-hunt-now")
-def bug_hunt_now_cmd(
-    app_name: str = typer.Option(..., "--app", help="App name"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="No LLM/GitHub/repo writes"),
-) -> None:
-    """Force-fire the Bug-Hunter persona once."""
-    _scheduled_persona_now(
-        persona="bug_hunter", app_name=app_name, dry_run=dry_run, label="bug-hunt"
-    )
-
-
 @app.command("ux-audit-now")
 def ux_audit_now_cmd(
     app_name: str = typer.Option(..., "--app", help="App name"),
@@ -3105,7 +2977,8 @@ def schedules_cmd() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Phase-7 commands: status-sync, idle-check.
+# Phase-7 commands: status-sync. (``idle-check`` was deleted 2026-08-07,
+# 019 AC5, along with ``factory/chain/idle.py``.)
 # --------------------------------------------------------------------------- #
 
 
@@ -3139,64 +3012,6 @@ def status_sync_cmd(
         Panel.fit(
             f"Updated [bold]factory-status[/bold] issue #{number} for app=[bold]{app_name}[/bold]",
             title="status-sync",
-            style="green",
-        )
-    )
-
-
-@app.command("idle-check")
-def idle_check_cmd(
-    app_name: str = typer.Option(..., "--app", help="App name"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="No GitHub calls; print snapshot only"),
-    since_hours: int = typer.Option(2, "--since-hours", help="Idle threshold window in hours"),
-) -> None:
-    """Detect whether ``--app`` has gone idle and open/update the ``factory-idle`` issue.
-
-    Idle = queue empty AND no in-flight stories AND no scheduled
-    persona findings in the last ``--since-hours`` hours AND no recent
-    deploys. Recommended cron: every 30 minutes.
-    """
-    load_dotenv()
-    load_dotenv(_FACTORY_ROOT / ".env", override=False)
-
-    from factory.chain.idle import detect_idle, open_idle_issue
-
-    snapshot = detect_idle(app_name, _FACTORY_ROOT, since_hours=since_hours)
-    if snapshot is None:
-        console.print(
-            Panel.fit(
-                f"App [bold]{app_name}[/bold] is not idle "
-                f"(work in flight, or activity within {since_hours}h).",
-                title="idle-check",
-            )
-        )
-        return
-
-    recent_lines = (
-        "\n".join(f"- `{d.id}-{d.slug}` ({d.title})" for d in snapshot.recent_directions)
-        or "_(no recent directions)_"
-    )
-    body_preview = (
-        f"Idle since: `{snapshot.idle_since.isoformat()}`\n\n"
-        f"Recent directions (most recent first):\n{recent_lines}"
-    )
-
-    if dry_run:
-        console.print(
-            Panel(
-                body_preview,
-                title=f"factory-idle (dry-run) — app={app_name}",
-                style="yellow",
-            )
-        )
-        return
-
-    gh = _ensure_github_client()
-    number = open_idle_issue(snapshot, gh, software_factory_root=_FACTORY_ROOT)
-    console.print(
-        Panel.fit(
-            f"Updated [bold]factory-idle[/bold] issue #{number} for app=[bold]{app_name}[/bold]",
-            title="idle-check",
             style="green",
         )
     )

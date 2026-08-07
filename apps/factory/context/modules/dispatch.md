@@ -51,8 +51,9 @@ and returns on the first failure:
 8. **PM rate limit** — only for `job_kind == "pm"`:
    `pm_invocations_last_hour >= rate_limits.pm_invocations_per_hour` →
    `pm_invocations_per_hour_exceeded`, retry 600s.
-9. **Scheduled-persona daily caps** — for `job_kind in {"ralph", "bug_hunter",
-   "security", "ux_auditor"}`: `<job_kind>_runs_today >=
+9. **Scheduled-persona daily caps** — for `job_kind in {"security",
+   "ux_auditor"}` (`ralph`/`bug_hunter` and their caps were deleted
+   2026-08-07, 019 AC5): `<job_kind>_runs_today >=
    rate_limits.<job_kind>_runs_per_day` → `<job_kind>_rate_limit_exceeded`,
    retry 3600s.
 
@@ -175,12 +176,12 @@ from `factory_settings.yaml` at repo root (memoized per root by
   auto-recovery re-dispatch, CI-fix), advancing it to
   `BLOCKED_BUDGET_EXCEEDED` when crossed.
 - **`queues`**: `human_review_max_open_prs: 5`, `failing_ci_pause_threshold: 3`.
-- **`rate_limits`**: `pm_invocations_per_hour: 4`, `ralph_runs_per_day: 24`,
-  `bug_hunter_runs_per_day: 6`, `security_runs_per_day: 2`,
-  `ux_auditor_runs_per_day: 1` (throttled 2026-07-24, was 4),
-  `factory_improver_runs_per_day: 12` (self-improver is event-triggered off
-  `factory_needs_redesign`, not cron — this is just the circuit-breaker
-  ceiling).
+- **`rate_limits`**: `pm_invocations_per_hour: 4`, `security_runs_per_day: 2`,
+  `ux_auditor_runs_per_day: 1` (throttled 2026-07-24, was 4). `ralph_runs_per_day`
+  and `bug_hunter_runs_per_day` were deleted 2026-08-07 (019 AC5) along with
+  the `ralph`/`bug_hunter` personas and schedules. `factory_improver` (and its
+  `factory_improver_runs_per_day` circuit-breaker cap) was also retired
+  2026-08-07 — 1 commit landed in 196 proposals.
 - **`modes`**: `default: normal`, `available` as above.
 
 ### Scheduled-persona cadence vs. rate-limit cap
@@ -188,20 +189,24 @@ from `factory_settings.yaml` at repo root (memoized per root by
 `factory/scheduler/cron.py` reads `factory_settings.yaml::schedules`
 (independent of `rate_limits`) for WHEN a persona is due; `rate_limits`
 (via `can_dispatch`'s daily-cap block) decides whether it's still ALLOWED
-to fire once due. Live schedule: `ralph` hourly (`0 * * * *`), `bug_hunt`
-every 4h (`0 */4 * * *`), `security_weekly` daily at 09:00 (`0 9 * * *`,
-bounded by `security_runs_per_day: 2` despite the schedule's name), and
-`ux_audit` pinned to `0 9 1 1 *` (once a year) — a deliberate near-total
-disable after the auditor filed self-referential directions faster than an
-operator could review them; `factory ux-audit-now` is the on-demand
-escape hatch. `is_due()` compares the schedule's cron fire-time against
+to fire once due. Live schedule: `security_weekly` daily at 09:00
+(`0 9 * * *`, bounded by `security_runs_per_day: 2` despite the schedule's
+name), and `ux_audit` pinned to `0 9 1 1 *` (once a year) — a deliberate
+near-total disable after the auditor filed self-referential directions
+faster than an operator could review them; `factory ux-audit-now` is the
+on-demand escape hatch. The `ralph` (hourly) and `bug_hunt` (every 4h)
+schedules/personas were deleted 2026-08-07 (019 AC5) — `ralph` had
+previously locked itself out for weeks on its own `rate_limited` rows
+(6,328 `rate_limited` rows vs. 91 real runs) before that counting bug was
+fixed; that history stays as a regression note in
+`tests/test_cron_scheduler.py` even though the persona itself is gone.
+`is_due()` compares the schedule's cron fire-time against
 `cron_schedules.last_run` (a failed run still counts as "ran" so a broken
 persona doesn't refire every tick). `due_schedules()` separately checks
 `runs_in_window()` (rolling 24h/1h count, excluding `rate_limited`/
-`rejected` rows — counting refusals as consumption once locked ralph out
-for weeks: 6,328 `rate_limited` rows vs. 91 real runs) against
-`rate_limits.<rate_limit_key>`, writing an audit row on a rate-limited skip
-so it's visible in `factory schedules`/`factory inbox`.
+`rejected` rows) against `rate_limits.<rate_limit_key>`, writing an audit
+row on a rate-limited skip so it's visible in `factory schedules`/
+`factory inbox`.
 
 ## Key files
 
