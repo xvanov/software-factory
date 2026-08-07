@@ -83,6 +83,20 @@ auto_pm_sync:
 # direction regardless of this flag.
 ci_health:
   enabled: true
+# Detector -> direction trigger (019 AC7 / Flow D). When enabled, ``factory
+# tick`` runs every registered detector in factory/manager/detectors/ once
+# per app per real tick (the deleted FMS L1 Watcher used to be their only
+# caller) and files at most a few machine directions per tick, deduped on a
+# stable signature so the same fault is never re-filed while a direction for
+# it is still open. Every filing is parked at the operator-approval gate.
+#
+# DEFAULT IS OFF (review round 2, 2026-08-07). AC7's verification is the
+# seeded unit test, not production traffic; a read-only re-measurement
+# against the live factory found this pass would have filed 48 machine
+# directions in its first ~16 ticks before the liveness/recency fixes
+# landed. Flip on per app after a soak — never globally on merge.
+detector_watch:
+  enabled: false
 # Phase 6 scheduled personas. ``factory tick`` consults this on every run
 # and dispatches due entries via ``factory.chain.scheduled_tasks``. Rate
 # limits referenced by ``rate_limit_key`` look up the same-named field in
