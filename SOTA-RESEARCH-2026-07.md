@@ -16,6 +16,11 @@
 
 ## The thesis, restated with external evidence
 
+> **Reframed by operator decision 2026-08-07:** the operative claim is now *"buy
+> throughput the subscription can't sell"* — success is tasks/day at an acceptable
+> defect rate, not $/task. The section below predates that reframing; its evidence
+> stands, its framing is one step behind.
+
 Our claim: *harness quality beats model size; cheap models plus loops and backpressure
 beat frontier models plus a thin harness, far cheaper.*
 
@@ -172,7 +177,7 @@ insight. We got there first.
   3 rows to Azure 429s. A later report re-ran those rows and puts `openhands` at
   **10/19 = 53%**, p=0.375, $1.82 per resolved instance — a **2.8×** cost ratio, and
   `openhands` vs `bare` at **p=0.004**. The conclusion is unchanged and the gap is
-  wider. See `PLAN.md` §1 for the provenance rule and Corrections #14.
+  wider. See `STATUS.md` for the provenance rule (the retired plan's Corrections #14 is archived at `docs/archive/PLAN-2026-08-07-retired.md`).
 - **Contamination is not the explanation for Claude's lead.** `claude-opus-4-8`
   (published cutoff Jan 2026) scores 74% against `claude-opus-5`'s 79% on the same
   harness, p=1.000, even though all 19 instances predate opus-5's cutoff. The relevant
@@ -204,7 +209,7 @@ insight. We got there first.
     OpenHands agent on the same weights (`bench/swebench/results.md`).
   - The reading that survives both: role decomposition wins where the task is
     *composed of many separable units*, and loses where the task is one patch.
-    See `PLAN.md` Phase C.3, which tests exactly that on our own architecture.
+    See the archived plan's Phase C.3 (`docs/archive/PLAN-2026-08-07-retired.md`) — deferred by operator decision 2026-08-07 to run LAST, after Exteroception v1.
 - **Harnesses may be depreciating assets.** The strongest dissent holds that harness
   components encode expiring assumptions and should be deletable within hours, with
   ~90-day replacement cycles; O'Reilly's "Kirby effect" describes frontier models
@@ -224,7 +229,7 @@ insight. We got there first.
   consulted during search); and file-state patch collection over model-emitted unified
   diffs (~~Claw-SWE-Bench: 69.1% → <1.5% apply failures switching transport~~ —
   **DOWNGRADED 2026-08-04, the citation could not be verified; the design intuition
-  stands, the number does not**. `PLAN.md`'s deferred patch-apply item is costed on
+  stands, the number does not**. the archived plan's deferred patch-apply item (`docs/archive/PLAN-2026-08-07-retired.md`) is costed on
   our own 21 historical failures instead).
 
 ---
@@ -270,4 +275,4 @@ patching, where the answer is no (see the MAS-Zero bullet above).
 effect is −7 pp (−16 pp on the later report), so *detecting* it needs high
 hundreds of instances, $4–6k. **Widening can bound the negative; it can never
 show the chain works.** The measurement that can is a corpus of multi-unit tasks
-with human-authored oracles — `PLAN.md` Phase D.
+with human-authored oracles — SacrificeBench, archived plan Phase D (`docs/archive/PLAN-2026-08-07-retired.md`), sequenced after Exteroception v1.

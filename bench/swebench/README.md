@@ -36,7 +36,7 @@ uv run python bench/swebench_adapter.py report \
 > committed to `origin/main`** as of `664bcd7d` (PR #232), which also amended
 > `PRE-REGISTRATION-1.6.md` to close the `attempt > 1` protocol question.
 >
-> **The tables below use the later report**, matching `PLAN.md` §1, `STATUS.md`,
+> **The tables below use the later report**, matching `STATUS.md`,
 > `README.md` and the committed `results.md` — which re-derives from the later
 > archive byte-for-byte, so that is the archive `--check` must be pointed at
 > (pointed at `04-18-05` it correctly exits non-zero on drift). **The conclusion
@@ -106,7 +106,7 @@ Paired McNemar exact, over instances where both arms are audited-valid:
 **Do not read the sweep files for these numbers.** `sweep-<arm>.json`'s aggregate
 counters are in-flight snapshots and contradict their own `results` rows —
 `sweep-factory.json` says `resolved: 2`, its rows say 7, the archive says 7. Only
-`results.md` and `results-archive/` are authoritative. Tracked as `PLAN.md` 1.6 G.
+`results.md` and `results-archive/` are authoritative. Tracked in `STATUS.md`'s operator queue (formerly `PLAN.md` 1.6 G, archived at `docs/archive/PLAN-2026-08-07-retired.md`).
 
 ## Datasets are profiles — SWE-rebench is primary, Pro is FROZEN
 
@@ -800,7 +800,7 @@ in-process agent loop cannot be killed, the same trade-off `sandbox_run` makes �
 and grades the tree as it stands. That is why the trajectory is persisted
 incrementally rather than at the end.
 
-## The solo-noreview arm — the reviewer ablation (PLAN.md B.1 Phase 1a)
+## The solo-noreview arm — the reviewer ablation (B.1 Phase 1a; plan since archived)
 
 `solo-noreview` is the `factory` arm with the **reviewer round-trip removed and
 nothing else**. Pre-registered in
@@ -886,7 +886,7 @@ seeds a story at `SM_DONE` and dispatches only `dev`/`review` — i.e. it starts
 *downstream* of `handle_stories_spawned`, where authoring happens. So the 37% and
 the 40% chain-verdict precision above were produced by an arm labelled "the
 product" that was missing the product's only independence layer. Fixed
-2026-08-05 (`PLAN.md` A.1b); the rows in `results.md` predate it.
+2026-08-05 (archived plan A.1b, `docs/archive/PLAN-2026-08-07-retired.md`); the rows in `results.md` predate it.
 
 `run_factory` now authors the oracle from the instance's `problem_statement`
 after the story row exists and **before the dispatch loop**, through the chain's

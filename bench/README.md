@@ -13,16 +13,18 @@ and caveats in `swebench/results.md`):
 |---|---|---:|---:|---|
 | claude-5 | Claude Code CLI × `claude-opus-5` | 15/19 | 79% | [54%, 94%] |
 | claude-4.8 | the SAME CLI × `claude-opus-4-8` | 14/19 | 74% | [49%, 91%] |
-| openhands | OpenHands single agent, no chain × `azure/deepseek-v4-pro` | 7/16 | 44% | [20%, 70%] |
+| openhands | OpenHands single agent, no chain × `azure/deepseek-v4-pro` | 10/19 | 53% | [29%, 76%] |
 | factory | the chain on OpenHands × deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | 37% | [16%, 62%] |
 | bare | hand-rolled text loop, no tool calls × deepseek-v4-pro | 1/18 | 6% | [0%, 27%] |
 
-- **The chain shows no measurable lift**: 37% vs 44% against a single OpenHands
-  agent on the same model, prompt and tools — McNemar exact **p=0.625**, n=16. Our
-  lift comes from using a competent agent loop, not from the chain.
-- **The lift is tooling**: `openhands` 44% vs `bare` 6%, **p=0.031**.
+- **The chain shows no measurable lift**: 37% vs 53% against a single OpenHands
+  agent on the same model, prompt and tools — McNemar exact **p=0.375**, n=19
+  (later archive `2026-08-04T23-19-24.998844Z`, the one `results.md` re-derives
+  from; the earlier archive reads 44% / p=0.625 — same conclusion). Our lift
+  comes from using a competent agent loop, not from the chain.
+- **The lift is tooling**: `openhands` 53% vs `bare` 6%, **p=0.004**.
 - **Cost moves the wrong way**: $5.13 per resolved instance for the chain vs
-  $2.20 for one agent — 2.3× for no measurable gain.
+  $1.82 for one agent — 2.8× for no measurable gain.
 - Claude Code is ~2× the factory (p=0.008), but that pair varies harness **and**
   model, so it is a reference point, not a scaffold deficit.
 - n=19, k=1, MDE ≈ ±38 pp. "No measurable lift" — not "the chain hurts".
@@ -134,10 +136,11 @@ superseded-by header.
   **`factory` − `openhands`**: one OpenHands agent on the same deployment, same
   prompt, same tools, no chain. **Not `factory` − bare** — that varies the chain
   and the tool interface at once, which is exactly how the retracted "+58 pp
-  scaffold lift" happened. Measured 2026-08-04: `factory` − `openhands` = −7 pp,
-  p=0.625, while `openhands` − `bare` = +38 pp, p=0.031. See `PLAN.md` §1. Never
-  report a factory number without the matched `openhands` number beside it.
+  scaffold lift" happened. Measured 2026-08-04: `factory` − `openhands` = −16 pp,
+  p=0.375 (−7 pp / p=0.625 on the earlier archive), while `openhands` − `bare` =
+  +47 pp, p=0.004. See `STATUS.md`. Never report a factory number without the
+  matched `openhands` number beside it.
 - **Contaminated task pool**: the six directions behind t1–t6 (`023`–`028`) are
   now `closed` — the factory has since shipped them, so they can no longer be
-  used as held-out tasks. The 45 `pm-validated` directions are the held-out pool —
-  see `PLAN.md` Phase D.
+  used as held-out tasks. The 45 `pm-validated` directions are the held-out pool for
+  SacrificeBench — see the archived plan (`docs/archive/PLAN-2026-08-07-retired.md`, Phase D) and `STATUS.md`.

@@ -1,3 +1,12 @@
+> **RETIRED 2026-08-07 by operator decision.** This file was the working plan
+> and de-facto PRD through Phase A/B.1. It is superseded by the **Exteroception
+> v1 direction** (`apps/factory/directions/` — newest direction) and the
+> rewritten `STATUS.md`. It is archived, not deleted, because its correction
+> log (36 corrections, 16 costed refutations) is part of the project's failure
+> ledger. Do not execute phases from this file; forward work lives in the
+> direction. One pre-registration is explicitly retired with it: E.5's "one
+> honest L1→L4 cycle before deleting the manager LLM tiers".
+
 # PLAN.md — reordered around the measured result
 
 **Reconciled with measured reality 2026-08-05** — A.2/A.3/A.8 done (#233), C.1 done

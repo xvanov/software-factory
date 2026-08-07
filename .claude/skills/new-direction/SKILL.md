@@ -19,6 +19,9 @@ Read `references/contract.md` before drafting — it is the exact machine contra
 ## Phase 0 — Orient (do this before asking anything)
 
 1. Confirm the target app. `ls apps/` — today that's `sacrifice` and `factory`.
+   Note (operator decision 2026-08-07): `sacrifice` is a **benchmark corpus and
+   sensor testbed**, not a product with real users — apply the business/user
+   lenses accordingly.
 2. Skim what already exists so you don't propose a duplicate or an orphan:
    - `ls apps/<app>/directions/ | tail -20` — recent directions
    - `apps/<app>/context/` — the app's canonical context modules, if present

@@ -5,11 +5,11 @@
 ![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
 ![Tests](https://github.com/xvanov/software-factory/actions/workflows/test.yml/badge.svg)
 ![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/xvanov/software-factory/python-coverage-comment-action-data/endpoint.json)
-![Test count](https://img.shields.io/badge/tests-2182%20passing-brightgreen)
+![Test count](https://img.shields.io/badge/tests-2368%20passing-brightgreen)
 ![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)
 ![Typed](https://img.shields.io/badge/types-mypy-blue)
 
-The thesis under test: **harness quality beats model size.** A well-instrumented pipeline of small, verifiable steps — each gated by real tests and a live runtime smoke check — ships production code unattended on models ~10× cheaper than frontier subscriptions. It does ship: 117 stories merged and deployed, 24 of them edits to the factory itself.
+The thesis under test: **harness quality beats model size.** A well-instrumented pipeline of small, verifiable steps — each gated by real tests and a live runtime smoke check — ships production code unattended on models ~10× cheaper than frontier subscriptions. It does ship: 117 stories merged — 24 of them edits to the factory itself. (Two honesty caveats, audited 2026-08-07: the `deployed` story state records a *merge* — real deploys are `deploy_disabled_in_config` on every app and have never executed; and of this repo's own 173 merged PRs, ~25 came through the chain — the operator authored the rest.)
 
 **The thesis is not proven, and the latest measurement runs against it.** Externally graded on SWE-rebench with a hidden oracle (2026-08-04, five arms, n=19, k=1 — [full result](bench/swebench/results.md)):
 
@@ -134,29 +134,34 @@ flowchart LR
     PR --> TW[Tech-writer<br/>context docs]
 ```
 
-- **Directions** are markdown work orders (`apps/<app>/directions/`) — filed by you, or by the factory's own scanner personas (hourly drift watchdog, bug hunter, weekly security audit, UX auditor).
+- **Directions** are markdown work orders (`apps/<app>/directions/`) — filed by you. (The scanner personas that used to machine-file them — drift watchdog, bug hunter — are scheduled for deletion per the 2026-08-07 operator decision: 0 findings in 705 runs, and 70% of one app's backlog was machine-filed noise. Goal supply is human-ratified.)
 - **Personas** are prompt-defined roles (`factory/personas/*.md`) executed either as tool-using sandboxes (OpenHands SDK) or single structured-JSON calls. Model routing per persona/difficulty lives in one file: `factory/routes.yaml`.
 - **Nothing merges on green unit tests alone.** The `smoke-green` gate boots the PR's own code on an isolated port and drives the core user journey live before auto-merge.
 - **Convergence machinery** keeps dev↔review loops short: the reviewer carries memory of its own previous findings, proposes concrete `FIND/REPLACE` edits, and a drift clamp stops goalpost-moving at cycle 3.
 
-## The factory manages itself
+## The factory manages itself — scope cut 2026-08-07
 
-A four-tier management pipeline (FMS) watches the factory's own telemetry:
+Factory self-edits go through the chain like any other story and must pass the
+**staging twin** (`factory/manager/staging.py`): the diff is applied to a clone,
+the clone is actually run, and only a healthy clone promotes (17 validated,
+3 fatal self-edits rejected). `recovery.py` auto-fixes known operational faults,
+and a halted factory refuses to burn spend until an operator runs
+`factory resume`. `factory/manager/**` and `bench/**` stay forbidden to
+self-edit (operator PR only).
 
-| Tier | Role | Cadence |
-|------|------|---------|
-| L1 Watcher | summarize event streams, flag anomalies | every 60 s |
-| L2 Summarizer | structured concern documents | on escalation |
-| L3 Diagnostician | root-cause + unified-diff proposal | on escalation |
-| L4 Apply | classify safe/forbidden, branch, test, PR | on proposal |
-
-Blocked stories auto-recover (bounded), stale worktrees get pruned, and a halted factory refuses to burn spend until an operator runs `factory resume`. Every factory self-edit is validated on a cloned staging copy — full suite + import/CLI smoke — before it can touch the live tree; `factory/manager/**` and `bench/**` stay forbidden to self-edit (operator PR only).
+The four-tier LLM pipeline that used to sit above this (L1 Watcher → L2
+Summarizer → L3 Diagnostician → L4 Apply) is **scheduled for deletion by
+operator decision (2026-08-07)**: it consumed 52% of all-time LLM spend, filed
+one GitHub issue, and applied zero fixes (L4: 0 PRs in 163 attempts). Its
+replacement is deterministic: the pure-Python detectors fire on facts, file
+deduplicated directions into the normal chain, and the firing detector itself is
+the acceptance criterion. See `STATUS.md` and the Exteroception v1 direction.
 
 ## Quickstart
 
 ```bash
 uv sync --all-extras          # dev extras included — bare `uv sync` omits pytest
-uv run pytest -q              # 2182 tests, ~5 min (not the ~30s of the early repo)
+uv run pytest -q              # 2,368 tests, ~5 min (not the ~30s of the early repo)
 uv run factory --help
 ```
 
@@ -196,7 +201,7 @@ uv run python bench/swebench_adapter.py report \
 ```
 factory/           the orchestrator
   chain/           state machine, handlers, gates, auto-merge, worktrees
-  manager/         FMS tiers (watcher → summarizer → diagnostician → apply)
+  manager/         staging twin, recovery, detectors, signals/halt (LLM tiers scheduled for deletion)
   personas/        prompt-defined roles (pm, sm, dev, reviewer, …)
   routes.yaml      per-persona model routing — the single model-choice seam
 apps/<app>/        per-app config, directions (work orders), stories
