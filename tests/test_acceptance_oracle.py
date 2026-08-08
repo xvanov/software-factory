@@ -1,18 +1,19 @@
-"""Tests for the WS1.2 independent acceptance oracle.
+"""Tests for the WS1.2 independent acceptance oracle (019 AC3: out-of-process).
 
 Covers the four properties the design promises:
 
   (a) the acceptance gate PASSES when delivered code satisfies the ACs and
       FAILS when it violates one — EVEN when the dev's own suite is green (the
-      core anti-reward-hack case);
+      core anti-reward-hack case) — now exercised through a BOOTED app over
+      HTTP rather than an in-process import;
   (b) the authored acceptance test lands OUTSIDE the dev worktree (independence);
-  (c) the gate + required-wiring are per-app opt-in (off by default);
+  (c) the gate + required-wiring are per-app opt-in (off by default) — untouched
+      by 019 AC3, since none of these paths reach a boot;
   (d) dry-run / no-ref / missing-file are non-authoritative, never a false pass.
 """
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 from factory.app_config import AppConfig, AppGatesConfig
@@ -32,7 +33,8 @@ from factory.chain.gates.evaluator import (
 from factory.chain.state_machine import StoryRecord, StoryState
 from factory.chain.worktree import ensure_worktree_for_story, worktree_path
 from factory.directions.parser import Direction
-from tests.oracle_repo import two_commit_repo
+from tests.oracle_boot_fixture import BAD_IMPL, GOOD_IMPL, HTTP_ORACLE, boot_cfg, write_bootable_app
+from tests.oracle_repo import commit_all, init_repo
 
 # --------------------------------------------------------------------------- #
 # Fixtures / helpers
@@ -78,66 +80,42 @@ def _direction(tmp_path: Path, acceptance: list[str]) -> Direction:
     )
 
 
-def _oracle_cfg(*, on: bool = True, command: str | None = None) -> AppConfig:
+def _oracle_cfg(*, on: bool = True, boot=None) -> AppConfig:
     return AppConfig(
         name="sacrifice",
         repo="o/r",
-        gates=AppGatesConfig(acceptance_oracle=on, acceptance_test_command=command),
+        gates=AppGatesConfig(acceptance_oracle=on, acceptance_boot=boot),
     )
 
 
 # The acceptance test the oracle would author from a spec like
-# "the app lowercases the email before storing it". Behavioral, blind to impl.
-_ACCEPTANCE_TEST_SRC = (
-    "from mod import normalize_email\n"
-    "\n"
-    "def test_ac1_email_is_lowercased():\n"
-    "    assert normalize_email('User@Example.COM') == 'user@example.com'\n"
-)
-
-
-_BUGGY_IMPL = "def normalize_email(e):\n    return e.strip()\n"
-_GOOD_IMPL = "def normalize_email(e):\n    return e.lower()\n"
+# "the app lowercases the email before storing it". Behavioral, blind to impl,
+# driven over HTTP (019 AC3) against a real booted instance.
+_ACCEPTANCE_TEST_SRC = HTTP_ORACLE
 
 
 def _make_app_checkout(repo_root: Path, *, correct: bool) -> tuple[str, str]:
-    """A tiny runnable app checkout, as a real git branch off a base commit.
+    """A real, bootable app checkout, as a git branch off a base commit.
 
-    ``correct`` decides whether HEAD satisfies the acceptance criterion. When
-    incorrect, the app's OWN unit tests still pass (they assert the buggy
-    behaviour) — the oracle is what catches it.
-
-    The BASE commit is always the buggy implementation, because the gate now
-    requires the oracle to be RED at the merge base before it credits a green at
-    HEAD (PLAN A.6): "the oracle passes now" is only evidence if "the oracle
-    failed before" is also true. Returns ``(base_sha, head_sha)``.
+    ``correct`` decides whether HEAD satisfies the acceptance criterion. The
+    BASE commit is always the buggy implementation (PLAN A.6: "the oracle
+    passes now" is only evidence if "the oracle failed before" is also true).
+    Returns ``(base_sha, head_sha)``.
     """
-    dev_assert = "'user@example.com'" if correct else "'User@Example.COM'"
-    return two_commit_repo(
-        repo_root,
-        base={
-            "conftest.py": "",  # repo on sys.path
-            "mod.py": _BUGGY_IMPL,
-            "tests/test_dev_own.py": (
-                "from mod import normalize_email\n"
-                "def test_dev():\n"
-                "    assert normalize_email('User@Example.COM ') == 'User@Example.COM'\n"
-            ),
-        },
-        head={
-            "mod.py": _GOOD_IMPL if correct else _BUGGY_IMPL,
-            "tests/test_dev_own.py": (
-                "from mod import normalize_email\n"
-                "def test_dev():\n"
-                f"    assert normalize_email('User@Example.COM ') == {dev_assert}\n"
-            ),
-            "story_marker.py": "MARKER = 1\n",
-        },
-    )
+    init_repo(repo_root)
+    write_bootable_app(repo_root, impl=BAD_IMPL)
+    base_sha = commit_all(repo_root, "base")
+    import subprocess
+
+    subprocess.run(["git", "checkout", "-q", "-b", "feat/story"], cwd=repo_root, check=True)
+    write_bootable_app(repo_root, impl=GOOD_IMPL if correct else BAD_IMPL)
+    (repo_root / "backend" / "app" / "story_marker.py").write_text("MARKER = 1\n", encoding="utf-8")
+    head_sha = commit_all(repo_root, "story work")
+    return base_sha, head_sha
 
 
 # --------------------------------------------------------------------------- #
-# (a) core anti-reward-hack: oracle catches a spec violation the dev suite hides
+# (a) core anti-reward-hack: oracle catches a spec violation over HTTP
 # --------------------------------------------------------------------------- #
 
 
@@ -156,26 +134,21 @@ def test_gate_passes_when_code_satisfies_acs(tmp_path: Path) -> None:
         software_factory_root=root,
         dry_run=False,
     )
-    r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
+    r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True, boot=boot_cfg()))
     assert r.passed, r.reason
     assert r.details["authoritative"] is True
     # ...and the pass is EVIDENCED: red at the merge base, green at HEAD.
     assert r.details["verified"] is True
-    assert r.details["base_run"]["verdict"] == "red"
+    assert r.details["base_run"]["status"] == "fail"
     assert r.details["base_sha"] == base_sha[:12]
 
 
 def test_gate_fails_on_ac_violation_even_when_dev_tests_green(tmp_path: Path) -> None:
-    """The whole point: the dev's OWN suite is green (it asserts the buggy
-    behaviour), but the independent oracle fails because an AC is violated."""
+    """The whole point: a violating implementation is caught by the
+    independent oracle driving the REAL booted app, regardless of what the
+    dev's own (unrelated) test suite says."""
     repo = tmp_path / "repo"
     _base_sha, head_sha = _make_app_checkout(repo, correct=False)
-    # Sanity: the dev's own suite really is green on the buggy code.
-    dev_run = subprocess.run(
-        ["python", "-m", "pytest", "tests/test_dev_own.py", "-q"],
-        cwd=repo, capture_output=True, text=True,
-    )
-    assert dev_run.returncode == 0, dev_run.stdout + dev_run.stderr
 
     root = tmp_path / "factory"
     ref = _write_stored_oracle(root, story_id=7)
@@ -188,11 +161,11 @@ def test_gate_fails_on_ac_violation_even_when_dev_tests_green(tmp_path: Path) ->
         software_factory_root=root,
         dry_run=False,
     )
-    r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
+    r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True, boot=boot_cfg()))
     assert not r.passed, "oracle must fail when an AC is violated"
     assert r.details["authoritative"] is True
-    # And the copied-in test was cleaned up (never left to be committed).
-    assert not any(p.name.startswith("test_acceptance_oracle_") for p in repo.iterdir())
+    # And nothing was ever copied into the dev's checkout at all.
+    assert not any(p.name.startswith("test_acceptance_oracle_") for p in repo.rglob("*"))
 
 
 def _write_stored_oracle(root: Path, *, story_id: int) -> str:
@@ -208,6 +181,8 @@ def _write_stored_oracle(root: Path, *, story_id: int) -> str:
 
 
 def _git(cwd: Path, *args: str) -> None:
+    import subprocess
+
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
 
@@ -215,7 +190,6 @@ def test_authored_oracle_not_in_dev_worktree(tmp_path: Path) -> None:
     """The dev sandbox runs against a per-story worktree of the APP repo under
     state/worktrees/. The authored oracle lands under state/acceptance/ — a
     sibling tree the worktree never contains."""
-    # A real source app repo so ensure_worktree_for_story can build a worktree.
     src = tmp_path / "app"
     src.mkdir()
     _git(src, "init", "-b", "main")
@@ -229,7 +203,6 @@ def test_authored_oracle_not_in_dev_worktree(tmp_path: Path) -> None:
     root.mkdir()
     story = _story(story_id=7)
 
-    # Author the oracle (fake author fn — no LLM).
     direction = _direction(tmp_path, ["the email is lowercased before storing"])
     ref = author_acceptance_test(
         story,
@@ -244,34 +217,25 @@ def test_authored_oracle_not_in_dev_worktree(tmp_path: Path) -> None:
     stored = root / ref
     assert stored.exists()
 
-    # Build the dev worktree exactly as the chain does.
     wt = ensure_worktree_for_story(
-        src,
-        software_factory_root=root,
-        app="sacrifice",
-        story_id=7,
-        slug="lowercase-email",
-        base_branch="main",
+        src, software_factory_root=root, app="sacrifice", story_id=7,
+        slug="lowercase-email", base_branch="main",
     )
 
-    # The independence guarantee: no acceptance test anywhere in the worktree.
     assert wt == worktree_path(root, "sacrifice", 7, "lowercase-email")
     worktree_files = {p.name for p in wt.rglob("*") if p.is_file()}
     assert "test_acceptance.py" not in worktree_files
     assert not any("acceptance" in name for name in worktree_files)
-    # And the stored oracle lives under state/acceptance/, not state/worktrees/.
     assert "state/acceptance/" in stored.as_posix()
     assert "worktrees" not in stored.relative_to(root).as_posix()
 
 
 def test_spec_prompt_is_spec_only(tmp_path: Path) -> None:
-    """The author prompt carries the ACs (spec) and never any implementation."""
     story = _story()
     direction = _direction(tmp_path, ["returns 404 when the goal is missing"])
     prompt = build_spec_prompt(story, direction)
     assert "returns 404 when the goal is missing" in prompt
     assert "Acceptance criteria" in prompt
-    # No implementation channel exists in the prompt builder's inputs at all.
     assert "def " not in prompt
 
 
@@ -292,6 +256,20 @@ def test_spec_prompt_is_always_example_mode(tmp_path: Path) -> None:
     assert "Property-based testing mode" not in prompt
     assert "Hypothesis" not in prompt
     assert "EARS" not in prompt
+
+
+def test_spec_prompt_gains_the_http_mode_block_when_boot_is_configured(tmp_path: Path) -> None:
+    story = _story()
+    direction = _direction(tmp_path, ["returns 404 when the goal is missing"])
+    without_boot = build_spec_prompt(story, direction, boot=None)
+    assert "ACCEPTANCE_BASE_URL" not in without_boot
+
+    with_boot = build_spec_prompt(story, direction, boot=boot_cfg())
+    assert "ACCEPTANCE_BASE_URL" in with_boot
+    assert "httpx" in with_boot
+    # still spec-only: the AC is verbatim, no implementation channel exists.
+    assert "returns 404 when the goal is missing" in with_boot
+    assert "def " not in with_boot
 
 
 # --------------------------------------------------------------------------- #
@@ -324,23 +302,12 @@ def test_not_required_without_opt_in() -> None:
 
 
 def test_required_for_every_story_once_opted_in() -> None:
-    """Opting the app in makes the label REQUIRED regardless of per-story flags.
-
-    Required-ness used to read ``story.acceptance_expected``, a value written by a
-    best-effort DB write that swallows its errors — so a lost write dropped the
-    story out of the required set, and a failing gate that is not required is
-    filtered out of the merge decision entirely (the PR merged un-gated).
-    Applicability is the gate's call now, not the required set's; a no-AC story is
-    passed by the gate as "not applicable" (see the gate tests)."""
     story = _story(ref=None, expected=False)
     labels = required_gate_labels(_oracle_cfg(on=True), story)
     assert "acceptance-verified" in labels
 
 
 def test_required_when_expected_even_if_authoring_failed() -> None:
-    """The false-green fix: a story that is EXPECTED to have an oracle but whose
-    authoring FAILED (expected=True, ref=None) is STILL required — so it blocks
-    rather than silently shipping un-gated code."""
     story = _story(ref=None, expected=True)
     labels = required_gate_labels(_oracle_cfg(on=True), story)
     assert "acceptance-verified" in labels
@@ -355,9 +322,6 @@ def test_required_when_opted_in_and_ref_present() -> None:
 
 
 def test_required_without_story_too() -> None:
-    """App-level query (no story): still required for an opted-in app. A PR with no
-    StoryRecord has no oracle and cannot be independently verified, so the gate
-    blocks it rather than the required set quietly dropping the requirement."""
     assert "acceptance-verified" in required_gate_labels(_oracle_cfg(on=True))
 
 
@@ -383,8 +347,6 @@ def test_dry_run_is_non_authoritative(tmp_path: Path) -> None:
 
 
 def test_opted_in_expected_no_ref_blocks_authoritatively(tmp_path: Path) -> None:
-    """THE FALSE-GREEN FIX: opted-in + EXPECTED + authoring failed (no ref) must
-    BLOCK authoritatively — never a silent skip that ships un-gated code."""
     pr = PRContext(
         pr_number=1,
         head_sha="a",
@@ -400,11 +362,6 @@ def test_opted_in_expected_no_ref_blocks_authoritatively(tmp_path: Path) -> None
 
 
 def test_opted_in_not_expected_no_ref_is_skip(tmp_path: Path) -> None:
-    """opted-in + the direction on disk really has NO ACs → not applicable (pass).
-
-    The exemption is re-derived from the SPEC, so it takes a direction on disk
-    without acceptance criteria — a bare ``expected=False`` flag is no longer
-    enough to skip the gate."""
     write_direction_on_disk(tmp_path, app="sacrifice", direction_id="002", acceptance=[])
     pr = PRContext(
         pr_number=1,
@@ -423,7 +380,6 @@ def test_opted_in_not_expected_no_ref_is_skip(tmp_path: Path) -> None:
 def write_direction_on_disk(
     root: Path, *, app: str, direction_id: str, acceptance: list[str]
 ) -> Path:
-    """Write a minimal parseable direction under ``apps/<app>/directions/``."""
     ddir = root / "apps" / app / "directions" / f"{direction_id}-emails"
     ddir.mkdir(parents=True, exist_ok=True)
     ac_block = (
@@ -439,9 +395,6 @@ def write_direction_on_disk(
 
 
 def test_opted_in_flagless_story_with_acs_on_disk_still_blocks(tmp_path: Path) -> None:
-    """The lost-flag fail-open: ``acceptance_expected`` never persisted, no ref —
-    but the direction on disk DOES carry acceptance criteria, so the story is
-    expected and the gate blocks instead of skipping it as "not applicable"."""
     write_direction_on_disk(
         tmp_path, app="sacrifice", direction_id="002", acceptance=["the email is lowercased"]
     )
@@ -460,14 +413,12 @@ def test_opted_in_flagless_story_with_acs_on_disk_still_blocks(tmp_path: Path) -
 
 
 def test_opted_in_unresolvable_direction_blocks(tmp_path: Path) -> None:
-    """Cannot resolve the direction → cannot establish the story is EXEMPT →
-    block. A detector that cannot decide must not wave the story through."""
     pr = PRContext(
         pr_number=1,
         head_sha="a",
         base_branch="main",
         story=_story(ref=None, expected=False),
-        software_factory_root=tmp_path,  # no apps/ tree at all
+        software_factory_root=tmp_path,
         dry_run=False,
     )
     r = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
@@ -476,7 +427,6 @@ def test_opted_in_unresolvable_direction_blocks(tmp_path: Path) -> None:
 
 
 def test_opted_in_without_story_record_blocks(tmp_path: Path) -> None:
-    """An opted-in app's PR with no StoryRecord cannot be verified → block."""
     pr = PRContext(
         pr_number=1,
         head_sha="a",
@@ -491,7 +441,6 @@ def test_opted_in_without_story_record_blocks(tmp_path: Path) -> None:
 
 
 def test_missing_stored_file_expected_blocks_authoritatively(tmp_path: Path) -> None:
-    """Expected + a ref recorded but the FILE is gone → authoritative block."""
     pr = PRContext(
         pr_number=1,
         head_sha="a",
@@ -499,7 +448,7 @@ def test_missing_stored_file_expected_blocks_authoritatively(tmp_path: Path) -> 
         story=_story(
             ref="state/acceptance/sacrifice/7/test_acceptance.py", expected=True
         ),
-        software_factory_root=tmp_path,  # file does not exist under here
+        software_factory_root=tmp_path,
         repo_root=tmp_path / "repo",
         dry_run=False,
     )
@@ -522,7 +471,7 @@ def test_author_returns_none_when_not_opted_in(tmp_path: Path) -> None:
     )
     assert ref is None
     assert story.acceptance_test_ref is None
-    assert story.acceptance_expected is False  # not opted in → not expected
+    assert story.acceptance_expected is False
 
 
 def test_author_returns_none_without_acceptance_criteria(tmp_path: Path) -> None:
@@ -533,7 +482,7 @@ def test_author_returns_none_without_acceptance_criteria(tmp_path: Path) -> None
         author_fn=lambda _s, _st: _ACCEPTANCE_TEST_SRC,
     )
     assert ref is None
-    assert story.acceptance_expected is False  # no ACs → not expected
+    assert story.acceptance_expected is False
 
 
 def test_author_skips_llm_in_dry_run_but_sets_expected(tmp_path: Path) -> None:
@@ -550,8 +499,7 @@ def test_author_skips_llm_in_dry_run_but_sets_expected(tmp_path: Path) -> None:
         dry_run=True, author_fn=_fake,
     )
     assert ref is None
-    assert calls == []  # no author call in dry-run
-    # ...but the story is still marked EXPECTED so a real tick authors + gates it.
+    assert calls == []
     assert story.acceptance_expected is True
 
 
@@ -576,8 +524,6 @@ def test_author_writes_outside_repo_and_sets_ref(tmp_path: Path) -> None:
 
 
 def test_author_sets_expected_true_even_when_authoring_raises(tmp_path: Path) -> None:
-    """The BLOCKER fix: authoring flakes, but acceptance_expected is still set
-    True (so the gate blocks) and the ref stays None."""
     story = _story(story_id=9)
     direction = _direction(tmp_path, ["the email is lowercased"])
     root = tmp_path / "factory"
@@ -591,11 +537,10 @@ def test_author_sets_expected_true_even_when_authoring_raises(tmp_path: Path) ->
     )
     assert ref is None
     assert story.acceptance_test_ref is None
-    assert story.acceptance_expected is True  # BLOCKS, never silently ships
+    assert story.acceptance_expected is True
 
 
 def test_author_retries_transient_failure(tmp_path: Path) -> None:
-    """A couple of transient author failures are absorbed within one call."""
     story = _story(story_id=11)
     direction = _direction(tmp_path, ["the email is lowercased"])
     root = tmp_path / "factory"
@@ -612,7 +557,7 @@ def test_author_retries_transient_failure(tmp_path: Path) -> None:
         dry_run=False, db_path=root / "state" / "factory.db", author_fn=_flaky,
     )
     assert ref is not None
-    assert attempts["n"] == _AUTHOR_ATTEMPTS  # the inner guard is 2, below the cap of 3
+    assert attempts["n"] == _AUTHOR_ATTEMPTS
 
 
 def test_gate_blocks_then_passes_after_reauthor(tmp_path: Path) -> None:
@@ -627,39 +572,32 @@ def test_gate_blocks_then_passes_after_reauthor(tmp_path: Path) -> None:
         pr_number=1, head_sha=head_sha, base_branch="main",
         story=story, repo_root=repo, software_factory_root=root, dry_run=False,
     )
-    # 1) Authoring failed earlier → gate blocks authoritatively.
-    r_blocked = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
+    r_blocked = acceptance_verified.evaluate(pr, _oracle_cfg(on=True, boot=boot_cfg()))
     assert not r_blocked.passed and r_blocked.details["authoritative"] is True
 
-    # 2) Self-heal re-authors from the SPEC (still dev-blind).
     direction = _direction(tmp_path, ["the email is lowercased"])
     ref = author_acceptance_test(
-        story, direction, _oracle_cfg(on=True), root,
+        story, direction, _oracle_cfg(on=True, boot=boot_cfg()), root,
         dry_run=False, db_path=root / "state" / "factory.db",
         author_fn=lambda _s, _st: _ACCEPTANCE_TEST_SRC,
     )
     assert ref is not None
 
-    # 3) Same gate now passes against satisfying code.
-    r_ok = acceptance_verified.evaluate(pr, _oracle_cfg(on=True))
+    r_ok = acceptance_verified.evaluate(pr, _oracle_cfg(on=True, boot=boot_cfg()))
     assert r_ok.passed and r_ok.details["authoritative"] is True
 
 
 def test_reauthor_sweep_heals_missing_oracle(tmp_path: Path) -> None:
-    """The tick sweep re-authors an expected-but-missing story end to end:
-    resolves the direction from disk, authors from spec, writes + persists."""
     from factory.chain.acceptance import reauthor_missing_oracles
     from factory.chain.handlers import get_story, persist_story
 
     root = tmp_path
     (root / "state").mkdir(parents=True, exist_ok=True)
     (root / "apps" / "sacrifice").mkdir(parents=True, exist_ok=True)
-    # App config opting in.
     (root / "apps" / "sacrifice" / "config.yaml").write_text(
         "name: sacrifice\nrepo: o/r\ngates:\n  acceptance_oracle: true\n",
         encoding="utf-8",
     )
-    # Direction on disk with ACs.
     ddir = root / "apps" / "sacrifice" / "directions" / "002-emails"
     ddir.mkdir(parents=True, exist_ok=True)
     (ddir / "direction.md").write_text(
@@ -668,7 +606,6 @@ def test_reauthor_sweep_heals_missing_oracle(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     db = root / "state" / "factory.db"
-    # An expected-but-unauthored story (authoring flaked at spawn).
     story = persist_story(
         _story(story_id=None, ref=None, expected=True), db
     )
@@ -683,7 +620,6 @@ def test_reauthor_sweep_heals_missing_oracle(tmp_path: Path) -> None:
     assert refreshed.acceptance_test_ref is not None
     assert (root / refreshed.acceptance_test_ref).read_text() == _ACCEPTANCE_TEST_SRC
 
-    # Idempotent: a second sweep finds nothing to heal.
     assert reauthor_missing_oracles(
         "sacrifice", root, dry_run=False, db_path=db,
         author_fn=lambda _s, _st: _ACCEPTANCE_TEST_SRC,

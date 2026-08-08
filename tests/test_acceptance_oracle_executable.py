@@ -1,32 +1,20 @@
-"""The acceptance oracle, made EXECUTABLE (2026-08-05).
+"""The acceptance oracle, made EXECUTABLE (2026-08-05), then made OUT-OF-PROCESS
+(2026-08-07, 019 AC3).
 
-``factory/chain/acceptance.py`` + the ``acceptance-verified`` gate had never run
-once in production (``acceptance_expected`` 0/165 stories, ``state/acceptance/``
-absent, ``gates.acceptance_oracle`` set in no app config). Driving it for real
-against a sacrifice direction found the defects covered here:
-
-  (1) the author guessed module paths and produced a test that could not import
-      the app — a 100% FALSE BLOCK; the gate now runs in a configured
-      directory/cwd and the author gets the app's harness facts;
-  (2) nothing validated the author's output, so prose or a markdown fence would
-      be stored as the story's oracle and only fail at merge time;
-  (3) an all-skipped run exits 0 — exit-0-means-pass credited a verification
-      that never happened;
-  (4) the copy the gate drops into the checkout lands in the story's own DEV
-      WORKTREE, which the chain later ``git add -A``s — a crash mid-run leaked
-      the hidden oracle to the dev and into the PR;
-  (5) required-ness read a DB flag written by a best-effort write, so a lost
-      write shipped a story un-gated;
-  (6) any infrastructure error inside the gate escaped and aborted the whole
-      merge evaluation;
-  (7) authoring could re-fire forever, and could re-author over a frozen oracle.
+Everything about WHERE the oracle used to run inside the checkout —
+``acceptance_test_dir`` / ``acceptance_test_cwd`` / ``acceptance_test_command``
+and the app-supplied ``{test_file}`` template — is INERT under the
+out-of-process runner (see ``factory/app_config.py``): the oracle never lands
+in any checkout at all, so there is nothing left to place, no directory to
+resolve, and no runner command to validate. Those tests DIE here; what
+survives is everything about the AUTHOR'S OUTPUT (validation, allowlisting)
+and the hygiene/authoring machinery that is genuinely unchanged by AC3.
 """
 
 from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -48,14 +36,17 @@ from factory.chain.gates import acceptance_verified
 from factory.chain.gates.evaluator import PRContext
 from factory.chain.state_machine import StoryRecord, StoryState
 from factory.directions.parser import Direction
-from tests.oracle_repo import two_commit_repo
-
-_GOOD_ORACLE = (
-    "from app.mod import normalize_email\n"
-    "\n"
-    "def test_ac1_email_is_lowercased():\n"
-    "    assert normalize_email('User@Example.COM') == 'user@example.com'\n"
+from tests.oracle_boot_fixture import (
+    BAD_IMPL,
+    GOOD_IMPL,
+    HTTP_ORACLE,
+    IMPORT_FORM_ORACLE,
+    boot_cfg,
+    write_bootable_app,
 )
+from tests.oracle_repo import commit_all, git, init_repo
+
+_GOOD_ORACLE = HTTP_ORACLE
 
 
 # --------------------------------------------------------------------------- #
@@ -105,54 +96,24 @@ def _direction(tmp_path: Path, acceptance: list[str]) -> Direction:
     )
 
 
-def _cfg(
-    *,
-    on: bool = True,
-    command: str | None = None,
-    test_dir: str | None = None,
-    cwd: str | None = None,
-    hint: str | None = None,
-) -> AppConfig:
+def _cfg(*, on: bool = True, boot=None, hint: str | None = None) -> AppConfig:
     return AppConfig(
         name="sacrifice",
         repo="o/r",
-        gates=AppGatesConfig(
-            acceptance_oracle=on,
-            acceptance_test_command=command,
-            acceptance_test_dir=test_dir,
-            acceptance_test_cwd=cwd,
-            acceptance_harness_hint=hint,
-        ),
+        gates=AppGatesConfig(acceptance_oracle=on, acceptance_boot=boot, acceptance_harness_hint=hint),
     )
-
-
-_GOOD_IMPL = "def normalize_email(e):\n    return e.lower()\n"
-_BUGGY_IMPL = "def normalize_email(e):\n    return e.strip()\n"
 
 
 def _nested_checkout(repo: Path, *, correct: bool = True) -> tuple[str, str]:
-    """A checkout shaped like a real app: the package lives under ``backend/``.
-
-    Importable only with ``cwd=backend`` — which is exactly why an oracle dropped
-    at the repo root and run from the repo root cannot import it.
-
-    A REAL git branch off a base commit, because the gate grades the merge
-    candidate in a throwaway worktree and credits a green at HEAD only when the
-    oracle was RED at the merge base (PLAN A.6). The base commit therefore always
-    carries the buggy implementation. Returns ``(base_sha, head_sha)``.
-    """
-    return two_commit_repo(
-        repo,
-        base={
-            "backend/app/__init__.py": "",
-            "backend/app/mod.py": _BUGGY_IMPL,
-            "backend/tests/.gitkeep": "",
-        },
-        head={
-            "backend/app/mod.py": _GOOD_IMPL if correct else _BUGGY_IMPL,
-            "backend/app/story_marker.py": "MARKER = 1\n",
-        },
-    )
+    """A bootable app checkout, base always buggy (PLAN A.6)."""
+    init_repo(repo)
+    write_bootable_app(repo, impl=BAD_IMPL)
+    base_sha = commit_all(repo, "base")
+    git(repo, "checkout", "-q", "-b", "feat/story")
+    write_bootable_app(repo, impl=GOOD_IMPL if correct else BAD_IMPL)
+    (repo / "backend" / "app" / "story_marker.py").write_text("MARKER = 1\n", encoding="utf-8")
+    head_sha = commit_all(repo, "story work")
+    return base_sha, head_sha
 
 
 def _store_oracle(root: Path, *, story_id: int, content: str = _GOOD_ORACLE) -> str:
@@ -163,8 +124,6 @@ def _store_oracle(root: Path, *, story_id: int, content: str = _GOOD_ORACLE) -> 
 
 
 def _pr(root: Path, repo: Path | None, story: StoryRecord, sha: str = "abc") -> PRContext:
-    """``sha`` must be the checkout's real HEAD (or an ancestor of it): the gate
-    refuses to grade a tree that cannot be shown to contain the PR head commit."""
     return PRContext(
         pr_number=1,
         head_sha=sha,
@@ -199,83 +158,54 @@ def _write_app_config(root: Path, *, on: bool = True) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# (1) the false block: WHERE the oracle runs
+# the gate runs against a REAL, correctly-placed boot recipe (no dir/cwd left
+# to configure — the boot happens wherever ``acceptance_boot.cwd`` says)
 # --------------------------------------------------------------------------- #
 
 
-def test_default_root_placement_cannot_import_a_real_app(tmp_path: Path) -> None:
-    """Reproduces the first real run: repo-root placement → import error → block."""
+def test_gate_boots_and_grades_a_nested_app_checkout(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
-    root = tmp_path / "factory"
-    ref = _store_oracle(root, story_id=7)
-    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), _head_sha), _cfg())
-    assert not r.passed
-    assert r.details["exit_code"] != 0
-
-
-def test_configured_dir_and_cwd_make_the_same_oracle_pass(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
+    _base_sha, head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha),
-        _cfg(test_dir="backend/tests", cwd="backend"),
+        _pr(root, repo, _story(ref=ref), head_sha), _cfg(boot=boot_cfg()),
     )
     assert r.passed, r.details.get("output_tail")
     assert r.details["authoritative"] is True
-    assert r.details["test_file"] == f"tests/{ORACLE_COPY_PREFIX}7.py"
-    assert str(r.details["cwd"]).endswith("backend")
     assert r.details["tests_passed"] == 1
 
 
-def test_configured_placement_still_fails_a_violating_implementation(tmp_path: Path) -> None:
-    """The gate must keep FAILING on a real AC violation, not merely run."""
+def test_gate_keeps_failing_a_violating_implementation(tmp_path: Path) -> None:
+    """PINNED FLAKE (2026-08-07): an adversarial review saw this fail once
+    with ``authoritative is False`` (a genuine violation downgraded to the
+    waivable ``app_crashed_during_run`` — an operator would be OFFERED A
+    WAIVER for a violating implementation) and could not reproduce it in 11
+    follow-up attempts. ``boot.probe_health`` now retries before concluding
+    "died" (the likeliest transient cause). If this ever fails again, the
+    assertion message below carries ``unverifiable_kind`` + the head summary
+    so the occurrence is diagnosable instead of a one-line "assert False"."""
     repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo, correct=False)
+    _base_sha, head_sha = _nested_checkout(repo, correct=False)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha),
-        _cfg(test_dir="backend/tests", cwd="backend"),
+        _pr(root, repo, _story(ref=ref), head_sha), _cfg(boot=boot_cfg()),
     )
-    assert not r.passed
-    assert r.details["authoritative"] is True
-
-
-def test_test_dir_outside_the_checkout_blocks(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
-    root = tmp_path / "factory"
-    ref = _store_oracle(root, story_id=7)
-    r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha), _cfg(test_dir="../escape")
+    diag = (
+        f"unverifiable_kind={r.details.get('unverifiable_kind')!r} "
+        f"head_status={r.details.get('head_status')!r} "
+        f"head_summary={r.details.get('head_summary')!r} "
+        f"head_app_alive_after_run={r.details.get('head_app_alive_after_run')!r} "
+        f"head_app_healthy_after_run={r.details.get('head_app_healthy_after_run')!r} "
+        f"reason={r.reason!r}"
     )
-    assert not r.passed
-    assert "acceptance_test_dir" in str(r.details.get("infra_error", "")) or "outside" in r.reason
-
-
-def test_missing_test_dir_blocks_instead_of_raising(tmp_path: Path) -> None:
-    """A configured dir that does not exist in the merge candidate is an operator
-    config fault: it must block AUTHORITATIVELY, not raise out of the gate."""
-    repo = tmp_path / "repo"
-    base_sha, head_sha = two_commit_repo(
-        repo, base={"README.md": "app\n"}, head={"README.md": "app v2\n"}
-    )
-    assert base_sha != head_sha
-    root = tmp_path / "factory"
-    ref = _store_oracle(root, story_id=7)
-    r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), head_sha), _cfg(test_dir="backend/tests")
-    )
-    assert not r.passed
-    assert r.details["authoritative"] is True
-    assert "acceptance_test_dir" in str(r.details["infra_error"])
+    assert not r.passed, diag
+    assert r.details["authoritative"] is True, diag
 
 
 # --------------------------------------------------------------------------- #
-# (2) the author's output is validated before it becomes the oracle
+# the author's output is validated before it becomes the oracle
 # --------------------------------------------------------------------------- #
 
 
@@ -301,6 +231,27 @@ def test_normalize_rejects_unusable_output(bad: str) -> None:
         normalize_oracle_source(bad)
 
 
+def test_normalize_accepts_a_real_http_oracle_in_http_mode() -> None:
+    out = normalize_oracle_source(_GOOD_ORACLE, http_mode=True)
+    assert "httpx" in out
+
+
+def test_normalize_rejects_the_legacy_import_form_in_http_mode() -> None:
+    """019 AC3's self-heal seam: an author response that regresses to the
+    in-process import shape is a FAILED ATTEMPT (retried), not a stored
+    blocker discovered only when the gate runs it."""
+    with pytest.raises(OracleSourceError, match="out-of-process-runnable"):
+        normalize_oracle_source(IMPORT_FORM_ORACLE, http_mode=True)
+
+
+def test_normalize_allows_the_import_form_when_http_mode_is_off() -> None:
+    """The bench arm (``gates.acceptance_oracle: True``, no boot recipe) still
+    calls ``normalize_oracle_source`` without ``http_mode`` — must not
+    regress that caller."""
+    out = normalize_oracle_source(IMPORT_FORM_ORACLE)
+    assert "from app.mod import normalize_email" in out
+
+
 def test_unusable_author_output_is_a_failed_attempt_not_a_stored_oracle(
     tmp_path: Path,
 ) -> None:
@@ -318,30 +269,48 @@ def test_unusable_author_output_is_a_failed_attempt_not_a_stored_oracle(
     )
     assert ref is None
     assert story.acceptance_test_ref is None
-    assert story.acceptance_expected is True  # blocks, never silently ships
-    assert calls["n"] == _AUTHOR_ATTEMPTS  # retried inside the pass (inner guard = 2)
+    assert story.acceptance_expected is True
+    assert calls["n"] == _AUTHOR_ATTEMPTS
     assert not (acceptance_dir(root, "sacrifice", 13) / "test_acceptance.py").exists()
+
+
+def test_import_form_regression_is_a_failed_attempt_when_boot_is_configured(
+    tmp_path: Path,
+) -> None:
+    story = _story(story_id=14)
+    root = tmp_path / "factory"
+    calls = {"n": 0}
+
+    def _regressed(_spec: str, _s: StoryRecord) -> str:
+        calls["n"] += 1
+        return IMPORT_FORM_ORACLE
+
+    ref = author_acceptance_test(
+        story, _direction(tmp_path, ["ac"]), _cfg(boot=boot_cfg()), root,
+        dry_run=False, db_path=root / "state" / "factory.db", author_fn=_regressed,
+    )
+    assert ref is None
+    assert story.acceptance_expected is True
+    assert calls["n"] == _AUTHOR_ATTEMPTS
 
 
 def test_fenced_author_output_is_stored_unfenced_and_runs(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
+    _base_sha, head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     story = _story(story_id=7, ref=None)
     ref = author_acceptance_test(
-        story, _direction(tmp_path, ["ac"]), _cfg(), root,
+        story, _direction(tmp_path, ["ac"]), _cfg(boot=boot_cfg()), root,
         dry_run=False, db_path=root / "state" / "factory.db",
         author_fn=lambda _s, _st: f"```python\n{_GOOD_ORACLE}```",
     )
     assert ref is not None
-    r = acceptance_verified.evaluate(
-        _pr(root, repo, story, _head_sha), _cfg(test_dir="backend/tests", cwd="backend")
-    )
+    r = acceptance_verified.evaluate(_pr(root, repo, story, head_sha), _cfg(boot=boot_cfg()))
     assert r.passed, r.details.get("output_tail")
 
 
 # --------------------------------------------------------------------------- #
-# (3) a run that verifies nothing is not a pass
+# a run that verifies nothing is not a pass (all-skipped survives AC3 intact)
 # --------------------------------------------------------------------------- #
 
 
@@ -354,60 +323,54 @@ _ALL_SKIPPED = (
 
 
 def test_all_skipped_oracle_exits_zero_but_gate_blocks(tmp_path: Path) -> None:
+    """An all-skip oracle is caught even EARLIER under AC2 than it used to be:
+    it is also all-skip against the gutted-implementation stub, so the gate
+    never even reaches a HEAD boot (``vacuous_oracle``, before any exit code
+    exists to read) — strictly stronger than the old "exit 0 but blocks"."""
     repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
+    _base_sha, head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7, content=_ALL_SKIPPED)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha), _cfg(test_dir="backend/tests", cwd="backend")
+        _pr(root, repo, _story(ref=ref), head_sha), _cfg(boot=boot_cfg()),
     )
-    assert r.details["exit_code"] == 0  # pytest is happy
     assert not r.passed, "an all-skipped oracle verifies nothing and must not pass"
-    assert r.details["tests_passed"] == 0
-    assert "vacuous" in r.reason
+    assert r.details["unverifiable_kind"] == "vacuous_oracle"
+    assert "exit_code" not in r.details, "caught before a HEAD boot was ever paid for"
 
 
 # --------------------------------------------------------------------------- #
-# (4) the copy must never survive in the dev's worktree
+# the copy must never survive in the dev's worktree (defence in depth for a
+# leak from an older, in-process build — the HTTP runner never writes one)
 # --------------------------------------------------------------------------- #
 
 
 def test_stale_copy_anywhere_in_the_checkout_is_swept(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
-    stale = repo / "backend" / "tests" / f"{ORACLE_COPY_PREFIX}999.py"
+    _base_sha, head_sha = _nested_checkout(repo)
+    stale = repo / "backend" / f"{ORACLE_COPY_PREFIX}999.py"
     stale.write_text("def test_leaked():\n    assert True\n", encoding="utf-8")
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
     r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha), _cfg(test_dir="backend/tests", cwd="backend")
+        _pr(root, repo, _story(ref=ref), head_sha), _cfg(boot=boot_cfg()),
     )
     assert r.passed
-    assert r.details["swept_before_run"] == [f"backend/tests/{ORACLE_COPY_PREFIX}999.py"]
+    assert r.details["swept_before_run"] == [f"backend/{ORACLE_COPY_PREFIX}999.py"]
     assert not stale.exists()
     assert sweep_leaked_oracles(repo) == []
 
 
 def test_gate_excludes_the_oracle_pattern_from_git(tmp_path: Path) -> None:
-    """Even a leaked copy must be un-committable: the chain does ``git add -A``."""
     repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
-    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    _base_sha, head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
-    acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha), _cfg(test_dir="backend/tests", cwd="backend")
-    )
+    acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head_sha), _cfg(boot=boot_cfg()))
     excl = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
     assert f"{ORACLE_COPY_PREFIX}*" in excl
-    # Prove it: plant a leak — source AND the compiled copy pytest leaves behind,
-    # which is what actually got staged before this test existed — and stage
-    # everything the way the chain's dev commit does.
-    leak = repo / "backend" / "tests" / f"{ORACLE_COPY_PREFIX}7.py"
+    leak = repo / "backend" / f"{ORACLE_COPY_PREFIX}7.py"
     leak.write_text(_GOOD_ORACLE, encoding="utf-8")
-    pyc_dir = repo / "backend" / "tests" / "__pycache__"
-    pyc_dir.mkdir(exist_ok=True)
-    (pyc_dir / f"{ORACLE_COPY_PREFIX}7.cpython-312.pyc").write_bytes(b"\x00compiled")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
     staged = subprocess.run(
         ["git", "diff", "--cached", "--name-only"], cwd=repo, capture_output=True, text=True
@@ -420,11 +383,7 @@ def test_reused_worktree_ensure_sweeps_a_leaked_oracle(tmp_path: Path) -> None:
 
     src = tmp_path / "app"
     src.mkdir()
-    for args in (
-        ["init", "-b", "main"],
-        ["config", "user.email", "t@t"],
-        ["config", "user.name", "t"],
-    ):
+    for args in (["init", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
         subprocess.run(["git", *args], cwd=src, check=True, capture_output=True)
     (src / "README.md").write_text("app\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=src, check=True, capture_output=True)
@@ -439,8 +398,6 @@ def test_reused_worktree_ensure_sweeps_a_leaked_oracle(tmp_path: Path) -> None:
     leak = wt / f"{ORACLE_COPY_PREFIX}7.py"
     leak.write_text(_GOOD_ORACLE, encoding="utf-8")
 
-    # The dev's next dispatch goes through the same ensure → the leak is gone
-    # before the dev (or its ``git add -A``) can ever see it.
     again = ensure_worktree_for_story(
         src, software_factory_root=root, app="sacrifice", story_id=7,
         slug="lowercase-email", base_branch="main",
@@ -450,7 +407,7 @@ def test_reused_worktree_ensure_sweeps_a_leaked_oracle(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# (5)/(6) fail-closed wiring
+# fail-closed wiring
 # --------------------------------------------------------------------------- #
 
 
@@ -460,148 +417,63 @@ def test_a_pr_label_cannot_substitute_for_an_oracle_run() -> None:
     assert "acceptance-verified" in _RESULT_ONLY_GATE_LABELS
 
 
-def test_stray_braces_in_the_command_template_block_rather_than_crash(
-    tmp_path: Path,
-) -> None:
-    repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
-    root = tmp_path / "factory"
-    ref = _store_oracle(root, story_id=7)
-    # ``str.format`` would raise KeyError('foo') here and abort the whole merge
-    # evaluation; literal substitution keeps it a normal (failing) command.
-    r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha),
-        _cfg(command="echo {foo} {test_file} && exit 3", test_dir="backend/tests", cwd="backend"),
-    )
-    assert not r.passed
-    assert r.details["exit_code"] == 3
-
-
 def test_unexpected_gate_error_blocks_authoritatively(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
+    _base_sha, head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
 
     def _boom(*_a: object, **_k: object) -> None:
         raise RuntimeError("disk on fire")
 
-    monkeypatch.setattr(acceptance_verified.shutil, "copyfile", _boom)
-    r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha), _cfg(test_dir="backend/tests", cwd="backend")
-    )
+    monkeypatch.setattr(acceptance_verified, "sweep_leaked_oracles", _boom)
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head_sha), _cfg(boot=boot_cfg()))
     assert not r.passed
     assert r.details["authoritative"] is True
     assert "disk on fire" in str(r.details["infra_error"])
 
 
-def test_command_that_never_names_the_oracle_blocks(tmp_path: Path) -> None:
-    """A config typo that drops ``{test_file}`` would otherwise produce a green
-    gate for a command that never ran the oracle."""
+def test_boot_command_missing_port_token_blocks_rather_than_crashing(tmp_path: Path) -> None:
+    """A config typo (no ``{port}``) used to be the ``{test_file}`` template
+    check's job; the equivalent config-shape guard now lives in
+    ``boot.boot_app`` and must still surface as an authoritative block via the
+    ``evaluate()`` wrapper, never an unhandled crash of the merge evaluation."""
     repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
+    _base_sha, head_sha = _nested_checkout(repo)
     root = tmp_path / "factory"
     ref = _store_oracle(root, story_id=7)
-    r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha),
-        _cfg(command="pytest -q", test_dir="backend/tests", cwd="backend"),
-    )
+    bad_boot = boot_cfg(command="echo hello")  # no {port}
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head_sha), _cfg(boot=bad_boot))
     assert not r.passed
     assert r.details["authoritative"] is True
-    assert "{test_file}" in str(r.details["infra_error"])
-
-
-def test_unreadable_non_pytest_runner_can_no_longer_pass(tmp_path: Path) -> None:
-    """DELIBERATE TIGHTENING (2026-08-05). An exit code with no readable test
-    summary used to be credited as a pass ("exit 0 is all an unreadable runner
-    gives us"). It cannot be any more: without counts there is no way to know the
-    oracle ran, and no way to establish that it was able to FAIL at the merge base.
-    An app whose runner hides pytest's summary must fix the runner."""
-    repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
-    root = tmp_path / "factory"
-    ref = _store_oracle(root, story_id=7)
-    r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha),
-        _cfg(command="true {test_file}", test_dir="backend/tests", cwd="backend"),
-    )
-    assert not r.passed
-    assert r.details["tests_passed"] is None
-    assert r.details["unverifiable_kind"] == "unreadable_runner"
-    assert r.details["verified"] is False
-
-
-def test_wrapper_command_is_still_vacuity_checked(tmp_path: Path) -> None:
-    """A wrapper (``make acceptance``) never mentions pytest, but still prints its
-    summary — the check must read the OUTPUT, not the command string, or every
-    wrapper-command app silently loses the anti-vacuity protection."""
-    repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
-    root = tmp_path / "factory"
-    ref = _store_oracle(root, story_id=7, content=_ALL_SKIPPED)
-    r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha),
-        _cfg(
-            command=f"{sys.executable} -B -m pytest {{test_file}} -q -p no:cacheprovider"
-            " | cat",  # the word 'pytest' is there, but prove output-driven below
-            test_dir="backend/tests",
-            cwd="backend",
-        ),
-    )
-    assert not r.passed
-    assert r.details["tests_passed"] == 0
-
-
-def test_pytest_command_with_no_summary_blocks(tmp_path: Path) -> None:
-    """Exit 0 with no readable pytest summary is not evidence of anything."""
-    repo = tmp_path / "repo"
-    _base_sha, _head_sha = _nested_checkout(repo)
-    root = tmp_path / "factory"
-    ref = _store_oracle(root, story_id=7)
-    r = acceptance_verified.evaluate(
-        _pr(root, repo, _story(ref=ref), _head_sha),
-        _cfg(command="echo pytest ran {test_file}; true", test_dir="backend/tests", cwd="backend"),
-    )
-    assert not r.passed
-    assert "no pytest result summary" in r.reason
+    assert "{port}" in str(r.details["infra_error"])
 
 
 def test_sweep_never_deletes_a_tracked_file(tmp_path: Path) -> None:
-    """The sweep must not become a destructive mechanism: a COMMITTED app test whose
-    name matches the pattern stays put (deleting it would be committed by the
-    chain's later ``git add -A``)."""
     repo = tmp_path / "repo"
     _base_sha, _head_sha = _nested_checkout(repo)
-    tracked = repo / "backend" / "tests" / f"{ORACLE_COPY_PREFIX}regression.py"
+    tracked = repo / "backend" / f"{ORACLE_COPY_PREFIX}regression.py"
     tracked.write_text("def test_kept():\n    assert True\n", encoding="utf-8")
-    for args in (
-        ["init", "-b", "main"],
-        ["config", "user.email", "t@t"],
-        ["config", "user.name", "t"],
-        ["add", "-A"],
-        ["commit", "-m", "app test"],
-    ):
-        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "app test"], cwd=repo, check=True, capture_output=True)
 
-    untracked = repo / "backend" / "tests" / f"{ORACLE_COPY_PREFIX}999.py"
+    untracked = repo / "backend" / f"{ORACLE_COPY_PREFIX}999.py"
     untracked.write_text("def test_leaked():\n    assert True\n", encoding="utf-8")
 
     removed = sweep_leaked_oracles(repo)
-    assert removed == [f"backend/tests/{ORACLE_COPY_PREFIX}999.py"]
+    assert removed == [f"backend/{ORACLE_COPY_PREFIX}999.py"]
     assert tracked.exists()
     assert not untracked.exists()
 
 
 # --------------------------------------------------------------------------- #
-# (7) authoring is bounded, idempotent, and never anonymous
+# authoring is bounded, idempotent, and never anonymous
 # --------------------------------------------------------------------------- #
 
 
 def test_author_refuses_a_story_without_an_id(tmp_path: Path) -> None:
-    """An id-less story would write into the shared ``…/0/`` directory, so one
-    story would end up gated by another story's oracle."""
     story = _story(story_id=None)
     root = tmp_path / "factory"
     calls: list[str] = []
@@ -612,7 +484,7 @@ def test_author_refuses_a_story_without_an_id(tmp_path: Path) -> None:
     )
     assert ref is None
     assert calls == []
-    assert story.acceptance_expected is True  # still blocks
+    assert story.acceptance_expected is True
     assert not (acceptance_dir(root, "sacrifice", None) / "test_acceptance.py").exists()
 
 
@@ -627,9 +499,8 @@ def test_frozen_oracle_is_never_re_authored(tmp_path: Path) -> None:
         author_fn=lambda _s, _st: (calls.append("x"), "def test_new():\n    assert 1\n")[1],
     )
     assert out == ref
-    assert calls == []  # no LLM call, no overwrite of the pre-dev freeze
+    assert calls == []
     assert (root / ref).read_text(encoding="utf-8") == _GOOD_ORACLE
-    # ...unless explicitly forced.
     author_acceptance_test(
         story, _direction(tmp_path, ["ac"]), _cfg(), root,
         dry_run=False, db_path=root / "state" / "factory.db", force=True,
@@ -654,24 +525,19 @@ def test_authoring_stops_after_three_failed_passes_and_the_gate_says_so(
             story, _direction(tmp_path, ["ac"]), _cfg(), root,
             dry_run=False, db_path=root / "state" / "factory.db", author_fn=_boom,
         )
-    # 3 passes x the inner guard. The inner guard is 2, STRICTLY below the cap of
-    # 3 — an inner guard equal to the cap makes the early signal unreachable.
     assert calls["n"] == _MAX_AUTHOR_PASSES * _AUTHOR_ATTEMPTS
     sidecar = json.loads(
         (acceptance_dir(root, "sacrifice", 9) / "attempts.json").read_text(encoding="utf-8")
     )
     assert sidecar["passes"] == 3
 
-    # A fourth pass must not call the model again — unbounded retries burn spend
-    # every five minutes forever.
     author_acceptance_test(
         story, _direction(tmp_path, ["ac"]), _cfg(), root,
         dry_run=False, db_path=root / "state" / "factory.db", author_fn=_boom,
     )
     assert calls["n"] == _MAX_AUTHOR_PASSES * _AUTHOR_ATTEMPTS
 
-    # ...and the story stays BLOCKED, with the exhaustion named for the operator.
-    r = acceptance_verified.evaluate(_pr(root, tmp_path / "repo", story), _cfg())
+    r = acceptance_verified.evaluate(_pr(root, tmp_path / "repo", story, "a" * 40), _cfg())
     assert not r.passed
     assert r.details["author_exhausted"] is True
     assert r.details["author_passes"] == 3
@@ -684,7 +550,6 @@ def test_authoring_stops_after_three_failed_passes_and_the_gate_says_so(
 
 
 def test_reauthor_ignores_already_shipped_stories(tmp_path: Path) -> None:
-    """Opting an app in must not fire an LLM call for each historical story."""
     from factory.chain.handlers import persist_story
 
     root = tmp_path
@@ -692,8 +557,7 @@ def test_reauthor_ignores_already_shipped_stories(tmp_path: Path) -> None:
     _write_app_config(root)
     _write_direction_dir(root, acceptance=["the email is lowercased"])
     db = root / "state" / "factory.db"
-    for state in (StoryState.DEPLOYED, StoryState.SUPERSEDED_BY_SIBLING,
-                  StoryState.BLOCKED_BUDGET_EXCEEDED):
+    for state in (StoryState.DEPLOYED, StoryState.SUPERSEDED_BY_SIBLING, StoryState.BLOCKED_BUDGET_EXCEEDED):
         persist_story(_story(story_id=None, expected=True, state=state.value), db)
 
     calls: list[str] = []
@@ -706,8 +570,6 @@ def test_reauthor_ignores_already_shipped_stories(tmp_path: Path) -> None:
 
 
 def test_reauthor_heals_an_inflight_story_whose_flag_was_never_set(tmp_path: Path) -> None:
-    """After the operator flips the flag, in-flight stories spawned before the
-    flip must get an oracle — otherwise they block forever with no way to heal."""
     from factory.chain.handlers import get_story, persist_story
 
     root = tmp_path
@@ -765,6 +627,52 @@ def test_reauthor_noop_when_the_app_has_not_opted_in(tmp_path: Path) -> None:
     assert calls == []
 
 
+def test_reauthor_forces_a_re_author_of_a_legacy_stored_oracle_once_boot_is_configured(
+    tmp_path: Path,
+) -> None:
+    """019 AC3 self-heal (design §7): a STORED oracle from before the app had
+    a boot recipe is still import-form — statically rejected by the runner
+    forever unless something re-authors it. ``reauthor_missing_oracles`` must
+    force exactly that ONE case, and never touch an already HTTP-runnable
+    stored oracle."""
+    from factory.chain.handlers import get_story, persist_story
+
+    root = tmp_path
+    (root / "state").mkdir(parents=True, exist_ok=True)
+    p = root / "apps" / "sacrifice"
+    p.mkdir(parents=True, exist_ok=True)
+    (p / "config.yaml").write_text(
+        "name: sacrifice\nrepo: o/r\ngates:\n  acceptance_oracle: true\n"
+        "  acceptance_boot:\n    command: 'x --port {port}'\n",
+        encoding="utf-8",
+    )
+    _write_direction_dir(root, acceptance=["the email is lowercased"])
+    db = root / "state" / "factory.db"
+    story = persist_story(_story(story_id=None, ref=None, expected=True), db)
+    ref = _store_oracle(root, story_id=story.id, content=IMPORT_FORM_ORACLE)
+    story.acceptance_test_ref = ref
+    persist_story(story, db)
+
+    calls: list[str] = []
+    healed = reauthor_missing_oracles(
+        "sacrifice", root, dry_run=False, db_path=db,
+        author_fn=lambda _s, _st: (calls.append("x"), _GOOD_ORACLE)[1],
+    )
+    assert healed == 1
+    assert calls == ["x"]
+    refreshed = get_story(story.id, db)
+    assert refreshed is not None
+    assert (root / refreshed.acceptance_test_ref).read_text(encoding="utf-8") == _GOOD_ORACLE
+
+    # Idempotent: the now-HTTP-runnable oracle is never touched again.
+    again = reauthor_missing_oracles(
+        "sacrifice", root, dry_run=False, db_path=db,
+        author_fn=lambda _s, _st: (calls.append("x"), "def test_new():\n    assert 1\n")[1],
+    )
+    assert again == 0
+    assert calls == ["x"]
+
+
 # --------------------------------------------------------------------------- #
 # the harness hint reaches the author, and stays spec-only
 # --------------------------------------------------------------------------- #
@@ -779,14 +687,13 @@ def test_harness_hint_is_handed_to_the_author(tmp_path: Path) -> None:
 
     author_acceptance_test(
         _story(story_id=21), _direction(tmp_path, ["the email is lowercased"]),
-        _cfg(hint="The ASGI app is `app` in `app.main`. Drive it with TestClient."),
+        _cfg(hint="The health path is `GET /api/health`."),
         tmp_path / "factory",
         dry_run=False, db_path=tmp_path / "factory" / "state" / "factory.db",
         author_fn=_capture,
     )
-    assert "app.main" in seen["spec"]
+    assert "api/health" in seen["spec"]
     assert "Harness" in seen["spec"]
-    # Still spec-only: the hint is layout, and the ACs are verbatim.
     assert "the email is lowercased" in seen["spec"]
 
 
@@ -803,10 +710,6 @@ def test_no_harness_section_without_a_hint(tmp_path: Path) -> None:
 def test_real_spawn_path_writes_the_oracle_and_the_flag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``handle_stories_spawned`` — the actual pm-sync entry point — must leave a
-    persisted ``acceptance_expected`` AND a readable oracle outside the app repo.
-    In production both were empty for all 165 stories; this pins the path that was
-    supposed to fill them. Only the LLM call is faked."""
     from factory.app_config import load_app_config
     from factory.chain.handlers import handle_stories_spawned
     from factory.directions.parser import parse_direction_dir
@@ -816,7 +719,7 @@ def test_real_spawn_path_writes_the_oracle_and_the_flag(
     (root / "apps" / "sacrifice").mkdir(parents=True, exist_ok=True)
     (root / "apps" / "sacrifice" / "config.yaml").write_text(
         "name: sacrifice\nrepo: o/r\ngates:\n  acceptance_oracle: true\n"
-        "  acceptance_harness_hint: 'The app object is `app` in `app.main`.'\n",
+        "  acceptance_harness_hint: 'The health path is `GET /api/health`.'\n",
         encoding="utf-8",
     )
     _write_direction_dir(root, acceptance=["the email is lowercased before storing"])
@@ -856,10 +759,7 @@ def test_real_spawn_path_writes_the_oracle_and_the_flag(
     assert row.acceptance_expected is True
     assert row.acceptance_test_ref == f"state/acceptance/sacrifice/{row.id}/test_acceptance.py"
     assert (root / row.acceptance_test_ref).read_text(encoding="utf-8") == _GOOD_ORACLE
-    # Independence: stored under state/acceptance, never under state/worktrees.
     assert "worktrees" not in row.acceptance_test_ref
-    # The spec-only prompt carried the ACs and the app's harness facts, no code.
     assert "the email is lowercased before storing" in str(seen["spec"])
-    assert "app.main" in str(seen["spec"])
-    # ...and the call was attributed to this factory root, not to the process cwd.
+    assert "api/health" in str(seen["spec"])
     assert Path(str(seen["root"])) == root
