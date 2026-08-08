@@ -127,18 +127,32 @@ and a story runs the merge gate with the flag on.
    first ~16 ticks** (#250), measured by re-running the first cut read-only
    against real live state before it ever shipped enabled.
 
-**Four KNOWN OPEN risks of the oracle runner** (from the gate's module
-docstring, `factory/chain/gates/acceptance_verified.py`; none is closed by
-#251/#254, each has a named v1.1 candidate — read before any soak):
-1. **A healthy-but-semantically-broken BASE forges red.**
-   `boot._poll_health` returns healthy on the **first response under 400** —
-   a health endpoint that answers before its own dependency (a DB pool) is
-   ready makes the base respond 500 to everything, every credited criterion
-   then fails at base, and that reads as a genuine `red` → credit. This is
-   the one risk the operator should decide on before any soak: it is a new
-   failure shape the in-process runner never had. v1.1: require the base's
-   first response to be a genuine 2xx from at least one credited criterion,
-   or re-probe health at the end of the base run.
+**KNOWN OPEN risks of the oracle runner** — #1 **CLOSED by PR #256**, #2–#4
+still open (from the gate's module docstring,
+`factory/chain/gates/acceptance_verified.py`; each open one has a named v1.1
+candidate — read before any soak):
+1. **A healthy-but-semantically-broken BASE forges red — CLOSED 2026-08-07/08,
+   PR #256.** `boot._poll_health` *used to* return healthy on the first
+   response under 400, so a health endpoint answering before its own
+   dependency (a DB pool) was ready made the base respond 500 to everything,
+   every credited criterion failed at base, and that read as a genuine `red` →
+   credit, cached in `base_runs.json`. Two independent mechanisms now close it:
+   (a) `boot._poll_health` requires `_HEALTH_CONSECUTIVE_REQUIRED` (2)
+   back-to-back healthy polls, with any response ≥ 400 (5xx included)
+   resetting the streak to zero — this hardens a *flaky* boot; (b) the real
+   fix, in `_base_run`: an all-FAIL-over-`K` base is no longer trusted as
+   `red` on its own. It must be corroborated, either by at least one credited
+   criterion having already PASSED at base, or by
+   `boot.probe_paths`/`served_a_real_route` finding the live base answered a
+   direct factory-issued request with something other than a 5xx. Without
+   corroboration the candidate `red` is downgraded to `unknown`, which is
+   never cached and falls through to the ablation route. Regression tests:
+   `tests/test_acceptance_oracle_green_means_something.py` (search
+   `KNOWN_OPEN_1`), fixture mode `broken_at_base`. **Stated residual:** the
+   probe is a blind replay (no body, no auth), so a body-validating route may
+   4xx rather than exercise its real logic, and a 4xx is accepted as "served
+   for real" — a deliberate fail-safe trade-off, not an airtight
+   corroboration.
 2. **Shared-DB cross-run contamination.** A hardcoded identifier that passes
    at HEAD can collide (409, or a stale row) at BASE in the real shared
    Postgres, forging a red the `ACCEPTANCE_RUN_ID` namespacing convention
@@ -214,7 +228,7 @@ Note (audit): **"deployed" is a state name, not a deploy.** All 102
 |---|---|---|
 | **No measurable chain lift, at 2.8× cost** | The table above | Still open. 019 built the sensors; it did not re-run the benchmark or attempt a B-phase collapse. No direction filed yet |
 | Chain green ≈ coin flip | Verdict precision 6/15 = 40%; zero-byte green | Still open. The oracle is live on sacrifice, not re-measured against the SWE-bench chain-verdict rows above. No direction filed yet |
-| **The acceptance oracle's green was forgeable in-process** — **CLOSED, but not merely by moving out of process** | Moving the verdict out of process (PR #251) **relocated the attack**: the booted app shared uid + received `TMPDIR`, so production code could plant a `conftest.py` in the oracle's own run dir or overwrite the oracle file — adversarial review reproduced forgery end-to-end twice against the first cut. Closed by run-directory tamper-evidence (oracle sha256 + exact expected file set, checked before junit parsing) + `--noconftest` + dropping `TMPDIR` from `env_passthrough`; new never-waivable reason `oracle_run_tampered`. Four KNOWN OPEN risks remain — see the Exteroception section above | **Done** — PR #251 (+ #253, #254). `gates.acceptance_oracle: true` on sacrifice |
+| **The acceptance oracle's green was forgeable in-process** — **CLOSED, but not merely by moving out of process** | Moving the verdict out of process (PR #251) **relocated the attack**: the booted app shared uid + received `TMPDIR`, so production code could plant a `conftest.py` in the oracle's own run dir or overwrite the oracle file — adversarial review reproduced forgery end-to-end twice against the first cut. Closed by run-directory tamper-evidence (oracle sha256 + exact expected file set, checked before junit parsing) + `--noconftest` + dropping `TMPDIR` from `env_passthrough`; new never-waivable reason `oracle_run_tampered`. Three KNOWN OPEN risks remain (#2-#4; #1 closed by PR #256) — see the Exteroception section above | **Done** — PR #251 (+ #253, #254). `gates.acceptance_oracle: true` on sacrifice |
 | Manager LLM tiers: cost without yield | All three LLM personas = **$1,028.58 = 52.0%** of all-time spend (watcher alone $972.23 = 49.2%, 44,127 runs); 262 concerns → 165 proposals (48 titles / ~37 root causes, 107 escalate-to-human) → **0 applied fixes**, 1 GitHub issue (via staging, not apply). L4: 163 attempts, 0 PRs | **Done** — deleted, −17,182 lines, PR #247 |
 | `factory_improver` | 196 proposals → **1 landed commit ever** (PR #5); 179 apply failures, 158 `dirty_working_tree` | **Done** — retired with the manager tiers, PR #247 |
 | Detector coverage is partial | 11 registered detectors; the watcher hard-codes 9 — `conformance_breach` and `fms_yield` have **never run** | **Wired, not yet live** — all 11 detectors adapted with signature dedupe into `factory/chain/detector_watch.py` (PR #250); ships **disabled** (`detector_watch.enabled: false` in `factory_settings.yaml`) pending a soak, so none has run in production yet |

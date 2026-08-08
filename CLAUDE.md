@@ -24,8 +24,9 @@ model, at p > 0.3 — and at MDE ≈ ±38 pp that is "no measurable lift", **not
 is established; see `STATUS.md`. **The Exteroception v1 direction is closed**
 (`apps/factory/directions/019-exteroception-v1-close-the-sensing-gap/`) — its
 seven acceptance criteria shipped as **operator PRs #247–#254, not the
-chain**. No successor direction is filed yet; what it left open (four KNOWN
-OPEN oracle risks, `detector_watch` disabled pending a soak, the carried-over
+chain**. No successor direction is filed yet; what it left open (three KNOWN
+OPEN oracle risks — #2–#4, since #1 was closed by PR #256 — plus
+`detector_watch` disabled pending a soak and the carried-over
 operator queue) is in `STATUS.md`. The old `PLAN.md` is retired at
 `docs/archive/PLAN-2026-08-07-retired.md`.
 
