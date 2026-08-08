@@ -59,6 +59,26 @@ from factory.chain.slop_detector import scan_diff
 
 def evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:
     label = "tests-meaningful"
+    # Fail-closed, not vacuously-green: an empty ``files_changed`` on a REAL
+    # real-run PR means the caller could not resolve the diff (a ``gh``
+    # failure), not that the diff is genuinely empty — ``scan_diff`` iterates
+    # the file list, so an empty list scans nothing and reports "no findings"
+    # regardless of what the PR actually did. Found 2026-08-07 alongside the
+    # same hole in ``canonical-paths-only``: the tick path's synthesized
+    # fixtures carried ``files_changed=[]`` for every real PR, so this REQUIRED
+    # gate always passed without ever running. Dry-run / no-PR fixtures are
+    # unaffected — that vacuous shape is genuinely what a preview with no
+    # checkout looks like, not a resolution failure.
+    if not pr.files_changed and not pr.dry_run and pr.pr_number > 0:
+        return GateResult(
+            label=label,
+            passed=False,
+            reason=(
+                "cannot determine the changed files for this real PR "
+                "(files_changed unavailable) — refusing to scan a diff it cannot see"
+            ),
+            details={"authoritative": False, "files_changed_unavailable": True},
+        )
     findings = scan_diff(pr.files_changed, repo_root=pr.repo_root)
     findings_dicts = [fnd.as_dict() for fnd in findings]
     if findings:

@@ -144,6 +144,15 @@ allowed_direct_writes:
     why: >-
       CI-failure recovery exhausted its attempts; the story parks so the worker
       stops re-driving it every tick.
+  - writer: auto_merge._park_gate_block_exhausted
+    to: [blocked_ci_unresolved]
+    from: [pr_open, ci_green, ready_for_merge]
+    why: >-
+      A required gate (e.g. `smoke-green`) never passed after 3 consecutive
+      evaluations of the SAME head sha — the missing-gate-labels analogue of
+      `_park`'s CI-failure exhaustion, same terminal sink, so the worker stops
+      re-evaluating (and re-paying for tests-green/smoke-green at 600s a piece)
+      a verdict a new commit is required to change.
   - writer: auto_merge._handle_ci_failure
     to: [reviewer_requested_changes]
     why: >-
