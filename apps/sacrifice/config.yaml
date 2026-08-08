@@ -108,6 +108,19 @@ gates:
     run_timeout_seconds: 300
     shutdown_grace_seconds: 5
     env:
+      # EXPLICIT, not inherited: sacrifice's ``Settings`` refuses to start when a
+      # secret field still holds its hardcoded default, so a boot with no
+      # DATABASE_URL dies at import with a pydantic ValidationError and every
+      # AC-carrying story blocks ``head_boot_failed``. Measured 2026-08-07 by
+      # booting a real judge worktree before the flag flip. It was previously
+      # only in ``env_passthrough``, i.e. it depended on the operator's ambient
+      # shell — a merge gate must never depend on that. Port 5433 is the
+      # loopback-bound ``sacrifice-db`` container (the same one
+      # ``prerequisite_command`` checks and ``backend/tests/conftest.py`` uses).
+      # NOTE this is the SHARED dev database: cross-run contamination is a
+      # documented KNOWN OPEN risk of this runner — oracles must namespace the
+      # entities they create with ``ACCEPTANCE_RUN_ID``.
+      DATABASE_URL: "postgresql+asyncpg://postgres:postgres@localhost:5433/sacrifice"
       JWT_SECRET: "acceptance-oracle-test-only-secret"
       SACRIFICE_MEDIA_DIR: "{run_dir}/media"
       DIRECTIONS_PATH: "{run_dir}/directions"
