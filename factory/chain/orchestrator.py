@@ -125,6 +125,11 @@ class TickSummary:
     # auto-closed this tick). ``None`` when the ~hourly gate didn't fire, the
     # mode suppressed it, or no GitHub client was available.
     issue_hygiene: dict[str, int] | None = None
+    # 019 AC6 — idle-becomes-a-ping. Set whenever ``run_idle_ping_tick`` fired
+    # a NEW operator_ping this tick (``{"idle_since", "last_delivered_unit"}``).
+    # ``None`` on every other tick: not idle, already pinged this episode,
+    # dry-run, a suppressed mode, or the module errored (see ``errors``).
+    idle_ping: dict[str, Any] | None = None
     # Phase 7: set to True when tick exits early due to factory halt.
     halted: bool = False
     halt_reason: str | None = None
@@ -3175,6 +3180,34 @@ def tick(
                     # the tick.
                     summary.errors.append(("detector-watch", repr(exc)))
 
+        # 019 AC6 — idle becomes a ping (Flow C). Runs where the deleted
+        # ``idle.py`` block used to (see cli.py's tick_cmd history): once per
+        # tick, per app, AFTER dispatch/auto-merge/ci-health so "zero
+        # dispatchable stories" reflects what actually happened THIS tick, not
+        # a pre-dispatch snapshot. Skipped in dry_run (no state write, no
+        # event — a dry-run preview must never consume the one-ping-per-
+        # episode dedup) and in modes where forward-motion signals are
+        # deliberately suppressed. Fully fail-safe: any exception lands in
+        # ``summary.errors`` (never breaks the tick), and the module's own
+        # internal fail-safe (see ``idle_ping.py``) suppresses rather than
+        # spams on a corrupt marker.
+        if not dry_run:
+            current_mode = get_mode(root, db_path=db)
+            if current_mode not in {"paused", "drain-reviews"}:
+                try:
+                    from factory.chain.idle_ping import run_idle_ping_tick
+
+                    _ping = run_idle_ping_tick(root, app, db)
+                    if _ping.error:
+                        summary.errors.append(("idle-ping", _ping.error))
+                    elif _ping.fired:
+                        summary.idle_ping = {
+                            "idle_since": _ping.idle_since,
+                            "last_delivered_unit": _ping.last_delivered_unit,
+                        }
+                except Exception as exc:  # noqa: BLE001 - never break the tick
+                    summary.errors.append(("idle-ping", repr(exc)))
+
         # Autonomous issue hygiene. Close GitHub trackers/story-issues for
         # directions/stories that are COMPLETE or terminally ABANDONED, so the
         # repo's issues stay clean WITHOUT a manual ``factory reconcile-issues``.
@@ -3297,4 +3330,5 @@ def tick_summary_as_dict(summary: TickSummary) -> dict[str, Any]:
             }
         ),
         "issue_hygiene": summary.issue_hygiene,
+        "idle_ping": summary.idle_ping,
     }

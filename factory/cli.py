@@ -1520,9 +1520,32 @@ def inbox_cmd(
     else:
         console.print("[dim]No scheduled persona runs in the last 24h.[/dim]")
 
-    # NOTE (019 AC5): the "idle apps" table that lived here (Phase 7) was
-    # removed with ``factory/chain/idle.py``. AC6 replaces it with an
-    # operator-ping section driven by the idle->ping rewrite.
+    # 019 AC6: operator pings — one per idle episode (app has zero
+    # dispatchable stories and zero live human-filed directions), replacing
+    # the "idle apps" table (Phase 7) that AC5 removed with
+    # ``factory/chain/idle.py``. Deduplicated: this reads the SAME per-app
+    # marker ``factory.chain.orchestrator.tick`` writes, so the table only
+    # ever shows an app once per still-open episode, not once per tick.
+    from factory.chain.idle_ping import active_pings
+
+    try:
+        pings = active_pings(_FACTORY_ROOT, apps)
+    except Exception:  # noqa: BLE001 - one section must never take down the inbox
+        pings = []
+    if pings:
+        ping_table = Table(title="operator_ping (idle apps)")
+        ping_table.add_column("app")
+        ping_table.add_column("idle since")
+        ping_table.add_column("last delivered unit")
+        for p in pings:
+            ping_table.add_row(
+                str(p.get("app") or ""),
+                str(p.get("idle_since") or "")[:19],
+                str(p.get("last_delivered_unit") or "(none yet)"),
+            )
+        console.print(ping_table)
+    else:
+        console.print("[dim]No idle-app pings.[/dim]")
 
     # Phase 7: pinned ``factory-status`` issue numbers (one per app).
     # These are the operators' single GH-side entry point for live state.
