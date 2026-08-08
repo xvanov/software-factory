@@ -22,6 +22,16 @@ the boot command and env values is a LITERAL replace, never ``str.format``: a
 real boot command can contain other braces (a compose env-var expansion, a jq
 filter) and ``str.format`` raising ``KeyError`` on one would abort the whole
 merge evaluation rather than failing this one gate.
+
+Two things here exist specifically to stop a booted-but-not-really-serving
+instance from being mistaken for a healthy one (KNOWN OPEN #1 in
+``gates.acceptance_verified``, closed 2026-08-07/08): :func:`_poll_health`
+requires several CONSECUTIVE healthy polls, not just the first one, and
+:func:`probe_paths` lets a caller issue its OWN direct HTTP requests against
+an already-booted app to get independent evidence it serves real routes, not
+only its health endpoint. Neither is a sandbox or a correctness proof; both
+are cheap, out-of-band evidence the acceptance-oracle gate uses before
+trusting a merge-base run's all-failing result as a genuine ``red``.
 """
 
 from __future__ import annotations
@@ -37,7 +47,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -189,23 +199,61 @@ def tail_log(path: Path, n: int) -> str:
     return data[-n:].decode("utf-8", errors="replace")
 
 
-def _poll_health(proc: subprocess.Popen[bytes], base_url: str, cfg: AcceptanceBootConfig) -> tuple[bool, str]:
+#: KNOWN OPEN #1 (closed 2026-08-07/08): the FIRST sub-400 health response used
+#: to be trusted outright. A health endpoint that answers before its own
+#: dependency (a DB pool still connecting) is ready can flap — 200 once, 5xx
+#: on the next real request — and a single lucky poll declared the app
+#: "booted" regardless. Requiring several CONSECUTIVE healthy polls, reset to
+#: zero on any non-2xx/3xx response in between, does not by itself prove the
+#: app's REAL routes work (that is what the base-run probe in
+#: ``gates.acceptance_verified`` establishes) — it closes the narrower,
+#: independently-worth-fixing case where the health check itself is flaky
+#: during startup (a worker still forking, a reload in progress).
+_HEALTH_CONSECUTIVE_REQUIRED = 2
+_HEALTH_POLL_INTERVAL_S = 0.5
+
+
+def _poll_health(
+    proc: subprocess.Popen[bytes],
+    base_url: str,
+    cfg: AcceptanceBootConfig,
+    *,
+    consecutive_required: int = _HEALTH_CONSECUTIVE_REQUIRED,
+    interval: float = _HEALTH_POLL_INTERVAL_S,
+) -> tuple[bool, str]:
+    """Healthy only after ``consecutive_required`` (>=1) BACK-TO-BACK polls all
+    answer ``< 400`` — a single stray success no longer ends the poll. Any
+    response ``>= 400`` (5xx explicitly included: a broken dependency
+    typically surfaces as 500, never silently as "healthy") resets the streak
+    to zero, so a flapping health check (200, 503, 200, 200) must produce TWO
+    healthy responses in a row after its last blip, not just two total.
+    """
     import httpx
 
     deadline = time.monotonic() + cfg.boot_timeout_seconds
     path = cfg.health_path or "/"
     url = f"{base_url}{path}"
+    consecutive = 0
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             return False, f"boot process exited (code={proc.returncode}) before becoming healthy"
+        healthy_this_poll = False
         try:
             resp = httpx.get(url, timeout=2.0)
-            if resp.status_code < 400:
-                return True, ""
+            healthy_this_poll = resp.status_code < 400
         except httpx.HTTPError:
             pass
-        time.sleep(0.5)
-    return False, f"did not become healthy within {cfg.boot_timeout_seconds}s ({url})"
+        if healthy_this_poll:
+            consecutive += 1
+            if consecutive >= max(consecutive_required, 1):
+                return True, ""
+        else:
+            consecutive = 0
+        time.sleep(interval)
+    return False, (
+        f"did not become healthy within {cfg.boot_timeout_seconds}s ({url}, "
+        f"needs {consecutive_required} consecutive healthy polls)"
+    )
 
 
 def _teardown(pgid: int, proc: subprocess.Popen[bytes] | None, grace: float) -> None:
@@ -294,6 +342,69 @@ def probe_health(app: BootedApp, cfg: AcceptanceBootConfig, *, timeout: float = 
         if attempt < retries - 1:
             time.sleep(0.3)
     return False
+
+
+@dataclass
+class ProbeResult:
+    """One direct, factory-issued HTTP request against a booted app —
+    evidence gathered OUTSIDE the oracle's own process. See ``probe_paths``."""
+
+    method: str
+    path: str
+    status: int | None
+    error: str | None = None
+
+
+def probe_paths(app: BootedApp, requests: Sequence[str], *, timeout: float = 3.0) -> list[ProbeResult]:
+    """KNOWN OPEN #1 (closed 2026-08-07/08): issue ``requests`` (each ``"METHOD
+    /path"``, the exact shape ``stub_server.StubApp.requests`` logs) directly
+    against ``app``, over HTTP, from THIS process — never from the oracle's.
+
+    Why this exists: a health endpoint that lies (answers 200 before its own
+    dependency is ready) makes ``_poll_health`` declare the app booted while
+    every REAL route still 500s. The oracle's own per-criterion outcome
+    (PASS/FAIL/ERROR) cannot tell "the app genuinely disagreed" from "the app
+    is broken and 500s to everything" — both look like a FAIL/ERROR from
+    inside pytest. This function gets INDEPENDENT evidence the caller (the
+    ``red at merge base`` crediting logic in ``gates.acceptance_verified``)
+    can use to require a real signal before trusting an all-FAIL base as
+    ``red``: see :func:`served_a_real_route`.
+
+    Deliberately a BLIND replay — no request body, no auth headers copied
+    from the oracle. That is a real limitation (a body-validating route may
+    4xx instead of exercising its real logic) but a stated, fail-safe one: a
+    4xx (or any non-5xx) still proves the route ran far enough to answer with
+    a real HTTP response instead of the broken-dependency catch-all, and this
+    function does not claim to prove more than that. Never raises — a request
+    that cannot even connect is recorded as ``status=None`` with the error,
+    not treated as an infrastructure failure of the CALLER.
+    """
+    import httpx
+
+    out: list[ProbeResult] = []
+    for raw in requests:
+        method, _, path = raw.partition(" ")
+        if not method or not path:
+            continue
+        if not path.startswith("/"):
+            path = "/" + path
+        url = f"{app.base_url}{path}"
+        try:
+            resp = httpx.request(method, url, timeout=timeout)
+            out.append(ProbeResult(method=method, path=path, status=resp.status_code))
+        except httpx.HTTPError as exc:
+            out.append(ProbeResult(method=method, path=path, status=None, error=str(exc)[:200]))
+    return out
+
+
+def served_a_real_route(results: Sequence[ProbeResult]) -> bool:
+    """``True`` iff at least one probe got back anything OTHER than a 5xx (or
+    a connection failure) — positive evidence the instance is actually
+    serving, not merely that its health endpoint answers. A 4xx counts: it
+    proves the route ran past whatever wraps a broken dependency in a blanket
+    500. ``False`` (including the empty-``results`` case) is the fail-safe
+    default — no evidence collected is not evidence of health."""
+    return any(r.status is not None and r.status < 500 for r in results)
 
 
 @contextmanager
@@ -407,10 +518,13 @@ def boot_app(
 
 __all__ = [
     "BootedApp",
+    "ProbeResult",
     "boot_app",
     "check_prerequisite",
     "free_port",
     "is_alive",
     "probe_health",
+    "probe_paths",
+    "served_a_real_route",
     "tail_log",
 ]

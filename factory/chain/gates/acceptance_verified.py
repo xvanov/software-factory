@@ -43,15 +43,25 @@ Crediting algebra (``red_green.verdict_over``)
 ===============================================
 Let ``K = {c : HEAD[c] == PASS and STUB[c] in {FAIL, ERROR}}``. ``K`` empty ⇒
 ``vacuous_oracle``. Otherwise the merge-base run is graded OVER ``K`` ONLY:
-at least one ``FAIL`` in ``K`` at the base ⇒ ``red`` ⇒ credit; every member of
-``K`` already ``PASS`` at the base ⇒ ``green`` ⇒ ``oracle_not_discriminating``;
-anything else (``ERROR``/``SKIP``/``MISSING`` only, or the base never booted)
-⇒ ``unknown`` ⇒ fall through to the ablation fallback
-(``mutation.check_can_fail``, driven here through ``oracle_probe.py`` so the
-ablation's OWN check is also computed out of process). An ``ERROR`` at the
-base is deliberately NOT counted as red — the same reason
+at least one ``FAIL`` in ``K`` at the base ⇒ ``red`` **candidate**; every
+member of ``K`` already ``PASS`` at the base ⇒ ``green`` ⇒
+``oracle_not_discriminating``; anything else (``ERROR``/``SKIP``/``MISSING``
+only, or the base never booted) ⇒ ``unknown`` ⇒ fall through to the ablation
+fallback (``mutation.check_can_fail``, driven here through ``oracle_probe.py``
+so the ablation's OWN check is also computed out of process). An ``ERROR`` at
+the base is deliberately NOT counted as red — the same reason
 ``red_green.base_verdict`` excludes it: a criterion that could not even be
 OBSERVED is not evidence that its assertion discriminates anything.
+
+A ``red`` candidate is credited as ``red`` only if CORROBORATED (KNOWN OPEN #1,
+closed 2026-08-07/08, ``_base_run``): either some criterion in ``K`` already
+PASSED at the base, or a direct, factory-issued probe against the live base
+instance (``boot.probe_paths``/``served_a_real_route``) got back something
+other than a 5xx. An uncorroborated all-FAIL-over-``K`` base — every credited
+criterion failing for a reason that could equally be "the app never really
+came up" — downgrades to ``unknown`` and falls through to the same ablation
+fallback, instead of being credited on a base that was never shown to be
+doing anything but failing.
 
 What "blocking" keys off
 =========================
@@ -105,24 +115,44 @@ is cheap, already tested, and removing it buys nothing but a chance to get it
 wrong on a rewrite. Read it as defence in depth for the ablation clone, not as
 protection for the primary HTTP path.
 
-KNOWN OPEN (2026-08-07) — ranked, read before the AC4 supervised flip
+KNOWN OPEN (2026-08-07, #1 closed 2026-08-07/08) — ranked, read before the
+AC4 supervised flip
 ======================================================================
 An adversarial review reproduced two forgeries against the first cut of this
 gate (a HEAD-planted ``conftest.py`` in the oracle's own run dir, and an
 in-place overwrite of the oracle file) — both closed below by
-``oracle_run``'s post-run tamper check + ``--noconftest``. Four risks remain
-OPEN; none is closed by this PR, all have a v1.1 candidate:
+``oracle_run``'s post-run tamper check + ``--noconftest``. Of the four risks
+that remained open, #1 is now closed; #2-#4 still have a v1.1 candidate:
 
-1. **A healthy-but-semantically-broken BASE forges red.** ``boot._poll_health``
-   returns healthy on the FIRST response ``< 400`` — a health endpoint that
-   answers before its OWN dependency (a DB pool) is ready makes the base
-   respond 500 to EVERYTHING. Every credited criterion then fails at base
-   (all-FAIL over ``K``) ⇒ ``red`` ⇒ CREDIT — and ``base_runs.json`` caches
-   that verdict. This is a NEW failure shape the in-process runner never had
-   (there was no "boot" to be healthy-but-broken). v1.1: require the base's
-   FIRST response to be a genuine 2xx from at least one credited criterion
-   before trusting an all-FAIL base as ``red``, or re-probe health at the end
-   of the base run the same way HEAD's liveness is re-probed.
+1. **CLOSED 2026-08-07/08 — a healthy-but-semantically-broken BASE forging
+   red.** ``boot._poll_health`` used to return healthy on the FIRST response
+   ``< 400`` — a health endpoint that answers before its OWN dependency (a DB
+   pool) is ready made the base respond 500 to EVERYTHING while still passing
+   the poll; every credited criterion then failed at base (all-FAIL over
+   ``K``) ⇒ ``red`` ⇒ CREDIT, cached in ``base_runs.json``. Two independent
+   mechanisms now close this: (a) ``boot._poll_health`` requires
+   ``_HEALTH_CONSECUTIVE_REQUIRED`` (2) BACK-TO-BACK healthy polls, reset to
+   zero by any non-2xx/3xx response, hardening against a flaky boot; (b) the
+   real fix, in ``_base_run``: an all-FAIL-over-``K`` base is no longer
+   trusted as ``red`` on its own — it must be independently corroborated,
+   either by at least one credited criterion having already PASSED at base,
+   or by ``boot.probe_paths``/``served_a_real_route`` finding the LIVE base
+   instance answered at least one direct, factory-issued request (built from
+   the "METHOD /path" samples the required stub run already observed — no
+   app-route knowledge is assumed, and the oracle's own internals are never
+   parsed) with anything other than a 5xx. Failing that corroboration
+   downgrades the candidate ``red`` to ``unknown`` — which falls through to
+   the ablation route, is never cached (``cache_put`` already only persists
+   ``red``/``green``), and can still credit the story if the ablation
+   independently proves failability. See ``tests/oracle_boot_fixture.py``'s
+   ``broken_at_base`` mode and the regression tests in
+   ``tests/test_acceptance_oracle_green_means_something.py`` (search
+   "KNOWN_OPEN_1"). Residual: the probe is a BLIND replay (no body, no auth) —
+   a body-validating route may 4xx instead of exercising its real logic, so a
+   4xx is accepted as "served for real" even though it proves less than a
+   2xx would; this is a deliberate, stated fail-safe trade-off (a non-5xx is
+   still evidence the route ran past whatever wraps the broken dependency in
+   a blanket 500), not a claim that the corroboration is airtight.
 2. **Shared-DB cross-run contamination.** A hardcoded identifier that passes
    at HEAD can collide (409, or a stale row) at BASE in a real shared
    Postgres, forging a red the RUN_ID namespacing convention (persona
@@ -142,12 +172,15 @@ OPEN; none is closed by this PR, all have a v1.1 candidate:
    under grading. Not evidenced, not defended against, structurally hard to
    rule out for ANY black-box oracle.
 
-Compositional note (F4/risk 1×ablation): a HEAD that exhausts a shared
-resource can make ``base`` fail to boot at all, steering the gate onto the
-K-BLIND-if-unfixed ablation route instead of the stronger base-red route —
-the ablation probe's ``--credit`` awareness (``oracle_probe.py``) is what
-defangs that steering, not a coincidence: whichever route the gate ends up
-on, only a FAIL on a criterion in ``K`` can license a credit.
+Compositional note (F4×ablation; distinct from the closed #1 above — this is
+the base failing to BOOT AT ALL, not booting healthy-but-broken): a HEAD that
+exhausts a shared resource can make ``base`` fail to boot at all, steering
+the gate onto the K-BLIND-if-unfixed ablation route instead of the stronger
+base-red route — the ablation probe's ``--credit`` awareness
+(``oracle_probe.py``) is what defangs that steering, not a coincidence:
+whichever route the gate ends up on, only a FAIL on a criterion in ``K`` can
+license a credit. The closed #1's downgrade-to-``unknown`` composes the same
+way: it lands on the exact same K-aware ablation route, not a weaker one.
 
 ⚠ ISOLATION BOUNDARY, STATED PLAINLY: everything in this module assumes the
 booted app and the oracle process share a MACHINE and a UNIX USER. That is a
@@ -639,6 +672,22 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
             for v in stub_server.STUB_VARIANTS
         )
 
+    # A small, deduplicated sample of the exact "METHOD /path" requests the
+    # oracle actually issued against EITHER stub variant (``stub_server``
+    # logs these regardless of variant, since both answer every path/method).
+    # This is the ONLY app-route knowledge this gate has that did not come
+    # from importing or statically parsing the oracle's own source — it was
+    # OBSERVED, cheaply, in-process, against the factory's own trusted stub —
+    # and it is what ``_base_run`` uses to probe a booted BASE instance
+    # directly (KNOWN OPEN #1, closed 2026-08-07/08; see the module docstring).
+    _probe_request_set: set[str] = set()
+    for _r in stub_results.values():
+        _sample = _r.get("requests_sample")
+        if isinstance(_sample, list):
+            _probe_request_set.update(s for s in _sample if isinstance(s, str))
+    probe_requests = sorted(_probe_request_set)[:10]
+    details["base_probe_requests"] = probe_requests
+
     all_stub_keys = set().union(*stub_criteria_by_variant.values()) if stub_criteria_by_variant else set()
     if not all_stub_keys or not any(_fails_all_stub_variants(c) for c in all_stub_keys):
         return _unverifiable(
@@ -841,6 +890,7 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
     verdict, base_reason, base_details = _base_run(
         pr, boot_cfg, oracle_src, dest_name, credited,
         repo_root=repo_root, base_sha=base_sha, sid=sid, oracle_sha=oracle_sha,
+        probe_requests=probe_requests,
     )
     details["base_run"] = base_details
     if verdict == "green":
@@ -899,6 +949,7 @@ def _base_run(
     base_sha: str,
     sid: object,
     oracle_sha: str,
+    probe_requests: list[str] | None = None,
 ) -> tuple[str, str, dict[str, object]]:
     """Run the oracle at the merge base; grade OVER ``credited`` (``K``).
 
@@ -906,6 +957,24 @@ def _base_run(
     oracle, and the boot recipe) — independent of ``K``, so a differently-
     authored oracle re-derives its own ``K`` against the same cached base
     result. The FINAL verdict is recomputed fresh every time from that map.
+
+    KNOWN OPEN #1 (closed 2026-08-07/08): a base whose health endpoint answers
+    before its own dependency is ready responds 500 to every REAL route while
+    still passing ``_poll_health`` — every credited criterion then FAILS at
+    base for a reason that has nothing to do with the diff, and the old logic
+    read that as a genuine ``red`` (crediting the story on a base that was
+    never actually exercised). The invariant this closes: **a ``red`` verdict
+    at the base must be evidence the app ran and disagreed, not evidence that
+    the app was broken.** ``verdict_over``'s raw verdict is now a CANDIDATE,
+    not the answer — an all-FAIL-over-``K`` base is trusted as ``red`` only
+    when independently corroborated: either at least one credited criterion
+    ALREADY PASSED at base (itself proof the app served that route for real),
+    or ``boot_mod.probe_paths``/``served_a_real_route`` finds the booted base
+    answered at least one direct, factory-issued request with something other
+    than a 5xx. Neither holding downgrades the candidate ``red`` to
+    ``unknown`` — which falls through to the ablation fallback, same as any
+    other ``unknown`` — rather than crediting a base that was never shown to
+    be doing anything but failing to boot correctly.
     """
     cache_path = _cache_path(pr, "base_runs.json")
     key = run_key(base_sha, oracle_sha, boot_cfg.command, boot_cfg.cwd or "", str(oracle_run.RUNNER_VERSION))
@@ -915,6 +984,7 @@ def _base_run(
             verdict, reason = verdict_over(credited, hit["criteria"])  # type: ignore[arg-type]
             return verdict, f"{reason} [cached]", {**hit, "cached": True}
 
+    probe_results: list[boot_mod.ProbeResult] = []
     with judge_worktree(repo_root, base_sha, label="oracle-base") as (base_tree, err):
         if base_tree is None:
             return "unknown", f"could not check out the merge base ({err})", {
@@ -929,6 +999,11 @@ def _base_run(
                 oracle_src, base_url=base_app.base_url, run_id=f"base-{sid}",
                 dest_name=dest_name, timeout_s=boot_cfg.run_timeout_seconds,
             )
+            if probe_requests:
+                # Probed INSIDE the boot's ``with`` block — the app is torn
+                # down the instant it exits, and this evidence is exactly
+                # about what the LIVE base instance answered during this run.
+                probe_results = boot_mod.probe_paths(base_app, probe_requests)
 
     if not base_run.junit_ok:
         return "unknown", f"the base run produced no readable per-criterion result (status={base_run.status})", {
@@ -936,9 +1011,37 @@ def _base_run(
         }
 
     verdict, reason = verdict_over(credited, base_run.criteria)
+    served_real = boot_mod.served_a_real_route(probe_results)
+    base_probe: dict[str, object] = {
+        "requests": list(probe_requests or []),
+        "results": [
+            {"method": r.method, "path": r.path, "status": r.status, "error": r.error} for r in probe_results
+        ],
+        "served_a_real_route": served_real,
+    }
+    if verdict == "red":
+        any_credited_passed = any(base_run.criteria.get(c) == "PASS" for c in credited)
+        if not any_credited_passed and not served_real:
+            downgraded_verdict, downgraded_reason = "unknown", (
+                f"{reason}, but no credited criterion passed at the base AND the base instance "
+                "never answered a single direct probe with anything but a 5xx (or a connection "
+                "failure) — this looks like a healthy-but-broken boot (KNOWN OPEN #1: a health "
+                "endpoint that answers before its own dependency is ready), not a genuine "
+                "disagreement, so it is NOT trusted as red"
+            )
+            downgraded_out: dict[str, object] = {
+                "base_sha": base_sha[:12], "status": base_run.status, "criteria": base_run.criteria,
+                "exit_code": base_run.exit_code, "output_tail": base_run.output[-1500:],
+                "base_probe": base_probe, "raw_verdict": verdict, "downgraded_from": verdict,
+            }
+            # NEVER cached: this is exactly the ``unknown`` case cache_put below
+            # already excludes (verdict not in {"red", "green"}) — no separate
+            # gate needed here, but stated for the reader auditing this branch.
+            return downgraded_verdict, downgraded_reason, downgraded_out
+
     out: dict[str, object] = {
         "base_sha": base_sha[:12], "status": base_run.status, "criteria": base_run.criteria,
-        "exit_code": base_run.exit_code, "output_tail": base_run.output[-1500:],
+        "exit_code": base_run.exit_code, "output_tail": base_run.output[-1500:], "base_probe": base_probe,
     }
     if cache_path is not None and verdict in {"red", "green"}:
         cache_put(cache_path, key, {k: v for k, v in out.items() if k != "output_tail"})

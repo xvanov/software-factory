@@ -156,7 +156,19 @@ jobs:
   pytest:
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Bumped 15 -> 25 (2026-08-08): the last five merges before this one each
+    # ran ~13m51s-14m05s — already within a minute of the old cap before this
+    # PR added anything. This PR's own fix (boot._poll_health's consecutive-
+    # poll requirement + probe_health's retry-with-backoff, both real added
+    # wall-clock across dozens of genuine subprocess boots in the acceptance-
+    # oracle test files) pushed three consecutive CI attempts to ~15m09s-15m15s
+    # — cancelled by the job cap with ZERO test failures each time (verified
+    # via the raw step log: every attempt reached 90-100% with no F/E marker
+    # before "The operation was canceled"). This is a real, small latency cost
+    # of closing a genuine fail-open (KNOWN OPEN #1), not a flaky test and not
+    # a semantics bug — the fix is correct and the added latency is the price
+    # of the extra evidence it requires. Headroom, not a new correctness gate.
+    timeout-minutes: 25
     permissions:
       # python-coverage-comment-action stores badge data on a repo branch
       # (push to main) and comments coverage on PRs.
