@@ -1184,6 +1184,22 @@ def tick_cmd(
             f"issue-hygiene: closed {summary.issue_hygiene['trackers_closed']} tracker(s) + "
             f"{summary.issue_hygiene['stories_closed']} story issue(s) (reconcile)"
         )
+    if summary.recovery:
+        _rec = summary.recovery
+        console.print(
+            f"recovery: recovered={len(_rec.get('recovered', []))} "
+            f"escalated={len(_rec.get('escalated', []))} "
+            f"skipped_cooldown={len(_rec.get('skipped_cooldown', []))} "
+            f"skipped_cap={len(_rec.get('skipped_cap', []))} "
+            f"errors={len(_rec.get('errors', []))}"
+        )
+    if summary.poison_escalation:
+        _pe = summary.poison_escalation
+        console.print(
+            f"poison-escalation: status={_pe.get('status')} "
+            f"poisoned={len(_pe.get('poisoned', []))} "
+            f"issue={_pe.get('issue_number')}"
+        )
     console.print(
         f"advanced={summary.stories_advanced} "
         f"blocked_by_caps={summary.blocked_by_caps} "
@@ -1643,6 +1659,68 @@ def pause_cmd() -> None:
 
     new = set_mode("paused", _FACTORY_ROOT)
     console.print(Panel.fit(f"factory mode -> [bold yellow]{new}[/bold yellow]", title="pause"))
+
+
+@app.command("halt")
+def halt_cmd(
+    reason: str = typer.Argument(..., help="Why the factory is being halted"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Immediately halt the factory: writes ``state/factory_mode.json``.
+
+    ``factory.manager.halt.request_halt`` had ZERO production callers after
+    PR #247 deleted the L3 Diagnostician (its only caller) — the write side
+    of the halt mechanism was orphaned while the read side (``is_halted``,
+    checked every tick) kept working, meaning nothing could actually set a
+    halt any more. This command is the writer: mirrors ``factory resume``'s
+    shape in reverse, and — like ``resume`` — is OPERATOR-ONLY. Never invoke
+    from any LLM pathway. ``factory mode`` (and ``factory tick``) show the
+    resulting halt state; only ``factory resume`` clears it.
+
+    Note: the underlying ``request_halt`` hardcodes ``set_by:
+    "manager_diagnostician"`` in the persisted state (it was written
+    exclusively for the deleted L3 pathway) and honours a 30-minute
+    operator-resume grace window during which ANY halt request — including
+    this one — is suppressed. Both are ``factory/manager/halt.py`` internals
+    this command cannot change without an operator-PR edit to that
+    forbidden-to-self-edit module; if you hit the grace window, this command
+    says so loudly instead of pretending to have halted.
+    """
+    from factory.manager.halt import is_halted, request_halt
+
+    if is_halted(root=_FACTORY_ROOT):
+        console.print("[yellow]Factory is already halted.[/yellow] Run 'factory mode' for details.")
+        raise typer.Exit(code=0)
+    if not yes:
+        confirmed = typer.confirm(f"Halt the factory now? reason={reason!r}", default=False)
+        if not confirmed:
+            console.print("[yellow]Aborted.[/yellow]")
+            raise typer.Exit(code=0)
+    halt_path = request_halt(
+        root=_FACTORY_ROOT,
+        concern_title="operator_halt",
+        proposal_path=None,
+        reason=reason,
+    )
+    if halt_path is None:
+        console.print(
+            Panel.fit(
+                "[bold yellow]Halt suppressed[/bold yellow]\n\n"
+                "An operator cleared a halt less than 30 minutes ago (the "
+                "resume-grace window in factory/manager/halt.py). The "
+                "factory is NOT halted. Wait out the window, or edit "
+                "state/factory_mode.json directly if this is genuinely "
+                "urgent.",
+                title="halt",
+            )
+        )
+        raise typer.Exit(code=1)
+    console.print(
+        Panel.fit(
+            f"[bold red]FACTORY HALTED[/bold red]\nreason: {reason}",
+            title="halt",
+        )
+    )
 
 
 @app.command("resume")
@@ -3328,6 +3406,37 @@ def cb_check_cmd(
                 title="circuit-breaker check",
             )
         )
+        # Narrow automatic emergency-stop trigger (019 safety-mechanism
+        # rewire): a self-edit commit that regresses main is exactly the
+        # "clearly warrants stopping everything" condition — a chain-authored
+        # change already broke the test suite on ``main``, so no further
+        # self-edit should be allowed to land until an operator has reviewed
+        # the auto-revert PR. This does NOT invent a new detection surface;
+        # it only reacts to a trip this command already computed. Best-effort
+        # and never masks the trip itself: a halt-request failure is printed
+        # but the command still reports TRIPPED via the exit code below.
+        try:
+            from factory.manager.halt import is_halted, request_halt
+
+            if not is_halted(root=_FACTORY_ROOT):
+                request_halt(
+                    root=_FACTORY_ROOT,
+                    concern_title="circuit_breaker_tripped",
+                    proposal_path=None,
+                    reason=(
+                        f"circuit breaker tripped: regression_commit="
+                        f"{result.get('regression_commit', '?')[:12]}; "
+                        f"revert_branch={result.get('revert_branch', '?')}. "
+                        "Review the auto-revert PR, then `factory manager "
+                        "circuit-breaker reset` and `factory resume`."
+                    ),
+                )
+                console.print(
+                    "[bold red]Factory HALTED[/bold red] — a self-edit regression must not "
+                    "be followed by another self-edit before operator review."
+                )
+        except Exception as exc:  # noqa: BLE001 - never mask the trip itself
+            console.print(f"[yellow]warning:[/yellow] could not halt after trip: {exc!r}")
         raise typer.Exit(code=1)
 
 

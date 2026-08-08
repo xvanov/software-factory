@@ -218,6 +218,33 @@ class AutoIntakeConfig(BaseModel):
     max_per_tick: int = 3
 
 
+class RecoveryConfig(BaseModel):
+    """Controls the deterministic operational-recovery cycle.
+
+    When ``enabled``, ``orchestrator.tick`` calls
+    ``factory.manager.recovery.run_recovery_cycle`` once per app per real
+    (non-dry-run) tick, alongside the ci-health/detector-watch/idle-ping
+    hooks. PR #247 deleted ``factory/manager/apply.py`` — the module's ONLY
+    production caller — orphaning all six of its playbooks, including
+    ``recover-stuck-fixonly-mode`` and ``quarantine-invalid-enum-story``,
+    each of which fixes a RECORDED live wedge in this repo's history (a
+    stuck non-normal mode blocked all dispatch; invalid-enum rows failed
+    every tick forever). ``CLAUDE.md`` documents ``recovery`` as a surviving
+    deterministic safety mechanism, so this reconnects it rather than
+    leaving it silently dead.
+
+    Defaults to ``True``: every playbook here fixes a known wedge class, and
+    the module is itself internally fail-safe — it forces dry-run while the
+    factory is halted (``factory.manager.halt.is_halted``) and bounds itself
+    with a per-cycle action cap and a per-target cooldown, so leaving it ON
+    cannot runaway. The risk of OFF (silent rot resuming) is worse than the
+    risk of ON. Flip off per-app only if a playbook proves counterproductive
+    in the field — flippable exactly like every other hook in this file.
+    """
+
+    enabled: bool = True
+
+
 class FactorySettings(BaseModel):
     caps: CapsConfig = Field(default_factory=CapsConfig)
     queues: QueuesConfig = Field(default_factory=QueuesConfig)
@@ -230,6 +257,7 @@ class FactorySettings(BaseModel):
     dev_convergence: DevConvergenceConfig = Field(default_factory=DevConvergenceConfig)
     ci_health: CiHealthConfig = Field(default_factory=CiHealthConfig)
     detector_watch: DetectorWatchConfig = Field(default_factory=DetectorWatchConfig)
+    recovery: RecoveryConfig = Field(default_factory=RecoveryConfig)
 
 
 _CACHED: dict[Path, FactorySettings] = {}

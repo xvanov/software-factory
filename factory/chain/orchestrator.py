@@ -130,6 +130,18 @@ class TickSummary:
     # ``None`` on every other tick: not idle, already pinged this episode,
     # dry-run, a suppressed mode, or the module errored (see ``errors``).
     idle_ping: dict[str, Any] | None = None
+    # Deterministic operational-recovery cycle (``factory.manager.recovery.
+    # run_recovery_cycle``), reconnected after PR #247 deleted its only caller
+    # (``factory/manager/apply.py``). ``None`` unless the cycle actually did
+    # something this tick — recovered/escalated an anomaly, skipped one under
+    # cooldown/cap, or errored. See ``settings.recovery.enabled``.
+    recovery: dict[str, Any] | None = None
+    # Poison-escalation (``factory.manager.poison_escalation.
+    # escalate_poisoned_rows``), reconnected after the same PR #247 deletion
+    # removed its only caller (the L1 watcher). ``None`` unless a persistent
+    # poisoned/invalid-enum row was actually escalated (or a prior escalation
+    # was suppressed by cooldown) this tick.
+    poison_escalation: dict[str, Any] | None = None
     # Phase 7: set to True when tick exits early due to factory halt.
     halted: bool = False
     halt_reason: str | None = None
@@ -2346,7 +2358,22 @@ def tick(
     # the dependency gate runs BEFORE ``can_dispatch`` (which is what implements
     # the modes), so without this the cap would keep abandoning dependents while
     # the operator had the factory paused to investigate their blocker.
-    _tick_mode = get_mode(root, db_path=db)
+    #
+    # ``get_mode`` WRITES to the DB (first-touch default insert) and can raise
+    # (e.g. ``database is locked``). This read sits BEFORE the tick's main try
+    # block below — historically an exception here propagated straight out of
+    # ``tick()`` with no summary at all, not even a partial one: the single
+    # most severe instance of the get_mode-outside-try hazard fixed throughout
+    # this function (019 safety-mechanism rewire). Fail OPEN to "normal" on
+    # error rather than crash: ``can_dispatch`` (the PRIMARY mode gate for
+    # per-story dispatch) re-reads mode independently inside its own guarded
+    # path, so a transient failure here only affects the secondary
+    # dependency-deferral cap check below, not the pause guarantee itself.
+    try:
+        _tick_mode = get_mode(root, db_path=db)
+    except Exception as _mode_exc:  # noqa: BLE001 - never crash tick() outright
+        _tick_mode = "normal"
+        summary.errors.append(("mode-read", repr(_mode_exc)))
 
     # ---- Signal: tick_start ------------------------------------------------
     try:
@@ -2435,7 +2462,11 @@ def tick(
             # not have us merge that main into every open PR) and only when
             # auto-merge is enabled (freshening branches for merges that will
             # never happen is pointless churn).
-            _fresh_mode = get_mode(root, db_path=db)
+            try:
+                _fresh_mode = get_mode(root, db_path=db)
+            except Exception as _fresh_mode_exc:  # noqa: BLE001 - fail-safe: skip the write
+                _fresh_mode = "paused"
+                summary.errors.append(("branch-freshening-mode-read", repr(_fresh_mode_exc)))
             if _fresh_mode not in {"paused", "drain-reviews"} and settings.auto_merge.enabled:
                 try:
                     freshened = freshen_behind_prs(db, app, cfg=cfg, root=root)
@@ -2602,7 +2633,11 @@ def tick(
         # (observed 2026-07-18: two mergeable PRs sat >2h behind a long tick).
         # The end-of-tick hook below still runs for PRs that open THIS tick.
         if settings.auto_merge.enabled:
-            _pre_mode = get_mode(root, db_path=db)
+            try:
+                _pre_mode = get_mode(root, db_path=db)
+            except Exception as _pre_mode_exc:  # noqa: BLE001 - fail-safe: skip the write
+                _pre_mode = "paused"
+                summary.errors.append(("auto-merge-pre-mode-read", repr(_pre_mode_exc)))
             if _pre_mode not in {"paused", "drain-reviews"}:
                 try:
                     summary.merges = auto_merge_tick(
@@ -3115,9 +3150,17 @@ def tick(
         # ``factory_settings.auto_merge.enabled`` and skipped in modes where
         # forward motion is suppressed (``paused``, ``drain-reviews``).
         if settings.auto_merge.enabled:
-            current_mode = get_mode(root, db_path=db)
-            if current_mode not in {"paused", "drain-reviews"}:
-                try:
+            try:
+                # ``get_mode`` WRITES to the DB (first-touch default insert),
+                # so a `database is locked` error is possible here. It MUST be
+                # inside this try: previously it sat between the ``enabled``
+                # check and the try block, so a locked-DB exception propagated
+                # straight out of ``tick()``, killing the whole tick and
+                # discarding ``summary`` before the caller ever saw it (a
+                # reviewer-flagged hazard shared by every hook below — fixed
+                # in all of them together, 019 safety-mechanism rewire).
+                current_mode = get_mode(root, db_path=db)
+                if current_mode not in {"paused", "drain-reviews"}:
                     merge_actions = auto_merge_tick(
                         root,
                         app,
@@ -3137,11 +3180,11 @@ def tick(
                     summary.merges = list(summary.merges or []) + [
                         m for m in merge_actions if m.pr_number not in _seen_prs
                     ]
-                except Exception as exc:
-                    # Auto-merge failures must not break the tick — the
-                    # operator can still inspect the chain via ``factory
-                    # story`` and re-run auto-merge by hand.
-                    summary.errors.append(("auto-merge", repr(exc)))
+            except Exception as exc:
+                # Auto-merge (and the mode lookup guarding it) failures must
+                # not break the tick — the operator can still inspect the
+                # chain via ``factory story`` and re-run auto-merge by hand.
+                summary.errors.append(("auto-merge", repr(exc)))
 
         # Post-merge main-branch CI-health monitor (D004). Cheap (1-2 ``gh``
         # calls) — runs once per app per tick regardless of in-flight story
@@ -3152,14 +3195,16 @@ def tick(
         # in modes where forward motion (here: filing a new direction) is
         # deliberately paused.
         if settings.ci_health.enabled:
-            current_mode = get_mode(root, db_path=db)
-            if current_mode not in {"paused", "drain-reviews"}:
-                try:
+            try:
+                # get_mode INSIDE the try — see the auto-merge hook above for
+                # why (a locked-DB read must never kill the tick).
+                current_mode = get_mode(root, db_path=db)
+                if current_mode not in {"paused", "drain-reviews"}:
                     summary.ci_health = main_ci_health_tick(root, app, dry_run=dry_run)
-                except Exception as exc:
-                    # Best-effort: a CI-health monitor failure must never
-                    # break the tick.
-                    summary.errors.append(("ci-health", repr(exc)))
+            except Exception as exc:
+                # Best-effort: a CI-health monitor (or its mode lookup)
+                # failure must never break the tick.
+                summary.errors.append(("ci-health", repr(exc)))
 
         # Detector -> direction trigger (019 AC7 / Flow D). Same gating
         # discipline as ci-health above (explicit settings flag + suppressed
@@ -3171,14 +3216,15 @@ def tick(
         # the pass there would file directions against a temp DB's story ids
         # that don't exist in the real one.
         if settings.detector_watch.enabled and not dry_run:
-            current_mode = get_mode(root, db_path=db)
-            if current_mode not in {"paused", "drain-reviews"}:
-                try:
+            try:
+                # get_mode INSIDE the try — see the auto-merge hook above.
+                current_mode = get_mode(root, db_path=db)
+                if current_mode not in {"paused", "drain-reviews"}:
                     summary.detector_watch = detector_watch_tick(root, app)
-                except Exception as exc:
-                    # Best-effort: a detector-watch failure must never break
-                    # the tick.
-                    summary.errors.append(("detector-watch", repr(exc)))
+            except Exception as exc:
+                # Best-effort: a detector-watch (or its mode lookup) failure
+                # must never break the tick.
+                summary.errors.append(("detector-watch", repr(exc)))
 
         # 019 AC6 — idle becomes a ping (Flow C). Runs where the deleted
         # ``idle.py`` block used to (see cli.py's tick_cmd history): once per
@@ -3192,9 +3238,10 @@ def tick(
         # internal fail-safe (see ``idle_ping.py``) suppresses rather than
         # spams on a corrupt marker.
         if not dry_run:
-            current_mode = get_mode(root, db_path=db)
-            if current_mode not in {"paused", "drain-reviews"}:
-                try:
+            try:
+                # get_mode INSIDE the try — see the auto-merge hook above.
+                current_mode = get_mode(root, db_path=db)
+                if current_mode not in {"paused", "drain-reviews"}:
                     from factory.chain.idle_ping import run_idle_ping_tick
 
                     _ping = run_idle_ping_tick(root, app, db)
@@ -3205,8 +3252,8 @@ def tick(
                             "idle_since": _ping.idle_since,
                             "last_delivered_unit": _ping.last_delivered_unit,
                         }
-                except Exception as exc:  # noqa: BLE001 - never break the tick
-                    summary.errors.append(("idle-ping", repr(exc)))
+            except Exception as exc:  # noqa: BLE001 - never break the tick
+                summary.errors.append(("idle-ping", repr(exc)))
 
         # Autonomous issue hygiene. Close GitHub trackers/story-issues for
         # directions/stories that are COMPLETE or terminally ABANDONED, so the
@@ -3218,9 +3265,10 @@ def tick(
         # hygiene hiccup must never fail the tick, so it is NOT recorded in
         # ``summary.errors`` — only surfaced (counts) in ``summary.issue_hygiene``.
         if not dry_run and _should_run_issue_hygiene(root, app):
-            _hyg_mode = get_mode(root, db_path=db)
-            if _hyg_mode not in {"paused", "drain-reviews"}:
-                try:
+            try:
+                # get_mode INSIDE the try — see the auto-merge hook above.
+                _hyg_mode = get_mode(root, db_path=db)
+                if _hyg_mode not in {"paused", "drain-reviews"}:
                     from factory.directions.tracker_issue import reconcile_completed_issues
                     from factory.providers.github import build_github_client
 
@@ -3235,8 +3283,76 @@ def tick(
                             "stories_closed": len(_rep.get("stories_closed", [])),
                             "errors": len(_rep.get("errors", [])),
                         }
-                except Exception:  # noqa: BLE001 - hygiene must NEVER break the tick
-                    pass
+            except Exception:  # noqa: BLE001 - hygiene must NEVER break the tick
+                pass
+
+        # Deterministic operational-recovery cycle
+        # (``factory.manager.recovery.run_recovery_cycle``). PR #247 deleted
+        # ``factory/manager/apply.py`` — the ONLY production caller of every
+        # one of the six recovery playbooks, including
+        # ``recover-stuck-fixonly-mode`` and ``quarantine-invalid-enum-story``,
+        # each of which corresponds to a RECORDED live wedge in this repo's
+        # history (a stuck non-normal mode blocked all dispatch; invalid-enum
+        # rows failed every tick forever). CLAUDE.md documents ``recovery`` as
+        # a surviving safety mechanism; without this hook it was orphaned and
+        # failing silently. Gated by ``settings.recovery.enabled`` (default
+        # True — every playbook fixes a recorded wedge and the module is
+        # itself internally fail-safe: it forces dry-run while the factory is
+        # halted and bounds itself with a per-cycle action cap + per-target
+        # cooldown), skipped in ``dry_run`` (it can mutate real story/mode
+        # state) and in ``paused``/``drain-reviews`` (forward motion
+        # deliberately suppressed). ``get_mode`` INSIDE the try — see the
+        # auto-merge hook above for why. Surfaced on ``summary.recovery`` only
+        # when the cycle actually did something (recovered/escalated/skipped/
+        # errored); an all-quiet cycle stays ``None`` so a healthy soak's tick
+        # output doesn't get noisy.
+        if settings.recovery.enabled and not dry_run:
+            try:
+                current_mode = get_mode(root, db_path=db)
+                if current_mode not in {"paused", "drain-reviews"}:
+                    from factory.manager.recovery import run_recovery_cycle
+
+                    _recovery_result = run_recovery_cycle(root, apps=[app], db_path=db)
+                    if any(
+                        _recovery_result.get(_k)
+                        for _k in (
+                            "recovered",
+                            "escalated",
+                            "skipped_cooldown",
+                            "skipped_cap",
+                            "errors",
+                        )
+                    ):
+                        summary.recovery = _recovery_result
+            except Exception as exc:  # noqa: BLE001 - recovery must never break the tick
+                summary.errors.append(("recovery", repr(exc)))
+
+        # Poison-escalation (``factory.manager.poison_escalation.
+        # escalate_poisoned_rows``). Orphaned by the SAME PR #247 deletion —
+        # its only caller was the deleted L1 watcher, so a persistent
+        # poisoned/invalid-enum row (the reconciler above quarantines the
+        # SYMPTOM every cycle) never surfaced the underlying data-integrity
+        # anomaly to a human. Fully self-gated internally (only escalates
+        # when a recent ``tick_end`` reported ``skipped > 0``, and dedups on a
+        # stable signature within a cooldown), so this call is cheap and
+        # inert on a normal healthy tick. Same discipline as every hook above:
+        # skipped in ``dry_run``, skipped in ``paused``/``drain-reviews``,
+        # ``get_mode`` INSIDE the try, and any failure lands in
+        # ``summary.errors`` without ever breaking the tick.
+        if not dry_run:
+            try:
+                current_mode = get_mode(root, db_path=db)
+                if current_mode not in {"paused", "drain-reviews"}:
+                    from factory.manager.poison_escalation import escalate_poisoned_rows
+
+                    _poison_result = escalate_poisoned_rows(root, db_path=db, apps=[app])
+                    if _poison_result.get("status") not in (
+                        "no_skip_signal",
+                        "no_poisoned_rows",
+                    ):
+                        summary.poison_escalation = _poison_result
+            except Exception as exc:  # noqa: BLE001 - never break the tick
+                summary.errors.append(("poison-escalation", repr(exc)))
 
         _tick_succeeded = True
     except Exception as _exc:  # noqa: BLE001
@@ -3331,4 +3447,6 @@ def tick_summary_as_dict(summary: TickSummary) -> dict[str, Any]:
         ),
         "issue_hygiene": summary.issue_hygiene,
         "idle_ping": summary.idle_ping,
+        "recovery": summary.recovery,
+        "poison_escalation": summary.poison_escalation,
     }

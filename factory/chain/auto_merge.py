@@ -142,6 +142,100 @@ def _story_targets_factory_repo(app_config: AppConfig) -> bool:
     return targets_factory_repo(app_config.repo)
 
 
+def _fetch_pr_merge_commit_sha(  # pragma: no cover - real-run path; queries live GH state
+    *, app_config: AppConfig, pr_number: int
+) -> str | None:
+    """Best-effort: the merge-commit SHA for an already-merged PR, or ``None``.
+
+    Squash-merging a PR creates a NEW commit on the base branch that is not
+    the PR's ``head_sha`` — the only way to learn it after the fact is to ask
+    GitHub. Fail-safe: any failure (``gh`` missing/timeout, non-zero exit,
+    unparseable payload, no merge commit recorded yet) returns ``None`` rather
+    than a wrong sha, since the circuit breaker must never track a made-up
+    commit.
+    """
+    import json as _json
+    import subprocess
+
+    if pr_number <= 0:
+        return None
+    cmd = [
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "mergeCommit",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        data = _json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    merge_commit = data.get("mergeCommit")
+    if not isinstance(merge_commit, dict):
+        return None
+    oid = merge_commit.get("oid")
+    return oid if isinstance(oid, str) and oid else None
+
+
+def _record_self_edit_commit_if_applicable(
+    *,
+    app_config: AppConfig,
+    fixture: FixturePR,
+    root: Path | None,
+    merge_commit_sha_provider: Any = None,
+) -> None:
+    """Track a just-merged factory self-edit commit for the circuit breaker.
+
+    ``factory.manager.circuit_breaker.record_manager_commit`` had ZERO
+    production callers after PR #247 deleted ``factory/manager/apply.py`` (its
+    only caller) — the breaker's commit ledger never gained an entry, so
+    ``check_and_trip`` could never find a tracked SHA at HEAD and the breaker
+    was permanently inert despite ``factory manager circuit-breaker status/
+    check/reset`` still existing. This is the chain-side replacement caller: a
+    factory-repo PR that touches ``factory/`` (a self-edit, the same notion
+    ``_evaluate_self_edit_gate``/``staging.is_self_edit`` use) is exactly what
+    the breaker was built to guard, so once such a PR has ACTUALLY merged we
+    record its merge-commit SHA.
+
+    Advisory only: this NEVER raises and never affects the merge decision — a
+    failure to record just means the breaker can't track *this* commit, not a
+    failed or reverted merge. ``merge_commit_sha_provider`` is an injection
+    seam (defaults to ``_fetch_pr_merge_commit_sha``) so tests can pin the
+    wiring without shelling out to ``gh``.
+    """
+    try:
+        if not _story_targets_factory_repo(app_config):
+            return
+        from factory.manager.staging import is_self_edit
+
+        if not is_self_edit(list(fixture.files_changed)):
+            return
+        provider = merge_commit_sha_provider or _fetch_pr_merge_commit_sha
+        sha = provider(app_config=app_config, pr_number=fixture.pr_number)
+        if not sha:
+            return
+        from factory.manager.circuit_breaker import record_manager_commit
+
+        record_manager_commit(
+            root=Path(root) if root is not None else Path.cwd(),
+            sha=sha,
+            proposal_path=f"chain:{app_config.repo}:pr-{fixture.pr_number}",
+        )
+    except Exception:  # noqa: BLE001 - advisory tracking must never break a merge
+        pass
+
+
 class MergeActionRecord(SQLModel, table=True):
     """One row per auto-merge decision (merged or no-op)."""
 
@@ -951,6 +1045,7 @@ def _evaluate_one_pr(
     pr_merged_query: Any = None,
     db_path: Path | None = None,
     sibling_shipped_query: Any = None,
+    merge_commit_sha_provider: Any = None,
 ) -> MergeAction:
     """Decide if a PR should be merged; merge it in real-run.
 
@@ -966,7 +1061,9 @@ def _evaluate_one_pr(
     merge shell-out (``_gh_pr_merge``) and the authoritative
     "is-this-PR-actually-merged" query (``_pr_is_merged_on_github``). Tests
     pass fakes to drive the "auto-merge enabled but not merged yet" vs "really
-    merged" branches without touching GitHub.
+    merged" branches without touching GitHub. ``merge_commit_sha_provider`` is
+    the analogous seam for ``_record_self_edit_commit_if_applicable`` (the
+    circuit-breaker commit tracker).
     """
     story = fixture.story
     docs_chain = _is_docs_chain(story)
@@ -1018,6 +1115,12 @@ def _evaluate_one_pr(
         except Exception:  # noqa: BLE001 - fail-safe: cannot confirm → not merged
             already_merged = False
         if already_merged:
+            _record_self_edit_commit_if_applicable(
+                app_config=app_config,
+                fixture=fixture,
+                root=software_factory_root,
+                merge_commit_sha_provider=merge_commit_sha_provider,
+            )
             return MergeAction(
                 app=app,
                 pr_number=fixture.pr_number,
@@ -1336,6 +1439,12 @@ def _evaluate_one_pr(
                 auto_merge_enabled=True,
             )
 
+    _record_self_edit_commit_if_applicable(
+        app_config=app_config,
+        fixture=fixture,
+        root=software_factory_root,
+        merge_commit_sha_provider=merge_commit_sha_provider,
+    )
     return MergeAction(
         app=app,
         pr_number=fixture.pr_number,
@@ -2539,6 +2648,7 @@ def auto_merge_tick(
     escalate: Any = None,
     merge_fn: Any = None,
     pr_merged_query: Any = None,
+    merge_commit_sha_provider: Any = None,
 ) -> list[MergeAction]:
     """Single pass of the auto-merge worker against ``app``.
 
@@ -2802,6 +2912,7 @@ def auto_merge_tick(
             merge_fn=merge_fn,
             pr_merged_query=pr_merged_query,
             db_path=db,
+            merge_commit_sha_provider=merge_commit_sha_provider,
         )
         _record_merge_action(action, f.head_sha, db)
         # A factory self-edit refused by the chain-side staging gate: the live
