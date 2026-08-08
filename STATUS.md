@@ -99,17 +99,44 @@ P0 manager deletion. Verify merge state with `git log --oneline` / `gh pr view
 | AC6 | Idle becomes one deduplicated `operator_ping` per idle episode in `factory inbox`; zero machine-authored directions; re-emits the `app_idle` event `stalled_stories._last_idle_ts` reads | #252 |
 | AC4 | `gates.acceptance_oracle: true` for sacrifice, exercised against the real app in a throwaway clone: red at merge base `b40e87aff062` (route absent → 404), green at HEAD, verdict computed out of process over HTTP, `failability_route=merge_base_red`, `authoritative=true`, `verified=true`; a positive-observable criterion failed both stub variants and was credited, a status-code-only criterion passed both and was excluded as vacuous | #254 (merged, `2f81d224`) |
 
-**Mechanism proven ≠ graded a live story — do not blur these.** AC4's evidence
-above is a throwaway-clone run the operator drove by hand; it proves the
-runner works against the real app. It is **not** a chain-driven story passing
-under the flag. As of this writing sacrifice has **zero non-terminal
-stories** (91 `deployed` / 28 `superseded_by_sibling` / 2
-`closed_by_operator` = all 121 sacrifice stories, all terminal —
-`state/factory.db`), and every one of those 121 rows has `acceptance_expected
-= 0` and `acceptance_test_ref IS NULL` — none of them ever went through this
-gate; they all predate the flag flip. The live gate has not yet graded a real
-chain-driven story. That only happens once `pm-sync` files new sacrifice work
-and a story runs the merge gate with the flag on.
+**The live gate HAS now graded a real chain-driven story — 2026-08-08.**
+Sacrifice story **172** (`d119-add-unauthenticated-get-api-meta`, direction
+119) ran the full chain and merged as **sacrifice PR #381**; story state
+`deployed`, **$0.96** total. It is the first and only sacrifice story with
+`acceptance_expected = 1` (all 121 earlier rows have `= 0` and
+`acceptance_test_ref IS NULL` — they predate the flag flip and never went
+through this gate). Sacrifice is now 122 stories, all terminal: 92 `deployed`
+/ 28 `superseded_by_sibling` / 2 `closed_by_operator`.
+
+The verdict was real, not a recorded flag — evidence is on disk in
+`state/acceptance/sacrifice/172/`:
+
+- `stub_runs.json` — all three criteria FAIL against **both** stub variants
+  (`empty`, `plausible`) ⇒ K=3, none excluded as vacuous. The criteria assert
+  positive observables (`service == "sacrifice"`, non-empty `version` string),
+  so KNOWN OPEN #3 could not exclude them; they create no DB rows, so KNOWN
+  OPEN #2 could not forge a red.
+- `base_runs.json` — merge base `24c841f9a733`, all three FAIL, `status: fail`.
+  **KNOWN OPEN #1's corroboration (#256) fired here on its first real run:**
+  `base_probe` recorded a direct factory-issued `GET /api/meta` → **404** with
+  `served_a_real_route: true`, so the all-FAIL base was corroborated as
+  genuinely serving and trusted as a real `red` rather than downgraded to
+  `unknown`.
+
+Ordering was correct, not a bypass: all 7 required gates passed first, **then**
+the factory enabled GitHub auto-merge (`auto_merge_attempt`, `merged=0`,
+"auto-merge enabled; awaiting required checks"); GitHub merged 23 s later on CI
+green.
+
+**Diagnostic trap — read before calling a future oracle run a false green.**
+The `acceptance-verified` gate emits **nothing** on the `acceptance` event
+stream (every `_emit` in `factory/chain/acceptance.py` is on the *authoring*
+side), and it runs inside the auto-merge worker after `pr_open`, so it is not a
+chain step either. For story 172 `state/events/acceptance.ndjson` therefore
+held exactly one row — `authored` — for a story the oracle had fully graded,
+while `merge_actions.gates_passed_json` listed `acceptance-verified`. That
+combination looks exactly like the `gate_enforced: false` shape and is not it.
+The run artifacts above are the only proof the gate really ran.
 
 **What the adversarial passes caught that green tests did not, twice:**
 1. **The oracle's forgery was relocated, not closed, by moving out of process.**
@@ -253,11 +280,12 @@ Note (audit): **"deployed" is a state name, not a deploy.** All 102
   never starts it — hint `make up-db`) and `DATABASE_URL` explicit in
   `acceptance_boot.env` (PR #253). This does not touch the CI gates below —
   the oracle grades one story's acceptance criteria at merge time, it is not
-  a CI step. **Proven against the real app in a throwaway clone, not yet
-  against a live chain-driven story**: sacrifice has zero non-terminal
-  stories right now (91 deployed / 28 superseded / 2 closed, all terminal)
-  and `acceptance_expected`/`acceptance_test_ref` are unset on every one of
-  those 121 rows — none of them ever ran this gate.
+  a CI step. **Now proven against a live chain-driven story too** — story 172
+  → sacrifice PR #381, merged 2026-08-08 (see the Exteroception section above
+  for the on-disk run evidence). Sacrifice has zero non-terminal stories right
+  now (92 deployed / 28 superseded / 2 closed = 122, all terminal); story 172
+  is the only row with `acceptance_expected = 1`, and the other 121 have it
+  unset — they never ran this gate.
 - Gates are otherwise still hollow: CI typecheck force-exits 0 over 208 real
   mypy errors; lint is changed-files-only over 100 whole-tree errors; Jest
   (267 tests) and the clean `tsc --noEmit` are not in CI; Playwright collects
