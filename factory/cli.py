@@ -1108,6 +1108,14 @@ def tick_cmd(
         and not summary.deferred
         and not summary.merges
         and (summary.ci_health is None or summary.ci_health.state in ("unknown", "green"))
+        and (
+            summary.detector_watch is None
+            or not (
+                summary.detector_watch.filed
+                or summary.detector_watch.errors
+                or summary.detector_watch.firings_total
+            )
+        )
     ):
         console.print(
             Panel.fit(
@@ -1159,6 +1167,15 @@ def tick_cmd(
             f"ci-health: state={summary.ci_health.state} "
             f"filed={summary.ci_health.filed} "
             f"reason={summary.ci_health.reason!r}"
+        )
+    if summary.detector_watch is not None and (
+        summary.detector_watch.filed or summary.detector_watch.errors or summary.detector_watch.firings_total
+    ):
+        dw = summary.detector_watch
+        console.print(
+            f"detector-watch: ran={len(dw.ran)} firings={dw.firings_total} "
+            f"filed={len(dw.filed)} deduped={len(dw.deduped)} capped={len(dw.capped)} "
+            f"errors={len(dw.errors)}"
         )
     if summary.issue_hygiene and (
         summary.issue_hygiene.get("trackers_closed") or summary.issue_hygiene.get("stories_closed")

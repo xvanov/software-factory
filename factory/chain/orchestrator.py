@@ -32,6 +32,7 @@ from factory.app_config import AppConfig, load_app_config
 from factory.chain import handlers as H
 from factory.chain.auto_merge import MergeAction, auto_merge_tick
 from factory.chain.ci_health import CiHealthResult, main_ci_health_tick
+from factory.chain.detector_watch import DetectorWatchResult, detector_watch_tick
 from factory.chain.event_log import log_story_event
 from factory.chain.state_machine import (
     DEP_DEFER_CAP_REASON_PREFIX,
@@ -115,6 +116,11 @@ class TickSummary:
     # Post-merge main-branch CI-health monitor result (D004). ``None`` when
     # ``ci_health.enabled=false`` or the factory mode suppresses it.
     ci_health: CiHealthResult | None = None
+    # Detector -> direction trigger result (019 AC7 / Flow D). ``None`` when
+    # ``detector_watch.enabled=false``, the mode suppresses it, or this was a
+    # dry-run tick (the pass is skipped entirely, not merely non-mutating —
+    # see the call site).
+    detector_watch: DetectorWatchResult | None = None
     # Autonomous issue-hygiene reconcile result (counts of trackers/story issues
     # auto-closed this tick). ``None`` when the ~hourly gate didn't fire, the
     # mode suppressed it, or no GitHub client was available.
@@ -3150,6 +3156,25 @@ def tick(
                     # break the tick.
                     summary.errors.append(("ci-health", repr(exc)))
 
+        # Detector -> direction trigger (019 AC7 / Flow D). Same gating
+        # discipline as ci-health above (explicit settings flag + suppressed
+        # in modes where forward motion — here: filing a new direction — is
+        # deliberately paused), PLUS an extra condition ci-health doesn't
+        # need: skipped ENTIRELY in dry_run, not just non-mutating. Every
+        # detector reads real on-disk state (runs.ndjson, factory.db, …) and
+        # a dry-run tick already runs against a throwaway DB copy — running
+        # the pass there would file directions against a temp DB's story ids
+        # that don't exist in the real one.
+        if settings.detector_watch.enabled and not dry_run:
+            current_mode = get_mode(root, db_path=db)
+            if current_mode not in {"paused", "drain-reviews"}:
+                try:
+                    summary.detector_watch = detector_watch_tick(root, app)
+                except Exception as exc:
+                    # Best-effort: a detector-watch failure must never break
+                    # the tick.
+                    summary.errors.append(("detector-watch", repr(exc)))
+
         # Autonomous issue hygiene. Close GitHub trackers/story-issues for
         # directions/stories that are COMPLETE or terminally ABANDONED, so the
         # repo's issues stay clean WITHOUT a manual ``factory reconcile-issues``.
@@ -3247,6 +3272,28 @@ def tick_summary_as_dict(summary: TickSummary) -> dict[str, Any]:
                 "reason": summary.ci_health.reason,
                 "required_failing": list(summary.ci_health.required_failing),
                 "advisory_failing": list(summary.ci_health.advisory_failing),
+            }
+        ),
+        "detector_watch": (
+            None
+            if summary.detector_watch is None
+            else {
+                "app": summary.detector_watch.app,
+                "ran": list(summary.detector_watch.ran),
+                "firings_total": summary.detector_watch.firings_total,
+                "filed": [
+                    {
+                        "detector": f.detector,
+                        "subject": f.subject,
+                        "signature": f.signature,
+                        "direction_id": f.direction_id,
+                    }
+                    for f in summary.detector_watch.filed
+                ],
+                "deduped": list(summary.detector_watch.deduped),
+                "capped": list(summary.detector_watch.capped),
+                "errors": list(summary.detector_watch.errors),
+                "dedupe_scan_failed": summary.detector_watch.dedupe_scan_failed,
             }
         ),
         "issue_hygiene": summary.issue_hygiene,

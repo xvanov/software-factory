@@ -173,6 +173,32 @@ class CiHealthConfig(BaseModel):
     enabled: bool = True
 
 
+class DetectorWatchConfig(BaseModel):
+    """Controls the detector -> direction trigger (019 AC7 / Flow D).
+
+    When ``enabled``, ``orchestrator.tick`` calls
+    ``factory.chain.detector_watch.detector_watch_tick`` once per app per
+    real (non-dry-run) tick. It runs every registered detector in
+    ``factory.manager.detectors.DETECTORS`` — the deleted FMS L1 Watcher used
+    to be their only caller — and files at most a few machine directions per
+    tick, deduped on a stable signature so the same fault is never re-filed
+    while a direction for it is still open. Every filed direction is parked
+    at the operator-approval gate (``source=detector-<name>`` is not in the
+    deterministic-source allowlist) — this flag controls detection, not
+    whether the resulting work auto-builds.
+
+    Defaults to ``False`` (review round 2, 2026-08-07): AC7's own
+    verification is the seeded unit test, not production traffic. A
+    read-only re-measurement against the live factory found the pass would
+    have filed 48 machine directions in its first ~16 ticks before the
+    liveness/recency fixes landed — every default-on flag in this file
+    controls a REAL write, and this one fans out across 11 detectors at
+    once. Flip on per-app after a soak, not globally on merge.
+    """
+
+    enabled: bool = False
+
+
 class AutoIntakeConfig(BaseModel):
     """Controls automatic intake of USER-FILED GitHub issues every tick.
 
@@ -203,6 +229,7 @@ class FactorySettings(BaseModel):
     auto_intake: AutoIntakeConfig = Field(default_factory=AutoIntakeConfig)
     dev_convergence: DevConvergenceConfig = Field(default_factory=DevConvergenceConfig)
     ci_health: CiHealthConfig = Field(default_factory=CiHealthConfig)
+    detector_watch: DetectorWatchConfig = Field(default_factory=DetectorWatchConfig)
 
 
 _CACHED: dict[Path, FactorySettings] = {}

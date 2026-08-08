@@ -163,44 +163,57 @@ def create_direction(
         raise FileExistsError(f"Direction directory already exists: {dir_path}")
     dir_path.mkdir(parents=True, exist_ok=False)
 
-    # direction.md
-    (dir_path / "direction.md").write_text(
-        _build_direction_md(
-            title=title,
-            type_tag=type_tag,
-            why=why,
-            acceptance=acceptance,
-            explore=explore,
-            priority=priority,
-        ),
-        encoding="utf-8",
-    )
-
-    # flow.md
-    if has_ui:
-        (dir_path / "flow.md").write_text(_build_flow_md(flow_steps or []), encoding="utf-8")
-
-    # api_spec.md
-    if has_api:
-        (dir_path / "api_spec.md").write_text(
-            _build_api_spec_md(api_spec_lines or []), encoding="utf-8"
+    try:
+        # direction.md
+        (dir_path / "direction.md").write_text(
+            _build_direction_md(
+                title=title,
+                type_tag=type_tag,
+                why=why,
+                acceptance=acceptance,
+                explore=explore,
+                priority=priority,
+            ),
+            encoding="utf-8",
         )
 
-    # artifacts/
-    if attach_files:
-        artifacts_dir = dir_path / "artifacts"
-        artifacts_dir.mkdir(exist_ok=True)
-        for src in attach_files:
-            src_path = Path(src)
-            if not src_path.exists():
-                # skip silently; the user already saw the prompt confirm them
-                continue
-            shutil.copy2(src_path, artifacts_dir / src_path.name)
+        # flow.md
+        if has_ui:
+            (dir_path / "flow.md").write_text(_build_flow_md(flow_steps or []), encoding="utf-8")
 
-    # state.yaml
-    _write_initial_state_yaml(dir_path, source=source)
+        # api_spec.md
+        if has_api:
+            (dir_path / "api_spec.md").write_text(
+                _build_api_spec_md(api_spec_lines or []), encoding="utf-8"
+            )
 
-    parsed = parse_direction_dir(app, dir_path)
+        # artifacts/
+        if attach_files:
+            artifacts_dir = dir_path / "artifacts"
+            artifacts_dir.mkdir(exist_ok=True)
+            for src in attach_files:
+                src_path = Path(src)
+                if not src_path.exists():
+                    # skip silently; the user already saw the prompt confirm them
+                    continue
+                shutil.copy2(src_path, artifacts_dir / src_path.name)
+
+        # state.yaml
+        _write_initial_state_yaml(dir_path, source=source)
+
+        parsed = parse_direction_dir(app, dir_path)
+    except Exception:
+        # A partial write (ENOSPC, a disk quota, a bad attach_files copy, an
+        # unparseable result, ...) must not leave an orphaned directory
+        # behind: every subsequent caller-retry would burn a fresh direction
+        # ID on the same failure forever, and any dedupe scan that treats a
+        # dir with no readable direction.md as untrustworthy (see
+        # ``factory.chain.detector_watch._open_detector_signatures``) would
+        # then refuse to file ANYTHING for this app until a human notices
+        # and removes it by hand. Best-effort cleanup; the ORIGINAL exception
+        # is what the caller sees (019 AC7 review round 2, S3).
+        shutil.rmtree(dir_path, ignore_errors=True)
+        raise
     return CreatedDirection(direction=parsed, dir_path=dir_path)
 
 
