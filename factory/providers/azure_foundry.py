@@ -151,17 +151,51 @@ _DEEPSEEK_V4_PRO_OUTPUT_PER_TOKEN = 0.00000383  # $3.83 per 1M (Azure retail, ea
 # in the registration metadata like the other two rates.
 _DEEPSEEK_V4_PRO_CACHE_READ_PER_TOKEN = 1.61e-7  # ~$0.161 per 1M (estimated, see above)
 
+# Two Azure deployments created 2026-08-07/08 and reachable via live smoke
+# calls: ``azure/DeepSeek-V4-Flash`` and ``azure/Kimi-K2.7-Code``. Same defect
+# as ``azure/deepseek-v4-pro`` above — LiteLLM ships without a price entry
+# for either, so every call landed ``cost_usd = 0.0`` in ``runs``, making
+# ``caps.daily_spend_usd`` / the hourly cap / the per-story budget breaker
+# blind to any volume run on them. Registered here before either model is
+# routed to a persona (this fix does not touch ``routes.yaml``).
+#
+# Verified 2026-08-08 against the Azure retail price API
+# (prices.azure.com/api/retail/prices), Data Zone (DZ) tier, eastus2 — same
+# caveat as deepseek-v4-pro: our deployments are GlobalStandard, whose rate
+# matches or slightly undercuts Data Zone.
+#
+#   product "Azure Deepseek Models", meter "V4 Flash * DZ Tokens":
+#     input        $0.00021 / 1K = $0.21 / 1M
+#     output       $0.00056 / 1K = $0.56 / 1M
+#     cached input $0.000031/ 1K = $0.031/ 1M
+#   product "Azure Fireworks Models", meter "FW Kimi K2.7 Code * DZ Tokens":
+#     input        $0.00105 / 1K = $1.05 / 1M
+#     output       $0.0044  / 1K = $4.40 / 1M
+#     cached input $0.00021 / 1K = $0.21 / 1M
+#
+# Both cached-input rates are PUBLISHED Azure meters (unlike deepseek-v4-pro's
+# estimated cache rate above) — no scaling/estimation needed for either model.
+_DEEPSEEK_V4_FLASH_INPUT_PER_TOKEN = 0.00000021  # $0.21 / 1M (Azure retail DZ, eastus2)
+_DEEPSEEK_V4_FLASH_OUTPUT_PER_TOKEN = 0.00000056  # $0.56 / 1M (Azure retail DZ, eastus2)
+_DEEPSEEK_V4_FLASH_CACHE_READ_PER_TOKEN = 3.1e-8  # $0.031 / 1M (Azure retail DZ, eastus2)
+
+_KIMI_K2_7_CODE_INPUT_PER_TOKEN = 0.00000105  # $1.05 / 1M (Azure retail DZ, eastus2)
+_KIMI_K2_7_CODE_OUTPUT_PER_TOKEN = 0.0000044  # $4.40 / 1M (Azure retail DZ, eastus2)
+_KIMI_K2_7_CODE_CACHE_READ_PER_TOKEN = 2.1e-7  # $0.21 / 1M (Azure retail DZ, eastus2)
+
 
 def _register_litellm_pricing() -> None:
     """Register cost-per-token entries for Azure deployments LiteLLM doesn't know.
 
-    Currently registers ``azure/deepseek-v4-pro`` only; the other deployments
-    on the resource (``azure/gpt-5.4``) get prices from LiteLLM's built-in
-    table. Re-registering an already-known model is a no-op for the price
-    fields; LiteLLM simply overwrites them.
+    Registers ``azure/deepseek-v4-pro``, ``azure/DeepSeek-V4-Flash`` and
+    ``azure/Kimi-K2.7-Code``; the other deployments on the resource
+    (``azure/gpt-5.4``, ``azure/gpt-5.3-codex``) get prices from LiteLLM's
+    built-in table. Re-registering an already-known model is a no-op for the
+    price fields; LiteLLM simply overwrites them.
 
-    The pricing values are flagged as ESTIMATED in the metadata — the source
-    of truth is the constants above this function.
+    The pricing values are flagged as ESTIMATED in the metadata only where
+    that's true (currently just ``deepseek-v4-pro``'s cache-read rate) — the
+    source of truth is the constants above this function.
     """
     try:
         import litellm
@@ -181,6 +215,30 @@ def _register_litellm_pricing() -> None:
                         "fireworks_ai/deepseek-v4-pro cache/input ratio onto "
                         "this deployment's input rate — no published Azure "
                         "meter for cached tokens on this deployment."
+                    ),
+                },
+                "azure/DeepSeek-V4-Flash": {
+                    "input_cost_per_token": _DEEPSEEK_V4_FLASH_INPUT_PER_TOKEN,
+                    "output_cost_per_token": _DEEPSEEK_V4_FLASH_OUTPUT_PER_TOKEN,
+                    "cache_read_input_token_cost": _DEEPSEEK_V4_FLASH_CACHE_READ_PER_TOKEN,
+                    "litellm_provider": "azure",
+                    "mode": "chat",
+                    "factory_cost_note": (
+                        "Azure retail DZ tier, eastus2, verified 2026-08-08 "
+                        "($0.21/$0.56 per 1M, cache_read $0.031/1M) — all "
+                        "three rates are EXACT published Azure meters."
+                    ),
+                },
+                "azure/Kimi-K2.7-Code": {
+                    "input_cost_per_token": _KIMI_K2_7_CODE_INPUT_PER_TOKEN,
+                    "output_cost_per_token": _KIMI_K2_7_CODE_OUTPUT_PER_TOKEN,
+                    "cache_read_input_token_cost": _KIMI_K2_7_CODE_CACHE_READ_PER_TOKEN,
+                    "litellm_provider": "azure",
+                    "mode": "chat",
+                    "factory_cost_note": (
+                        "Azure retail DZ tier, eastus2, verified 2026-08-08 "
+                        "($1.05/$4.40 per 1M, cache_read $0.21/1M) — all "
+                        "three rates are EXACT published Azure meters."
                     ),
                 },
             }

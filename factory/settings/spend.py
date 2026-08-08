@@ -64,6 +64,36 @@ def persona_runs_today(
     return count
 
 
+def unpriced_model_runs_today(
+    software_factory_root: Path, *, db_path: Path | None = None
+) -> list[Run]:
+    """Runs today that burned tokens but landed ``cost_usd == 0.0`` with
+    ``usage_reliable is False`` — the silent-$0 signature of a model with no
+    LiteLLM price registration (see ``factory.providers.azure_foundry`` and
+    the guard in ``factory.runner._record_run``).
+
+    ``factory budget`` surfaces the count so an operator sees the blind spot
+    a $0.00 total can otherwise hide: these runs are real spend the ledger
+    could not read, not free calls.
+    """
+    db = db_path or (Path(software_factory_root) / "state" / "factory.db")
+    eng = _engine(db)
+    today = datetime.now(UTC).date().isoformat()
+    out: list[Run] = []
+    with Session(eng) as session:
+        rows = session.exec(select(Run)).all()
+        for r in rows:
+            if not (r.ts or "").startswith(today):
+                continue
+            if (
+                getattr(r, "usage_reliable", None) is False
+                and float(r.cost_usd or 0.0) == 0.0
+                and ((r.tokens_in or 0) > 0 or (r.tokens_out or 0) > 0)
+            ):
+                out.append(r)
+    return out
+
+
 def hour_spend_usd(software_factory_root: Path, *, db_path: Path | None = None) -> float:
     """Sum of ``runs.cost_usd`` for runs in the past 60 minutes (UTC)."""
     db = db_path or (Path(software_factory_root) / "state" / "factory.db")
@@ -179,6 +209,7 @@ __all__ = [
     "record_cost",
     "spend_by_day",
     "today_spend_usd",
+    "unpriced_model_runs_today",
 ]
 
 
