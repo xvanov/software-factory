@@ -35,7 +35,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from factory.app_config import AppConfig
+from factory.app_config import AcceptanceBootConfig, AppConfig
 from factory.chain.state_machine import StoryRecord, StoryState, is_terminal
 
 if TYPE_CHECKING:
@@ -342,8 +342,55 @@ def _read_artifact(direction: Direction, name: str, present: bool) -> str:
         return ""
 
 
+def _http_mode_block() -> list[str]:
+    """The out-of-process-runner instructions (019 AC3), appended whenever the
+    app has a boot recipe configured (``gates.acceptance_boot``).
+
+    Spec-derived only in the sense that it names NOTHING about this story —
+    every word here is the same for every story in every app that boots — so
+    it adds no independence risk and needs no direction data to build.
+    """
+    return [
+        "## How your test is executed (read before writing anything)",
+        "",
+        "Your file runs in a BARE temporary directory, with the FACTORY's own",
+        "python interpreter — not the app's environment, not the app's",
+        "dependencies, and with no access to the app's source code at all. The",
+        "app itself is booted SEPARATELY as a real running server, and your test",
+        "is the only thing that talks to it — over HTTP.",
+        "",
+        "* Import ONLY the standard library, `httpx`, and `pytest`. An import of",
+        "  any app module (`from app.mod import x`, `import mod`) will be",
+        "  REJECTED before your test ever runs — there is no app package on this",
+        "  process's import path, and there never will be.",
+        "* The app's base URL is the environment variable `ACCEPTANCE_BASE_URL`",
+        "  (e.g. `http://127.0.0.1:PORT`). Read it with `os.environ[\"ACCEPTANCE_BASE_URL\"]`",
+        "  and drive the app with `httpx.Client(base_url=...)` — synchronous",
+        "  `httpx`, never `async def` tests (there is no asyncio plugin loaded).",
+        "* A second environment variable, `ACCEPTANCE_RUN_ID`, is a value UNIQUE",
+        "  to this run. If your test creates any named/identified resource (a",
+        "  user, an email address, a slug) that a shared/persistent database",
+        "  could remember across runs, namespace it with this run id — a",
+        "  hard-coded identifier that already exists from a PREVIOUS run can make",
+        "  a real bug look green, or make a correct implementation look red.",
+        "* Assert a POSITIVE, OBSERVABLE outcome your HTTP call actually reveals",
+        "  — a specific field in a specific response, not only a status code and",
+        "  not only an absence. This oracle is ALSO run against a fixed",
+        "  `200 {}` no-op stub before it is ever trusted; a criterion satisfied",
+        "  by that no-op is EXCLUDED and never counted, however many times it",
+        "  passes against the real app.",
+        "* Do not use a test client / `TestClient` — there is no app object to",
+        "  construct one from in this process. `httpx` against the real network",
+        "  address is the only client.",
+    ]
+
+
 def build_spec_prompt(
-    story: StoryRecord, direction: Direction, *, harness_hint: str | None = None
+    story: StoryRecord,
+    direction: Direction,
+    *,
+    harness_hint: str | None = None,
+    boot: AcceptanceBootConfig | None = None,
 ) -> str:
     """Assemble the SPEC-ONLY prompt handed to the acceptance author.
 
@@ -358,14 +405,19 @@ def build_spec_prompt(
     existed.
 
     ``harness_hint`` (``gates.acceptance_harness_hint``) is the app's OPERATOR-
-    WRITTEN repo-layout facts: which module exposes the app, which client to drive
-    it with, where the tests run from. It is required for the output to be
-    runnable at all — the first real authoring run (2026-08-05) produced a test
-    that guessed ``sacrifice.main`` / ``main`` / ``app.main`` and died with
-    ``No module named 'app'``, because nothing told the author where the app
-    lives. It is NOT an independence leak: it is the same static layout any
-    reader of the repo's README can see, is identical for every story in the app,
-    and contains none of the dev's implementation or tests for THIS story.
+    WRITTEN repo-layout facts: routes, prefixes, auth flow. It is required for
+    the output to be runnable at all — the first real authoring run (2026-08-05)
+    produced a test that guessed module paths and died with
+    ``No module named 'app'``. It is NOT an independence leak: it is the same
+    static layout any reader of the repo's README can see, identical for every
+    story in the app, and contains none of the dev's implementation for THIS
+    story.
+
+    ``boot`` (``gates.acceptance_boot``) gates the HTTP-mode block
+    (:func:`_http_mode_block`) — present whenever the app has a boot recipe
+    configured, i.e. the out-of-process runner is what will actually execute
+    this file (019 AC3). ``None`` (the bench arm, or an app that has not
+    configured a boot recipe) leaves the prompt exactly as before.
     """
     acceptance_lines = list(direction.acceptance)
     ac_block = (
@@ -393,15 +445,16 @@ def build_spec_prompt(
     if harness_hint and harness_hint.strip():
         parts += [
             "",
-            "## Harness (how to import and drive this app — repo layout, NOT an implementation)",
+            "## Harness (how to reach this app's routes — repo layout, NOT an implementation)",
             "",
-            "These are stable facts about where the app lives and how its test suite",
-            "runs. They are the same for every story in this app and tell you nothing",
-            "about how THIS story was implemented. Your file is executed inside this",
-            "harness, so import exactly as described rather than guessing module paths.",
+            "These are stable facts about the app's routes/auth/data model. They",
+            "are the same for every story in this app and tell you nothing about",
+            "how THIS story was implemented.",
             "",
             harness_hint.strip(),
         ]
+    if boot is not None:
+        parts += ["", *_http_mode_block()]
     return "\n".join(parts)
 
 
@@ -459,7 +512,7 @@ class OracleSourceError(ValueError):
     """The author returned something that is not a runnable acceptance test."""
 
 
-def normalize_oracle_source(content: str) -> str:
+def normalize_oracle_source(content: str, *, http_mode: bool = False) -> str:
     """Return ``content`` as storable python, or raise :class:`OracleSourceError`.
 
     Nothing validated the author's output before it was written to disk, so
@@ -476,6 +529,13 @@ def normalize_oracle_source(content: str) -> str:
     ``assert``: the persona is allowed to ``pytest.skip`` a criterion that is
     untestable as written, and a wholly-vacuous oracle is caught authoritatively at
     gate time (a run in which nothing passed cannot satisfy the gate).
+
+    ``http_mode=True`` (the app has a boot recipe, 019 AC3) additionally runs
+    the out-of-process runner's own static import allowlist
+    (``oracle_run.oracle_import_check``) — an author response that regresses to
+    the legacy import-form shape (``from app.mod import x``) is a FAILED
+    AUTHOR ATTEMPT, retried the same as a syntax error, rather than a stored
+    blocker discovered only when ``acceptance-verified`` runs it.
     """
     if not isinstance(content, str) or not content.strip():
         raise OracleSourceError("empty acceptance test content")
@@ -496,7 +556,14 @@ def normalize_oracle_source(content: str) -> str:
     )
     if not has_test:
         raise OracleSourceError("acceptance test declares no test_* function")
-    return src if src.endswith("\n") else src + "\n"
+    out = src if src.endswith("\n") else src + "\n"
+    if http_mode:
+        from factory.chain.oracle_run import oracle_import_check
+
+        problem = oracle_import_check(out)
+        if problem:
+            raise OracleSourceError(f"acceptance test is not out-of-process-runnable: {problem}")
+    return out
 
 
 def _attempts_path(software_factory_root: Path, app: str, story_id: int | None) -> Path:
@@ -834,14 +901,15 @@ def author_acceptance_test(
         return None
 
     author = author_fn or _default_author(root, db_path)
+    boot = app_config.gates.acceptance_boot
     spec_prompt = build_spec_prompt(
-        story, direction, harness_hint=app_config.gates.acceptance_harness_hint
+        story, direction, harness_hint=app_config.gates.acceptance_harness_hint, boot=boot
     )
     content: str | None = None
     last_err: str | None = None
     for attempt in range(1, _AUTHOR_ATTEMPTS + 1):
         try:
-            content = normalize_oracle_source(author(spec_prompt, story))
+            content = normalize_oracle_source(author(spec_prompt, story), http_mode=boot is not None)
             break
         except Exception as exc:  # noqa: BLE001 - retry transient author failures
             content = None
@@ -985,11 +1053,32 @@ def reauthor_missing_oracles(
             break
         if story.state in _NO_ORACLE_STATES:
             continue
-        if ref_is_readable(story, root):
-            continue
         expected, _source = acceptance_expected_for_story(story, app_config, root)
         if not expected:
             continue
+
+        force = False
+        if ref_is_readable(story, root):
+            # 019 AC3 self-heal: a STORED oracle that predates the app's boot
+            # recipe is still in the legacy import-form shape
+            # (``from app.mod import x``), which the out-of-process runner
+            # statically rejects (``oracle_imports_app_code``) — forever,
+            # since nothing re-authors a frozen oracle otherwise. Detect that
+            # ONE case and force a re-author; every other already-readable
+            # oracle is left frozen (the anti-reward-hack property).
+            if app_config.gates.acceptance_boot is None:
+                continue
+            try:
+                p = Path(story.acceptance_test_ref or "")
+                stored_path = p if p.is_absolute() else root / p
+                stored_src = stored_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            from factory.chain.oracle_run import oracle_import_check
+
+            if oracle_import_check(stored_src) is None:
+                continue  # already HTTP-mode-runnable; never re-author a frozen oracle
+            force = True
         if author_exhausted(story, root):
             # Exhausted stories are NOT silently skipped. The gate blocks them
             # forever, so the only thing that can move them is an operator — and
@@ -1022,7 +1111,7 @@ def reauthor_missing_oracles(
         attempted += 1
         ref = author_acceptance_test(
             story, direction, app_config, root,
-            dry_run=False, db_path=db, author_fn=author_fn,
+            dry_run=False, db_path=db, author_fn=author_fn, force=force,
         )
         if ref is not None:
             healed += 1

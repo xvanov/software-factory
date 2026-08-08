@@ -847,10 +847,75 @@ def cache_put(path: Path, key: str, value: dict[str, object], *, keep: int = 10)
         _log.debug("red_green cache write failed for %s", path)
 
 
+# --------------------------------------------------------------------------- #
+# per-criterion crediting (019 AC2/AC3 — the gutted-implementation control)
+# --------------------------------------------------------------------------- #
+#
+# Under the out-of-process runner, "is this oracle able to fail" is no longer a
+# single whole-file verdict: a criterion set with one real assertion and nine
+# tautologies must credit only the real one. ``CriterionOutcome`` is the
+# per-criterion vocabulary (junit-derived), and :func:`verdict_over`
+# generalises :func:`base_verdict` to grade the merge-base run over a SUBSET of
+# criteria — the set ``K`` that survived the stub exclusion
+# (``gates.acceptance_verified``: HEAD == PASS *and* stub in {FAIL, ERROR}).
+#
+# ``base_verdict`` itself is UNTOUCHED. CORRECTION (2026-08-07, found by an
+# adversarial review): an earlier version of this note claimed "the swebench
+# arm" calls it — checked, and that is FALSE. As of this writing NOTHING in
+# this codebase calls ``base_verdict`` except its own unit test
+# (``tests/test_acceptance_oracle_green_means_something.py::test_base_verdict``);
+# ``gates.acceptance_verified`` calls ``verdict_over`` exclusively. It is kept
+# (not deleted) because it answers the whole-file question directly for any
+# FUTURE caller that never adopts per-criterion crediting — ``verdict_over``
+# is a generalisation, not a replacement, and the whole-file question is
+# still a coherent thing to ask. Its unit test is what gives it a caller at
+# all right now; do not let that test rot to "restore" status again.
+
+CriterionOutcome = Literal["PASS", "FAIL", "ERROR", "SKIP", "MISSING"]
+
+
+def verdict_over(credited: Sequence[str] | set[str], base: dict[str, str]) -> tuple[BaseVerdict, str]:
+    """Grade the merge-base run restricted to the credited criterion set ``K``.
+
+    ``credited`` is ``K`` (every criterion the caller has already established
+    passes at HEAD and fails the gutted-implementation stub). ``base`` is the
+    per-criterion outcome map from the merge-base run (``MISSING`` for any key
+    ``base`` never reported — e.g. the module does not exist there at all).
+
+    * ``red`` — at least one credited criterion **FAILED** at the base. Same
+      "at least one, not all" caveat as :func:`base_verdict`: a criterion set
+      testing several ACs legitimately has some already-passing at the base.
+    * ``green`` — every credited criterion already PASSES at the base, so
+      nothing in ``K`` discriminates this diff.
+    * ``unknown`` — neither of the above: an ``ERROR``/``SKIP``/``MISSING``
+      mix with no ``FAIL``. An ``ERROR`` is deliberately NOT counted as red
+      here for the same reason :func:`base_verdict` excludes it — a criterion
+      that could not even be OBSERVED at the base is not evidence that its
+      assertion discriminates anything.
+    * ``K`` empty ⇒ ``unknown`` (belt-and-braces; the caller's own
+      ``vacuous_oracle`` check at the stub stage should already have caught an
+      empty ``K`` before paying for a base boot at all).
+    """
+    keys = list(credited)
+    if not keys:
+        return "unknown", "no criterion survived the stub exclusion (the credited set K is empty)"
+    outcomes = [base.get(c, "MISSING") for c in keys]
+    failed = [c for c, o in zip(keys, outcomes, strict=True) if o == "FAIL"]
+    if failed:
+        return "red", f"{len(failed)} credited criterion/criteria FAILED at the merge base: {failed[:5]}"
+    if all(o == "PASS" for o in outcomes):
+        return "green", "every credited criterion ALREADY PASSES at the merge base"
+    return "unknown", (
+        "the credited criteria are not uniformly PASS at the base, but none FAILED either "
+        "(ERROR/SKIP/MISSING only) — not proof of failability"
+    )
+
+
 __all__ = [
     "DEP_MANIFEST_NAME",
     "TIMEOUT_EXIT_CODE",
     "BaseVerdict",
+    "CriterionOutcome",
     "PytestSummary",
     "RunStatus",
     "base_verdict",
@@ -868,4 +933,5 @@ __all__ = [
     "restore_paths_from",
     "rollback_pytest_config_only",
     "run_key",
+    "verdict_over",
 ]

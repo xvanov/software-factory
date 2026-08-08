@@ -1,225 +1,176 @@
-"""Gate: ``acceptance-verified`` (WS1.2 — independent acceptance oracle).
+"""Gate: ``acceptance-verified`` — 019 AC2 (gutted-implementation control) +
+AC3 (out-of-process verdict).
 
 The problem this closes
-=======================
-
-Loop-4 makes the dev author AND run its own tests. That is great for
-convergence, but a coder that writes the tests judging it can reward-hack —
-special-case the exact assertions, weaken them, or delete the hard ones
-(ImpossibleBench: hiding the acceptance tests from the coder drops cheating to
-~0). Every other merge gate re-derives truth from artifacts the dev produced
-(``tests-green`` re-runs the dev's suite; ``tests-meaningful`` scans the dev's
-tests). None of them is INDEPENDENT of the dev.
-
-This gate is that independent layer. It runs an acceptance test authored from
-the direction's acceptance criteria — the SPEC ONLY, blind to the dev's code
-and the dev's tests — that the dev never sees or edits (authored at story spawn,
-stored under ``state/acceptance/<app>/<story_id>/`` OUTSIDE the dev worktree;
-see ``factory.chain.acceptance``).
-
-WHAT MAKES ITS GREEN MEAN SOMETHING (2026-08-05)
-================================================
-
-Running the oracle is not enough. Three properties have to hold or the green
-carries no information, and none of them was checked when the gate first became
-executable:
-
-1. **The oracle must be able to FAIL.** ``normalize_oracle_source`` deliberately
-   requires no ``assert``, and the vacuity check only catches skips — so
-   ``def test_ac1(): assert True`` ran, reported "1 passed", and produced a
-   merge-authoritative green against an implementation that violated the
-   criterion. Closed by running the SAME oracle at the PR's MERGE BASE and
-   requiring it to be RED there (PLAN A.6, ``factory.chain.red_green``), with
-   ABLATION (``factory.chain.mutation.check_can_fail``) as the fallback when that
-   base run yields no usable answer.
-
-   ⚠ THE CAVEAT — it lives in ``red_green``'s docstring and is repeated here
-   because this is where it bites: only the *fails-at-base* half is oracle-free.
-   Agentless measured 213/300 generated tests reproducing a bug but only 94/300
-   also flipping green under the gold patch, so a hard both-halves gate rejects
-   good work. Therefore "red at base" means AT LEAST ONE test failed there, and a
-   base run that cannot be TRUSTED is ``unknown`` — a *skipped-with-reason*,
-   which blocks and is never read as a pass (regression-only, never "approve").
-
-   TWO MECHANISMS, ONE ORDER — and the order is the whole argument
-   --------------------------------------------------------------
-   ``red_green.base_verdict`` asks *"is this oracle RED without the story's
-   diff?"*. ``mutation.check_can_fail`` asks *"if we gut a symbol the diff
-   touched, does the oracle go red?"*. They are not redundant and they are not
-   interchangeable: **the base run is the STRONGER instrument**, so it always
-   speaks first and its definitive answers are never overturned.
-
-   Why stronger: ablation is satisfied by an oracle that merely *calls* the code.
-   ``def test(): client.post("/healthz"); assert True`` goes red under ablation
-   (the gutted handler raises) while asserting nothing at all — whereas at the
-   merge base that same oracle passes, which is the correct verdict "this carries
-   no information about the diff". So ablation is used **only** where the base run
-   returned ``unknown`` (no readable summary, timeout, nothing collected at base,
-   the acceptance harness does not resolve at base — common for a story that
-   CREATES the test directory). It is never allowed to rescue a base run that came
-   back ``green``: ``green`` is a definitive "this oracle does not discriminate
-   this diff", and the ablation of a diff symbol would answer a weaker question
-   more permissively. That state stays a block with an operator waiver as its only
-   path back.
-
-   The ``unknown`` state is also, by construction, not something the dev can
-   steer into: the base run happens at the merge base, in a tree that predates the
-   diff, under operator-owned app config. And the ablation fallback reproduces the
-   primary path's structural defences in its own scratch clone — same channel
-   rollback, plus a check that the clone really is the graded commit — so even a
-   dev who could force ``unknown`` would gain nothing.
-
-2. **The dev must not control the environment that judges it.** The old run
-   happened in ``PRContext.repo_root`` — the story's own dev worktree — with
-   pytest loading whatever ``conftest.py`` / ``pyproject.toml`` the diff put
-   there. Two 7-line attacks forced a pass against a violating implementation (a
-   ``pytest_runtest_call`` hookwrapper calling ``outcome.force_result(None)``, and
-   ``addopts = "-p _fixup"`` plus a root plugin). Closed by running in a
-   THROWAWAY git worktree (``red_green.judge_worktree``) — so nothing the dev left
-   UNTRACKED exists there at all — in which the diff's own contribution to the
-   oracle's import path is rolled back to the merge base. The oracle is never
-   copied into the dev's tree, which also closes the leak window and the
-   ``.pytest_cache`` disclosure.
-
-   PRODUCTION CODE FROM HEAD, THE WHOLE TEST SURFACE FROM BASE. That is the
-   invariant, and it is wider than "collection channels" because restricting it to
-   collection channels left a working forced-pass attack: the oracle is copied into
-   the app's test directory, so pytest imports it as part of that package and runs
-   ``backend/tests/__init__.py`` first — seven lines there rebind the function under
-   test and a violating implementation goes green, with a RED merge-base run
-   corroborating it (the file does not exist at base). ``__init__.py`` under
-   ``tests/`` is test CODE, not a collection channel. The rollback set is therefore
-   defined as the exact complement of ``factory.diff_paths.is_production_path``, so
-   widening either underlying classifier widens it for free.
-
-   ⚠ ONE DOCUMENTED EXCEPTION TO THAT COMPLEMENT: ``pyproject.toml``
-   (2026-08-05). It is in the set as a pytest collection channel, and it is ALSO
-   the dependency manifest the app's acceptance command resolves its environment
-   from — sacrifice runs ``uv run --extra dev pytest`` with cwd ``backend``, and
-   ``uv`` reads that exact file. Reverting it wholesale meant a story that ADDS a
-   dependency, with a CORRECT implementation, got ``passed=False,
-   authoritative=True`` for a collection error this gate caused itself, then got
-   re-dispatched with an identical failure signature. So the file's two roles are
-   split: **pytest tables from the merge base, every other table from HEAD**
-   (``red_green.rollback_pytest_config_only``, which verifies both halves against
-   ``tomllib`` and fails safe on any mismatch). The cost is real and is the reason
-   this paragraph exists: the rollback set is no longer the clean complement of one
-   predicate, so a reader widening either classifier must remember that this one
-   file has its own handler.
-
-   Backing that up, because a residual case nobody thought of is the likelier
-   failure than the one that was measured: an **errors-only red at HEAD is
-   NON-authoritative whenever anything was rolled back**. A collection/import
-   error after we rewrote the tree cannot be attributed — "the dev's code is wrong"
-   and "we broke the environment" look identical — and a gate must never
-   authoritatively blame the developer for what it may have done itself. It still
-   blocks; it is just waivable and does not re-dispatch. An assertion that RAN and
-   disagreed stays authoritative.
-
-   Still CONVENTIONAL, not structural: what gets restored is the app's own
-   PREVIOUSLY MERGED test surface, which is dev-authored history — sacrifice's
-   ``backend/tests/conftest.py:147`` overrides ``get_db`` with an autouse fixture
-   and the shipped ``acceptance_harness_hint`` advertises that as a feature, so the
-   oracle is judged against a dev-configured DB substitute. What IS structural:
-   THIS story's diff cannot change it.
-
-   ⚠⚠ AND HERE IS WHAT THIS GATE DOES **NOT** GIVE YOU — READ BEFORE FLIPPING THE
-   FLAG. This gate's green is bounded by "the diff's production code did not attack
-   the harness", and **nothing checks that**. Measured 2026-08-05, three lines in
-   the module under test:
-
-       import sys
-       if 'pytest' in sys.modules:
-           import _pytest.python
-           _pytest.python.Function.runtest = lambda self: None
-
-   ...produces ``passed=True, verified=True, authoritative=True`` against an
-   implementation that violates the criterion, with a genuinely RED merge-base run
-   corroborating it. An ablation-AWARE variant of the same trick forges the fallback
-   route too (detect the sentinel raise, forge red; otherwise forge green).
-
-   No rollback set closes this. The oracle must import the diff's production code to
-   test it, so that code runs in the interpreter that computes the verdict, and
-   in-process anything is defeatable in-process. The two candidate closures are
-   (a) an out-of-process behavioural oracle — the verdict computed in the factory
-   from HTTP responses, the way ``smoke-green`` already works — or (b) a
-   tampering detector over the diff's production paths, which would false-block the
-   ``factory`` app wholesale because its production code IS test infrastructure.
-   Neither is built. See
-   ``tests/…::test_KNOWN_OPEN_production_code_can_patch_pytest_in_process``, an
-   ``xfail(strict=True)`` that turns red the day this is fixed.
-
-3. **The tree must be the merge candidate.** ``auto_merge._story_worktree``
-   resets to ``origin/<feature>`` only when ``git fetch`` returned 0, so on a
-   fetch failure the gate graded whatever the worktree held — and could return an
-   authoritative pass for an unrelated commit. The gate now requires
-   ``pr.head_sha`` to be an ANCESTOR of the checkout's HEAD (not equal to it: the
-   worktree merges ``origin/main`` in first, so equality would false-block) — AND
-   that HEAD adds nothing over the PR head except the base branch
-   (``red_green.extra_commits_beyond``). Ancestry alone still lets a worktree that
-   is AHEAD of ``origin/<feature>`` — a commit the chain made and failed to push —
-   pass as the merge candidate, which is the same fault one level in. Found by the
-   adversarial pass on the fix for that fault.
-
-What "blocking" keys off
 ========================
 
-Required-ness is a property of the APP, not of a database flag: once
-``gates.acceptance_oracle`` is on, ``required_gate_labels`` requires this label
-for every non-docs story, and THIS gate decides applicability. Per-story
-expectation is re-derived from the spec by
-``acceptance.acceptance_expected_for_story`` (flag → ref → the direction on
-disk), because the flag is written by a best-effort DB write: a lost write used
-to leave ``acceptance_expected=0`` on a story that must be gated, and both the
-gate and the required set then read that as "no acceptance criteria, skip" and
-shipped it un-gated.
+Loop-4 makes the dev author AND run its own tests, so a coder that writes the
+tests judging it can reward-hack. This gate is the INDEPENDENT layer: it runs
+an acceptance test authored from the direction's acceptance criteria — the SPEC
+ONLY, blind to the dev's code and tests (``factory.chain.acceptance``) — and
+until 2026-08-07 it did so by having ``pytest`` IMPORT the diff's production
+code and run in the SAME interpreter that computed the verdict. That carried a
+forgery hole no file-level rollback could close: three lines of production
+code reassigning ``pytest``'s own test-runner machinery forged a genuine-
+looking red-at-base -> green-at-HEAD
+(``tests/test_acceptance_oracle_green_means_something.py``, formerly an
+``xfail(strict=True)``; it now hard-passes).
 
-Resolution
-==========
+**THE FIX (019 AC3): the verdict is computed by a SEPARATE process driving a
+BOOTED instance of the app over HTTP** — the ``smoke_green`` pattern
+(``factory.chain.boot`` + ``factory.chain.oracle_run``). The oracle process
+never imports a single line the diff wrote; its only channel to the app under
+test is the network. Reassigning ``pytest`` internals inside the booted app's
+own process cannot forge a verdict computed in a DIFFERENT process.
 
-* Not opted in (``gates.acceptance_oracle`` False): PASS (skip). Never required.
-* Opted in, story genuinely has no acceptance criteria: PASS (not applicable).
-* Opted in, expectation cannot be established (no story row, unresolvable
-  direction): AUTHORITATIVE BLOCK — never a silent pass.
-* Expected + stored test MISSING/unreadable (authoring flaked): AUTHORITATIVE
-  BLOCK — the self-heal re-authors it, up to ``acceptance._MAX_AUTHOR_PASSES``
-  passes, after which it stays blocked and names the exhaustion.
-* Dry-run / no checkout: NON-AUTHORITATIVE block (cannot verify), never a pass.
-* Real run — three families, and only the first is a green:
-    - **pass**: HEAD run green (≥1 passed, nothing failed, one readable summary)
-      AND failability established — the base run RED
-      (``failability_route="merge_base_red"``), or, when the base run was
-      ``unknown``, an ablation of the diff's own production symbols that turned the
-      oracle red (``failability_route="ablation"``). ``authoritative=True``,
-      ``verified=True``.
-    - **block**: the HEAD run failed a test assertion, or was vacuous.
-      ``authoritative=True``.
-    - **skipped-with-reason**: provenance unverified, no judge tree, no merge
-      base, a collection channel we could not restore, conflicting summaries, an
-      unreadable runner, an oracle that already passes at base, a base run we
-      cannot trust, or an ERRORS-ONLY red at HEAD after we rolled anything back
-      (``head_errors_after_environment_rollback`` — we perturbed the environment,
-      so the error may be ours). ``passed=False``, ``authoritative=False``, ``verified=False``
-      — it blocks (fail-safe), does not blame the dev, is recorded for
-      ``factory inbox``, and is the only family an operator waiver can clear
-      (``acceptance.read_waiver`` — never a red HEAD run, never tampering,
-      never the wrong commit).
-* Any infrastructure error inside this gate: AUTHORITATIVE BLOCK. A raised
-  exception here used to escape ``evaluate_all_gates`` and abort the entire merge
-  evaluation.
+**THE OTHER HALF (019 AC2): the gutted-implementation control.** Booting a
+real instance closes the in-process forgery, but it does not by itself stop a
+criterion set that only asserts status codes and absences (the vacuity class,
+Beer et al. 2001) — a fixed no-op ``200 {}`` responder would satisfy such a
+criterion just as well as a correct implementation. So before crediting
+anything, the SAME oracle also runs against a catch-all stub
+(``factory.chain.stub_server``) that answers every request with ``200 {}``.
+Only a criterion that PASSES at HEAD and FAILS (or errors) against the stub is
+credited (the set ``K``); a criterion set where nothing survives that
+exclusion is ``vacuous_oracle`` and blocks BEFORE a single real boot is paid
+for.
+
+Run order is cheapest evidence first: **stub → prerequisite check → HEAD boot →
+BASE boot → ablation**. A bad oracle never pays for a boot; a missing
+dependency (a DB container down) never pays for two.
+
+Crediting algebra (``red_green.verdict_over``)
+===============================================
+Let ``K = {c : HEAD[c] == PASS and STUB[c] in {FAIL, ERROR}}``. ``K`` empty ⇒
+``vacuous_oracle``. Otherwise the merge-base run is graded OVER ``K`` ONLY:
+at least one ``FAIL`` in ``K`` at the base ⇒ ``red`` ⇒ credit; every member of
+``K`` already ``PASS`` at the base ⇒ ``green`` ⇒ ``oracle_not_discriminating``;
+anything else (``ERROR``/``SKIP``/``MISSING`` only, or the base never booted)
+⇒ ``unknown`` ⇒ fall through to the ablation fallback
+(``mutation.check_can_fail``, driven here through ``oracle_probe.py`` so the
+ablation's OWN check is also computed out of process). An ``ERROR`` at the
+base is deliberately NOT counted as red — the same reason
+``red_green.base_verdict`` excludes it: a criterion that could not even be
+OBSERVED is not evidence that its assertion discriminates anything.
+
+What "blocking" keys off
+=========================
+Required-ness is a property of the APP (``gates.acceptance_oracle``), not a
+DB flag; per-story applicability is re-derived from the spec
+(``acceptance.acceptance_expected_for_story``). Resolution:
+
+* Not opted in: PASS (skip). Opted in, no ACs: PASS (not applicable).
+* Expectation unresolvable, or the stored oracle missing/unreadable: BLOCK
+  authoritatively (self-heals via ``acceptance.reauthor_missing_oracles``).
+* Dry-run / no checkout: BLOCK non-authoritatively (cannot verify).
+* Cannot-run states (no boot recipe configured, the oracle statically imports
+  app code, the factory's own httpx/pytest are unavailable, a prerequisite
+  like a DB container is down, the stub or the runner itself is unreadable):
+  BLOCK non-authoritatively and NEVER WAIVABLE — these are the gate's own
+  fault or an operator config gap, and a human waving them through would ship
+  something nobody verified.
+* HEAD run fails an assertion, is vacuous, or every credited criterion already
+  passes at the base: BLOCK authoritatively (or ``oracle_not_discriminating``,
+  waivable — the oracle itself is the problem, not necessarily the dev).
+* HEAD run is errors-only AND the booted app did not stay alive/healthy:
+  ``app_crashed_during_run`` — non-authoritative, waivable (we cannot tell a
+  wrong implementation from an app that crashed under the oracle's load).
+* Credited, red at base (or failability proven by ablation), green at HEAD:
+  PASS, ``authoritative=True``, ``verified=True``.
+* Any infrastructure error inside this gate: AUTHORITATIVE BLOCK (the
+  ``evaluate()`` wrapper below).
+
+Waivable: ``no_merge_base``, ``base_equals_head``, ``diff_unreadable``,
+``no_judge_tree``, ``channel_restore_failed``, ``oracle_not_discriminating``,
+``failability_unverified``, ``head_boot_failed``, ``app_crashed_during_run``,
+``oracle_run_unreadable``, ``vacuous_oracle``, ``oracle_timeout``.
+NEVER waivable: the provenance pair, ``conflicting_summaries``,
+``oracle_runner_unconfigured``, ``oracle_imports_app_code``,
+``environment_unavailable``.
+
+What still applies, and why (belt-and-braces, not load-bearing any more)
+=========================================================================
+The judge-tree provenance checks, the collection-channel rollback, and the
+``pyproject.toml`` pytest/dependency split (``red_green.rollback_pytest_config_
+only``) all predate this gate's in-process history, when they closed real
+forced-pass attacks against a pytest run inside the dev's own collection
+config. Under the out-of-process runner NONE of that machinery grades
+anything any more — the oracle never touches the app's test tree at all, it
+only drives a booted server over HTTP — so a hostile ``conftest.py`` has
+nothing left to attach to. It stays anyway, for two reasons: (1) the ablation
+fallback's scratch clone boots a MUTATED copy of the SAME tree, and a manifest
+whose dependencies were reverted to the base would silently break that boot
+for any story that adds a dependency — the split still matters there; (2) it
+is cheap, already tested, and removing it buys nothing but a chance to get it
+wrong on a rewrite. Read it as defence in depth for the ablation clone, not as
+protection for the primary HTTP path.
+
+KNOWN OPEN (2026-08-07) — ranked, read before the AC4 supervised flip
+======================================================================
+An adversarial review reproduced two forgeries against the first cut of this
+gate (a HEAD-planted ``conftest.py`` in the oracle's own run dir, and an
+in-place overwrite of the oracle file) — both closed below by
+``oracle_run``'s post-run tamper check + ``--noconftest``. Four risks remain
+OPEN; none is closed by this PR, all have a v1.1 candidate:
+
+1. **A healthy-but-semantically-broken BASE forges red.** ``boot._poll_health``
+   returns healthy on the FIRST response ``< 400`` — a health endpoint that
+   answers before its OWN dependency (a DB pool) is ready makes the base
+   respond 500 to EVERYTHING. Every credited criterion then fails at base
+   (all-FAIL over ``K``) ⇒ ``red`` ⇒ CREDIT — and ``base_runs.json`` caches
+   that verdict. This is a NEW failure shape the in-process runner never had
+   (there was no "boot" to be healthy-but-broken). v1.1: require the base's
+   FIRST response to be a genuine 2xx from at least one credited criterion
+   before trusting an all-FAIL base as ``red``, or re-probe health at the end
+   of the base run the same way HEAD's liveness is re-probed.
+2. **Shared-DB cross-run contamination.** A hardcoded identifier that passes
+   at HEAD can collide (409, or a stale row) at BASE in a real shared
+   Postgres, forging a red the RUN_ID namespacing convention (persona
+   instruction, not enforced) is supposed to prevent. v1.1: run the HEAD
+   oracle twice and require both green, or a per-run schema/transaction
+   rollback.
+3. **Non-2xx-status criteria evade the stub.** A criterion asserting "returns
+   404" or "returns 401" is satisfied by BOTH stub variants (which always
+   answer 200), so a criterion that only ever checks a non-2xx status is
+   structurally excluded from ``K`` no matter how meaningful it is elsewhere —
+   the opposite failure mode from vacuity (a real criterion wrongly excluded,
+   not a fake one wrongly credited; fail-safe, but a false NEGATIVE on
+   coverage). v1.1: a third stub variant that answers a plausible non-2xx.
+4. **Behavioural mimicry.** Nothing here defends against production code that
+   inspects its OWN request patterns (rate, path enumeration order, timing)
+   to distinguish "being graded" from real traffic and behaves correctly only
+   under grading. Not evidenced, not defended against, structurally hard to
+   rule out for ANY black-box oracle.
+
+Compositional note (F4/risk 1×ablation): a HEAD that exhausts a shared
+resource can make ``base`` fail to boot at all, steering the gate onto the
+K-BLIND-if-unfixed ablation route instead of the stronger base-red route —
+the ablation probe's ``--credit`` awareness (``oracle_probe.py``) is what
+defangs that steering, not a coincidence: whichever route the gate ends up
+on, only a FAIL on a criterion in ``K`` can license a credit.
+
+⚠ ISOLATION BOUNDARY, STATED PLAINLY: everything in this module assumes the
+booted app and the oracle process share a MACHINE and a UNIX USER. That is a
+PROCESS boundary, not a PRIVILEGE boundary — a same-user attacker can always
+list ``/tmp``. ``oracle_run._tamper_check`` makes a same-user attack
+SELF-DEFEATING (detected, blocked, authoritative), not impossible. A
+different uid or a container per boot removes the assumption entirely and is
+the real v1.1 closure; nothing here should be read as claiming that boundary
+already exists.
 """
 
 from __future__ import annotations
 
-import os
-import shutil
+import shlex
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
-from factory.app_config import AppConfig, AppGatesConfig
+from factory.app_config import AcceptanceBootConfig, AppConfig
+from factory.chain import boot as boot_mod
+from factory.chain import oracle_run, stub_server
 from factory.chain.acceptance import (
     ORACLE_COPY_GLOB,
     ORACLE_COPY_PREFIX,
@@ -235,13 +186,11 @@ from factory.chain.acceptance import (
     sweep_leaked_oracles,
     unremovable_oracle_leaks,
 )
-from factory.chain.gates.evaluator import GateResult, PRContext, _run_command
+from factory.chain.gates.evaluator import GateResult, PRContext
 from factory.chain.red_green import (
-    base_verdict,
     cache_get,
     cache_put,
     changed_paths_since,
-    classify_pytest_run,
     extra_commits_beyond,
     head_contains_sha,
     head_sha,
@@ -251,185 +200,37 @@ from factory.chain.red_green import (
     restore_paths_from,
     rollback_pytest_config_only,
     run_key,
+    verdict_over,
 )
 from factory.diff_paths import is_collection_channel_path, is_production_path
 
 _LABEL = "acceptance-verified"
 
-# THIS interpreter, not a bare ``python`` resolved through PATH.
-#
-# The oracle authors Hypothesis PROPERTY tests from EARS-form acceptance criteria
-# (WS4.3), so a generated test opens with ``from hypothesis import given`` — and
-# ``hypothesis`` is a DEV EXTRA of this project. Bare ``python`` resolves through
-# PATH to whatever the caller inherited; inside the dev sandbox that is a sibling
-# app's venv (an interactive shell's rc file prepends it), which has no
-# hypothesis. Collection then died with ModuleNotFoundError and the gate returned
-# exit_code=2.
-#
-# That is a FALSE BLOCK, and an expensive one: the gate is required, so the story
-# was re-dispatched to dev with an IDENTICAL failure signature until it exhausted
-# its retries and sank to blocked_tests_need_clarification. Observed on stories
-# 148 and 157 (2026-07-30); in both cases the dev's code was fine and the harness
-# was broken.
-#
-# ``sys.executable`` is the fix rather than ``uv run``: the oracle runs the test in
-# a bare temp directory with no ``pyproject.toml``, so ``uv run`` would find no
-# project, build an ephemeral env, and still lack hypothesis. The interpreter
-# already running the factory is by construction the one whose env satisfies the
-# factory's own dev extras.
-#
-# It is only a DEFAULT, and for a real app it is usually the wrong one: an app
-# whose deps are not in the factory's env MUST set ``acceptance_test_command``
-# (plus ``acceptance_test_dir`` / ``acceptance_test_cwd``) so the oracle runs in
-# the app's own harness — and must then guarantee hypothesis in that env if any
-# of its acceptance criteria are EARS-shaped.
-#
-# ``-B`` (no bytecode) plus ``-p no:cacheprovider`` keep the run from leaving a
-# compiled copy of the hidden oracle or a ``.pytest_cache`` entry naming its
-# tests. Both now land in a throwaway judge tree, but an app that overrides the
-# command should keep the flags: ``.pytest_cache/v/cache/nodeids`` records the
-# oracle's TEST NAMES and ``lastfailed`` records which of its assertions failed.
-_DEFAULT_ACCEPTANCE_COMMAND = (
-    f"{sys.executable} -B -m pytest {{test_file}} -q -p no:cacheprovider"
-)
+# factory/chain/gates/acceptance_verified.py -> factory/chain/oracle_probe.py
+_ORACLE_PROBE_PATH = Path(__file__).resolve().parent.parent / "oracle_probe.py"
 
-
-# The ablation fallback runs one oracle invocation per target, plus one baseline.
-# Capped at 3 by the repo rule that nothing loops more than 3 times, and because
-# the first target is the symbol the diff changed MOST — the marginal value of a
-# fourth is small and the cost is another oracle run per tick.
+# Ablation targets: capped by the repo rule that nothing loops more than 3
+# times, and because the first target is the symbol the diff changed MOST.
 _MAX_ABLATION_TARGETS = 3
-# Matches ``evaluator._run_command``'s budget, deliberately: the ablation runs the
-# SAME oracle command the HEAD run already completed inside, so anything much
-# longer would only be waiting on a hang.
-_ABLATION_TIMEOUT_S = 600
-# HARD wall clock for the whole fallback, and it is not decoration. Each target
-# costs a green baseline plus a mutant run, so three targets at the per-run budget
-# is a 60-minute gate — inside ``evaluate_all_gates``, which has no timeout of its
-# own, on a tick that other stories are queued behind. The per-run timeout is
-# clamped to whatever is left, so this is the real bound, not a hint. Running out
-# of budget is "not proven", i.e. the block stands.
-_ABLATION_BUDGET_S = 900
-# Below this there is no point starting another target: a run that cannot finish
-# reports a timeout, which is an unattributable red, which is not a proof anyway.
-_ABLATION_MIN_RUN_S = 30
-
-
-class _ConfigError(ValueError):
-    """The app's acceptance config does not resolve against a given tree."""
-
-
-@dataclass
-class _OracleRun:
-    exit_code: int
-    output: str
-    command: str
-    cwd: str
-    test_file: str
-
-
-def _fmt_command(template: str, *, test_file: str) -> str:
-    """Substitute ``{test_file}`` by literal replacement.
-
-    NOT ``str.format``: a template containing any other brace (a shell brace
-    expansion, a jq filter) raised ``KeyError`` from inside the gate, and that
-    exception escaped into ``evaluate_all_gates`` and killed the whole merge
-    evaluation for the app rather than failing this one gate.
-    """
-    return template.replace("{test_file}", test_file)
-
-
-def _resolve_subdir(repo_root: Path, rel: str | None, *, what: str) -> Path:
-    """Resolve a repo-relative config path, refusing to escape the checkout."""
-    base = Path(repo_root).resolve()
-    if not rel or not rel.strip():
-        return base
-    target = (base / rel.strip()).resolve()
-    if base != target and base not in target.parents:
-        raise _ConfigError(f"{what}={rel!r} resolves outside the checkout ({target})")
-    if not target.is_dir():
-        raise _ConfigError(f"{what}={rel!r} does not exist in the checkout ({target})")
-    return target
-
-
-def _command_template(gates: AppGatesConfig) -> str:
-    cmd_template = gates.acceptance_test_command or _DEFAULT_ACCEPTANCE_COMMAND
-    if "{test_file}" not in cmd_template:
-        # A command that never names the oracle does not run it. Exit 0 would then
-        # be a green gate that verified nothing at all — the worst kind of
-        # fail-open, produced by a single config typo.
-        raise ValueError(
-            "gates.acceptance_test_command must contain '{test_file}' "
-            f"(got {cmd_template!r}) — a command that does not name the oracle "
-            "cannot be evidence that it ran"
-        )
-    return cmd_template
-
-
-def _oracle_test_file(gates: AppGatesConfig, dest_name: str) -> str:
-    """Where the copied oracle sits, RELATIVE TO the configured run cwd.
-
-    Computed from the config strings only — never from a concrete tree — so the
-    identical invocation replays in the judge worktree, at the merge base, and
-    inside ``mutation.check_can_fail``'s scratch clone. ``os.path.relpath`` covers
-    the case where the test dir is not under the cwd (dir=``backend/tests``,
-    cwd=``backend/app`` ⇒ ``../tests/…``); the old code emitted an absolute path
-    there, which is correct for exactly one tree and wrong for every other.
-    """
-    d = (gates.acceptance_test_dir or "").strip() or "."
-    c = (gates.acceptance_test_cwd or "").strip() or "."
-    rel = os.path.relpath(os.path.join(d, dest_name), c)
-    return PurePosixPath(Path(rel).as_posix()).as_posix()
-
-
-def _place_oracle(
-    tree: Path, gates: AppGatesConfig, stored: Path, dest_name: str
-) -> tuple[Path, Path]:
-    """Copy the stored oracle into ``tree``; return ``(dest, run_cwd)``.
-
-    ``tree`` is always a THROWAWAY tree, never the dev's. Raises
-    :class:`_ConfigError` when the configured dir/cwd does not resolve there — at
-    the merge base that is an ordinary "cannot verify" rather than an infra fault,
-    so the callers handle it differently.
-    """
-    dest_dir = _resolve_subdir(tree, gates.acceptance_test_dir, what="acceptance_test_dir")
-    run_cwd = _resolve_subdir(tree, gates.acceptance_test_cwd, what="acceptance_test_cwd")
-    dest = dest_dir / dest_name
-    if dest.is_symlink():
-        # ORACLE DISCLOSURE, found by the adversarial pass on the B2 fix (2026-08-05).
-        # ``shutil.copyfile`` follows a symlink at the DESTINATION, so a diff that
-        # commits ``<test_dir>/test_acceptance_oracle_<story id>.py`` as an ABSOLUTE
-        # symlink into the dev's own worktree would have this gate write the hidden
-        # oracle there — and the story id is guessable. A tracked file matching the
-        # prefix is deliberately NOT treated as a leak (an app may legitimately commit
-        # ``test_acceptance_oracle_smoke.py``; blocking on it was a permanent wedge),
-        # so nothing upstream refuses this. Unlink first: the dev-blindness guarantee
-        # is the whole point of the gate, and ``tree`` is always a throwaway.
-        dest.unlink()
-    shutil.copyfile(stored, dest)
-    return dest, run_cwd
-
-
-def _run_oracle_in(
-    tree: Path, gates: AppGatesConfig, stored: Path, dest_name: str
-) -> _OracleRun:
-    """Copy the stored oracle into ``tree`` and run the app's acceptance command."""
-    _dest, run_cwd = _place_oracle(tree, gates, stored, dest_name)
-    rel_for_cmd = _oracle_test_file(gates, dest_name)
-    cmd = _fmt_command(_command_template(gates), test_file=rel_for_cmd)
-    exit_code, output = _run_command(cmd, cwd=run_cwd)
-    return _OracleRun(
-        exit_code=exit_code, output=output, command=cmd,
-        cwd=str(run_cwd), test_file=rel_for_cmd,
-    )
+# Per-attempt ceiling for the ablation's oracle_probe invocation: one attempt
+# is a green baseline boot+run PLUS a mutant boot+run, so it needs roughly
+# twice a boot plus one run, with slack.
+_ABLATION_BUDGET_S = 1200
+# Below this there is no point starting another target.
+_ABLATION_MIN_RUN_BASE_S = 120
+# HARD wall clock for the WHOLE gate (stub + prerequisite + HEAD boot + BASE
+# boot + ablation), checked before each expensive step. Running out of budget
+# is "not proven" — the block stands, waivable, never an approve.
+_GATE_BUDGET_S = 1800
 
 
 @dataclass
 class _Rollback:
     """What the environment rollback did to one tree.
 
-    ``failed`` non-empty is *cannot verify*: a path we did not neutralise is still
-    under the diff's control, and the caller must block on it non-authoritatively.
+    ``failed`` non-empty is *cannot verify*: a path we did not neutralise is
+    still under the diff's control, and the caller must block on it
+    non-authoritatively.
     """
 
     restored: list[str]
@@ -441,18 +242,11 @@ class _Rollback:
 def _roll_back_environment(
     tree: Path, base_sha: str, plain: list[str], manifests: list[str]
 ) -> _Rollback:
-    """PRODUCTION CODE FROM HEAD, THE WHOLE TEST SURFACE FROM BASE — in one place.
-
-    Called for BOTH judging trees (the judge worktree and the ablation clone), which
-    is the point of the helper: when only the judge tree got a rollback fix, the
-    ablation route silently ran under the diff's own collection config, and the
-    fallback was weaker than the path it stands in for.
-
-    ``manifests`` are the paths that are ALSO the dependency manifest
-    (``pyproject.toml``). They get the surgical treatment — pytest tables from the
-    base, dependencies from HEAD — because reverting them wholesale broke every
-    story that adds a dependency. See ``red_green.rollback_pytest_config_only``.
-    """
+    """PRODUCTION CODE FROM HEAD, THE WHOLE TEST SURFACE FROM BASE — belt-and-
+    braces for the ablation clone (see the module docstring); the primary HTTP
+    path no longer depends on this to close a real attack, but the ablation
+    fallback's mutated scratch clone still needs HEAD's dependencies resolvable
+    from a manifest whose pytest tables came from the base."""
     restored, removed, failed = restore_paths_from(tree, base_sha, plain)
     neutralised: list[str] = []
     for rel in manifests:
@@ -461,20 +255,14 @@ def _roll_back_environment(
             neutralised.append(rel)
         else:
             failed.append(f"{rel} ({why})")
-    return _Rollback(
-        restored=restored, removed=removed, neutralised=neutralised, failed=failed
-    )
+    return _Rollback(restored=restored, removed=removed, neutralised=neutralised, failed=failed)
 
 
 def _git_common_dir(repo_root: Path) -> Path | None:
-    """The checkout's shared git dir (``.git``, or the worktree's parent gitdir)."""
     try:
         proc = subprocess.run(  # noqa: S603,S607 - fixed argv, no shell
             ["git", "rev-parse", "--git-common-dir"],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=15,
+            cwd=str(repo_root), capture_output=True, text=True, timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -488,17 +276,8 @@ def _git_common_dir(repo_root: Path) -> Path | None:
 
 
 def _exclude_oracle_from_git(repo_root: Path) -> None:
-    """Make a leaked oracle copy un-committable in this checkout.
-
-    Defense in depth for the independence guarantee. The oracle now runs in a
-    throwaway judge tree, so the gate no longer writes into the dev's worktree at
-    all — but a copy left by an OLDER factory build, or by any future path that
-    runs in-tree, sits where the chain does a deterministic ``git add -A`` +
-    commit on the dev's green pass (``handlers._commit_green_dev_work``), which
-    would publish the hidden oracle into the PR. A local ``.git/info/exclude``
-    entry keeps ``add -A`` from staging it even then. Best-effort and local-only —
-    never written to the repo tree.
-    """
+    """Defence in depth: a leaked oracle copy (from an older build) must never
+    be committable. Best-effort and local-only."""
     common = _git_common_dir(repo_root)
     if common is None:
         return
@@ -531,11 +310,7 @@ def evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:
                 "acceptance oracle gate FAILED to run "
                 f"({type(exc).__name__}: {exc}) — blocking (fail-closed)"
             ),
-            details={
-                "authoritative": True,
-                "verified": False,
-                "infra_error": repr(exc)[:500],
-            },
+            details={"authoritative": True, "verified": False, "infra_error": repr(exc)[:500]},
         )
 
 
@@ -549,25 +324,15 @@ def _unverifiable(
 ) -> GateResult:
     """SKIPPED-WITH-REASON: the oracle could not be graded, so we do not approve.
 
-    Blocks, but non-authoritatively: this is not evidence against the dev, it names
-    the operator action, and it is recorded for ``factory inbox`` (a story stuck
-    here sits at ``pr_open`` with no rejection reason and would otherwise appear in
-    no operator surface at all). The one thing it must never be is a green —
-    ``passed`` and ``verified`` are both False.
-
     ``waiver_sha`` opts this state into the operator waiver
-    (``acceptance.read_waiver``); pass ``None`` for states where a human must not
-    be able to wave the story through (tampered evidence, the wrong commit).
+    (``acceptance.read_waiver``); pass ``None`` where a human must not be able
+    to wave the story through (tampered evidence, a config the gate itself
+    cannot run, the wrong commit).
     """
     story = pr.story
     app = story.app if story is not None else ""
     sid = story.id if story is not None else None
-    details = {
-        **details,
-        "authoritative": False,
-        "verified": False,
-        "unverifiable_kind": kind,
-    }
+    details = {**details, "authoritative": False, "verified": False, "unverifiable_kind": kind}
     reason = f"acceptance oracle NOT VERIFIED ({kind}): {why}"
 
     waiver = (
@@ -597,15 +362,74 @@ def _unverifiable(
     return GateResult(label=_LABEL, passed=False, reason=reason, details=details)
 
 
+def _cache_path(pr: PRContext, name: str) -> Path | None:
+    root = pr.software_factory_root
+    story = pr.story
+    if root is None or story is None:
+        return None
+    return acceptance_dir(Path(root), story.app, story.id) / name
+
+
+def _stub_run(
+    oracle_src: str, oracle_sha: str, cache_path: Path | None, run_id: str, timeout_s: int,
+    dest_name: str, variant: str,
+) -> dict[str, object]:
+    """Run the oracle against ONE stub variant; cached on
+    ``(oracle_sha, variant, STUB_VERSION, RUNNER_VERSION)`` — the stub is the
+    factory's own fixed harness, so a re-run of the same oracle against it
+    always produces the same criteria.
+
+    ``dest_name`` MUST be the SAME filename the HEAD/BASE runs use: a
+    criterion's identity is its junit ``classname::name``, and pytest derives
+    ``classname`` from the FILE it collected — a stub run written under a
+    different filename produces nodeids that never match the HEAD run's, so
+    every criterion would look "missing" from the stub's point of view and the
+    crediting set ``K`` would always be empty.
+
+    ⚠ ``ACCEPTANCE_RUN_ID`` also differs across the stub/HEAD/BASE runs (not
+    only ``ACCEPTANCE_BASE_URL``, contrary to an earlier version of this
+    docstring) — kept that way DELIBERATELY, not fixed, because making it
+    identical would let HEAD and BASE collide on the SAME namespaced resource
+    in a shared persistent DB (the design's OWN "risk 2", cross-run
+    contamination). The residual: an oracle that ``@pytest.mark.parametrize``s
+    on the run id would get different junit node NAMES per run and K would
+    look empty — no author is instructed to do this (the persona says
+    "namespace values you CREATE with the run id", not "parametrize on it"),
+    but nothing here statically forbids it. See the module docstring's KNOWN
+    OPEN list.
+    """
+    key = run_key(oracle_sha, variant, str(stub_server.STUB_VERSION), str(oracle_run.RUNNER_VERSION))
+    if cache_path is not None:
+        hit = cache_get(cache_path, key)
+        if hit is not None and hit.get("readable") is True:
+            return {**hit, "cached": True}
+
+    with stub_server.stub_app(variant=variant) as stub:
+        run = oracle_run.run_oracle(
+            oracle_src, base_url=stub.base_url, run_id=run_id,
+            dest_name=dest_name, timeout_s=timeout_s,
+        )
+        request_count = stub.request_count
+        requests_sample = stub.requests[:20]
+
+    readable = run.junit_ok or run.status in ("pass", "fail", "vacuous")
+    out: dict[str, object] = {
+        "variant": variant, "status": run.status, "criteria": run.criteria,
+        "request_count": request_count, "junit_ok": run.junit_ok, "readable": readable,
+        "requests_sample": requests_sample, "output_tail": run.output[-1000:],
+    }
+    if cache_path is not None and readable:
+        cache_put(cache_path, key, {k: v for k, v in out.items() if k != "output_tail"})
+    return out
+
+
 def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0911,PLR0912,PLR0915
     gates = app_config.gates
+    deadline = time.monotonic() + _GATE_BUDGET_S
 
-    # Not opted in: skip (pass). Mirrors the optional command gates — a missing
-    # capability means "this gate does not apply", not "this gate fails".
     if not gates.acceptance_oracle:
         return GateResult(
-            label=_LABEL,
-            passed=True,
+            label=_LABEL, passed=True,
             reason="acceptance oracle not enabled for this app (skipped)",
             details={"acceptance_oracle": False},
         )
@@ -614,28 +438,14 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
     ref = getattr(story, "acceptance_test_ref", None) if story is not None else None
     root = pr.software_factory_root
 
-    # Re-derived from the SPEC, never trusted from the DB flag alone.
     expected, source = acceptance_expected_for_story(story, app_config, root)
     if not expected:
-        # Opted in, but this story has no acceptance criteria to verify — not
-        # applicable. (Only ever reached when the direction was resolvable and
-        # genuinely carries no criteria.)
         return GateResult(
-            label=_LABEL,
-            passed=True,
+            label=_LABEL, passed=True,
             reason="story has no acceptance criteria (not applicable, skipped)",
-            details={
-                "acceptance_oracle": True,
-                "acceptance_expected": False,
-                "expected_source": source,
-            },
+            details={"acceptance_oracle": True, "acceptance_expected": False, "expected_source": source},
         )
 
-    # Expected but the stored oracle is missing/unreadable → authoring flaked, or
-    # there is no story row to author for at all. BLOCK AUTHORITATIVELY (never a
-    # silent pass). The tick self-heal (reauthor_missing_oracles) re-authors it
-    # before a later merge attempt, so this is not normally a dead-end; once the
-    # authoring pass ceiling is exhausted it IS a dead-end that names itself.
     if not ref_is_readable(story, root):
         exhausted = author_exhausted(story, root)
         passes = (
@@ -650,38 +460,26 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
             else " — authoring failed; blocking until it is re-authored (self-heals next tick)"
         )
         return GateResult(
-            label=_LABEL,
-            passed=False,
+            label=_LABEL, passed=False,
             reason=(
                 "acceptance oracle EXPECTED but not available "
                 f"(ref={ref!r}, root={'set' if root else 'unset'}, "
                 f"expected_source={source}){tail}"
             ),
             details={
-                "authoritative": True,
-                "verified": False,
-                "acceptance_expected": True,
-                "acceptance_test_ref": ref,
-                "expected_source": source,
-                "author_passes": passes,
-                "author_exhausted": exhausted,
+                "authoritative": True, "verified": False, "acceptance_expected": True,
+                "acceptance_test_ref": ref, "expected_source": source,
+                "author_passes": passes, "author_exhausted": exhausted,
             },
         )
 
-    # ref_is_readable(story, root) returned True above → story, ref, root all set.
     assert story is not None and ref is not None and root is not None
 
-    details: dict[str, object] = {
-        "acceptance_test_ref": ref,
-        "expected_source": source,
-    }
+    details: dict[str, object] = {"acceptance_test_ref": ref, "expected_source": source}
 
-    # Need a real checkout to run against. Dry-run (no worktree) cannot
-    # re-derive truth — never claim a merge-authoritative pass.
     if pr.dry_run or pr.repo_root is None:
         return GateResult(
-            label=_LABEL,
-            passed=False,
+            label=_LABEL, passed=False,
             reason="[dry-run] acceptance oracle present but not run (no checkout)",
             details={**details, "authoritative": False, "verified": False},
         )
@@ -689,76 +487,74 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
     repo_root = Path(pr.repo_root)
     p = Path(ref)
     stored = p if p.is_absolute() else Path(root) / p
-    oracle_sha = oracle_sha256(stored.read_text(encoding="utf-8", errors="replace"))
+    oracle_src = stored.read_text(encoding="utf-8", errors="replace")
+    oracle_sha = oracle_sha256(oracle_src)
     details["oracle_sha256"] = oracle_sha[:16]
     sid = story.id if story.id is not None else pr.head_sha
     dest_name = f"{ORACLE_COPY_PREFIX}{sid}.py"
 
-    # Validate the command template first: a broken template is an operator config
-    # fault and must block AUTHORITATIVELY (it raises out to ``evaluate``), never
-    # be mistaken for a run we merely could not read.
-    cmd_template = _command_template(gates)
+    boot_cfg = gates.acceptance_boot
+    if boot_cfg is None or not (boot_cfg.command or "").strip():
+        return _unverifiable(
+            pr, details, kind="oracle_runner_unconfigured",
+            why=(
+                "gates.acceptance_boot is not configured for this app — the out-of-process "
+                "oracle has no boot recipe to run against, so nothing here can be verified. "
+                "This is an operator config gap, not a decision to be waived"
+            ),
+        )
 
-    # Independence hygiene in the DEV worktree. The oracle no longer runs there, so
-    # this only cleans up after older builds and interrupted runs — but a copy left
-    # in the dev's tree is still a breach, so anything the sweep cannot remove
-    # BLOCKS (the sweep now REFUSES to delete when git cannot say what is tracked).
+    import_problem = oracle_run.oracle_import_check(oracle_src)
+    if import_problem:
+        return _unverifiable(pr, details, kind="oracle_imports_app_code", why=import_problem)
+
+    try:
+        import httpx  # noqa: F401
+        import pytest  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - factory's own runtime, not exercised in CI
+        return _unverifiable(
+            pr, details, kind="environment_unavailable",
+            why=f"the factory's own interpreter cannot import httpx/pytest ({exc})",
+        )
+
+    # Independence hygiene — defence in depth for a copy left by an older
+    # (in-process) build or an interrupted run; the HTTP runner never writes
+    # the oracle into the dev's checkout at all.
     details["swept_before_run"] = sweep_leaked_oracles(repo_root)
     _exclude_oracle_from_git(repo_root)
-    # Only a REAL leak blocks: an untracked copy (or a tree where git cannot say).
-    # A git-TRACKED file matching the prefix is the app's own committed test, and
-    # blocking on it was a permanent unwaivable wedge — see
-    # ``acceptance.unremovable_oracle_leaks``.
     leaked = unremovable_oracle_leaks(repo_root)
     if leaked:
         return GateResult(
-            label=_LABEL,
-            passed=False,
+            label=_LABEL, passed=False,
             reason=(
                 "acceptance oracle copies are present in the DEV worktree and could not be "
                 f"removed ({leaked[:5]}) — blocking to protect dev-blindness"
             ),
-            details={
-                **details, "authoritative": True, "verified": False, "leaked_copies": leaked,
-            },
+            details={**details, "authoritative": True, "verified": False, "leaked_copies": leaked},
         )
 
-    # (3) PROVENANCE — grade the merge candidate or grade nothing.
+    # Provenance — grade the merge candidate or grade nothing.
     contains, why = head_contains_sha(repo_root, pr.head_sha)
     details["head_sha"] = pr.head_sha
     details["provenance"] = why
     if contains is not True:
         return _unverifiable(
-            pr, details,
-            kind="provenance_unverified" if contains is None else "wrong_commit",
-            why=(
-                f"the checkout does not demonstrably contain the PR head commit ({why}) — "
-                "``_story_worktree`` only resets to origin/<feature> when git fetch "
-                "returned 0, so an authoritative pass here could describe code that is "
-                "not the one being merged"
-            ),
-            waiver_sha=None,  # never waivable: this is not the merge candidate
+            pr, details, kind="provenance_unverified" if contains is None else "wrong_commit",
+            why=f"the checkout does not demonstrably contain the PR head commit ({why})",
         )
 
-    # ...and nothing BEYOND the merge candidate. Ancestry alone allows a checkout
-    # that is the PR head PLUS unpushed local commits, which is the same "grading
-    # something other than what will merge" fault one level in.
     extra, how_extra = extra_commits_beyond(repo_root, pr.head_sha, pr.base_branch)
     details["provenance_extra"] = how_extra
     if extra is None or extra:
-        details["extra_commits"] = extra[:5] if extra else None
         return _unverifiable(
             pr, details,
             kind="provenance_unverified" if extra is None else "checkout_ahead_of_pr_head",
             why=(
-                f"the checkout carries work that is neither the PR head nor the base "
-                f"branch ({how_extra}: {(extra or [])[:5]}) — an authoritative verdict "
-                "here would describe code that is not being merged"
+                f"the checkout carries work that is neither the PR head nor the base branch "
+                f"({how_extra}: {(extra or [])[:5]})"
                 if extra
-                else f"could not establish that the checkout adds nothing to the PR head "
-                     f"({how_extra})"
+                else f"could not establish that the checkout adds nothing to the PR head ({how_extra})"
             ),
-            waiver_sha=None,  # never waivable: this is not the merge candidate
         )
 
     base_sha, how = resolve_base_sha(repo_root, pr.base_branch)
@@ -775,10 +571,7 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
     if base_sha == local_head:
         return _unverifiable(
             pr, details, kind="base_equals_head",
-            why=(
-                f"the merge base IS the checkout HEAD ({base_sha[:12]}) — there is no story "
-                "diff here for the oracle to discriminate"
-            ),
+            why=f"the merge base IS the checkout HEAD ({base_sha[:12]})",
             waiver_sha=oracle_sha,
         )
 
@@ -789,58 +582,94 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
             why=f"git could not diff {base_sha[:12]}..HEAD in the checkout",
             waiver_sha=oracle_sha,
         )
-    # PRODUCTION CODE FROM HEAD, THE WHOLE TEST SURFACE FROM BASE.
-    #
-    # Restoring only ``is_collection_channel_path`` was not enough, and the gap was
-    # a WORKING forced-pass attack (found 2026-08-05 by the adversarial pass on this
-    # very fix, and the reason the set below is a union). The oracle is copied INTO
-    # the app's test directory, so pytest's prepend import mode imports it as part of
-    # that package — which executes ``backend/tests/__init__.py`` first. Seven lines
-    # there (``import app.mod; app.mod.normalize_email = lambda e: e.lower()``) repair
-    # a violating implementation before a single assertion runs. ``__init__.py`` under
-    # ``tests/`` is test CODE, not a collection channel, so it was passed straight
-    # through from HEAD — and the merge-base run went RED (the file does not exist at
-    # base), so the forgery arrived wearing a perfect red→green.
-    #
-    # The general fact: every file in the test surface is in the oracle's import
-    # path. Only production code may come from the diff.
-    #
-    # Expressed as the exact COMPLEMENT of ``is_production_path`` rather than as a
-    # union of the two classifiers it is defined against
-    # (``factory.diff_paths.is_production_path`` *is*
-    # ``not is_test_code_path and not is_collection_channel_path``). Same set today,
-    # but it stays correct for free: anything a future edit adds to either classifier
-    # joins the rollback set automatically, instead of leaving a third place that
-    # someone has to remember to widen. The ``__init__.py`` hole below is exactly
-    # what forgetting costs.
     rollbacks = sorted({c for c in changed if not is_production_path(c)})
     details["rolled_back_to_base"] = rollbacks
-    details["collection_channels_in_diff"] = [
-        c for c in rollbacks if is_collection_channel_path(c)
-    ]
-    # ...except that ONE member of that set may not be reverted wholesale.
-    # ``pyproject.toml`` is both a pytest collection channel and the DEPENDENCY
-    # MANIFEST the app's acceptance command resolves its environment from, so
-    # reverting it made every dependency-adding story fail collection and get blamed
-    # for it. Its pytest tables come from the base; its dependencies come from HEAD.
-    # This is the one documented exception to "the rollback set is the exact
-    # complement of ``is_production_path``" — see
-    # ``red_green.rollback_pytest_config_only`` for the measurement and the cost.
+    details["collection_channels_in_diff"] = [c for c in rollbacks if is_collection_channel_path(c)]
     manifests = [c for c in rollbacks if is_dependency_manifest(c)]
     plain = [c for c in rollbacks if not is_dependency_manifest(c)]
     details["dependency_manifests_in_diff"] = manifests
 
-    # (2) Run at HEAD in a THROWAWAY tree whose collection channels are rolled
-    # back to the merge base, so the diff cannot decide its own verdict.
+    # ---- STUB: cheapest evidence, before any boot is paid for. ------------- #
+    # TWO variants (AC2, widened 2026-08-07): a criterion must fail BOTH to be
+    # credited. See ``stub_server``'s module docstring for why the single
+    # ``{}`` variant alone is too permissive for a criterion that reads a
+    # response field ("items = r.json()['items']") — it fails the thin stub
+    # via KeyError REGARDLESS of whether the assertion it goes on to make is
+    # meaningful, so a structurally-vacuous check ("len(items) >= 0") rode the
+    # single-variant stub straight into credit.
+    stub_cache = _cache_path(pr, "stub_runs.json")
+    stub_results = {
+        variant: _stub_run(
+            oracle_src, oracle_sha, stub_cache, f"stub-{variant}-{sid}",
+            boot_cfg.run_timeout_seconds, dest_name, variant,
+        )
+        for variant in stub_server.STUB_VARIANTS
+    }
+    details["stub_run"] = {
+        v: {k: val for k, val in r.items() if k != "output_tail"} for v, r in stub_results.items()
+    }
+
+    unreadable_variants = [v for v, r in stub_results.items() if not r.get("readable")]
+    if unreadable_variants:
+        return _unverifiable(
+            pr, details, kind="environment_unavailable",
+            why=(
+                "the factory's OWN gutted-implementation stub produced no readable result for "
+                f"variant(s) {unreadable_variants} — this is the gate's fault, not the story's"
+            ),
+        )
+    def _as_int(value: object) -> int:
+        return value if isinstance(value, int) else 0
+
+    stub_request_counts = {v: _as_int(r.get("request_count")) for v, r in stub_results.items()}
+    details["stub_requests"] = stub_request_counts
+    if all(n == 0 for n in stub_request_counts.values()):
+        return _unverifiable(
+            pr, details, kind="vacuous_oracle",
+            why="the oracle sent ZERO HTTP requests against EITHER gutted-implementation stub variant",
+            waiver_sha=oracle_sha,
+        )
+    stub_criteria_by_variant: dict[str, dict[str, str]] = {
+        v: (r.get("criteria") or {}) for v, r in stub_results.items()  # type: ignore[misc]
+    }
+
+    def _fails_all_stub_variants(nodeid: str) -> bool:
+        return all(
+            stub_criteria_by_variant[v].get(nodeid) in ("FAIL", "ERROR")
+            for v in stub_server.STUB_VARIANTS
+        )
+
+    all_stub_keys = set().union(*stub_criteria_by_variant.values()) if stub_criteria_by_variant else set()
+    if not all_stub_keys or not any(_fails_all_stub_variants(c) for c in all_stub_keys):
+        return _unverifiable(
+            pr, details, kind="vacuous_oracle",
+            why=(
+                "every criterion in the oracle PASSES against at least one gutted-implementation "
+                "no-op stub variant — a no-op implementation would satisfy this oracle, so its "
+                "green at HEAD would carry no information"
+            ),
+            waiver_sha=oracle_sha,
+        )
+
+    # ---- PREREQUISITE: a CHECK, never a start. ----------------------------- #
+    prereq_ok, prereq_why = boot_mod.check_prerequisite(boot_cfg, cwd=repo_root)
+    details["prerequisite"] = prereq_why
+    if not prereq_ok:
+        return _unverifiable(pr, details, kind="environment_unavailable", why=prereq_why)
+
+    if time.monotonic() > deadline:
+        return _unverifiable(
+            pr, details, kind="oracle_timeout",
+            why="the gate's overall time budget was exhausted before a HEAD boot could be attempted",
+            waiver_sha=oracle_sha,
+        )
+
+    # ---- HEAD: production code from HEAD, in a throwaway judge tree. ------ #
     with judge_worktree(repo_root, "HEAD", label="oracle-head") as (judge, err):
         if judge is None:
             return _unverifiable(
                 pr, details, kind="no_judge_tree",
-                why=(
-                    f"could not build the independent judge tree ({err}); running in the dev's "
-                    "own worktree would let the diff's conftest/pyproject force the verdict, "
-                    "which is the hole this gate exists to close"
-                ),
+                why=f"could not build the independent judge tree ({err})",
                 waiver_sha=oracle_sha,
             )
         rolled = _roll_back_environment(judge, base_sha, plain, manifests)
@@ -850,272 +679,356 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
         if rolled.failed:
             return _unverifiable(
                 pr, details, kind="channel_restore_failed",
-                why=(
-                    f"could not restore collection channel(s) {rolled.failed!r} from the merge "
-                    "base; the diff would still control how the oracle is collected"
-                ),
+                why=f"could not restore collection channel(s) {rolled.failed!r} from the merge base",
                 waiver_sha=oracle_sha,
             )
-        head_run = _run_oracle_in(judge, gates, stored, dest_name)
+        with boot_mod.boot_app(judge, boot_cfg, run_id=f"head-{sid}", label="oracle-head") as (head_app, boot_why):
+            if head_app is None:
+                return _unverifiable(
+                    pr, details, kind="head_boot_failed",
+                    why=f"the app never became healthy at HEAD: {boot_why[:4000]}",
+                    waiver_sha=oracle_sha,
+                )
+            details["head_boot"] = {"port": head_app.port}
+            head_run = oracle_run.run_oracle(
+                oracle_src, base_url=head_app.base_url, run_id=f"head-{sid}",
+                dest_name=dest_name, timeout_s=boot_cfg.run_timeout_seconds,
+            )
+            head_alive = boot_mod.is_alive(head_app)
+            head_healthy = boot_mod.probe_health(head_app, boot_cfg)
 
-    details.update(
-        {
-            "command": head_run.command,
-            "cwd": head_run.cwd,
-            "test_file": head_run.test_file,
-            "exit_code": head_run.exit_code,
-            "output_tail": head_run.output,
-        }
-    )
-    status, summary = classify_pytest_run(head_run.exit_code, head_run.output)
-    details["head_status"] = status
-    # A count read from CONFLICTING summaries is not a count — one of the lines is
-    # not pytest's. Recording it would republish the forgery as the gate's own
-    # finding (``tests_passed: 7`` with zero real passes).
+    details.update({
+        "command": head_run.command,
+        "exit_code": head_run.exit_code,
+        "output_tail": head_run.output[-4000:],
+        "head_status": head_run.status,
+        "head_junit_ok": head_run.junit_ok,
+        "head_app_alive_after_run": head_alive,
+        "head_app_healthy_after_run": head_healthy,
+    })
     details["tests_passed"] = (
-        summary.passed if summary is not None and status != "conflicting" else None
+        head_run.summary.passed if head_run.summary is not None and head_run.status != "conflicting" else None
     )
-    if summary is not None:
-        details["head_summary"] = summary.as_dict()
+    if head_run.summary is not None:
+        details["head_summary"] = head_run.summary.as_dict()
 
-    if status == "fail":
-        # THE SAFETY NET (2026-08-05). We just rewrote the tree the oracle runs in —
-        # the whole test surface reverted to the merge base, the manifest's pytest
-        # tables with it. If the result is a COLLECTION/IMPORT error rather than a
-        # test FAILURE, we cannot tell "the dev's code is wrong" from "we broke the
-        # environment": an errors-only red is exactly what the reverted dependency
-        # manifest produced, and an authoritative verdict there re-dispatched a dev
-        # whose code was fine with an identical failure signature until the story
-        # sank. So the block STANDS (fail-safe) but stops being an accusation — it is
-        # waivable and it does not re-dispatch.
-        #
-        # Deliberately conditioned on a NON-EMPTY rollback set: with nothing rolled
-        # back we perturbed nothing, the error is the artifact's own, and the dev is
-        # the right party to tell. And an assertion that RAN and disagreed
-        # (``summary.failed >= 1``) stays authoritative whatever we changed — that is
-        # evidence about the code, not about the environment.
-        #
-        # This is belt-and-braces over the manifest fix above, not a substitute for
-        # it: it bounds the residual cases nobody has thought of yet.
-        errors_only = (
-            summary is not None and summary.failed == 0 and summary.errors >= 1
+    if head_run.status == "blocked_imports":
+        return _unverifiable(pr, details, kind="oracle_imports_app_code", why=head_run.output)
+
+    if head_run.status == "tampered":
+        # AUTHORITATIVE and NEVER WAIVABLE — this is not "cannot verify", it is
+        # "something running as the diff's production code wrote to the
+        # oracle's own run directory during the run" (a planted conftest.py a
+        # pytest version let past --noconftest, or the oracle file itself
+        # overwritten in place). That is itself evidence the story is not
+        # trustworthy; an operator waiver must never be able to clear it.
+        reason = (
+            "acceptance oracle run TAMPERED WITH during execution "
+            f"(oracle_run_tampered): {head_run.output}"
         )
-        if errors_only and rollbacks:
+        record_gate_block(pr.software_factory_root, story.app, story.id, kind="oracle_run_tampered", reason=reason)
+        return GateResult(
+            label=_LABEL, passed=False, reason=reason,
+            details={**details, "authoritative": True, "verified": False, "unverifiable_kind": "oracle_run_tampered"},
+        )
+
+    if head_run.status == "fail":
+        summary = head_run.summary
+        if summary is not None and summary.failed >= 1:
+            return GateResult(
+                label=_LABEL, passed=False,
+                reason=f"ran independent acceptance oracle exit_code={head_run.exit_code} (assertion failed at HEAD)",
+                details={**details, "authoritative": True, "verified": False},
+            )
+        errors_only = summary is not None and summary.failed == 0 and summary.errors >= 1
+        if errors_only and head_alive and head_healthy:
+            # LIVENESS, not the rollback set, decides authority now: the app
+            # stayed up and healthy through the run, so an errors-only red is
+            # the oracle's own problem — the dev is the right party to tell.
+            return GateResult(
+                label=_LABEL, passed=False,
+                reason=f"ran independent acceptance oracle exit_code={head_run.exit_code} (errors-only red, app stayed healthy)",
+                details={**details, "authoritative": True, "verified": False},
+            )
+        if errors_only:
             return _unverifiable(
-                pr, details, kind="head_errors_after_environment_rollback",
+                pr, details, kind="app_crashed_during_run",
                 why=(
-                    f"the oracle run at HEAD is red ENTIRELY from {summary.errors if summary else 0}"
-                    " error(s) and no test failure "
-                    f"(exit_code={head_run.exit_code}), and this gate rolled "
-                    f"{len(rollbacks)} path(s) back to the merge base to get an "
-                    "independent verdict — so we cannot distinguish a wrong "
-                    "implementation from an environment we perturbed ourselves. "
-                    "Blocking, but NOT as a finding against the story"
+                    "the oracle run at HEAD is red entirely from error(s), and the booted app "
+                    f"was NOT alive/healthy afterward (alive={head_alive}, healthy={head_healthy}) "
+                    "— cannot distinguish a wrong implementation from an app that crashed"
                 ),
                 waiver_sha=oracle_sha,
             )
         return GateResult(
-            label=_LABEL,
-            passed=False,
+            label=_LABEL, passed=False,
             reason=f"ran independent acceptance oracle exit_code={head_run.exit_code}",
             details={**details, "authoritative": True, "verified": False},
         )
-    if status == "vacuous":
-        # A pytest run in which every test SKIPPED also exits 0 while verifying
-        # nothing, and the persona is explicitly allowed to ``pytest.skip`` a
-        # criterion that is untestable as written.
+
+    if head_run.status == "vacuous":
         return GateResult(
-            label=_LABEL,
-            passed=False,
-            reason=(
-                "acceptance oracle exited 0 but reported NO passing test "
-                "(vacuous run — every criterion skipped, or nothing collected); "
-                "blocking rather than crediting a verification that did not happen"
-            ),
+            label=_LABEL, passed=False,
+            reason="acceptance oracle exited 0 but reported NO passing test at HEAD (vacuous run)",
             details={**details, "authoritative": True, "verified": False},
         )
-    if status == "conflicting":
-        # Two DIFFERENT pytest summaries in one output; one of them is not
-        # pytest's. A parser cannot decide which, so nothing here is gradeable.
+
+    if head_run.status == "conflicting":
         return _unverifiable(
             pr, details, kind="conflicting_summaries",
-            why=(
-                "the run printed more than one pytest summary — the pass count is forged or "
-                "forgeable, so it cannot be evidence of anything"
-            ),
-            waiver_sha=None,  # never waivable: the evidence itself is suspect
+            why="the HEAD run printed conflicting summaries (junit vs stdout mismatch, or two stdout summaries)",
         )
-    if status == "unreadable":
-        if "pytest" in head_run.command:
-            return GateResult(
-                label=_LABEL,
-                passed=False,
-                reason=(
-                    "acceptance oracle exited 0 but produced no pytest result summary "
-                    "(nothing ran, or the output was suppressed) — blocking rather than "
-                    "crediting a verification that cannot be evidenced"
-                ),
-                details={**details, "authoritative": True, "verified": False},
-            )
+
+    if head_run.status == "unreadable":
         return _unverifiable(
-            pr, details, kind="unreadable_runner",
+            pr, details, kind="oracle_run_unreadable",
+            why=f"the factory-owned oracle runner produced no readable result at HEAD (exit_code={head_run.exit_code})",
+            waiver_sha=oracle_sha,
+        )
+
+    if head_run.status == "pass" and not head_run.junit_ok:
+        # Found 2026-08-07: the stdout summary said "N passed" (a readable
+        # aggregate), but the per-criterion junit file did not parse — so
+        # ``head_run.criteria`` is empty and crediting below would compute an
+        # empty ``K`` and mislabel this a ``vacuous_oracle`` (the ORACLE's
+        # fault) when it is actually the RUNNER's fault (this module wrote a
+        # junit file it cannot itself read back). Same waivable, non-
+        # authoritative family as the ``unreadable`` branch above — just
+        # caught one summary-source later.
+        return _unverifiable(
+            pr, details, kind="oracle_run_unreadable",
+            why="the HEAD run's stdout summary was readable but its junit file was not — no per-criterion result exists to grade",
+            waiver_sha=oracle_sha,
+        )
+
+    # head_run.status == "pass" — apply the gutted-implementation exclusion.
+    # A criterion is credited only if it FAILS at HEAD's stub check for BOTH
+    # variants (``_fails_all_stub_variants``); passing either one excludes it.
+    credited = {
+        c for c, outcome in head_run.criteria.items()
+        if outcome == "PASS" and _fails_all_stub_variants(c)
+    }
+    excluded = sorted(c for c, outcome in head_run.criteria.items() if outcome == "PASS" and c not in credited)
+    details["credited_criteria"] = sorted(credited)
+    details["stub_excluded_criteria"] = excluded
+    all_keys = set(head_run.criteria) | all_stub_keys
+    details["criteria"] = {
+        c: {
+            "head": head_run.criteria.get(c, "MISSING"),
+            **{v: stub_criteria_by_variant[v].get(c, "MISSING") for v in stub_server.STUB_VARIANTS},
+        }
+        for c in sorted(all_keys)
+    }
+
+    if not credited:
+        return _unverifiable(
+            pr, details, kind="vacuous_oracle",
             why=(
-                f"the configured runner produced no readable test summary "
-                f"(exit_code={head_run.exit_code}); an exit code alone cannot show that the "
-                "oracle ran, let alone that it was able to fail"
+                "every criterion that passed at HEAD also passes the gutted-implementation "
+                "stub — nothing in this oracle is known to discriminate a real implementation "
+                "from a no-op"
             ),
             waiver_sha=oracle_sha,
         )
 
-    # (1) The oracle passed at HEAD. Can it fail AT ALL? Run the same oracle at
-    # the merge base; only a RED base licenses crediting this green.
+    if time.monotonic() > deadline:
+        return _unverifiable(
+            pr, details, kind="oracle_timeout",
+            why="the gate's overall time budget was exhausted before a BASE boot could be attempted",
+            waiver_sha=oracle_sha,
+        )
+
     verdict, base_reason, base_details = _base_run(
-        pr, gates, stored, dest_name,
-        repo_root=repo_root, base_sha=base_sha,
-        cmd_template=cmd_template, oracle_sha=oracle_sha,
+        pr, boot_cfg, oracle_src, dest_name, credited,
+        repo_root=repo_root, base_sha=base_sha, sid=sid, oracle_sha=oracle_sha,
     )
     details["base_run"] = base_details
     if verdict == "green":
         return _unverifiable(
             pr, details, kind="oracle_not_discriminating",
             why=(
-                f"{base_reason}. Its green at HEAD therefore says nothing about this story: "
-                "a tautological oracle (``assert True``) and a criterion a sibling story "
-                "already satisfied look identical from here. Re-author the oracle, tighten "
-                "the direction's acceptance criteria, or record a decision with "
-                "`factory acceptance-waive`"
+                f"{base_reason}. Its green at HEAD therefore says nothing about this story — "
+                "re-author the oracle, tighten the direction's acceptance criteria, or record "
+                "a decision with `factory acceptance-waive`"
             ),
             waiver_sha=oracle_sha,
         )
+
     route = f"red at merge base {base_sha[:12]}, green at HEAD"
     if verdict == "unknown":
-        # The base run could not be trusted. Fall back to ABLATION, which needs no
-        # usable base: gut the production symbols this story's diff touched and
-        # require the oracle to go red. See ``_ablation_can_fail``.
+        if time.monotonic() > deadline:
+            return _unverifiable(
+                pr, details, kind="oracle_timeout",
+                why="the gate's overall time budget was exhausted before the ablation fallback could run",
+                waiver_sha=oracle_sha,
+            )
         proven, abl_reason, abl_details = _ablation_can_fail(
-            gates, stored, dest_name,
-            repo_root=repo_root, head_ref=local_head,
-            base_sha=base_sha, plain=plain, manifests=manifests,
+            boot_cfg, oracle_src, dest_name, credited,
+            repo_root=repo_root, head_ref=local_head, base_sha=base_sha,
+            plain=plain, manifests=manifests, factory_root=Path(root),
             cache_path=_cache_path(pr, "ablation_proofs.json"), oracle_sha=oracle_sha,
         )
         details["failability_ablation"] = abl_details
         if not proven:
             return _unverifiable(
                 pr, details, kind="failability_unverified",
-                why=(
-                    f"{base_reason}, and {abl_reason} — so a green at HEAD cannot be "
-                    "distinguished from an oracle that cannot fail. Regression-only "
-                    "fallback: NOT approving"
-                ),
+                why=f"{base_reason}, and {abl_reason} — regression-only fallback: NOT approving",
                 waiver_sha=oracle_sha,
             )
         route = f"failability proven by ablation ({abl_reason}); the merge-base run was unusable"
 
     clear_gate_block(pr.software_factory_root, story.app, story.id)
     return GateResult(
-        label=_LABEL,
-        passed=True,
-        reason=f"ran independent acceptance oracle exit_code={head_run.exit_code} ({route})",
+        label=_LABEL, passed=True,
+        reason=f"ran independent out-of-process acceptance oracle ({route})",
         details={
-            **details,
-            "authoritative": True,
-            "verified": True,
+            **details, "authoritative": True, "verified": True,
             "failability_route": "merge_base_red" if verdict == "red" else "ablation",
         },
     )
 
 
-def _cache_path(pr: PRContext, name: str) -> Path | None:
-    """Where a per-story cache file lives, or ``None`` when there is no story dir."""
-    root = pr.software_factory_root
-    story = pr.story
-    if root is None or story is None:
-        return None
-    return acceptance_dir(Path(root), story.app, story.id) / name
+def _base_run(
+    pr: PRContext,
+    boot_cfg: AcceptanceBootConfig,
+    oracle_src: str,
+    dest_name: str,
+    credited: set[str],
+    *,
+    repo_root: Path,
+    base_sha: str,
+    sid: object,
+    oracle_sha: str,
+) -> tuple[str, str, dict[str, object]]:
+    """Run the oracle at the merge base; grade OVER ``credited`` (``K``).
+
+    The per-criterion outcome map is what's cached (keyed on the base sha, the
+    oracle, and the boot recipe) — independent of ``K``, so a differently-
+    authored oracle re-derives its own ``K`` against the same cached base
+    result. The FINAL verdict is recomputed fresh every time from that map.
+    """
+    cache_path = _cache_path(pr, "base_runs.json")
+    key = run_key(base_sha, oracle_sha, boot_cfg.command, boot_cfg.cwd or "", str(oracle_run.RUNNER_VERSION))
+    if cache_path is not None:
+        hit = cache_get(cache_path, key)
+        if hit is not None and isinstance(hit.get("criteria"), dict):
+            verdict, reason = verdict_over(credited, hit["criteria"])  # type: ignore[arg-type]
+            return verdict, f"{reason} [cached]", {**hit, "cached": True}
+
+    with judge_worktree(repo_root, base_sha, label="oracle-base") as (base_tree, err):
+        if base_tree is None:
+            return "unknown", f"could not check out the merge base ({err})", {
+                "base_sha": base_sha[:12], "reason": err[:300],
+            }
+        with boot_mod.boot_app(base_tree, boot_cfg, run_id=f"base-{sid}", label="oracle-base") as (base_app, boot_why):
+            if base_app is None:
+                return "unknown", f"the app never became healthy at the merge base: {boot_why[:1000]}", {
+                    "base_sha": base_sha[:12], "boot_failed": True,
+                }
+            base_run = oracle_run.run_oracle(
+                oracle_src, base_url=base_app.base_url, run_id=f"base-{sid}",
+                dest_name=dest_name, timeout_s=boot_cfg.run_timeout_seconds,
+            )
+
+    if not base_run.junit_ok:
+        return "unknown", f"the base run produced no readable per-criterion result (status={base_run.status})", {
+            "base_sha": base_sha[:12], "status": base_run.status, "output_tail": base_run.output[-1500:],
+        }
+
+    verdict, reason = verdict_over(credited, base_run.criteria)
+    out: dict[str, object] = {
+        "base_sha": base_sha[:12], "status": base_run.status, "criteria": base_run.criteria,
+        "exit_code": base_run.exit_code, "output_tail": base_run.output[-1500:],
+    }
+    if cache_path is not None and verdict in {"red", "green"}:
+        cache_put(cache_path, key, {k: v for k, v in out.items() if k != "output_tail"})
+    return verdict, reason, out
+
+
+def _ablation_probe_command(
+    *, factory_root: Path, dest_name: str, boot: AcceptanceBootConfig, run_id: str, credited: set[str]
+) -> str:
+    """Factory-owned argv for the ablation's out-of-process check.
+
+    Invoked by ``mutation.check_can_fail`` as a plain shell command run with
+    ``PATH`` stripped of the caller's own venv (``mutation._mutant_env``), so
+    every path here is either an absolute path or resolved by ``sys.executable``
+    — nothing relies on ``oracle_probe.py`` being importable or on ``PATH``.
+
+    ``credited`` is threaded through as repeated ``--credit`` flags (AC2, found
+    2026-08-07): without it, the probe reads RED off ANY failed criterion, so a
+    mutation that only kills a stub-excluded (vacuous) criterion would license
+    an approval on the ``unknown`` ⇒ ablation route — the one place AC2's
+    exclusion guarantee was not actually enforced.
+    """
+    parts = [
+        shlex.quote(sys.executable), shlex.quote(str(_ORACLE_PROBE_PATH)),
+        "--factory-root", shlex.quote(str(factory_root)),
+        "--tree", ".",
+        "--oracle", shlex.quote(dest_name),
+        "--boot-command", shlex.quote(boot.command),
+        "--boot-cwd", shlex.quote(boot.cwd or ""),
+        "--health-path", shlex.quote(boot.health_path),
+        "--boot-timeout", str(boot.boot_timeout_seconds),
+        "--run-timeout", str(boot.run_timeout_seconds),
+        "--shutdown-grace", str(boot.shutdown_grace_seconds),
+        "--env-passthrough", shlex.quote(",".join(boot.env_passthrough)),
+        "--run-id", shlex.quote(run_id),
+    ]
+    for k, v in (boot.env or {}).items():
+        parts += ["--env", shlex.quote(f"{k}={v}")]
+    for c in sorted(credited):
+        parts += ["--credit", shlex.quote(c)]
+    return " ".join(parts)
 
 
 def _ablation_can_fail(
-    gates: AppGatesConfig,
-    stored: Path,
+    boot_cfg: AcceptanceBootConfig,
+    oracle_src: str,
     dest_name: str,
+    credited: set[str],
     *,
     repo_root: Path,
     head_ref: str,
     base_sha: str,
     plain: list[str],
     manifests: list[str],
-    cache_path: Path | None = None,
-    oracle_sha: str = "",
+    factory_root: Path,
+    cache_path: Path | None,
+    oracle_sha: str,
 ) -> tuple[bool, str, dict[str, object]]:
-    """SECOND route to failability: gut the story's own code, require the oracle to notice.
+    """SECOND route to failability, computed OUT OF PROCESS like the primary path.
 
-    Reached only when the merge-base run came back ``unknown`` — see the module
-    docstring for why that is the only place it is allowed to speak.
-
-    Delegates to ``factory.chain.mutation.check_can_fail`` (PR #239), which
-    materializes its own scratch clone at ``head_ref``, demands a GREEN baseline,
-    splices a raise into ``path::qualname``, and returns ``True`` only for a red it
-    can attribute to that splice. Targets come from
-    ``mutation.select_symbols`` — the PRODUCTION functions this story's diff
-    actually touched, so a proof here says something about *this* story and not
-    just about the oracle in the abstract.
-
-    The ``prepare`` hook reproduces the primary path's structural defences inside
-    that clone: the hidden oracle is copied in (it exists in no repo), the diff's
-    whole test surface is rolled back to the merge base so a hostile ``conftest.py``
-    or ``tests/__init__.py`` at HEAD cannot decide its own ablation verdict, and the
-    clone is confirmed to BE the graded commit. Without those, the fallback would be
-    weaker than the path it stands in for, and a dev who could steer the gate into
-    ``unknown`` would have found a way in.
-
-    CACHED on ``(head sha, oracle content, command, base sha)`` — B5. Every part is
-    immutable, which is the same argument the ``red`` base-verdict cache already
-    rests on: the graded commit does not change under a given sha, and the oracle is
-    frozen. Without it the route re-ran on every tick of every open PR (measured
-    1.45 s cold / 1.43 s warm on a toy repo, 15-30 s in a fresh clone and more for an
-    app with a DB container) — and the manifest fix above pushes MORE stories here,
-    because a dependency-adding story's base run cannot resolve the dependency it
-    adds and therefore comes back ``unknown``.
-
-    ``base_sha`` is in the key although the docstring's headline triple does not name
-    it: the rollback set and the ``prepare`` hook are both computed against the base,
-    so a proof is only about the tree that base produced. It costs no hit rate — a
-    checkout whose base moved has a different HEAD too.
-
-    Only a PROOF is cached. A ``False`` can be a timeout or an exhausted budget, and
-    freezing that would turn a fixable environment fault into a permanent block —
-    the same reason an ``unknown`` base verdict is never cached.
-
-    Returns ``(proven, reason, details)``. Every non-proof is ``False``.
+    ``check_command`` is ``oracle_probe.py``, invoked by absolute path: it boots
+    the app from the SAME scratch clone ``mutation.check_can_fail`` mutates,
+    drives the oracle over HTTP, and exits 0/1/other for GREEN/RED/INFRA
+    (``mutation._run_suite``'s exact contract). Kill attribution is the
+    SENTINEL FILE ``mutate_source`` writes before raising — a filesystem check
+    after the run, unaffected by which process actually executed the mutated
+    body (the booted app, a grandchild of ``check_command``'s own subprocess).
     """
     from factory.chain import mutation
 
     attempts: list[dict[str, object]] = []
     out: dict[str, object] = {"route": "ablation", "attempts": attempts}
 
-    command = _fmt_command(
-        _command_template(gates), test_file=_oracle_test_file(gates, dest_name)
+    command = _ablation_probe_command(
+        factory_root=factory_root, dest_name=dest_name, boot=boot_cfg,
+        run_id=f"ablation-{head_ref[:12]}", credited=credited,
     )
     out["command"] = command
 
-    # ``dir``/``cwd`` join the key for the same reason ``_base_run``'s key carries
-    # them: two configs can produce an identical relative ``{test_file}`` while
-    # running in different directories (dir=``a/tests``,cwd=``a`` and
-    # dir=``b/tests``,cwd=``b`` both yield ``tests/<name>``), and a proof is only
-    # about the harness that produced it.
-    key = run_key(
-        head_ref, oracle_sha, command, base_sha,
-        gates.acceptance_test_dir or "", gates.acceptance_test_cwd or "",
-    )
+    per_attempt_timeout = 2 * boot_cfg.boot_timeout_seconds + boot_cfg.run_timeout_seconds + 120
+    min_run_s = 2 * boot_cfg.boot_timeout_seconds + _ABLATION_MIN_RUN_BASE_S
+
+    key = run_key(head_ref, oracle_sha, command, base_sha)
     if cache_path is not None:
         hit = cache_get(cache_path, key)
         if hit is not None and hit.get("proven") is True:
             reason = f"{hit.get('reason', '')} [cached]"
             return True, reason, {**hit, "reason": reason, "cached": True}
 
-    selection = mutation.select_symbols(
-        repo_root, base_sha, head_ref, max_symbols=_MAX_ABLATION_TARGETS
-    )
+    selection = mutation.select_symbols(repo_root, base_sha, head_ref, max_symbols=_MAX_ABLATION_TARGETS)
     if selection is None:
         why = f"the diff {base_sha[:12]}..{head_ref} could not be read, so there is nothing to ablate"
         out["reason"] = why
@@ -1133,140 +1046,47 @@ def _ablation_can_fail(
         return False, why, out
 
     def _prepare(tree: Path) -> str | None:
-        # ``mutation._materialize_tree`` falls back to copying the WORKING TREE when
-        # it cannot clone, and a copy carries the dev's UNTRACKED files (a stray
-        # ``conftest.py``, a ``sitecustomize.py``) while carrying no ``.git`` — so
-        # the channel rollback below silently has nothing to roll back. Refuse
-        # anything that is not a real checkout at the commit we asked for. This is
-        # D2's property (grade the merge candidate or grade nothing) applied to the
-        # second tree; without it the fallback grades a tree nobody committed.
         actual = head_sha(tree)
         if actual != head_ref:
             return (
-                f"the scratch tree is at {actual!r}, not the graded commit "
-                f"{head_ref[:12]} — it is a working-tree copy or a wrong checkout, "
-                "and its collection config is not the merge candidate's"
+                f"the scratch tree is at {actual!r}, not the graded commit {head_ref[:12]} — "
+                "it is a working-tree copy or a wrong checkout"
             )
         rolled = _roll_back_environment(tree, base_sha, plain, manifests)
         if rolled.failed:
-            return (
-                f"could not restore collection channel(s) {rolled.failed!r} from the merge "
-                "base — the diff would still control how the oracle is collected"
-            )
+            return f"could not restore collection channel(s) {rolled.failed!r} from the merge base"
         try:
-            _place_oracle(tree, gates, stored, dest_name)
-        except (_ConfigError, OSError) as exc:
-            return f"the acceptance harness does not resolve in the scratch tree ({exc})"
+            (tree / dest_name).write_text(oracle_src, encoding="utf-8")
+        except OSError as exc:
+            return f"could not place the oracle in the scratch tree ({exc})"
         return None
 
     deadline = time.monotonic() + _ABLATION_BUDGET_S
     for sym in symbols:
         remaining = int(deadline - time.monotonic())
-        if remaining < _ABLATION_MIN_RUN_S:
+        if remaining < min_run_s:
             out["budget_exhausted_after"] = len(attempts)
             break
         proven, detail = mutation.check_can_fail(
-            repo_root=repo_root,
-            head_ref=head_ref,
-            target_path=sym.path,
-            qualname=sym.qualname,
-            check_command=command,
-            timeout_s=min(_ABLATION_TIMEOUT_S, remaining),
-            prepare=_prepare,
-            run_cwd=gates.acceptance_test_cwd,
+            repo_root=repo_root, head_ref=head_ref, target_path=sym.path, qualname=sym.qualname,
+            check_command=command, timeout_s=min(per_attempt_timeout, remaining), prepare=_prepare,
         )
         attempts.append({"symbol": sym.key, "proven": proven, "detail": detail[:300]})
         if proven:
             out["proven_by"] = sym.key
             out["reason"] = detail
             if cache_path is not None:
-                cache_put(
-                    cache_path,
-                    key,
-                    {
-                        "proven": True,
-                        "reason": detail[:300],
-                        "proven_by": sym.key,
-                        "route": "ablation",
-                        "head_ref": head_ref[:12],
-                        "base_sha": base_sha[:12],
-                    },
-                )
+                cache_put(cache_path, key, {
+                    "proven": True, "reason": detail[:300], "proven_by": sym.key,
+                    "route": "ablation", "head_ref": head_ref[:12], "base_sha": base_sha[:12],
+                })
             return True, detail, out
 
     why = (
         f"ablating {len(attempts)} of this story's own production symbol(s) "
         f"({', '.join(str(a['symbol']) for a in attempts)}) never made the oracle go red"
         if attempts
-        else f"the ablation fallback ran out of its {_ABLATION_BUDGET_S}s budget "
-             "before it could measure anything"
+        else f"the ablation fallback ran out of its {_ABLATION_BUDGET_S}s budget before it could measure anything"
     )
     out["reason"] = why
     return False, why, out
-
-
-def _base_run(
-    pr: PRContext,
-    gates: AppGatesConfig,
-    stored: Path,
-    dest_name: str,
-    *,
-    repo_root: Path,
-    base_sha: str,
-    cmd_template: str,
-    oracle_sha: str,
-) -> tuple[str, str, dict[str, object]]:
-    """Run the oracle at the merge base; ``(verdict, reason, details)``.
-
-    CACHED on ``(base sha, oracle content, command, dir, cwd)`` — everything the
-    result depends on. The base tree for a given sha is immutable and the oracle is
-    frozen, so re-running it on every tick of every open PR buys nothing. Only
-    DEFINITIVE verdicts (``red``/``green``) are cached: caching an ``unknown``
-    would freeze a transient infra fault into a block that fixing the environment
-    could never clear.
-    """
-    cache_path = _cache_path(pr, "base_runs.json")
-    key = run_key(
-        base_sha, oracle_sha, cmd_template,
-        gates.acceptance_test_dir or "", gates.acceptance_test_cwd or "",
-    )
-    if cache_path is not None:
-        hit = cache_get(cache_path, key)
-        if hit is not None and hit.get("verdict") in {"red", "green"}:
-            return (
-                str(hit["verdict"]),
-                f"{hit.get('reason', '')} [cached]",
-                {**hit, "cached": True},
-            )
-
-    with judge_worktree(repo_root, base_sha, label="oracle-base") as (base_tree, err):
-        if base_tree is None:
-            return "unknown", f"could not check out the merge base ({err})", {
-                "verdict": "unknown", "reason": err[:300], "base_sha": base_sha[:12],
-            }
-        try:
-            run = _run_oracle_in(base_tree, gates, stored, dest_name)
-        except _ConfigError as exc:
-            # e.g. ``acceptance_test_dir`` is a directory this story CREATES, so it
-            # does not exist at the base. Unknown, not red: "the harness could not
-            # run" is not "the test failed".
-            return "unknown", f"the acceptance config does not resolve at the base ({exc})", {
-                "verdict": "unknown", "reason": str(exc)[:300], "base_sha": base_sha[:12],
-            }
-        except OSError as exc:
-            return "unknown", f"the base run could not start ({exc})", {
-                "verdict": "unknown", "reason": repr(exc)[:300], "base_sha": base_sha[:12],
-            }
-
-    verdict, reason, summary = base_verdict(run.exit_code, run.output)
-    out: dict[str, object] = {
-        "verdict": verdict,
-        "reason": reason,
-        "base_sha": base_sha[:12],
-        "exit_code": run.exit_code,
-        "summary": summary.as_dict() if summary is not None else None,
-        "output_tail": run.output[-1500:],
-    }
-    if cache_path is not None and verdict in {"red", "green"}:
-        cache_put(cache_path, key, {k: v for k, v in out.items() if k != "output_tail"})
-    return verdict, reason, out

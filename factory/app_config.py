@@ -61,6 +61,64 @@ class DeployConfig(BaseModel):
     timeout_seconds: int = 600
 
 
+class AcceptanceBootConfig(BaseModel):
+    """019 AC3 — how ``acceptance-verified`` boots a real instance of the app.
+
+    Consumed by ``factory/chain/boot.py``. Every field is a plain string/int —
+    the factory stays stack-agnostic; the app declares the recipe.
+    """
+
+    #: The shell command that starts the app, MUST contain ``{port}`` (the
+    #: gate refuses to boot without it — see ``boot.boot_app``). May also use
+    #: ``{base_url}`` / ``{run_id}`` / ``{run_dir}`` — all four are substituted
+    #: by LITERAL replace, never ``str.format``, so a command containing other
+    #: braces (a compose var, a jq filter) cannot raise ``KeyError`` and abort
+    #: the whole merge evaluation. Example:
+    #: ``"uv run uvicorn app.main:app --host 127.0.0.1 --port {port}"``.
+    command: str = ""
+    #: Repo-relative directory the boot command runs in. ``None``/empty = the
+    #: tree root.
+    cwd: str | None = None
+    #: HTTP path polled (and re-probed after the run) to decide "healthy".
+    health_path: str = "/health"
+    boot_timeout_seconds: int = 180
+    run_timeout_seconds: int = 300
+    shutdown_grace_seconds: float = 5.0
+    #: Extra env vars for the booted app. Values may use the same four
+    #: substitution tokens as ``command`` (e.g. a media dir under
+    #: ``{run_dir}``), substituted the same literal way.
+    env: dict[str, str] = Field(default_factory=dict)
+    #: Names of CURRENT-PROCESS env vars forwarded to the booted app verbatim.
+    #: Deliberately NOT the whole environment — the boot command runs in a
+    #: constructed env, not an inherited one, so a stray var from the gate's
+    #: own process can't leak into the app under test by accident.
+    #:
+    #: ``TMPDIR`` is deliberately ABSENT (found 2026-08-07): the booted app is
+    #: the diff's own production code, and forwarding the gate's temp root
+    #: hands it the exact directory the oracle's throwaway run-dir lives
+    #: under, which a background thread can poll and tamper with. Removing it
+    #: narrows discoverability; it does NOT close the hole by itself — a
+    #: same-user process can still guess the OS default ``/tmp`` without any
+    #: env var at all. The mechanism that actually closes it is
+    #: ``oracle_run._tamper_check`` (see that module's docstring): this field
+    #: is defence in depth, not the boundary.
+    env_passthrough: list[str] = Field(
+        default_factory=lambda: ["PATH", "HOME", "LANG", "LC_ALL", "UV_CACHE_DIR", "XDG_CACHE_HOME"]
+    )
+    #: A CHECK the app's dependency (a DB container, …) is already up — never
+    #: a start command. ``None`` = nothing to check. See ``boot.check_prerequisite``.
+    prerequisite_command: str | None = None
+    #: Operator-facing action named in the block reason when the prerequisite
+    #: fails (e.g. ``"make up-db"``).
+    prerequisite_hint: str | None = None
+    #: Optional shell hooks run before/after the boot, for app-specific setup
+    #: (seeding, migrations) the boot command itself does not do. Neither is
+    #: required; both are best-effort and their failure does not by itself
+    #: block (the health poll is the real gate).
+    setup_command: str | None = None
+    teardown_command: str | None = None
+
+
 class AppGatesConfig(BaseModel):
     """Per-app gate commands consumed by the auto-merge worker (Phase 4).
 
@@ -107,72 +165,67 @@ class AppGatesConfig(BaseModel):
     # avoiding the PRs 110/111 "every merge blocked" regression).
     smoke_harness_ready: bool = False
 
-    # WS1.2 independent acceptance oracle. When True, the chain authors an
-    # acceptance test from each story's direction acceptance criteria (the SPEC
-    # ONLY, blind to the dev's code/tests) at spawn time, stores it in factory
-    # state OUTSIDE the dev worktree, and the ``acceptance-verified`` gate copies
-    # it into the merge-candidate checkout and runs it as a REQUIRED gate. Off by
-    # default so the rollout is per-app opt-in — an app that hasn't enabled it
-    # sees no new merge blocks (mirrors the ``smoke_harness_ready`` rollout).
+    # WS1.2 / 019 AC2+AC3 — independent acceptance oracle. When True, the chain
+    # authors an acceptance test from each story's direction acceptance
+    # criteria (the SPEC ONLY, blind to the dev's code/tests) at spawn time,
+    # stores it in factory state OUTSIDE the dev worktree, and
+    # ``acceptance-verified`` runs it as a REQUIRED gate for every non-docs
+    # story. Off by default so the rollout is per-app opt-in — an app that
+    # hasn't enabled it sees no new merge blocks (mirrors the
+    # ``smoke_harness_ready`` rollout). Required-ness deliberately does NOT
+    # depend on a DB flag — see ``evaluator.required_gate_labels``.
     #
-    # Turning this on makes ``acceptance-verified`` a REQUIRED gate for every
-    # non-docs story in the app (the gate itself decides applicability: a story
-    # whose direction carries no acceptance criteria passes as "not applicable").
-    # Required-ness deliberately does NOT depend on a DB flag — see
-    # ``evaluator.required_gate_labels``. Before flipping it, set
-    # ``acceptance_test_dir`` / ``acceptance_test_cwd`` / ``acceptance_test_command``
-    # so the authored test can actually import the app, and
-    # ``acceptance_harness_hint`` so the author knows where the app lives.
+    # THE VERDICT IS NOW COMPUTED OUT OF PROCESS (2026-08-07, 019 AC3). The
+    # in-process runner — the oracle imported the diff's production code and
+    # ran under ``pytest`` in the SAME interpreter that graded it — carried a
+    # forgery hole no file-level rollback could close: three lines of
+    # production code reassigning pytest's own test-runner function forged a
+    # genuine-looking red-at-base -> green-at-HEAD (pinned by
+    # ``test_KNOWN_OPEN_production_code_can_patch_pytest_in_process``, an
+    # ``xfail(strict=True)`` that is WHY this flag stayed off). That test now
+    # HARD PASSES: the oracle's verdict is computed by a SEPARATE process
+    # driving a BOOTED instance of the app over HTTP
+    # (``factory/chain/boot.py`` + ``factory/chain/oracle_run.py``, the
+    # ``smoke_green`` pattern), so the interpreter that grades the diff never
+    # imports a single line the diff wrote. See ``gates/acceptance_verified``.
     #
-    # ⚠ DO NOT FLIP THIS YET (as of 2026-08-05), and the reason is NOT the rollout
-    # mechanics above. A KNOWN IN-PROCESS FORGERY HOLE survives: three lines of
-    # production code that reassign pytest's test-runner function to a no-op forge a
-    # genuine-looking red-at-base -> green-at-HEAD, so the gate's green would carry
-    # no information. No file-level rollback closes it (the acceptance gate already
-    # rolls the dev's collection channels back to base); it needs an OUT-OF-PROCESS
-    # behavioural oracle. Same class: a HEAD dependency that registers a ``pytest11``
-    # entry point via a local-path dep.
-    #
-    # The hole is pinned by an ``xfail(strict=True)`` in
-    # ``tests/test_acceptance_oracle_green_means_something.py`` whose reason states
-    # it is why this flag is off — so a silent "fix" fails the suite. Read that test
-    # before flipping this. Every OTHER blocker closed in PR #242 (failability via
-    # ``factory/chain/red_green.py``, dev-controlled collection config, and
-    # merge-candidate provenance). ``apps/sacrifice/config.yaml`` already carries the
-    # four prerequisite settings, so this looks flippable and is not.
+    # Enabling this ALSO requires ``acceptance_boot`` below — the gate refuses
+    # to run without it (``oracle_runner_unconfigured``, never waivable). That
+    # refusal lives at the GATE, not at config LOAD time: ``bench/**`` writes
+    # ``acceptance_oracle: True`` with no boot block at all (the swebench arm
+    # has no real app to boot) and is out of scope for this config — a
+    # load-time ``raise`` here would abort ``run_factory`` for that arm. A
+    # load-time validator for every OTHER app is a follow-up in the operator
+    # queue, not built here.
     acceptance_oracle: bool = False
-    # Command template the acceptance gate runs, with ``{test_file}`` substituted
-    # for the copied-in test's path (relative to ``acceptance_test_cwd``).
-    # Defaults to ``<this interpreter> -m pytest {test_file} -q`` when unset; apps
-    # whose suite needs a wrapper (e.g. ``uv run --extra dev pytest {test_file}
-    # -q``) override it here so the oracle runs against the app's real python env.
-    #
-    # Substitution is a literal replace, so a template may contain other braces
-    # without exploding (a ``KeyError`` from ``str.format`` used to escape the
-    # gate and abort the whole merge evaluation).
+    # WS1.2-era in-process settings. INERT since 019 AC3 — the out-of-process
+    # runner never copies the oracle into any checkout at all, so there is no
+    # "where does it land" or "what command runs it" left to configure here.
+    # Kept ONLY so an old ``apps/<app>/config.yaml`` keeps PARSING (a removed
+    # field would be a config-load break for every app that still carries
+    # one); nothing reads these three any more. Use ``acceptance_boot`` below.
     acceptance_test_command: str | None = None
-    # WHERE in the checkout the oracle file is placed, repo-relative. Default
-    # (unset) = the checkout root, which is wrong for most real apps and was a
-    # 100%-false-block: measured 2026-08-05 against sacrifice, an oracle dropped
-    # at the repo root cannot import the app at all (``No module named 'app'``)
-    # because the package lives under ``backend/`` and the env defaults its
-    # conftest sets are only loaded for files under ``backend/tests/``. Point this
-    # at the app's own test directory (sacrifice: ``backend/tests``) so the oracle
-    # runs inside the same harness the app's own suite gets.
+    # INERT — see ``acceptance_test_command`` above.
     acceptance_test_dir: str | None = None
-    # WHERE the command runs, repo-relative (``cwd``). Default (unset) = the
-    # checkout root. Must be the directory the app's pytest config/rootdir lives
-    # in (sacrifice: ``backend``), because that is what puts the app package on
-    # ``sys.path``. ``{test_file}`` is rendered relative to THIS directory.
+    # INERT — see ``acceptance_test_command`` above.
     acceptance_test_cwd: str | None = None
     # Operator-written HARNESS FACTS handed to the acceptance author: how to
-    # import/boot the app and drive its public surface (module path of the ASGI
-    # app, the test client to use, a CLI entrypoint, …). This is repo LAYOUT, not
-    # the dev's implementation — the author still never sees the dev's code or
-    # tests, so independence is preserved — and without it the author must GUESS
-    # module paths, which is exactly how the first real run failed. Keep it to
-    # stable, spec-adjacent facts that are true for every story in the app.
+    # import/boot the app and drive its public surface. STILL LIVE under
+    # AC3 — the author now writes an HTTP journey (``httpx`` against
+    # ``ACCEPTANCE_BASE_URL``) rather than an in-process import, and this hint
+    # is where the operator says which paths/prefixes/auth flow it should use
+    # (see ``acceptance_author.md``). This is repo LAYOUT, not the dev's
+    # implementation — the author still never sees the dev's code or tests —
+    # and without it the author must GUESS routes, which is exactly how the
+    # first real (in-process) run failed. Keep it to stable, spec-adjacent
+    # facts that are true for every story in the app.
     acceptance_harness_hint: str | None = None
+    # 019 AC3 — how to BOOT a real instance of the app for the oracle to drive.
+    # ``None`` (the default) means the out-of-process runner is unconfigured:
+    # the gate blocks with ``oracle_runner_unconfigured`` rather than silently
+    # skipping, because an app that opted into ``acceptance_oracle`` but never
+    # configured a boot recipe would otherwise ship every story un-gated.
+    acceptance_boot: AcceptanceBootConfig | None = None
 
     # Flaky-test quarantine (WS4.4). When True, the ``tests-green`` real-run gate
     # routes a RED ``test_command`` through flake detection: any failing test is
