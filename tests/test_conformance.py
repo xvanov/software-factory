@@ -294,6 +294,7 @@ def test_every_documented_bypass_in_the_real_code_is_accepted() -> None:
         ("sm_done", "blocked_dependency_unmet", "orchestrator.tick"),
         ("dev_in_progress", "sm_done", "orchestrator.tick"),
         ("pr_open", "blocked_ci_unresolved", "auto_merge._park"),
+        ("pr_open", "blocked_ci_unresolved", "auto_merge._park_gate_block_exhausted"),
         ("pr_open", "reviewer_requested_changes", "auto_merge._handle_ci_failure"),
         ("pr_open", "reviewer_requested_changes", "auto_merge._handle_pr_conflict_rebuild"),
         ("ready_for_merge", "superseded_by_sibling", "auto_merge.auto_merge_tick"),

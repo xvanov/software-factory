@@ -332,6 +332,36 @@ def test_tests_meaningful_reports_that_mutation_is_not_a_gate(
     assert r.details["mutation_status"] == "not_a_merge_gate"
 
 
+def test_tests_meaningful_does_not_pass_vacuously_when_files_unavailable(
+    app_cfg_empty: AppConfig,
+) -> None:
+    """2026-08-07: the tick path synthesized ``files_changed=[]`` for every
+    real PR (no ``github_client``), so this REQUIRED gate always scanned
+    nothing and reported "no findings" — green without ever running. A real,
+    real-run PR (``pr_number > 0``, ``dry_run=False``) with an unresolved file
+    list must BLOCK, not pass."""
+    pr = PRContext(
+        pr_number=42, head_sha="a" * 40, base_branch="main", files_changed=[], dry_run=False
+    )
+    r = tests_meaningful.evaluate(pr, app_cfg_empty)
+    assert not r.passed
+    assert "cannot determine" in r.reason
+    assert r.details["files_changed_unavailable"] is True
+
+
+def test_tests_meaningful_dry_run_empty_files_still_passes_vacuously(
+    app_cfg_empty: AppConfig,
+) -> None:
+    """The genuine dry-run / no-checkout preview keeps its old shape — an
+    empty file list there means "nothing to preview", not "couldn't resolve
+    the diff", so it must not start blocking previews that never touched gh."""
+    pr = PRContext(
+        pr_number=42, head_sha="a" * 40, base_branch="main", files_changed=[], dry_run=True
+    )
+    r = tests_meaningful.evaluate(pr, app_cfg_empty)
+    assert r.passed
+
+
 # --- the hazard this gate used to carry ----------------------------------- #
 #
 # ``tests-meaningful`` is in LOOP4_REQUIRED_GATE_LABELS, and it used to run
@@ -463,6 +493,29 @@ def test_canonical_paths_only_fails_on_forbidden_diff(app_cfg_empty: AppConfig) 
     )
     r = canonical_paths_only.evaluate(pr, app_cfg_empty)
     assert not r.passed
+
+
+def test_canonical_paths_only_does_not_pass_vacuously_when_files_unavailable(
+    app_cfg_empty: AppConfig,
+) -> None:
+    """Same fail-open as ``tests-meaningful`` (2026-08-07): an unresolved file
+    list on a real PR must block, never pass by scanning nothing."""
+    pr = PRContext(
+        pr_number=42, head_sha="a" * 40, base_branch="main", files_changed=[], dry_run=False
+    )
+    r = canonical_paths_only.evaluate(pr, app_cfg_empty)
+    assert not r.passed
+    assert "cannot determine" in r.reason
+
+
+def test_canonical_paths_only_dry_run_empty_files_still_passes_vacuously(
+    app_cfg_empty: AppConfig,
+) -> None:
+    pr = PRContext(
+        pr_number=42, head_sha="a" * 40, base_branch="main", files_changed=[], dry_run=True
+    )
+    r = canonical_paths_only.evaluate(pr, app_cfg_empty)
+    assert r.passed
 
 
 # --- production_tree_changed --------------------------------------------- #

@@ -78,6 +78,18 @@ _MERGEABLE_STATES = {
 # ``handlers._MAX_REVIEW_CYCLES``.
 _MAX_CI_FIX_CYCLES = 3
 
+# Required-gate-block exhaustion. A "missing gate labels" MergeAction used to
+# just sit there: PR_OPEN is not in ``orchestrator._AUTO_RECOVERABLE_STATES``,
+# a gate failure is not a CI failure so ``_handle_ci_failure`` never fires for
+# it, and ``merge_actions`` rows are written but never read back as a counter
+# — so the SAME PR got re-evaluated every tick FOREVER. Measured live
+# 2026-08-07: PR 88 alone re-evaluated 436 times on 'missing gate labels:
+# [smoke-green]' (580 across all evaluations), each re-running tests-green AND
+# smoke-green at 600s a piece, on BOTH the start-of-tick and end-of-tick
+# ``auto_merge_tick`` calls. Same cap, same rationale as ``_MAX_CI_FIX_CYCLES``
+# just above: nothing loops more than 3 times (CLAUDE.md).
+_MAX_GATE_BLOCK_CYCLES = 3
+
 # CONFLICT -> dev REBUILD loop. When an open PR is genuinely CONFLICTING with
 # main (a real content conflict, mergeable=="CONFLICTING" / mergeStateStatus
 # DIRTY — NOT merely BEHIND, which ``_attempt_pr_reconcile``'s
@@ -825,6 +837,102 @@ def _sibling_already_shipped(
         return False
 
 
+def _gate_block_history(
+    *, story_id: int, head_sha: str, root: Path | None, slug: str | None
+) -> tuple[int, dict[str, Any] | None]:
+    """Prior REQUIRED-gate blocks already recorded for THIS exact head sha.
+
+    Derived from the existing ``merge_gates_failed`` event stream rather than a
+    new mutable counter column — every one of those events already carries
+    ``head_sha``, and (since the fix alongside this) ``missing_labels``.
+    Counting them back out is cheap and needs no schema change.
+
+    Returns ``(count, last_payload)``: ``count`` is how many prior events for
+    ``(story_id, head_sha)`` had a non-empty ``missing_labels`` (i.e. actually
+    BLOCKED the merge, not merely a non-required gate failing); ``last_payload``
+    is the most recent one, which the caller reuses to skip re-running the
+    gates. A NEW commit produces a NEW ``head_sha``, so both the count and the
+    skip reset for free the moment the story pushes a fix — nothing here needs
+    to notice a commit happened, it just stops matching.
+    """
+    from factory.chain.event_log import read_story_events
+
+    events = read_story_events(story_id, software_factory_root=root, slug_hint=slug or "")
+    matches = [
+        e
+        for e in events
+        if e.get("event") == "merge_gates_failed"
+        and e.get("head_sha") == head_sha
+        and e.get("missing_labels")
+    ]
+    if not matches:
+        return 0, None
+    return len(matches), matches[-1]
+
+
+def _park_gate_block_exhausted(
+    *,
+    story: StoryRecord,
+    fixture: FixturePR,
+    missing_labels: list[str],
+    block_count: int,
+    root: Path | None,
+    db_path: Path | None,
+) -> None:
+    """Required-gate-block exhaustion -> the SAME terminal sink a real CI
+    failure already has (``_handle_ci_failure``'s ``_park``): the story parks
+    in ``BLOCKED_CI_UNRESOLVED`` so it stops being re-evaluated every tick.
+
+    Unlike the CI-failure park, this does NOT close the PR — a required-gate
+    block (e.g. a flaky ``smoke-green``) is not necessarily a wrong
+    implementation the way a genuine CI red is, and an operator may want to fix
+    the harness and let the SAME PR through rather than have it destroyed
+    out from under them. Only the story's own state stops looping; the PR
+    stays open for a human (or a future commit) to resolve.
+
+    Sets ``last_rejection_reason`` — unlike the CI-failure park, which does
+    not — so this reaches ``factory inbox``: ``blocked_ci_unresolved`` is on
+    the tracker-closer's resolved-states allowlist (by design: the ticket
+    genuinely IS done rotting the tick loop), but the inbox predicate carves
+    an exception back out for exactly this reason field (see ``cli.py``).
+    """
+    from factory.chain.event_log import log_story_event
+    from factory.chain.handlers import persist_story
+
+    reason = (
+        f"gate_block_exhausted: required gate(s) {missing_labels!r} never passed "
+        f"after {block_count} consecutive evaluations of head {fixture.head_sha[:12]}"
+    )
+    story.state = StoryState.BLOCKED_CI_UNRESOLVED.value
+    story.last_rejection_reason = reason
+    story.error = (
+        f"auto-merge: {reason}. Parked so it stops being re-evaluated every tick — "
+        f"fix the failing gate(s) for PR #{fixture.pr_number} and push a new commit "
+        "to resume (a new head sha resets this), or close the PR by hand."
+    )
+    if db_path is not None:
+        try:
+            persist_story(story, db_path)
+        except Exception:  # noqa: BLE001 - best-effort; the event below still fires
+            pass
+    try:
+        log_story_event(
+            story.id,
+            "gate_block_exhausted",
+            {
+                "pr_number": fixture.pr_number,
+                "head_sha": fixture.head_sha,
+                "missing_labels": missing_labels,
+                "block_count": block_count,
+                "cap": _MAX_GATE_BLOCK_CYCLES,
+            },
+            software_factory_root=root,
+            slug_hint=story.slug,
+        )
+    except Exception:  # noqa: BLE001 - telemetry only, never break the park
+        pass
+
+
 def _evaluate_one_pr(
     *,
     app: str,
@@ -920,10 +1028,46 @@ def _evaluate_one_pr(
     # The TDD gate evaluator is only relevant for the TDD chain; for
     # docs PRs we skip it (the enforcer already vetted the diff in the
     # ``handle_docs_enforcer`` step).
+    # Tracks the gate-block cap + skip below — only meaningful for a real,
+    # persisted story evaluated in real-run: dry-run previews and placeholder
+    # (no-PR) fixtures must behave exactly as before (existing tests pin that
+    # shape), and there is no stable per-commit key to cap without a real PR.
+    gate_block_tracked = (
+        not dry_run
+        and fixture.pr_number > 0
+        and story is not None
+        and story.id is not None
+    )
+    prior_block_count = 0
+    prior_block: dict[str, Any] | None = None
+    if gate_block_tracked:
+        assert story is not None and story.id is not None
+        prior_block_count, prior_block = _gate_block_history(
+            story_id=story.id,
+            head_sha=fixture.head_sha,
+            root=software_factory_root,
+            slug=story.slug,
+        )
+
     if docs_chain:
         gates_passed: list[str] = sorted(_DOCS_CHAIN_GATE_LABELS)
         gates_failed: list[dict[str, Any]] = []
         missing_labels: list[str] = []
+        skipped_reevaluation = False
+    elif prior_block is not None:
+        # Cheap short-circuit (found 2026-08-07, measured live: PR 88 alone
+        # re-evaluated 436 times — tests-green + smoke-green both re-run at
+        # 600s a piece, on EVERY start-of-tick AND end-of-tick
+        # ``auto_merge_tick`` call, for a verdict that cannot change without a
+        # new commit). This exact head sha ALREADY has a recorded
+        # required-gate block on file — reuse that verdict instead of paying
+        # for tests-green/smoke-green again. A new commit produces a new
+        # ``head_sha``, which never matches a stale ``prior_block`` and falls
+        # straight through to a fresh evaluation below.
+        skipped_reevaluation = True
+        gates_passed = list(prior_block.get("gates_passed") or [])
+        gates_failed = list(prior_block.get("failed") or [])
+        missing_labels = list(prior_block.get("missing_labels") or [])
     else:
         pr_ctx = PRContext(
             pr_number=fixture.pr_number,
@@ -945,36 +1089,7 @@ def _evaluate_one_pr(
         # gate failed but never WHY. Persisted on the MergeAction and logged as
         # a story event so ``factory trace <id>`` shows the diagnosis.
         gates_failed = [r.as_dict() for r in results.values() if not r.passed]
-        # ``story.id`` is None for an unpersisted fixture story; the per-story
-        # event log is keyed on it, so skip the event rather than writing an
-        # orphan. The MergeAction and the merge_actions row still carry the
-        # diagnosis in that case.
-        if gates_failed and story is not None and story.id is not None:
-            from factory.chain.event_log import log_story_event
-
-            log_story_event(
-                story.id,
-                "merge_gates_failed",
-                {
-                    "pr_number": fixture.pr_number,
-                    "head_sha": fixture.head_sha,
-                    "failed": gates_failed,
-                    # This write is NOT suppressed in dry-run, so mark it. A
-                    # preview's gate evaluation is real but its verdict is
-                    # provisional (dry-run gates read recorded flags instead of
-                    # shelling out), and ``factory auto-merge`` defaults to
-                    # --dry-run. An unlabelled record is indistinguishable from
-                    # a real merge-time failure by ``factory trace`` or by any
-                    # future consumer. Suppressing it outright is the more
-                    # correct "dry-run is a pure preview" behaviour but needs
-                    # the real-run coverage in
-                    # tests/test_auto_merge_failed_gate_diagnostics.py rebuilt
-                    # against a non-dry-run tick, which is out of scope here.
-                    "dry_run": dry_run,
-                },
-                software_factory_root=software_factory_root,
-                slug_hint=story.slug,
-            )
+        skipped_reevaluation = False
 
         # Compute the labels the chain would have added on previous
         # ticks. In real-run we trust the actual PR labels; in dry-run
@@ -998,6 +1113,41 @@ def _evaluate_one_pr(
             for label in required_gate_labels(app_config, story)
             if label not in present_labels
         ]
+
+    if not docs_chain:
+        # ``story.id`` is None for an unpersisted fixture story; the per-story
+        # event log is keyed on it, so skip the event rather than writing an
+        # orphan. The MergeAction and the merge_actions row still carry the
+        # diagnosis in that case.
+        if gates_failed and story is not None and story.id is not None:
+            from factory.chain.event_log import log_story_event
+
+            log_story_event(
+                story.id,
+                "merge_gates_failed",
+                {
+                    "pr_number": fixture.pr_number,
+                    "head_sha": fixture.head_sha,
+                    "failed": gates_failed,
+                    "missing_labels": missing_labels,
+                    "gates_passed": gates_passed,
+                    # This write is NOT suppressed in dry-run, so mark it. A
+                    # preview's gate evaluation is real but its verdict is
+                    # provisional (dry-run gates read recorded flags instead of
+                    # shelling out), and ``factory auto-merge`` defaults to
+                    # --dry-run. An unlabelled record is indistinguishable from
+                    # a real merge-time failure by ``factory trace`` or by any
+                    # future consumer. Suppressing it outright is the more
+                    # correct "dry-run is a pure preview" behaviour but needs
+                    # the real-run coverage in
+                    # tests/test_auto_merge_failed_gate_diagnostics.py rebuilt
+                    # against a non-dry-run tick, which is out of scope here.
+                    "dry_run": dry_run,
+                    "skipped_reevaluation": skipped_reevaluation,
+                },
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
 
     blocking_present = sorted(set(fixture.labels) & BLOCKING_LABELS)
 
@@ -1025,6 +1175,31 @@ def _evaluate_one_pr(
         )
 
     if missing_labels:
+        if gate_block_tracked:
+            block_count = prior_block_count + 1
+            if block_count >= _MAX_GATE_BLOCK_CYCLES:
+                assert story is not None
+                _park_gate_block_exhausted(
+                    story=story,
+                    fixture=fixture,
+                    missing_labels=missing_labels,
+                    block_count=block_count,
+                    root=software_factory_root,
+                    db_path=db_path,
+                )
+                return MergeAction(
+                    app=app,
+                    pr_number=fixture.pr_number,
+                    merged=False,
+                    reason=(
+                        f"gate block exhausted: required gate(s) {missing_labels!r} never "
+                        f"passed after {block_count} consecutive evaluations of head "
+                        f"{fixture.head_sha[:12]} — parked (blocked_ci_unresolved)"
+                    ),
+                    gates_passed=gates_passed,
+                    gates_failed=gates_failed,
+                    blocking_labels=blocking_present,
+                )
         return MergeAction(
             app=app,
             pr_number=fixture.pr_number,
@@ -1319,6 +1494,92 @@ def _pr_terminally_unmergeable(
     mergeable = str(data.get("mergeable", "")).upper()
     merge_status = str(data.get("mergeStateStatus", "")).upper()
     return state in ("CLOSED", "MERGED") or mergeable == "CONFLICTING" or merge_status == "DIRTY"
+
+
+def _query_pr_head_sha(*, app_config: AppConfig, pr_number: int) -> str | None:
+    """The REAL head commit sha for ``pr_number``, via ``gh pr view --json
+    headRefOid``. ``None`` on any failure — ``gh`` missing/timeout, no such PR,
+    a non-zero exit, or output that doesn't even look like a commit id.
+
+    Found 2026-08-07: the tick path (``auto_merge_tick``'s local-fixture
+    synthesis, below) never had a ``github_client``, so it always synthesized
+    ``head_sha=f"local-{story.id}"`` — a string that can NEVER pass
+    ``red_green.head_contains_sha``'s ``_SHA_RE`` shape check, which sends the
+    (deliberately never-waivable) provenance gate into an unwaivable block on
+    every single real-run story. This is the fix: resolve the real sha for a
+    real PR number.  The caller must NOT fabricate a sha on failure — returning
+    ``None`` here (so the caller falls back to the honest ``local-<id>``
+    placeholder) keeps that failure legible as "not a commit id" rather than
+    quietly forging something that merely LOOKS like one. Mirrors
+    ``_query_ci_state``'s shell-out style and error handling.
+    """
+    import re
+    import subprocess
+
+    if pr_number <= 0:  # synthesized placeholder (no real PR) — nothing to query
+        return None
+    cmd = [
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "headRefOid",
+        "-q",
+        ".headRefOid",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    sha = (proc.stdout or "").strip()
+    if not re.match(r"^[0-9a-fA-F]{7,40}$", sha):
+        # An empty/malformed answer must never be handed back as if it were a
+        # real commit id — the caller's placeholder fallback is the honest
+        # outcome here, not this.
+        return None
+    return sha
+
+
+def _query_pr_files_changed(*, app_config: AppConfig, pr_number: int) -> list[str] | None:
+    """The REAL changed-file list for ``pr_number``, via ``gh pr view --json
+    files``. ``None`` on any failure (never ``[]``): the tick path's local
+    fixtures used to hardcode ``files_changed=[]``, which made two REQUIRED
+    gates — ``tests-meaningful`` (``scan_diff`` iterates the file list) and
+    ``canonical-paths-only`` (``scan_pr_diff`` does too) — pass VACUOUSLY
+    (nothing to scan, so no finding, so green) instead of actually running.
+    ``None`` here lets the caller keep the distinction between "really no
+    files" and "couldn't ask GitHub" instead of collapsing both into the same
+    empty list. Mirrors ``_query_ci_state``'s shell-out style and error
+    handling.
+    """
+    import subprocess
+
+    if pr_number <= 0:
+        return None
+    cmd = [
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        app_config.repo,
+        "--json",
+        "files",
+        "-q",
+        ".files[].path",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
 
 
 def _query_ci_state(*, app_config: AppConfig, pr_number: int) -> str | None:
@@ -2413,6 +2674,25 @@ def auto_merge_tick(
                 # PR number; synthesize a placeholder so the worker still
                 # records a decision row the operator can audit.
                 pr_no = -(db_story.id or 0)
+            # Real provenance for a real PR: resolve the ACTUAL head sha and
+            # changed-file list via gh, never a hardcoded/synthetic stand-in.
+            # Found 2026-08-07: this loop always synthesized
+            # ``head_sha=f"local-{id}"`` and ``files_changed=[]`` regardless of
+            # whether a real PR existed, which (a) made the acceptance-oracle
+            # provenance gate — deliberately never waivable — block every
+            # real-run story FOREVER (``local-N`` can never match
+            # ``red_green._SHA_RE``), and (b) made ``tests-meaningful`` /
+            # ``canonical-paths-only`` pass VACUOUSLY (nothing in an empty file
+            # list to scan). Both resolvers return ``None`` on any failure —
+            # never a fabricated sha or a silently-empty file list — so the
+            # placeholder-number path below (no real PR at all) and a genuine
+            # gh failure both fall back identically, and are indistinguishable
+            # from what dry-run/no-PR fixtures already looked like.
+            resolved_head_sha: str | None = None
+            resolved_files: list[str] | None = None
+            if pr_no > 0:
+                resolved_head_sha = _query_pr_head_sha(app_config=cfg, pr_number=int(pr_no))
+                resolved_files = _query_pr_files_changed(app_config=cfg, pr_number=int(pr_no))
             # Point command gates (smoke-green boots the PR's OWN code) at
             # the story's chain worktree when it still exists. Without this,
             # repo_root=None made the required smoke gate unevaluable and
@@ -2421,10 +2701,14 @@ def auto_merge_tick(
             fixtures.append(
                 FixturePR(
                     pr_number=int(pr_no),
-                    head_sha=f"local-{db_story.id}",
+                    # The honest ``local-<id>`` placeholder — NEVER a
+                    # fabricated hex string — when there is no real PR or gh
+                    # could not resolve one; ``head_contains_sha`` reads that
+                    # shape as "not a commit id", which is the truth.
+                    head_sha=resolved_head_sha or f"local-{db_story.id}",
                     base_branch=cfg.default_branch or "main",
                     labels=[],
-                    files_changed=[],
+                    files_changed=resolved_files or [],
                     # Real CI conclusion via gh, never a hardcoded pass. Falls
                     # back to None (→ gate reads the recorded flag) for
                     # placeholder PR numbers or when no checks are configured.

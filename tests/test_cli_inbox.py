@@ -93,3 +93,49 @@ def test_inbox_app_filter(seeded_root: Path) -> None:
     result = runner.invoke(cli_mod.app, ["inbox", "--app", "sacrifice"])
     assert result.exit_code == 0
     assert "story-blocked-by-cap" in result.stdout
+
+
+def test_inbox_surfaces_a_gate_block_parked_story(seeded_root: Path) -> None:
+    """019 blocker S2: a story parked by ``auto_merge._park_gate_block_exhausted``
+    sets ``last_rejection_reason``, and MUST reach the inbox despite
+    ``blocked_ci_unresolved`` sitting on the tracker-closer's resolved-states
+    allowlist — that allowlist is correct for the real-CI-failure park (which
+    closes the PR), not for a gate-block park that leaves the PR open."""
+    db = seeded_root / "state" / "factory.db"
+    persist_story(
+        StoryRecord(
+            direction_id="019",
+            app="sacrifice",
+            title="t",
+            slug="story-gate-block-parked",
+            scope="backend",
+            state=StoryState.BLOCKED_CI_UNRESOLVED.value,
+            last_rejection_reason=(
+                "gate_block_exhausted: required gate(s) ['smoke-green'] never "
+                "passed after 3 consecutive evaluations of head cafe1234"
+            ),
+            error="auto-merge: gate_block_exhausted: ...",
+        ),
+        db,
+    )
+    # Regression pin: the REAL-CI-FAILURE park (no last_rejection_reason) must
+    # stay invisible — that park already closed the PR, so there is nothing
+    # left pending, and the tracker-closer / inbox must keep agreeing on that.
+    persist_story(
+        StoryRecord(
+            direction_id="019",
+            app="sacrifice",
+            title="t",
+            slug="story-ci-failure-parked",
+            scope="backend",
+            state=StoryState.BLOCKED_CI_UNRESOLVED.value,
+        ),
+        db,
+    )
+
+    runner, cli_mod = _runner_with_root(seeded_root)
+    result = runner.invoke(cli_mod.app, ["inbox"])
+    assert result.exit_code == 0
+    assert "story-gate-block-parked" in result.stdout
+    assert "gate_block_exhausted" in result.stdout
+    assert "story-ci-failure-parked" not in result.stdout

@@ -1272,7 +1272,7 @@ def inbox_cmd(
     from sqlmodel import Session, create_engine, select
 
     from factory.chain.handlers import _engine
-    from factory.chain.state_machine import StoryRecord
+    from factory.chain.state_machine import StoryRecord, StoryState
     from factory.directions.parser import list_direction_dirs, parse_direction_dir
     from factory.settings.loader import load_settings
     from factory.settings.modes import get_mode
@@ -1328,7 +1328,21 @@ def inbox_cmd(
                 # own predicate) encodes that carve-out, so this table and the
                 # issue/tracker sweeps still cannot disagree — the reason the
                 # allowlist is shared in the first place.
-                if _story_is_resolved(r):
+                #
+                # SECOND carve-out (found 2026-08-07): ``blocked_ci_unresolved`` is
+                # unconditionally on the resolved-states allowlist — correct for the
+                # real-CI-failure park (``auto_merge._park``), which CLOSES the PR
+                # first, so there is genuinely nothing left pending. The required-
+                # gate-block park (``auto_merge._park_gate_block_exhausted``) reaches
+                # the SAME state but leaves the PR OPEN and sets
+                # ``last_rejection_reason`` specifically so a human can still act on
+                # it — without this carve-out that story was parked and then
+                # invisible, silently disagreeing with the point of parking it.
+                gate_block_parked = (
+                    r.state == StoryState.BLOCKED_CI_UNRESOLVED.value
+                    and bool(r.last_rejection_reason)
+                )
+                if _story_is_resolved(r) and not gate_block_parked:
                     continue
                 if r.last_rejection_reason:
                     reason = r.last_rejection_reason
