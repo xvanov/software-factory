@@ -1,9 +1,12 @@
-# STATUS — measured 2026-08-04, independently audited 2026-08-07
+# STATUS — measured 2026-08-04, audited 2026-08-07, Exteroception v1 closed 2026-08-07
 
 Point-in-time facts. Verify before you rely on them. The commands are in
-`CLAUDE.md`. The forward work queue is the **Exteroception v1 direction**
-(`apps/factory/directions/` — the newest direction); the retired long-form plan
-is archived at `docs/archive/PLAN-2026-08-07-retired.md`.
+`CLAUDE.md`. **The Exteroception v1 direction is closed** — its seven
+acceptance criteria are implemented by **operator PRs #247–#254, not the
+chain** (loop 3 with subagents; see the section below). No successor direction
+is filed yet; the carried-over operator queue lives in "What does not work".
+The retired long-form plan is archived at
+`docs/archive/PLAN-2026-08-07-retired.md`.
 
 All systemd units are deliberately **stopped**. Run `factory on` to start.
 
@@ -74,8 +77,95 @@ round-trip = 9/18 = 50% at **$2.83/resolved** vs the chain's 7/19 = 37% at
 $5.13 — the 29% cost saving is real (9 fewer dev calls, 1 tick vs 4; reviewer
 tokens were only 1.8% of spend); the quality delta is inside the ±38 pp MDE
 (p=0.688) and the ablation is confounded three ways. Clean re-run (both arms,
-one sweep, one commit, ~$62) is queued in the Exteroception direction.
+one sweep, one commit, ~$62) is still queued — 019 scoped it out (`bench/**`
+is operator-PR-only) and no direction has picked it up yet.
 Evidence: `bench/swebench/RESULTS-B1-PHASE1A.md`.
+
+## Exteroception v1 — closed 2026-08-07
+
+Implemented by an **operator agent (loop 3 with subagents), not the chain** —
+eight PRs against the direction's seven acceptance criteria plus the paired
+P0 manager deletion. Verify merge state with `git log --oneline` / `gh pr view
+<n>` rather than trusting this table.
+
+| AC | What shipped | PR |
+|---|---|---|
+| P0 (paired, out of scope of 019 itself) | Deleted the four FMS manager LLM tiers (watcher/summarizer/diagnostician/apply, −17,182 lines) + retired `factory_improver`/`factory_improver_apply`; `_any_path_is_forbidden_in_patch` moved to `factory/manager/forbidden_paths.py`; `factory-manager.service` removed from the host; mypy 99→68 errors | #247 |
+| AC1 | Vacuity gate at `pm-sync` triage (`factory/backpressure/vacuity.py`). First cut scored 0/4 precision under adversarial review; rebuilt around trigger-plus-content-free-residue. Re-calibrated: **precision 1.00, recall 0.80**, 8/45 flagged on the held-out pm-validated sacrifice directions, including direction 094. `explore`-tagged directions exempt | #248 |
+| AC5 | Deleted `idle.py`, `rollback.py`, `review_events.py`, `ears.py`, `bug_hunter.py` and the `bug_hunter`/`ralph`/`architect`/`release_manager`/`ux_designer` personas with their schedules/rate-limits/routes; fixed stale persona prompts and 5 stale context-module docs the same review pass found | #249 |
+| AC7 | Detector→direction trigger with signature dedupe (`factory/chain/detector_watch.py`); all 11 detectors adapted. A read-only re-measurement found the first cut would have filed **48 unfixable directions in its first ~16 ticks** against real live state; fixed with liveness+recency scoping. **Ships disabled** (`detector_watch.enabled: false`) pending a soak | #250 |
+| AC2 + AC3 | Out-of-process acceptance oracle (`factory/chain/boot.py`, `oracle_run.py`, `stub_server.py`, `oracle_probe.py`) + gutted-implementation control. The pinned `xfail(strict=True)` forgery test hard-passes, but adversarial review **reproduced forgery end-to-end twice anyway** — see "closed, but not simply relocated" below | #251 |
+| AC4 prep | Sacrifice's `acceptance_boot` needs `DATABASE_URL` explicit — found by booting a real judge worktree before the flag flip; `Settings` refuses its hardcoded default and the var was only in `env_passthrough` (unset under systemd) | #253 |
+| AC6 | Idle becomes one deduplicated `operator_ping` per idle episode in `factory inbox`; zero machine-authored directions; re-emits the `app_idle` event `stalled_stories._last_idle_ts` reads | #252 |
+| AC4 | `gates.acceptance_oracle: true` for sacrifice, exercised against the real app in a throwaway clone: red at merge base `b40e87aff062` (route absent → 404), green at HEAD, verdict computed out of process over HTTP, `failability_route=merge_base_red`, `authoritative=true`, `verified=true`; a positive-observable criterion failed both stub variants and was credited, a status-code-only criterion passed both and was excluded as vacuous | #254 (merged, `2f81d224`) |
+
+**Mechanism proven ≠ graded a live story — do not blur these.** AC4's evidence
+above is a throwaway-clone run the operator drove by hand; it proves the
+runner works against the real app. It is **not** a chain-driven story passing
+under the flag. As of this writing sacrifice has **zero non-terminal
+stories** (91 `deployed` / 28 `superseded_by_sibling` / 2
+`closed_by_operator` = all 121 sacrifice stories, all terminal —
+`state/factory.db`), and every one of those 121 rows has `acceptance_expected
+= 0` and `acceptance_test_ref IS NULL` — none of them ever went through this
+gate; they all predate the flag flip. The live gate has not yet graded a real
+chain-driven story. That only happens once `pm-sync` files new sacrifice work
+and a story runs the merge gate with the flag on.
+
+**What the adversarial passes caught that green tests did not, twice:**
+1. **The oracle's forgery was relocated, not closed, by moving out of process.**
+   The booted app runs as the same uid and received `TMPDIR`, so production
+   code could poll for the oracle's own run directory and plant a
+   `conftest.py` that neuters pytest, or overwrite the oracle file — review
+   reproduced both attacks end to end against the first cut of #251. Closed by
+   run-directory tamper-evidence (oracle sha256 + the exact expected file set,
+   checked **before** junit is parsed) + `--noconftest` + dropping `TMPDIR`
+   from `env_passthrough`; new never-waivable block reason
+   `oracle_run_tampered`. A second hole — the ablation probe was blind to the
+   credited criterion set, so a kill on a stub-excluded (vacuous) criterion
+   licensed approval — was fixed with a repeatable `--credit <nodeid>`.
+2. **The detector trigger would have filed 48 unfixable directions in its
+   first ~16 ticks** (#250), measured by re-running the first cut read-only
+   against real live state before it ever shipped enabled.
+
+**Four KNOWN OPEN risks of the oracle runner** (from the gate's module
+docstring, `factory/chain/gates/acceptance_verified.py`; none is closed by
+#251/#254, each has a named v1.1 candidate — read before any soak):
+1. **A healthy-but-semantically-broken BASE forges red.**
+   `boot._poll_health` returns healthy on the **first response under 400** —
+   a health endpoint that answers before its own dependency (a DB pool) is
+   ready makes the base respond 500 to everything, every credited criterion
+   then fails at base, and that reads as a genuine `red` → credit. This is
+   the one risk the operator should decide on before any soak: it is a new
+   failure shape the in-process runner never had. v1.1: require the base's
+   first response to be a genuine 2xx from at least one credited criterion,
+   or re-probe health at the end of the base run.
+2. **Shared-DB cross-run contamination.** A hardcoded identifier that passes
+   at HEAD can collide (409, or a stale row) at BASE in the real shared
+   Postgres, forging a red the `ACCEPTANCE_RUN_ID` namespacing convention
+   (a persona instruction, not enforced) is supposed to prevent.
+3. **Non-2xx-status criteria evade the stub.** A criterion asserting "returns
+   404" is satisfied by both stub variants (which only ever answer 200), so
+   it is structurally excluded from the credited set no matter how
+   meaningful it is — a real criterion wrongly excluded, not a fake one
+   wrongly credited (fail-safe, but undercounts coverage).
+4. **Behavioural mimicry.** Nothing defends against production code that
+   distinguishes "being graded" from real traffic and behaves correctly only
+   under grading. Not evidenced, structurally hard to rule out for any
+   black-box oracle.
+
+**Operational prerequisites now load-bearing for sacrifice merges:** the
+`sacrifice-db` container must be up (`prerequisite_command` only checks —
+`docker ps | grep sacrifice-db` — it never starts it; hint is `make up-db`);
+`DATABASE_URL` is now explicit in `acceptance_boot.env` (#253) rather than
+riding the operator's ambient shell.
+
+**Interim window, closed by #252:** between #249 (deleted the only writer of
+`app_idle`) and #252 (re-added it via the idle→ping rewrite), nothing wrote
+`app_idle`, so `stalled_stories.healthy_drain` was permanently `False` in that
+window — it fails toward NOISE, not silence, so nothing was silently missed.
+
+`detector_watch` ships **off by default** (`factory_settings.yaml`); flip per
+app after a soak, never globally on merge.
 
 ## What works
 
@@ -90,6 +180,7 @@ Evidence: `bench/swebench/RESULTS-B1-PHASE1A.md`.
 | Test suite | 2,368 tests, ~5 min |
 | SWE-bench measurement pipeline | Hidden sha256-pinned oracle, test-edit stripping asserted on every arm, `--network none` grading, gold-patch control 19/20, `report --check` byte-stable. Four retractions paid for it — do not "improve" it without a failing case |
 | The one exteroceptive gate | `smoke-green` blocked 578 merge *evaluations* (10 distinct PRs; 2 PRs = 86%) — the most active gate blocker. The seed of the target architecture |
+| **Independent, out-of-process, tamper-evident acceptance verdict** | Live on sacrifice (`gates.acceptance_oracle: true`, PR #254, merged `2f81d224`). Verdict computed by a separate process driving a booted app over HTTP, never importing the diff's code; tamper-evident (oracle sha256 + expected file set checked before junit parsing, `--noconftest`, no `TMPDIR` passthrough). Exercised end to end against the real app in a throwaway clone: red at merge base `b40e87aff062`, green at HEAD, `authoritative=true`, `verified=true`; the gutted-implementation control **credited** a positive-observable criterion that failed both stub variants and **excluded** a status-code-only criterion that passed both as vacuous. **Not yet proven against a live chain-driven story** — see the Exteroception section for why |
 
 Note (audit): **"deployed" is a state name, not a deploy.** All 102
 `deploy_actions` rows skipped (`deploy_disabled_in_config`) or errored;
@@ -99,17 +190,18 @@ Note (audit): **"deployed" is a state name, not a deploy.** All 102
 
 | Problem | Evidence | Where the fix lives |
 |---|---|---|
-| **No measurable chain lift, at 2.8× cost** | The table above | Exteroception direction (verify first, then B-phase collapse) |
-| Chain green ≈ coin flip | Verdict precision 6/15 = 40%; zero-byte green | Direction P1–P2 |
-| **The acceptance oracle's green is forgeable in-process** | 3 lines of production code patch pytest's runner; no file rollback closes it; pinned as `xfail(strict=True)`. This is why `gates.acceptance_oracle` is off everywhere | Direction P2 — out-of-process runner |
-| Manager LLM tiers: cost without yield | All three LLM personas = **$1,028.58 = 52.0%** of all-time spend (watcher alone $972.23 = 49.2%, 44,127 runs); 262 concerns → 165 proposals (48 titles / ~37 root causes, 107 escalate-to-human) → **0 applied fixes**, 1 GitHub issue (via staging, not apply). L4: 163 attempts, 0 PRs | Direction P0 — delete the four tiers (operator PR); E.5 soak retired by operator decision |
-| `factory_improver` | 196 proposals → **1 landed commit ever** (PR #5); 179 apply failures, 158 `dirty_working_tree` | Direction P0 — retire |
-| Detector coverage is partial | 11 registered detectors; the watcher hard-codes 9 — `conformance_breach` and `fms_yield` have **never run** | Direction P0 — detector ratchet |
-| Scanner personas manufacture noise | `bug_hunter` 705 runs, 0 findings; `ralph` 7,024 runs, 95.8% rate-limited; 70% of the sacrifice backlog was machine-filed, one direction re-filed 33× | Direction P0 — delete scanners; goal supply becomes human-ratified |
-| Merge-gate precision is unknown | Every published precision number is chain-verdict precision; `gate_enforced: false` in all six bench arms | Direction P2 |
-| A sweep silently loses runs to provider 429s; sweep aggregates contradict their rows | See archive notes | Bench queue (operator PR): 429 retry, aggregate recompute |
-| State has no backup | The twin guards source only | Direction P0 (E.1 carried over) |
-| `software-factory-copy` is public | It receives every candidate self-edit diff | Operator action (E.3 carried over) |
+| **No measurable chain lift, at 2.8× cost** | The table above | Still open. 019 built the sensors; it did not re-run the benchmark or attempt a B-phase collapse. No direction filed yet |
+| Chain green ≈ coin flip | Verdict precision 6/15 = 40%; zero-byte green | Still open. The oracle is live on sacrifice, not re-measured against the SWE-bench chain-verdict rows above. No direction filed yet |
+| **The acceptance oracle's green was forgeable in-process** — **CLOSED, but not merely by moving out of process** | Moving the verdict out of process (PR #251) **relocated the attack**: the booted app shared uid + received `TMPDIR`, so production code could plant a `conftest.py` in the oracle's own run dir or overwrite the oracle file — adversarial review reproduced forgery end-to-end twice against the first cut. Closed by run-directory tamper-evidence (oracle sha256 + exact expected file set, checked before junit parsing) + `--noconftest` + dropping `TMPDIR` from `env_passthrough`; new never-waivable reason `oracle_run_tampered`. Four KNOWN OPEN risks remain — see the Exteroception section above | **Done** — PR #251 (+ #253, #254). `gates.acceptance_oracle: true` on sacrifice |
+| Manager LLM tiers: cost without yield | All three LLM personas = **$1,028.58 = 52.0%** of all-time spend (watcher alone $972.23 = 49.2%, 44,127 runs); 262 concerns → 165 proposals (48 titles / ~37 root causes, 107 escalate-to-human) → **0 applied fixes**, 1 GitHub issue (via staging, not apply). L4: 163 attempts, 0 PRs | **Done** — deleted, −17,182 lines, PR #247 |
+| `factory_improver` | 196 proposals → **1 landed commit ever** (PR #5); 179 apply failures, 158 `dirty_working_tree` | **Done** — retired with the manager tiers, PR #247 |
+| Detector coverage is partial | 11 registered detectors; the watcher hard-codes 9 — `conformance_breach` and `fms_yield` have **never run** | **Wired, not yet live** — all 11 detectors adapted with signature dedupe into `factory/chain/detector_watch.py` (PR #250); ships **disabled** (`detector_watch.enabled: false` in `factory_settings.yaml`) pending a soak, so none has run in production yet |
+| Scanner personas manufacture noise | `bug_hunter` 705 runs, 0 findings; `ralph` 7,024 runs, 95.8% rate-limited; 70% of the sacrifice backlog was machine-filed, one direction re-filed 33× | **Done** — `bug_hunter`, `ralph`, `architect`, `release_manager`, `ux_designer` and their schedules/rate-limits/routes deleted, PR #249 |
+| Merge-gate precision is unknown | Every published precision number is chain-verdict precision; `gate_enforced: false` in all six bench arms | Still open. No direction filed yet |
+| A sweep silently loses runs to provider 429s; sweep aggregates contradict their rows | See archive notes | Still open — paired with 019's out-of-scope operator queue, not yet actioned |
+| Clean reviewer-ablation re-run (~$62) not yet run | See reviewer-ablation note above | Still open — same paired queue, not yet actioned |
+| State has no backup | The twin guards source only | Still open (E.1 carried over; not scoped into 019) |
+| `software-factory-copy` is public | It receives every candidate self-edit diff | Still open (E.3 carried over; not scoped into 019) |
 
 ## Sacrifice — current state (2026-08-07)
 
@@ -118,12 +210,27 @@ Note (audit): **"deployed" is a state name, not a deploy.** All 102
   wire-level regression tests. Clone-URL policy: validate the **host**, never
   the scheme (ssh/scp-style remotes are a supported feature).
 - Deployment is down (`sacrifice-backend.service` failed, `/api/health` → 502)
-  and stays down until the direction's testbed work needs it.
-- Gates are hollow: CI typecheck force-exits 0 over 208 real mypy errors; lint
-  is changed-files-only over 100 whole-tree errors; Jest (267 tests) and the
-  clean `tsc --noEmit` are not in CI; Playwright collects 35 tests of which 21
-  self-skip on `E2E_HARNESS_READY` (set nowhere) and none run in CI. In-process
-  to out-of-process test ratio ≈ **300:1**. Un-hollowing is direction P0.
+  and stays down until a direction's testbed work needs it.
+- **The out-of-process acceptance oracle is now live**: `gates.acceptance_oracle:
+  true` (PR #254, merged `2f81d224`), the boot recipe requires the
+  `sacrifice-db` container up (`prerequisite_command` checks with `docker ps`,
+  never starts it — hint `make up-db`) and `DATABASE_URL` explicit in
+  `acceptance_boot.env` (PR #253). This does not touch the CI gates below —
+  the oracle grades one story's acceptance criteria at merge time, it is not
+  a CI step. **Proven against the real app in a throwaway clone, not yet
+  against a live chain-driven story**: sacrifice has zero non-terminal
+  stories right now (91 deployed / 28 superseded / 2 closed, all terminal)
+  and `acceptance_expected`/`acceptance_test_ref` are unset on every one of
+  those 121 rows — none of them ever ran this gate.
+- Gates are otherwise still hollow: CI typecheck force-exits 0 over 208 real
+  mypy errors; lint is changed-files-only over 100 whole-tree errors; Jest
+  (267 tests) and the clean `tsc --noEmit` are not in CI; Playwright collects
+  35 tests of which 21 self-skip on `E2E_HARNESS_READY` (set nowhere) and none
+  run in CI. In-process to out-of-process test ratio ≈ **300:1**. Un-hollowing
+  this was explicitly out of scope of 019 (its own text: "a separate
+  sacrifice-app direction, after this one proves the oracle runner on a
+  booted sacrifice") — the oracle runner is now proven; the un-hollowing
+  direction is not yet filed.
 - Authorship (audit): the product skeleton is 26 direct human commits
   (2026-05-18/19); the factory's share of surviving lines is **≤ 37.7%** (upper
   bound; the worker commits under the operator's identity); 25 of 72 merged
@@ -133,7 +240,8 @@ Note (audit): **"deployed" is a state name, not a deploy.** All 102
 
 - **Chain self-edit (loop 2): works.** direction → story → dev → gates → PR →
   staging twin → merge. 24 factory stories deployed this way.
-- **FMS L4 apply: dead** (0/163) and scheduled for deletion.
+- **FMS L4 apply: dead** (0/163) — the four LLM tiers it lived in were deleted
+  2026-08-07, PR #247.
 Measuring only the second produces "the factory cannot improve itself" — false.
 Measuring only the first produces "the chain built the factory" — also false
 (audit: ~25 of 173 merged factory-repo PRs are chain PRs).
@@ -155,7 +263,7 @@ are partly estimated (cache-read rate unverifiable); prefer token counts.
 ## Standing evidence locations
 
 - Sensor report (audited v5): claude.ai artifact `2c5bbaef-…` — the strategic
-  review this direction implements; corrections marked ⟲.
+  review Exteroception v1 implemented; corrections marked ⟲.
 - Reviewer replay corpus backup: `/home/k/sf-reviewer-corpus-2026-08-05/`
   (bench run dirs are gitignored and wiped by every sweep).
 - Failure ledger: memory files (`MEMORY.md` index) + the archived plan's

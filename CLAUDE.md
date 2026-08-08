@@ -21,9 +21,13 @@ rows lost to Azure 429s were excluded there; the later archive re-ran them as
 the same under either report** — the chain sits below one agent on the same
 model, at p > 0.3 — and at MDE ≈ ±38 pp that is "no measurable lift", **not**
 "the chain hurts". Do not write docs or directions that assume the chain's value
-is established; see `STATUS.md`. The forward plan is the **Exteroception v1
-direction** (`apps/factory/directions/`, newest); the old `PLAN.md` is retired
-at `docs/archive/PLAN-2026-08-07-retired.md`.
+is established; see `STATUS.md`. **The Exteroception v1 direction is closed**
+(`apps/factory/directions/019-exteroception-v1-close-the-sensing-gap/`) — its
+seven acceptance criteria shipped as **operator PRs #247–#254, not the
+chain**. No successor direction is filed yet; what it left open (four KNOWN
+OPEN oracle risks, `detector_watch` disabled pending a soak, the carried-over
+operator queue) is in `STATUS.md`. The old `PLAN.md` is retired at
+`docs/archive/PLAN-2026-08-07-retired.md`.
 
 ```
 direction.md  →  PM (triage/split)  →  SM (story files)  →  Dev (OpenHands sandbox:
@@ -57,9 +61,12 @@ L3 Diagnostician (root cause + diff) → L4 Apply. **Operator decision
 fixes. What survives in `factory/manager/`: the deterministic detectors,
 `signals`, `halt`, `staging`, `recovery`, `circuit_breaker`, and
 `forbidden_paths` (the shared self-edit path classifier, moved out of the
-deleted `apply.py`). Detectors currently have zero production callers — the
-deleted L1 Watcher was the only invoker; direction 019 (AC7) rewires them
-into the chain tick. See the Exteroception direction, P0.
+deleted `apply.py`). Detectors are wired into the chain tick
+(`factory/chain/detector_watch.py`, 019 AC7, all 11 adapted with signature
+dedupe) but **ship disabled** (`detector_watch.enabled: false` in
+`factory_settings.yaml`) pending a soak — a read-only re-measurement against
+real live state found the first cut would have filed 48 unfixable directions
+in its first ~16 ticks. See `STATUS.md`.
 
 **Your job is the class of failure the FMS cannot fix itself:** it crashes,
 loops without converging, detects-but-never-remediates, or needs a fix in code
@@ -82,9 +89,11 @@ Then read the memory index at
 `/home/k/.claude/projects/-home-k-software-factory/memory/MEMORY.md` — the
 changelog of every failure class already diagnosed. Check it before
 re-diagnosing anything. Then `STATUS.md` (what works, measured, and the
-operator decisions) and the **Exteroception v1 direction** under
-`apps/factory/directions/` (the work queue). Verify with the commands above
-rather than trusting either.
+operator decisions). The **Exteroception v1 direction**
+(`apps/factory/directions/019-…`) is closed; `STATUS.md` carries what it left
+open and no successor direction is filed yet — check
+`apps/factory/directions/` for the current newest before assuming otherwise.
+Verify with the commands above rather than trusting either.
 
 ## Environment
 
