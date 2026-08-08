@@ -27,14 +27,23 @@ never prose: structured rewrites that the chain applies to the app repo.
       "content": "<full markdown content>"
     }
   ],
+  "no_updates_needed": false,
   "rationale": "1-3 paragraph summary of what changed in context and WHY (for the tracker issue, not for the context files)."
 }
 ```
 
 * All `context_updates` are **rewrites**. The chain replaces the whole
   file. Old content does not survive unless you re-emit it.
+* `no_updates_needed` is a **boolean**, not prose. Set it `true` ONLY when
+  `context_updates` is genuinely empty AND you have verified the diff has no
+  effect on any canonical doc (a purely internal refactor, a test-only
+  change, a comment fix). The chain's `docs-current` gate reads this field
+  as authoritative — do NOT explain "no updates needed" only in `rationale`
+  and leave this `false`; the gate will not go looking for the phrase in
+  your prose. Default `false` whenever `context_updates` is non-empty.
 * `rationale` is for human review and the tracker issue. It does NOT go
-  into the context files.
+  into the context files. It is NOT a substitute for `no_updates_needed` —
+  set both consistently.
 
 ## Rewrite rules (HARD — verbatim)
 

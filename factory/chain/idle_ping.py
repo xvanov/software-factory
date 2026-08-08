@@ -12,24 +12,54 @@ Idle episode, precisely
 ------------------------
 An idle episode STARTS the first tick where both hold:
 
-  * zero dispatchable stories (``factory.chain.handlers.stories_in_flight``
-    returns an empty list for the app) — see the note below on why this
-    source, not ``factory_status._TERMINAL_STATES``, is authoritative.
+  * zero dispatchable stories: ``factory.chain.handlers.stories_in_flight``
+    returns an empty list for the app AFTER subtracting every story parked
+    in a PERMANENT-park sink (``factory.directions.tracker_issue.
+    _story_is_resolved`` — deployed/superseded/closed/closed_by_operator/
+    blocked_ci_unresolved/blocked_dependency_unmet/quarantined_invalid_state,
+    with the dependency-cap carve-out that predicate already encodes). Without
+    this subtraction, ONE story permanently parked in e.g.
+    ``blocked_ci_unresolved`` (absent from ``stories_in_flight``'s own,
+    narrower terminal set — see the note below) makes the app read as
+    "in flight" forever, silencing every future ping. See the note below on
+    why ``stories_in_flight``, not ``factory_status._TERMINAL_STATES``, is
+    the base source.
   * zero LIVE human-filed directions (see ``_has_live_human_direction``).
 
 The episode ENDS the first tick where either condition flips: a story gets
-dispatched/advanced (``stories_in_flight`` becomes non-empty) or a human
+dispatched/advanced (the filtered ``in_flight`` becomes non-empty) or a human
 files a new direction (or an existing one is still pending). Ending the
 episode is entirely implicit — the next non-idle tick simply finds no reason
 to ping and clears the persisted marker; there is no separate "work happened"
-timestamp to track, because ``stories_in_flight`` and the human-direction
+timestamp to track, because the in-flight computation and the human-direction
 scan are themselves fresh, authoritative reads of "has anything happened"
 every single tick.
 
-Exactly one ping is written per episode: the FIRST idle tick writes the
-marker (and the ``app_idle`` event); every subsequent idle tick, while the
-marker is still present, is a no-op. A second episode (idle -> work -> idle
-again) gets a second ping.
+Exactly ONE operator ping is written per episode: the FIRST idle tick writes
+the marker; every subsequent idle tick, while the marker is still present, is
+a no-op for the marker/ping. A second episode (idle -> work -> idle again)
+gets a second ping. The ``app_idle`` EVENT is a different signal with a
+different cadence — see "Two signals, two cadences" below.
+
+Two signals, two cadences
+--------------------------
+``app_idle`` (the event, on ``state/events/idle.ndjson``) and the operator
+ping (the marker + ``factory inbox`` entry) look related but answer different
+questions, and conflating them was a real bug (found in a 019 fail-silent
+audit, corrected here — see ``STATUS.md``):
+
+  * The operator ping answers "has a HUMAN been notified about this episode
+    yet" — deduplicated once per episode, because notifying the same human
+    of the same ongoing silence every tick is the 957-fires-zero-humans
+    failure mode this module exists to end.
+  * ``app_idle`` answers "is the tick loop ALIVE and does it currently judge
+    this app idle" — a liveness heartbeat
+    ``factory.manager.detectors.stalled_stories`` consumes with a 30-minute
+    freshness window (``idle_recently`` / ``healthy_drain``). A heartbeat
+    that fires once and then goes quiet for the rest of a multi-hour episode
+    reads as "not idle recently" to that consumer well before the episode
+    actually ends — exactly backwards. So ``app_idle`` fires on EVERY idle
+    tick, not once per episode; only the ping is deduplicated.
 
 Why ``stories_in_flight``, not ``factory_status._TERMINAL_STATES``
 --------------------------------------------------------------------
@@ -61,9 +91,16 @@ long. So every ambiguous case here resolves to "don't ping":
   * Ping-state file present and parses -> already pinged this episode,
     stay quiet.
   * Ping-state file present but UNREADABLE/CORRUPT (bad JSON, wrong shape)
-    -> treated as "already pinged" (suppressed), and the read failure is
-    surfaced as an error the caller can record (never silently swallowed,
-    but never spammed either).
+    -> SELF-HEALED: overwritten with a valid, deliberately-suppressed marker
+    (never a guessed fresh ping — we don't know if this is a continuing
+    episode), and the read failure is surfaced as an error the caller can
+    record exactly ONCE (never silently swallowed, and — since the marker is
+    now valid — never spammed on every subsequent tick either). Before this
+    fix the corrupt-marker path never repaired the file, so the same error
+    recurred every tick forever; ``orchestrator.tick`` appends every
+    ``.error`` to ``summary.errors``, and ``factory tick``'s CLI exits 1
+    whenever that list is non-empty, so one bad marker turned into a
+    permanent ``factory-tick@.service`` crash-loop.
   * Cannot determine whether a live human direction exists (DB/parse error)
     -> assume one exists, i.e. do not ping this tick.
 
@@ -81,7 +118,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 @dataclass
@@ -108,9 +145,10 @@ def _load_ping_state(software_factory_root: Path, app: str) -> tuple[dict[str, A
 
     Returns ``(state, None)`` when no marker exists (no active episode) or
     the marker was read and parsed fine. Returns ``(None, error)`` when the
-    marker EXISTS but is unreadable/malformed — the fail-safe case the
-    caller must treat as "already pinged" (suppress), never as "no episode
-    yet" (which would re-fire).
+    marker EXISTS but is unreadable/malformed — the caller (S8 self-heal)
+    treats this tick as "already pinged" (suppress the ping, never a guessed
+    fresh one) and then OVERWRITES the marker with a valid one, so the SAME
+    error is never returned twice in a row.
     """
     path = _ping_state_path(software_factory_root, app)
     if not path.exists():
@@ -226,13 +264,18 @@ def run_idle_ping_tick(
     *,
     now: datetime | None = None,
 ) -> IdlePingResult:
-    """Evaluate + (at most once per episode) fire the idle ping for ``app``.
+    """Evaluate idle state for ``app``; fire the liveness event every idle
+    tick and the deduplicated operator ping at most once per episode.
 
-    Caller contract: this function NEVER files a direction and never touches
-    anything but the ``idle_ping`` marker + the ``app_idle`` event stream. It
-    is safe to call every tick; the dedup lives entirely in the marker file.
+    Caller contract: this function NEVER files a direction. It touches the
+    ``idle_ping`` marker (deduplicating the OPERATOR ping, once per episode)
+    and the ``app_idle`` event stream (S9: emitted on EVERY idle tick — a
+    load-bearing liveness signal ``stalled_stories.idle_recently`` /
+    ``healthy_drain`` consumes with a 30-minute freshness window, NOT the
+    same thing as the deduplicated ping). It is safe to call every tick.
     """
     from factory.chain.handlers import stories_in_flight
+    from factory.directions.tracker_issue import _story_is_resolved
     from factory.manager.signals import write_event
 
     root = Path(software_factory_root)
@@ -240,12 +283,44 @@ def run_idle_ping_tick(
 
     state, corrupt_error = _load_ping_state(root, app)
     if corrupt_error is not None:
-        # Fail SAFE toward silence: an unreadable marker must never be
-        # treated as "no episode yet" (that would re-fire every tick — the
-        # exact 957-fires class this module exists to end).
-        return IdlePingResult(fired=False, reason="corrupt_state", error=corrupt_error)
+        # S8 self-heal: a corrupt/malformed marker used to return here EVERY
+        # tick forever — never repaired, never re-checked — which (a)
+        # suppressed the ping forever on this app and (b) appended an
+        # "idle-ping" entry to ``summary.errors`` on every single tick.
+        # ``factory tick``'s CLI (cli.py) raises ``typer.Exit(1)`` whenever
+        # ``summary.errors`` is non-empty, so one bad marker turned into a
+        # PERMANENT ``factory-tick@.service`` crash-loop (Result=exit-code on
+        # every run, carrying no new information after the first). Repair it
+        # now: overwrite with a valid, deliberately SUPPRESSED marker (we
+        # don't know whether this is a continuing episode or a fresh one, so
+        # we never guess a fresh ping) and surface the failure exactly ONCE
+        # — this tick's ``.error`` — never again once the marker is clean.
+        idle_since = moment.isoformat()
+        _write_ping_state(
+            root,
+            app,
+            idle_since=idle_since,
+            pinged_at=idle_since,
+            last_delivered_unit=_last_delivered_unit(app, db_path),
+        )
+        return IdlePingResult(
+            fired=False,
+            reason="corrupt_state_repaired",
+            idle_since=idle_since,
+            error=corrupt_error,
+        )
 
-    in_flight = stories_in_flight(app, db_path)
+    # S8: subtract the PERMANENT-park sinks before the emptiness test.
+    # ``stories_in_flight``'s own terminal set (see its docstring) is
+    # narrower than the resolved-states allowlist used elsewhere (it
+    # deliberately keeps ``blocked_review_nonconvergent`` /
+    # ``blocked_underspecified`` "in flight" so they stay visible to the
+    # dispatcher's own bookkeeping) — but it OMITS ``blocked_ci_unresolved``,
+    # ``blocked_dependency_unmet`` and the other permanent sinks
+    # ``_story_is_resolved`` treats as done. One story parked in any of those
+    # made ``in_flight`` permanently non-empty, so the app could NEVER be
+    # judged idle again — a single dead story silencing every future ping.
+    in_flight = [s for s in stories_in_flight(app, db_path) if not _story_is_resolved(s)]
     idle_now = not in_flight and not _has_live_human_direction(app, root, db_path)
 
     if not idle_now:
@@ -253,26 +328,25 @@ def run_idle_ping_tick(
             _clear_ping_state(root, app)
         return IdlePingResult(fired=False, reason="not_idle")
 
-    if state is not None:
-        # Already pinged for this episode — no new ping.
-        return IdlePingResult(
-            fired=False,
-            reason="already_pinged",
-            idle_since=state.get("idle_since"),
-            last_delivered_unit=state.get("last_delivered_unit"),
-        )
-
-    # First idle tick of a NEW episode.
-    idle_since = moment.isoformat()
+    # S9: emit ``app_idle`` on EVERY idle tick (restoring the pre-AC5
+    # contract the deleted ``idle.py`` writer had), decoupled from the
+    # once-per-episode operator ping below. ``stalled_stories.idle_recently``
+    # requires an ``app_idle`` within 30 minutes; the once-per-EPISODE
+    # writer this module shipped with (#252) could go stale mid-episode
+    # (measured live: last emission 03:24, next tick's read at 04:22 — 55
+    # min stale — ``healthy_drain`` false for the whole window). The two
+    # signals are genuinely different (a continuous liveness heartbeat vs. a
+    # deduplicated human-facing notification) and conflating them was the
+    # bug.
+    # ``state["idle_since"]`` is validated as a ``str`` by ``_load_ping_state``
+    # whenever ``state`` is not None; the cast just tells mypy what that
+    # validation already guarantees.
+    idle_since = cast(str, state["idle_since"]) if state is not None else moment.isoformat()
     last_unit = _last_delivered_unit(app, db_path)
-    pinged_at = moment.isoformat()
-    _write_ping_state(
-        root, app, idle_since=idle_since, pinged_at=pinged_at, last_delivered_unit=last_unit
-    )
-    # Re-emit ``app_idle`` on the same stream/key ``stalled_stories.
-    # _last_idle_ts`` reads (``state/events/idle.ndjson``, ``event ==
-    # "app_idle"``) — AC5 deleted the only writer; healthy_drain needs it
-    # back or stall alarms lose their drain-suppression signal.
+    # S8: emit the event BEFORE writing/touching the marker below — a crash
+    # between the two used to lose the episode's ``app_idle`` silently
+    # (marker written, event never emitted, no retry because the marker now
+    # reads "already pinged").
     write_event(
         "idle",
         {
@@ -282,6 +356,22 @@ def run_idle_ping_tick(
             "last_delivered_unit": last_unit,
         },
         software_factory_root=root,
+    )
+
+    if state is not None:
+        # Already pinged for this episode — no NEW operator ping, but
+        # ``app_idle`` above still fired this tick (S9).
+        return IdlePingResult(
+            fired=False,
+            reason="already_pinged",
+            idle_since=state.get("idle_since"),
+            last_delivered_unit=state.get("last_delivered_unit"),
+        )
+
+    # First idle tick of a NEW episode — fire the deduplicated operator ping.
+    pinged_at = moment.isoformat()
+    _write_ping_state(
+        root, app, idle_since=idle_since, pinged_at=pinged_at, last_delivered_unit=last_unit
     )
     return IdlePingResult(
         fired=True, reason="pinged", idle_since=idle_since, last_delivered_unit=last_unit

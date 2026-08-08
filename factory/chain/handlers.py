@@ -42,6 +42,7 @@ from factory.chain.state_machine import (
     EVENT_DOCS_ONBOARDER_STARTED,
     EVENT_DOCS_SM_DONE,
     EVENT_DOCS_SM_STARTED,
+    EVENT_PR_CREATE_EXHAUSTED,
     EVENT_REVIEW_NONCONVERGENT,
     EVENT_REVIEWER_APPROVE,
     EVENT_REVIEWER_REQUEST_CHANGES,
@@ -242,6 +243,9 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     # Pre-existing rows gain it as 0 and start counting from their next stalled
     # deferral — none is retroactively parked.
     "dependency_defer_count": "INTEGER NOT NULL DEFAULT 0",
+    # S4 (019 fail-silent audit) — see StoryRecord.pr_create_retries.
+    # Pre-existing rows gain it as 0; none is retroactively parked.
+    "pr_create_retries": "INTEGER NOT NULL DEFAULT 0",
 }
 
 
@@ -3535,6 +3539,15 @@ def handle_review(
 # tech_writer
 # --------------------------------------------------------------------------- #
 
+# S3 (019 fail-silent audit): a JSON parse failure used to persist
+# ``{"context_updates": [], "rationale": "tech_writer JSON parse failed"}`` —
+# a result the ``docs-current`` REQUIRED gate can never satisfy (that string
+# matches none of the gate's legacy literal phrases), permanently stranding
+# the story. Retry the model call INLINE (same handler invocation, no extra
+# tick) before giving up. Strictly below the hard cap of 3 chain-level
+# retries used elsewhere (``_MAX_DEV_RETRIES`` / ``_MAX_REVIEW_CYCLES``).
+_MAX_TECH_WRITER_PARSE_RETRIES = 2
+
 
 def _dry_run_tech_writer(story: StoryRecord) -> dict[str, Any]:
     """Deterministic tech_writer result for dry-run mode."""
@@ -3634,21 +3647,53 @@ def handle_tech_writer(
         )
         _assert_no_broken_prompt_markers(full_prompt, where="handle_tech_writer")
         model_id = route(persona)
-        result_any = text_run(
-            persona=persona,
-            prompt=full_prompt,
-            model_id=model_id,
-            schema=None,
-            max_tokens=_CHEAP_MAX_TOKENS,
-            story_id=story.id,
-            app=story.app,
-            direction_id=story.direction_id,
-            db_path=db,
-        )
-        try:
-            result = json.loads(result_any) if isinstance(result_any, str) else result_any
-        except (TypeError, json.JSONDecodeError):
-            result = {"context_updates": [], "rationale": "tech_writer JSON parse failed"}
+        parse_error: str | None = None
+        parsed: dict[str, Any] | None = None
+        for attempt in range(1, _MAX_TECH_WRITER_PARSE_RETRIES + 1):
+            result_any = text_run(
+                persona=persona,
+                prompt=full_prompt,
+                model_id=model_id,
+                schema=None,
+                max_tokens=_CHEAP_MAX_TOKENS,
+                story_id=story.id,
+                app=story.app,
+                direction_id=story.direction_id,
+                db_path=db,
+            )
+            try:
+                candidate = json.loads(result_any) if isinstance(result_any, str) else result_any
+            except (TypeError, json.JSONDecodeError):
+                candidate = None
+            if isinstance(candidate, dict):
+                parsed = candidate
+                parse_error = None
+                break
+            parse_error = "tech_writer JSON parse failed"
+            log_story_event(
+                story.id,
+                "tech_writer_parse_retry",
+                {"attempt": attempt, "cap": _MAX_TECH_WRITER_PARSE_RETRIES},
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
+        if parsed is None:
+            # Exhausted retries. NEVER persist a result the docs-current gate
+            # can't satisfy — route to the same fail-closed blocked sink the
+            # diff-precondition checks above use, so a human sees this
+            # instead of a permanently-missing required label.
+            return _block_on_unavailable_diff(
+                story,
+                app_config,
+                software_factory_root,
+                persona="tech_writer",
+                reason=(
+                    f"{parse_error} after {_MAX_TECH_WRITER_PARSE_RETRIES} attempts "
+                    "(model never returned a parseable JSON object)"
+                ),
+                db=db,
+            )
+        result = parsed
 
     story.tech_writer_result_json = json.dumps(result)
 
@@ -3973,6 +4018,12 @@ def handle_docs_onboarder(
 # docs_enforcer
 # --------------------------------------------------------------------------- #
 
+# S4 (019 fail-silent audit): cap on consecutive ``gh pr create`` failures
+# before parking the story at BLOCKED_DEPLOY_FAILED instead of retrying
+# forever. Strictly below the hard cap of 3 used elsewhere
+# (``_MAX_DEV_RETRIES`` / ``_MAX_REVIEW_CYCLES``).
+_MAX_PR_CREATE_RETRIES = 2
+
 
 def handle_docs_enforcer(
     story: StoryRecord,
@@ -4099,8 +4150,52 @@ def handle_docs_enforcer(
         opened = _open_pr_for_story(story, app_config, software_factory_root)
         if opened is not None:
             story.github_pr_number = opened
+            story.pr_create_retries = 0
+            story.error = None
+            story.last_rejection_reason = None
             persist_story(story, db)
             payload["pr_number"] = opened
+        else:
+            # S4 (019 fail-silent audit): this USED TO fall through to
+            # EVENT_DOCS_ENFORCER_PASS anyway — the story advanced to
+            # PR_OPEN with github_pr_number still None, a state with NO
+            # ``orchestrator._DISPATCH`` entry, so nothing ever drove it
+            # again. The only trace was a ``git_op result=error`` line in
+            # ``state/events/git.ndjson`` — absent from `factory inbox` and
+            # from GitHub. Refuse the transition instead: stay in
+            # DOCS_ENFORCER_CHECK (which DOES have a dispatch entry, so the
+            # next tick retries `_open_pr_for_story` for free — no LLM call,
+            # `github_pr_number` is still None) and surface the failure via
+            # `error`/`last_rejection_reason` so `factory inbox` lists it.
+            # Bounded by `_MAX_PR_CREATE_RETRIES` (strictly below the hard
+            # cap of 3) so a persistently broken `gh`/push doesn't retry
+            # forever; past that it parks at BLOCKED_DEPLOY_FAILED.
+            story.pr_create_retries += 1
+            reason = (
+                f"gh pr create failed for branch {story.github_branch!r} "
+                f"(attempt {story.pr_create_retries}/{_MAX_PR_CREATE_RETRIES}); "
+                "see state/events/git.ndjson for the git_op error"
+            )
+            payload["pr_create_failed"] = True
+            payload["pr_create_retries"] = story.pr_create_retries
+            if story.pr_create_retries >= _MAX_PR_CREATE_RETRIES:
+                story.state = advance(story, EVENT_PR_CREATE_EXHAUSTED).value
+                reason = f"{reason} — retries exhausted, parked for human action"
+            story.error = reason
+            story.last_rejection_reason = reason
+            persist_story(story, db)
+            log_story_event(
+                story.id,
+                "pr_create_failed",
+                {
+                    "branch": story.github_branch,
+                    "retries": story.pr_create_retries,
+                    "exhausted": story.pr_create_retries >= _MAX_PR_CREATE_RETRIES,
+                },
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
+            return HandlerResult(next_state=StoryState(story.state), payload=payload, error=reason)
 
     story.state = advance(story, EVENT_DOCS_ENFORCER_PASS).value
     persist_story(story, db)

@@ -19,7 +19,12 @@ from typer.testing import CliRunner
 
 from factory.chain import orchestrator as O
 from factory.chain.handlers import persist_story
-from factory.chain.idle_ping import _ping_state_path, active_pings, run_idle_ping_tick
+from factory.chain.idle_ping import (
+    _load_ping_state,
+    _ping_state_path,
+    active_pings,
+    run_idle_ping_tick,
+)
 from factory.chain.state_machine import StoryRecord, StoryState
 from factory.manager.detectors.stalled_stories import _last_idle_ts
 
@@ -121,7 +126,16 @@ def test_idle_tick_pings_once_and_reemits_app_idle(factory_root: Path) -> None:
 
 
 def test_three_ticks_with_nothing_changing_still_exactly_one_ping(factory_root: Path) -> None:
-    """The core AC assertion: this is the 957-fires-zero-humans class."""
+    """The core AC assertion: this is the 957-fires-zero-humans class.
+
+    The OPERATOR ping stays deduplicated to exactly one per episode. The
+    ``app_idle`` EVENT is a different signal (S9, 019 fail-silent audit): a
+    liveness heartbeat ``stalled_stories.idle_recently`` reads with a
+    30-minute freshness window, so it fires on EVERY idle tick — a heartbeat
+    that only fired once per (potentially multi-hour) episode went stale
+    long before the episode ended. Three idle ticks -> one ping, three
+    ``app_idle`` events.
+    """
     db = factory_root / "state" / "factory.db"
 
     first = O.tick(factory_root, "sacrifice", db_path=db)
@@ -135,14 +149,19 @@ def test_three_ticks_with_nothing_changing_still_exactly_one_ping(factory_root: 
     assert third.idle_ping is None
     assert third.errors == []
 
-    # Exactly one app_idle line was ever written.
+    # Exactly one ping fired (asserted above via idle_ping is not None/None),
+    # but app_idle fired on every one of the three idle ticks.
     lines = [
         ln
         for ln in _events_path(factory_root).read_text(encoding="utf-8").splitlines()
         if ln.strip()
     ]
     app_idle_lines = [ln for ln in lines if json.loads(ln).get("event") == "app_idle"]
-    assert len(app_idle_lines) == 1
+    assert len(app_idle_lines) == 3
+    # Every emission carries the SAME idle_since (the episode's start), not a
+    # per-tick timestamp — the episode never ended between these ticks.
+    idle_sinces = {json.loads(ln)["idle_since"] for ln in app_idle_lines}
+    assert len(idle_sinces) == 1
 
     assert _directions_listing(factory_root) == []
 
@@ -212,6 +231,28 @@ def test_stories_in_flight_suppresses_the_ping(factory_root: Path) -> None:
     assert not _ping_state_path(factory_root, "sacrifice").exists()
 
 
+def test_story_parked_in_blocked_ci_unresolved_does_not_suppress_the_ping(
+    factory_root: Path,
+) -> None:
+    """S8: a story permanently parked in a terminal sink must not silence
+    every future ping.
+
+    ``blocked_ci_unresolved`` is absent from ``handlers.stories_in_flight``'s
+    own (narrower) terminal set, so without subtracting the permanent-park
+    sinks first, one such story made the app read as "in flight" forever —
+    a single dead story silencing every future idle ping.
+    """
+    db = factory_root / "state" / "factory.db"
+    _seed_in_flight_story(db, state=StoryState.BLOCKED_CI_UNRESOLVED.value)
+
+    summary = O.tick(factory_root, "sacrifice", db_path=db)
+
+    assert summary.idle_ping is not None
+    assert summary.errors == []
+    assert _ping_state_path(factory_root, "sacrifice").exists()
+    assert _last_idle_ts(factory_root) is not None
+
+
 def test_dry_run_tick_writes_no_ping_no_state_no_event(factory_root: Path) -> None:
     db = factory_root / "state" / "factory.db"
     create_engine(f"sqlite:///{db}", echo=False)  # ensure the file exists
@@ -253,6 +294,67 @@ def test_run_idle_ping_tick_unit_corrupt_state(factory_root: Path) -> None:
 
     assert result.fired is False
     assert result.error is not None
+
+
+def test_corrupt_marker_self_heals_instead_of_suppressing_forever(factory_root: Path) -> None:
+    """S8: a corrupt marker must be REPAIRED, not just suppressed-and-reread.
+
+    Before the fix, the corrupt-marker branch returned early WITHOUT ever
+    rewriting the file, so the identical error recurred on every subsequent
+    tick forever — and (via ``orchestrator.tick`` -> ``summary.errors`` ->
+    ``factory tick``'s ``typer.Exit(1)``) that meant a PERMANENT
+    ``factory-tick@.service`` crash-loop. After the fix, the FIRST tick
+    still records the error once (never silently swallowed), but the SECOND
+    tick reads a now-valid marker and behaves like any other idle tick — no
+    repeated error, and the deduplicated ping still fires exactly once for
+    this (freshly-started) episode.
+    """
+    db = factory_root / "state" / "factory.db"
+    marker = _ping_state_path(factory_root, "sacrifice")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("{not valid json", encoding="utf-8")
+
+    first = O.tick(factory_root, "sacrifice", db_path=db)
+    assert first.idle_ping is None
+    assert any(tag == "idle-ping" for tag, _ in first.errors), first.errors
+
+    # The marker is now valid JSON.
+    state, error = _load_ping_state(factory_root, "sacrifice")
+    assert error is None
+    assert state is not None
+
+    second = O.tick(factory_root, "sacrifice", db_path=db)
+    assert second.errors == []
+    # The repaired marker was written SUPPRESSED (not a guessed fresh ping),
+    # so this tick sees "already pinged" for the repaired episode — no NEW
+    # ping, but also no error.
+    assert second.idle_ping is None
+
+
+def test_app_idle_event_emitted_before_marker_write(
+    factory_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S8: the event must land even if the marker write blows up after it.
+
+    Before the fix, the marker was written FIRST and the event SECOND — a
+    crash between the two lost the episode's ``app_idle`` silently (the
+    marker already reads "already pinged", so no retry ever re-emits it).
+    Force the marker write to raise and assert the event was still emitted.
+    """
+    import factory.chain.idle_ping as idle_ping_mod
+
+    db = factory_root / "state" / "factory.db"
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("simulated marker-write crash")
+
+    monkeypatch.setattr(idle_ping_mod, "_write_ping_state", _boom)
+
+    with pytest.raises(RuntimeError, match="simulated marker-write crash"):
+        idle_ping_mod.run_idle_ping_tick(factory_root, "sacrifice", db)
+
+    # The event landed even though the subsequent marker write raised.
+    assert _last_idle_ts(factory_root) is not None
 
 
 # --------------------------------------------------------------------------- #

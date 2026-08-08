@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from factory.app_config import AppConfig
-from factory.chain.handlers import handle_tech_writer, persist_story
+from factory.chain.handlers import _writing_worktree, handle_tech_writer, persist_story
 from factory.chain.state_machine import StoryRecord, StoryState
 
 
@@ -141,3 +143,100 @@ def test_forbidden_path_raises_error_and_does_not_write(
     # The forbidden file was NOT written (in either path — assert both).
     forbidden = temp_root / "sacrifice" / "context" / "decisions" / "0001-foo.md"
     assert not forbidden.exists()
+
+
+# --------------------------------------------------------------------------- #
+# S3 (019 fail-silent audit): JSON parse failure retries, then blocks —
+# NEVER persists an unsatisfiable ``docs-current`` result.
+# --------------------------------------------------------------------------- #
+
+
+def _commit_a_change(worktree: Path) -> None:
+    (worktree / "feature.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(worktree), check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@e.x", "-c", "user.name=T E", "commit", "-q", "-m", "feat"],
+        cwd=str(worktree),
+        check=True,
+    )
+
+
+def _patch_tech_writer_prep(monkeypatch: pytest.MonkeyPatch) -> None:
+    import factory.chain.handlers as handlers_mod
+
+    monkeypatch.setattr(handlers_mod, "find_direction_for_story", lambda *a, **k: None)
+    monkeypatch.setattr(handlers_mod, "_read_story_file_content", lambda *a, **k: "story")
+    monkeypatch.setattr(handlers_mod, "_read_persona_prompt", lambda _p: "persona")
+    monkeypatch.setattr(handlers_mod, "route", lambda *a, **k: "azure/gpt-5.4")
+    monkeypatch.setattr("factory.context.loader.compose_context_prelude", lambda *a, **k: "ctx")
+
+
+def test_persistent_parse_failure_retries_then_blocks_without_persisting_unsatisfiable_result(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model that NEVER returns parseable JSON must retry (strictly below
+    the hard cap of 3), then route to the blocked sink — and must NEVER
+    persist ``tech_writer_result_json`` in a shape the ``docs-current``
+    REQUIRED gate can't satisfy (the old behaviour: ``{"context_updates":
+    [], "rationale": "tech_writer JSON parse failed"}``, which matches none
+    of the gate's legacy literal phrases and permanently strands the story)."""
+    s = _story_at_reviewer_done(temp_root)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, s)
+    _commit_a_change(worktree)
+
+    _patch_tech_writer_prep(monkeypatch)
+
+    calls: list[dict[str, Any]] = []
+    import factory.runner as runner_mod
+
+    def _fake_text_run(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "not json at all"
+
+    monkeypatch.setattr(runner_mod, "text_run", _fake_text_run)
+
+    result = handle_tech_writer(s, app_config, temp_root, dry_run=False, db_path=db)
+
+    from factory.chain.handlers import _MAX_TECH_WRITER_PARSE_RETRIES
+
+    assert len(calls) == _MAX_TECH_WRITER_PARSE_RETRIES, "must retry, strictly below the hard cap"
+    assert result.next_state == StoryState.BLOCKED_REVIEW_NONCONVERGENT
+    assert s.state == StoryState.BLOCKED_REVIEW_NONCONVERGENT.value
+    assert s.error is not None and "tech_writer" in s.error
+    assert s.last_rejection_reason is not None
+    # The docs-current-unsatisfiable placeholder must NEVER be persisted.
+    assert s.tech_writer_result_json is None or "JSON parse failed" not in (
+        s.tech_writer_result_json or ""
+    )
+
+
+def test_parse_failure_then_success_recovers_within_the_retry_budget(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient hiccup (bad output ONCE, then a valid object) must
+    recover inline — no block, no wasted tick."""
+    s = _story_at_reviewer_done(temp_root)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, s)
+    _commit_a_change(worktree)
+
+    _patch_tech_writer_prep(monkeypatch)
+
+    calls: list[dict[str, Any]] = []
+    import factory.runner as runner_mod
+
+    def _fake_text_run(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return "not json at all"
+        return json.dumps({"context_updates": [], "no_updates_needed": True, "rationale": "ok"})
+
+    monkeypatch.setattr(runner_mod, "text_run", _fake_text_run)
+
+    result = handle_tech_writer(s, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert len(calls) == 2
+    assert result.next_state == StoryState.TECH_WRITER_DONE
+    tw = json.loads(s.tech_writer_result_json)
+    assert tw["no_updates_needed"] is True
