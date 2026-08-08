@@ -89,15 +89,28 @@ gates:
   smoke_harness_ready: true
 
   # ── 019 AC2+AC3 — out-of-process acceptance oracle ──────────────────────────
-  # The boot recipe below is COMPLETE, and ``acceptance_oracle`` stays FALSE
-  # anyway. Flipping it is a SEPARATE, SUPERVISED step (direction 019 AC4): one
-  # real story must be watched end to end through this exact recipe — oracle
-  # authored from spec before dev dispatch, red at the merge base, green at
-  # HEAD through the boot — before the flag goes live and
-  # ``acceptance-verified`` becomes a REQUIRED merge gate for every AC-carrying
-  # story in this app. Do not flip this as a routine config edit; it is the
-  # AC4 checklist item, not this one.
-  acceptance_oracle: false
+  # LIVE since 2026-08-08 (direction 019 AC4). ``acceptance-verified`` is now a
+  # REQUIRED merge gate for every AC-carrying story in this app, and it FAILS
+  # SAFE: a story whose oracle cannot be run, whose app will not boot, or whose
+  # criteria are all satisfiable by a no-op is BLOCKED, never waved through.
+  #
+  # Flipped only after the whole path was exercised against the real app in a
+  # throwaway clone (no LLM spend, no writes to /home/k/sacrifice) — a route
+  # that does not exist at the merge base, added at HEAD:
+  #   red at merge base b40e87aff062 (404 -> the assertion fails)
+  #   green at HEAD, verdict computed OUT OF PROCESS over HTTP
+  #   failability_route=merge_base_red, authoritative=true, verified=true
+  #   the positive-observable criterion failed BOTH stub variants -> CREDITED
+  #   a status-code-only criterion passed both stubs -> EXCLUDED as vacuous
+  #
+  # Two operational prerequisites, or every AC-carrying story blocks (by
+  # design, with a named reason): the ``sacrifice-db`` container must be up
+  # (``prerequisite_command`` below CHECKS it, and never starts it — a merge
+  # gate must not mutate the machine), and the boot recipe's DATABASE_URL must
+  # stay explicit rather than inherited (see the env block, PR #253).
+  #
+  # To turn it off, set this false — do not delete the recipe below.
+  acceptance_oracle: true
   acceptance_boot:
     # Same shape as ``smoke_command`` (make smoke / scripts/smoke.sh): a real
     # uvicorn process on an ephemeral port, never a shared/reused server.
