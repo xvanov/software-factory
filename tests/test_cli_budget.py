@@ -61,3 +61,37 @@ def test_budget_shows_totals_and_recent_runs(seeded_root: Path) -> None:
     # last 5 runs section is present.
     assert "last 5 runs" in result.stdout
     assert "pm" in result.stdout
+    # No unpriced-model runs seeded — the blindness panel must not appear.
+    assert "unpriced-model blindness" not in result.stdout
+
+
+def test_budget_surfaces_unpriced_model_blindness(seeded_root: Path) -> None:
+    """2026-08-08 fix: a run that burned tokens but recorded cost_usd=0.0
+    with usage_reliable=False (the live ``azure/DeepSeek-V4-Flash`` /
+    ``azure/Kimi-K2.7-Code`` incident before they were priced) must be
+    surfaced by name in ``factory budget`` — today_spend_usd is blind to it,
+    so the operator needs a separate signal."""
+    db = seeded_root / "state" / "factory.db"
+    eng = _engine(db)
+    now = datetime.now(UTC).isoformat()
+    with Session(eng) as session:
+        session.add(
+            Run(
+                ts=now,
+                persona="dev",
+                model="azure/some-unpriced-model",
+                mode="sandbox",
+                tokens_in=50_000,
+                tokens_out=8_000,
+                cost_usd=0.0,
+                success=True,
+                usage_reliable=False,
+            )
+        )
+        session.commit()
+
+    runner, cli_mod = _runner_with_root(seeded_root)
+    result = runner.invoke(cli_mod.app, ["budget"])
+    assert result.exit_code == 0, result.stdout
+    assert "unpriced-model blindness" in result.stdout
+    assert "azure/some-unpriced-model" in result.stdout

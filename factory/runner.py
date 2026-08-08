@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, field
@@ -48,6 +49,8 @@ from sqlmodel import Field, Session, SQLModel, create_engine
 # Heavy SDK imports are deferred to inside sandbox_run() so the CLI can import
 # this module without paying the OpenHands SDK import cost (and so tests that
 # don't touch sandbox_run never need OpenHands installed).
+
+_log = logging.getLogger(__name__)
 
 _DEFAULT_DB_PATH = Path(__file__).parent.parent / "state" / "factory.db"
 _PERSONAS_DIR = Path(__file__).parent / "personas"
@@ -684,6 +687,33 @@ def _record_run(
     ended_at = datetime.now(UTC).isoformat()
     redacted_error = redact_secrets(error) if error is not None else None
     bounded_error = truncate_error(redacted_error) if redacted_error is not None else None
+
+    # Silent-$0 guard: a real call that burned tokens but landed cost_usd==0.0
+    # is either a genuinely free model (usage_reliable stays True — LiteLLM
+    # read a real $0.00 price) or a model with NO price registration at all
+    # (usage_reliable is explicitly False — see text_run/sandbox_run, where
+    # a missing LiteLLM price entry makes ``completion_cost`` raise, caught
+    # and recorded as unreliable rather than silently added as 0.0). The
+    # latter is exactly how ``azure/deepseek-v4-pro`` (and, before this
+    # guard, ``azure/DeepSeek-V4-Flash`` / ``azure/Kimi-K2.7-Code``) ran up
+    # real spend while every downstream cap/aggregator read it as free.
+    # usage_reliable already carries the honest signal (see its docstring on
+    # ``RunResult`` / ``Run``) — this just makes the signal LOUD instead of
+    # something only a `factory audit` deep-dive would surface, without
+    # blocking dispatch (a pricing gap must never wedge the factory).
+    if usage_reliable is False and cost_usd == 0.0 and (tokens_in > 0 or tokens_out > 0):
+        _log.warning(
+            "UNPRICED MODEL: persona=%s model=%r recorded tokens_in=%d "
+            "tokens_out=%d but cost_usd=0.0 — LiteLLM has no usable price "
+            "for this model id, so spend caps are BLIND to this run. "
+            "Register a price in factory/providers/azure_foundry.py "
+            "(_register_litellm_pricing).",
+            persona,
+            model,
+            tokens_in,
+            tokens_out,
+        )
+
     engine = _engine(db_path)
     with Session(engine) as session:
         row = Run(

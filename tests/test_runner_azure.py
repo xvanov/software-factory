@@ -278,6 +278,73 @@ def test_deepseek_v4_pro_cache_hit_cost_is_pinned() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# azure/DeepSeek-V4-Flash + azure/Kimi-K2.7-Code — 2026-08-08 spend-blindness fix
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("model_id", "input_per_1m", "output_per_1m", "cache_per_1m"),
+    [
+        ("azure/DeepSeek-V4-Flash", 0.21, 0.56, 0.031),
+        ("azure/Kimi-K2.7-Code", 1.05, 4.40, 0.21),
+    ],
+)
+def test_ensure_bootstrapped_registers_new_model_pricing(
+    model_id: str, input_per_1m: float, output_per_1m: float, cache_per_1m: float
+) -> None:
+    """Two Azure deployments created 2026-08-07/08 were reachable but priced
+    at $0.0 in ``runs.cost_usd`` — no LiteLLM entry existed, so the daily/
+    hourly spend caps were blind to any volume run on them (same class of bug
+    as ``azure/deepseek-v4-pro``). Verifies the registration end to end:
+    id present, both required rates > 0, provenance note attached.
+    """
+    azure_foundry.ensure_bootstrapped()
+    import litellm
+
+    entry = litellm.model_cost.get(model_id)
+    assert entry is not None, f"{model_id} is unregistered after bootstrap"
+    assert entry["input_cost_per_token"] > 0
+    assert entry["output_cost_per_token"] > 0
+    assert "azure retail" in entry.get("factory_cost_note", "").lower()
+
+    prompt_cost, completion_cost = litellm.cost_per_token(
+        model=model_id,
+        prompt_tokens=1_000_000,
+        completion_tokens=1_000_000,
+    )
+    assert prompt_cost == pytest.approx(input_per_1m, rel=1e-6)
+    assert completion_cost == pytest.approx(output_per_1m, rel=1e-6)
+
+    # Cache-read rate is a PUBLISHED Azure meter for both new models (unlike
+    # deepseek-v4-pro's estimated one) — assert it's registered and cheaper
+    # than the full input rate.
+    assert entry.get("cache_read_input_token_cost", 0.0) > 0.0
+    assert entry["cache_read_input_token_cost"] < entry["input_cost_per_token"]
+    cache_cost, _ = litellm.cost_per_token(
+        model=model_id,
+        prompt_tokens=0,
+        completion_tokens=0,
+        cache_read_input_tokens=1_000_000,
+    )
+    assert cache_cost == pytest.approx(cache_per_1m, rel=1e-6)
+
+
+def test_new_model_pricing_is_not_flagged_estimated() -> None:
+    """Unlike ``deepseek-v4-pro``'s cache-read rate, all rates for the two
+    new models come from a published Azure meter — the ``factory_cost_note``
+    must NOT carry the ``estimated`` marker ``settings.audit._model_cost_is_estimated``
+    keys off, or an operator would distrust a rate that is actually exact.
+    """
+    azure_foundry.ensure_bootstrapped()
+    import litellm
+
+    for model_id in ("azure/DeepSeek-V4-Flash", "azure/Kimi-K2.7-Code"):
+        entry = litellm.model_cost.get(model_id)
+        assert entry is not None
+        assert "estimated" not in entry.get("factory_cost_note", "").lower()
+
+
+# --------------------------------------------------------------------------- #
 # routes.yaml + model_router integration
 # --------------------------------------------------------------------------- #
 

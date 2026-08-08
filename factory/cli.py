@@ -1874,6 +1874,7 @@ def budget_cmd() -> None:
         projected_end_of_day,
         recent_runs,
         today_spend_usd,
+        unpriced_model_runs_today,
     )
 
     settings = load_settings(_FACTORY_ROOT)
@@ -1902,6 +1903,28 @@ def budget_cmd() -> None:
         for r in runs:
             rtable.add_row(r.ts, r.persona, r.model, f"${(r.cost_usd or 0):.4f}")
         console.print(rtable)
+
+    # Silent-$0 blindness: runs today that burned tokens but recorded
+    # cost_usd=0.0 because the model has no LiteLLM price registration (see
+    # factory.providers.azure_foundry). today_spend_usd above is BLIND to
+    # these — they contribute $0.00 to every number in the table above no
+    # matter how much they actually cost the provider.
+    unpriced = unpriced_model_runs_today(_FACTORY_ROOT, db_path=db)
+    if unpriced:
+        by_model: dict[str, int] = {}
+        for r in unpriced:
+            by_model[r.model] = by_model.get(r.model, 0) + 1
+        models_str = ", ".join(f"{m} x{n}" for m, n in sorted(by_model.items()))
+        console.print(
+            Panel.fit(
+                f"[red]{len(unpriced)} run(s) today burned tokens but recorded "
+                f"cost_usd=$0.00 because the model has no usable LiteLLM "
+                f"price: {models_str}. today_spend_usd above does NOT "
+                f"include their real cost — register a price in "
+                f"factory/providers/azure_foundry.py.[/red]",
+                title="budget — unpriced-model blindness",
+            )
+        )
 
 
 @app.command("why")

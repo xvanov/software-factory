@@ -249,6 +249,123 @@ def test_text_run_missing_api_key_records_premodel_infra(
 
 
 # --------------------------------------------------------------------------- #
+# Silent-$0 guard — 2026-08-08: an unpriced model must WARN, not read as free
+# --------------------------------------------------------------------------- #
+
+
+def test_record_run_warns_loudly_on_unpriced_model_with_real_usage(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The exact live bug: a model with no LiteLLM price burns real tokens
+    and lands cost_usd=0.0. usage_reliable=False already carries the honest
+    signal (set by text_run/sandbox_run when the provider's cost read
+    fails) — this asserts it is also made LOUD, naming the model and token
+    counts, instead of only being visible to a ``factory audit`` deep-dive.
+    """
+    import logging
+
+    db = tmp_path / "factory.db"
+    with caplog.at_level(logging.WARNING, logger="factory.runner"):
+        _record_run(
+            persona="dev",
+            model="azure/some-brand-new-deployment",
+            mode="sandbox",
+            tokens_in=50_000,
+            tokens_out=8_000,
+            cost_usd=0.0,
+            success=True,
+            story_path=None,
+            repo_path=None,
+            error=None,
+            db_path=db,
+            usage_reliable=False,
+        )
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "no WARNING emitted for a real call with an unreadable cost"
+    msg = warnings[0].getMessage()
+    assert "azure/some-brand-new-deployment" in msg
+    assert "50000" in msg
+    assert "8000" in msg
+
+
+def test_record_run_does_not_warn_when_usage_is_reliable(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A model that genuinely reports $0.00 (usage_reliable=True) is a known
+    fact, not a blind spot — no warning, no false alarm."""
+    import logging
+
+    db = tmp_path / "factory.db"
+    with caplog.at_level(logging.WARNING, logger="factory.runner"):
+        _record_run(
+            persona="dev",
+            model="azure/gpt-5.4",
+            mode="text",
+            tokens_in=100,
+            tokens_out=10,
+            cost_usd=0.0,
+            success=True,
+            story_path=None,
+            repo_path=None,
+            error=None,
+            db_path=db,
+            usage_reliable=True,
+        )
+    assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+
+def test_record_run_does_not_warn_when_no_tokens_were_spent(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A pre-model infra failure or dry-run has zero tokens AND
+    usage_reliable is None/False-but-inapplicable — must not false-positive
+    as an unpriced-model blind spot."""
+    import logging
+
+    db = tmp_path / "factory.db"
+    with caplog.at_level(logging.WARNING, logger="factory.runner"):
+        _record_run(
+            persona="dev",
+            model="azure/gpt-5.4",
+            mode="sandbox",
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            success=False,
+            story_path=None,
+            repo_path=None,
+            error="No API key available",
+            db_path=db,
+            premodel_infra=True,
+            usage_reliable=None,
+        )
+    assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+
+def test_text_run_against_an_unpriced_model_warns_via_the_real_call_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """End-to-end through ``text_run``: a model LiteLLM cannot price hits the
+    same ``_hidden_params`` miss as the live ``azure/DeepSeek-V4-Flash`` /
+    ``azure/Kimi-K2.7-Code`` incident, and the guard fires from the real call
+    path (not just a direct ``_record_run`` call)."""
+    import logging
+
+    monkeypatch.setenv("AZURE_API_KEY", "test-key")
+    _fake_litellm(monkeypatch, _Response())  # no _hidden_params → unreadable cost
+
+    db = tmp_path / "state" / "factory.db"
+    with caplog.at_level(logging.WARNING, logger="factory.runner"):
+        text_run(persona="sm", prompt="hi", model_id="azure/still-unpriced", db_path=db)
+
+    row = _only_row(db)
+    assert row.cost_usd == 0.0
+    assert row.usage_reliable is False
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("azure/still-unpriced" in r.getMessage() for r in warnings)
+
+
+# --------------------------------------------------------------------------- #
 # sandbox_run — the SDK-shape-drift equivalent
 # --------------------------------------------------------------------------- #
 
