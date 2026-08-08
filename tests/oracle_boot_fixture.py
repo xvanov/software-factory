@@ -52,8 +52,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except ValueError:
             return {}
 
+    def _broken_here(self):
+        # KNOWN OPEN #1 fixture support: FIXTURE_RUN_ID carries the boot's
+        # own run_id (literal-substituted by ``boot._build_env`` from
+        # ``{run_id}``) — "healthy but broken" is turned on ONLY for boots
+        # whose run_id starts with "base-", modelling a real app whose health
+        # endpoint never checks its own dependency (so it always answers 200)
+        # while every OTHER route 500s because that dependency (a DB pool,
+        # here) never became ready at THIS boot.
+        return os.environ.get("FIXTURE_RUN_ID", "").startswith("base-")
+
     def do_GET(self):
         if self.path == "/health":
+            # Deliberately does NOT consult ``_broken_here`` — the whole
+            # point of the fixture is a health check that lies.
             self._send_json(200, {"ok": True})
             return
         self._send_json(404, {})
@@ -61,6 +73,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         data = self._read_json()
         if self.path == "/normalize":
+            if self._broken_here():
+                self._send_json(500, {"error": "db pool not ready"})
+                return
             # Imported HERE (request time), not at module load: the mutation
             # ablation's sentinel write happens inside normalize_email's body,
             # and must fire on every call, not only the process's first import.
@@ -102,8 +117,15 @@ def boot_cfg(
     subdir: str = "backend",
     boot_timeout_seconds: int = 15,
     run_timeout_seconds: int = 20,
+    broken_at_base: bool = False,
     **overrides: object,
 ) -> AcceptanceBootConfig:
+    """``broken_at_base=True`` (KNOWN OPEN #1 regression fixture): the booted
+    app's ``/health`` always answers 200, but ``/normalize`` (its one real
+    route) 500s at ANY boot whose run_id starts with ``"base-"`` — the
+    "healthy but broken" shape a lying health check produces at the merge
+    base. ``{run_id}`` is substituted literally by ``boot._build_env``, so
+    this threads through with no change to ``boot.py`` itself."""
     from factory.app_config import AcceptanceBootConfig
 
     kwargs: dict[str, object] = {
@@ -114,6 +136,8 @@ def boot_cfg(
         "run_timeout_seconds": run_timeout_seconds,
         "shutdown_grace_seconds": 2,
     }
+    if broken_at_base:
+        kwargs["env"] = {"FIXTURE_RUN_ID": "{run_id}"}
     kwargs.update(overrides)
     return AcceptanceBootConfig(**kwargs)  # type: ignore[arg-type]
 
@@ -134,6 +158,23 @@ HTTP_ORACLE = (
 HTTP_TAUTOLOGY = (
     "def test_ac1_email_is_lowercased():\n"
     "    assert True\n"
+)
+
+#: Checks the status code BEFORE the body — common, reasonable oracle style,
+#: and the exact shape that turns a "healthy but broken" base (KNOWN OPEN #1)
+#: into a FAIL (an AssertionError on ``status_code == 200``) rather than an
+#: ERROR (a KeyError reading a missing field out of a ``{"error": ...}``
+#: body). ``verdict_over`` never counted ERROR as red, so the bug needs a
+#: FAIL to actually forge one — this is what reproduces that.
+HTTP_ORACLE_STRICT = (
+    "import os\n"
+    "import httpx\n"
+    "\n"
+    "def test_ac1_email_is_lowercased():\n"
+    "    base = os.environ['ACCEPTANCE_BASE_URL']\n"
+    "    r = httpx.post(f'{base}/normalize', json={'email': 'User@Example.COM'}, timeout=5)\n"
+    "    assert r.status_code == 200\n"
+    "    assert r.json()['email'] == 'user@example.com'\n"
 )
 
 #: A legacy import-form oracle — statically rejected before any boot.

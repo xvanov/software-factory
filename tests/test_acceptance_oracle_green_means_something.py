@@ -43,6 +43,7 @@ from tests.oracle_boot_fixture import (
     BAD_IMPL,
     GOOD_IMPL,
     HTTP_ORACLE,
+    HTTP_ORACLE_STRICT,
     HTTP_TAUTOLOGY,
     boot_cfg,
     write_bootable_app,
@@ -439,6 +440,156 @@ def test_D1_an_unknown_base_verdict_is_never_cached(
     assert r1.passed and r2.passed
     assert r1.details["base_run"].get("boot_failed") is True
     assert calls["n"] == 2, "an unknown base verdict was cached, skipping the re-boot attempt"
+
+
+# =========================================================================== #
+# KNOWN OPEN #1 (closed 2026-08-07/08) — a healthy-but-broken BASE must not
+# forge a credited red. ``boot_cfg(broken_at_base=True)`` puts the fixture app
+# into "health lies" mode: ``/health`` always 200s, ``/normalize`` (the one
+# real route) 500s at any boot whose run_id starts with ``"base-"`` — exactly
+# the shape a real app's DB-pool-not-ready race produces. ``HTTP_ORACLE_STRICT``
+# asserts ``status_code == 200`` BEFORE reading the body, so the 500 becomes a
+# FAIL (not an ERROR, which ``verdict_over`` never counted as red anyway) —
+# the one shape that could actually have forged a credited ``red`` before
+# this was fixed.
+# =========================================================================== #
+
+
+def test_KNOWN_OPEN_1_healthy_but_broken_base_does_not_forge_a_credited_red(
+    tmp_path: Path,
+) -> None:
+    """The regression pin for the whole bug. Before the fix, every credited
+    criterion failing at base (all with a 5xx-shaped ``AssertionError`` on
+    ``status_code == 200``) read as a genuine ``red`` and CREDITED the story
+    — even though the base app never served a single real request. The fix
+    must land this on ``unknown``/ablation instead, never on a credited
+    ``merge_base_red``."""
+    repo, _base, head = _repo(tmp_path, base_impl=BAD_IMPL, head_impl=GOOD_IMPL)
+    root = tmp_path / "factory"
+    ref = _store(root, content=HTTP_ORACLE_STRICT)
+    cfg = _cfg(boot=boot_cfg(broken_at_base=True))
+
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), cfg)
+
+    base_run = r.details["base_run"]
+    assert base_run.get("downgraded_from") == "red", base_run
+    assert base_run["base_probe"]["served_a_real_route"] is False, base_run["base_probe"]
+    assert base_run["base_probe"]["requests"], "the probe must have been given at least one request to try"
+    assert r.details.get("failability_route") != "merge_base_red", (
+        "a healthy-but-broken base forged a credited red at the merge base"
+    )
+
+
+def test_KNOWN_OPEN_1_a_downgraded_base_verdict_is_never_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mirrors ``test_D1_an_unknown_base_verdict_is_never_cached`` for the NEW
+    ``unknown`` shape: a downgraded (healthy-but-broken) base must re-attempt
+    the boot on every evaluation, exactly like any other ``unknown`` base."""
+    repo, _base, head = _repo(tmp_path, base_impl=BAD_IMPL, head_impl=GOOD_IMPL)
+    root = tmp_path / "factory"
+    ref = _store(root, content=HTTP_ORACLE_STRICT)
+    cfg = _cfg(boot=boot_cfg(broken_at_base=True))
+
+    calls = {"n": 0}
+    real = acceptance_verified.boot_mod.boot_app
+
+    def _spy(tree, cfg_, run_id, label="boot"):  # type: ignore[no-untyped-def]
+        if run_id.startswith("base-"):
+            calls["n"] += 1
+        return real(tree, cfg_, run_id, label=label)
+
+    monkeypatch.setattr(acceptance_verified.boot_mod, "boot_app", _spy)
+    r1 = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), cfg)
+    r2 = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), cfg)
+
+    assert r1.details["base_run"].get("downgraded_from") == "red"
+    assert r2.details["base_run"].get("downgraded_from") == "red"
+    assert calls["n"] == 2, "the downgraded base verdict was cached, skipping the re-boot attempt"
+    cache = acceptance_dir(root, "sacrifice", 7) / "base_runs.json"
+    assert not cache.exists()
+
+
+def test_KNOWN_OPEN_1_a_genuine_red_with_a_healthy_base_is_unaffected(tmp_path: Path) -> None:
+    """The working path (base genuinely serves and genuinely disagrees) must
+    keep crediting via ``merge_base_red`` — the corroboration requirement
+    must not turn a real red into a false ``unknown``."""
+    repo, base, head = _repo(tmp_path, base_impl=BAD_IMPL, head_impl=GOOD_IMPL)
+    root = tmp_path / "factory"
+    ref = _store(root, content=HTTP_ORACLE_STRICT)
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg())
+    assert r.passed, r.details.get("output_tail")
+    assert r.details["failability_route"] == "merge_base_red"
+    assert r.details["base_run"]["base_probe"]["served_a_real_route"] is True
+    assert "downgraded_from" not in r.details["base_run"]
+    assert r.details["base_sha"] == base[:12]
+
+
+def test_KNOWN_OPEN_1_poll_health_requires_consecutive_successes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An app that answers healthy ONCE and then 503s must NOT be declared
+    booted — ``_poll_health`` now requires ``consecutive_required`` (>=2)
+    back-to-back healthy polls."""
+    from factory.app_config import AcceptanceBootConfig
+    from factory.chain import boot as boot_mod
+
+    class _FakeResp:
+        def __init__(self, code: int) -> None:
+            self.status_code = code
+
+    codes = iter([200, 503, 200, 200])
+    calls = {"n": 0}
+
+    def _fake_get(url: str, timeout: float = 2.0):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        return _FakeResp(next(codes, 200))
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", _fake_get)
+    monkeypatch.setattr(boot_mod.time, "sleep", lambda *_a, **_k: None)
+
+    class _FakeProc:
+        returncode = None
+
+        def poll(self):  # type: ignore[no-untyped-def]
+            return None
+
+    cfg = AcceptanceBootConfig(command="x --port {port}", boot_timeout_seconds=5)
+    healthy, why = boot_mod._poll_health(_FakeProc(), "http://x", cfg)  # type: ignore[arg-type]
+    assert healthy, why
+    # 200 (consecutive=1), 503 (reset to 0), 200 (consecutive=1), 200 (consecutive=2 -> healthy)
+    assert calls["n"] == 4, "expected the 503 blip to reset the consecutive-success streak"
+
+
+def test_KNOWN_OPEN_1_poll_health_never_reads_a_5xx_as_healthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from factory.app_config import AcceptanceBootConfig
+    from factory.chain import boot as boot_mod
+
+    class _FakeResp:
+        status_code = 500
+
+    def _fake_get(url: str, timeout: float = 2.0):  # type: ignore[no-untyped-def]
+        return _FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", _fake_get)
+    monkeypatch.setattr(boot_mod.time, "sleep", lambda *_a, **_k: None)
+
+    class _FakeProc:
+        returncode = None
+
+        def poll(self):  # type: ignore[no-untyped-def]
+            return None
+
+    cfg = AcceptanceBootConfig(command="x --port {port}", boot_timeout_seconds=1)
+    healthy, why = boot_mod._poll_health(_FakeProc(), "http://x", cfg)  # type: ignore[arg-type]
+    assert not healthy
+    assert "consecutive" in why
 
 
 # =========================================================================== #
