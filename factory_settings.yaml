@@ -95,6 +95,19 @@ ci_health:
 # landed. Flip on per app after a soak — never globally on merge.
 detector_watch:
   enabled: false
+# Deterministic operational-recovery cycle (factory.manager.recovery). When
+# enabled, ``factory tick`` runs run_recovery_cycle once per app per real
+# tick. PR #247 deleted factory/manager/apply.py, the ONLY caller of every
+# one of the six recovery playbooks (including recover-stuck-fixonly-mode and
+# quarantine-invalid-enum-story, each of which fixes a RECORDED live wedge:
+# a stuck non-normal mode blocked all dispatch; invalid-enum rows failed
+# every tick forever). Default ON, unlike detector_watch above: every
+# playbook here fixes a known wedge and the module is internally fail-safe
+# (forces dry-run while halted; per-cycle action cap + per-target cooldown),
+# so the risk of leaving it OFF (silent rot) outweighs the risk of ON. Flip
+# off only if a playbook proves counterproductive in the field.
+recovery:
+  enabled: true
 # Phase 6 scheduled personas. ``factory tick`` consults this on every run
 # and dispatches due entries via ``factory.chain.scheduled_tasks``. Rate
 # limits referenced by ``rate_limit_key`` look up the same-named field in

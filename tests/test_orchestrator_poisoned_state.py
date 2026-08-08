@@ -92,17 +92,31 @@ def test_poisoned_state_row_is_skipped_not_fatal(
     assert summary.errors == []
     assert dispatched == [healthy_id]
 
-    # Poisoned row untouched (quarantined, not mutated or deleted).
+    # Poisoned row still PRESENT — never deleted. Its state, however, is now
+    # actively quarantined rather than left as-is: the recovery playbook
+    # ``quarantine-invalid-enum-story`` runs again as of the 2026-08-08 rewire
+    # (PR #247 had deleted its only caller along with the FMS watcher, leaving
+    # all six playbooks dead). Quarantining is the playbook's whole purpose —
+    # an un-quarantined invalid-enum row is the class that failed every tick
+    # until an operator noticed. The load-bearing properties are unchanged and
+    # asserted above: the skip is NON-FATAL, it never reaches summary.errors,
+    # and the healthy story is still dispatched.
     with Session(eng) as session:
         refreshed = session.get(StoryRecord, poisoned_id)
-        assert refreshed is not None
-        assert refreshed.state == "abandoned"
+        assert refreshed is not None, "a poisoned row must be quarantined, never deleted"
+        assert refreshed.state == "quarantined_invalid_state"
 
     # A second tick must NOT re-emit the invalid_state_skipped event for the
-    # same (story, state): the poisoned row persists until an operator repairs
-    # it, and re-emitting every tick would grow the per-story log unbounded.
+    # same (story, state) — re-emitting every tick would grow the per-story log
+    # unbounded. Since the 2026-08-08 recovery rewire the row is also no longer
+    # RE-SURFACED as an invalid-state skip on tick 2: the quarantine playbook
+    # already moved it out of the invalid-enum set on tick 1, which is exactly
+    # the point of quarantining (before the rewire nothing ran the playbook, so
+    # the row was rescanned forever). Non-fatality is still asserted.
     summary2 = O.tick(factory_root, "sacrifice", db_path=db, max_advances_per_story=1)
-    assert any("invalid state" in msg for _, msg in summary2.skipped)  # still surfaced each tick
+    assert not any("invalid state" in msg for _, msg in summary2.skipped), (
+        "a quarantined row must not be rescanned as invalid on later ticks"
+    )
     assert summary2.errors == []  # still non-fatal
 
     from factory.chain.event_log import read_story_events
