@@ -14,24 +14,31 @@ def _write(tmp_path: Path, body: str) -> Path:
 
 
 def test_defaults_merge_with_model_limits() -> None:
-    # Production routes.yaml: gpt-5.4 cap 16384, defaults pin caching_prompt.
-    params = llm_params_for("pm", "azure/gpt-5.4")
+    # Production routes.yaml: Kimi-K2.7-Code cap 16384, defaults pin
+    # caching_prompt. (gpt-5.4 is still in model_limits for the rollback path
+    # but is no longer routed as of 2026-08-08.)
+    params = llm_params_for("tech_writer", "azure/Kimi-K2.7-Code")
     assert params["max_output_tokens"] == 16384
     assert params["caching_prompt"] is True
 
 
 def test_difficulty_mapped_persona_entry() -> None:
+    # Both dev tiers are deepseek-v4-pro since the open-weight switch, and
+    # neither has a reasoning surface, so both pin reasoning_effort "none".
     std = llm_params_for("dev", "azure/deepseek-v4-pro", difficulty="standard")
     assert std["reasoning_effort"] == "none"
     assert std["max_output_tokens"] == 8192
-    hard = llm_params_for("dev", "azure/gpt-5.3-codex", difficulty="hard")
-    assert hard["reasoning_effort"] == "high"
-    assert hard["max_output_tokens"] == 16384
+    hard = llm_params_for("dev", "azure/deepseek-v4-pro", difficulty="hard")
+    assert hard["reasoning_effort"] == "none"
+    assert hard["max_output_tokens"] == 8192
 
 
 def test_flat_persona_entry() -> None:
-    params = llm_params_for("reviewer", "azure/gpt-5.3-codex")
-    assert params["reasoning_effort"] == "high"
+    # Flat (non-difficulty-mapped) persona entry still resolves. The reviewer
+    # runs DeepSeek-V4-Flash, which has no reasoning surface.
+    params = llm_params_for("reviewer", "azure/DeepSeek-V4-Flash")
+    assert params["reasoning_effort"] == "none"
+    assert params["max_output_tokens"] == 16384
 
 
 def test_unknown_keys_are_dropped(tmp_path: Path) -> None:

@@ -157,16 +157,16 @@ class TestKeyAwareDegradation:
         # the ladder never silently collapses under the shipped config.
         #
         # Was manager_watcher/manager_diagnostician (deleted 2026-08-07 with
-        # the FMS LLM tiers) exercising the cheap/code-specialist tiers;
-        # test_implementer and factory_self_context cover the same two
-        # model ids (deepseek-v4-pro, gpt-5.4) from the surviving personas.
+        # the FMS LLM tiers). Since 2026-08-08 all three routed models are
+        # open-weight and all resolve from the single AZURE_API_KEY, so the
+        # open-weight switch did not add a credential the ladder can lose.
         monkeypatch.setenv("FACTORY_PROVIDER", "azure")
         monkeypatch.setenv("AZURE_API_KEY", "test-key")
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        assert route("test_implementer") == "azure/deepseek-v4-pro"
-        assert route("factory_self_context") == "azure/gpt-5.4"
-        assert route("reviewer") == "azure/gpt-5.4"
-        assert route("security") == "azure/gpt-5.3-codex"
-        assert route("dev", "hard") == "azure/gpt-5.3-codex"
+        assert route("test_implementer") == "azure/DeepSeek-V4-Flash"
+        assert route("factory_self_context") == "azure/DeepSeek-V4-Flash"
+        assert route("reviewer") == "azure/DeepSeek-V4-Flash"
+        assert route("security") == "azure/Kimi-K2.7-Code"
+        assert route("dev", "hard") == "azure/deepseek-v4-pro"
         assert route("dev", "standard") == "azure/deepseek-v4-pro"

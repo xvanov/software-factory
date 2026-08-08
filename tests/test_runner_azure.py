@@ -361,9 +361,8 @@ def test_routes_yaml_default_provider_is_azure() -> None:
 def test_route_returns_azure_model_under_default_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With ``default_provider: azure`` structured-text personas resolve to an
-    ``azure/...`` model id; code-judgment personas (reviewer/security) route to
-    gpt-5.3-codex (2026-07-16 Azure-only ladder — codex verified reachable)."""
+    """With ``default_provider: azure`` every persona resolves to an
+    ``azure/...`` model id, and (since 2026-08-08) to an OPEN-WEIGHT one."""
     monkeypatch.delenv("FACTORY_PROVIDER", raising=False)
     for persona in (
         "pm",
@@ -374,47 +373,69 @@ def test_route_returns_azure_model_under_default_provider(
     ):
         model_id = model_router.route(persona)
         assert model_id.startswith("azure/"), f"{persona} routed to {model_id!r}"
-    # security stays on the code specialist. The reviewer moved to gpt-5.4 on
-    # 2026-08-01: dev.hard is gpt-5.3-codex, so a gpt-5.3-codex reviewer would
-    # be grading its own model on exactly the stories that escalated to the
-    # hard tier. Enforced by model_router.check_review_independence.
-    assert model_router.route("security") == "azure/gpt-5.3-codex"
-    assert model_router.route("reviewer") == "azure/gpt-5.4"
+    assert model_router.route("security") == "azure/Kimi-K2.7-Code"
+    assert model_router.route("reviewer") == "azure/DeepSeek-V4-Flash"
+    # The reviewer must differ from BOTH dev tiers — enforced fatally by
+    # model_router.check_review_independence at load.
     assert model_router.route("reviewer") != model_router.route("dev", "hard")
+    assert model_router.route("reviewer") != model_router.route("dev", "standard")
 
 
 def test_route_dev_uses_deepseek_v4_pro(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Dev standard tier routes to deepseek-v4-pro (heavy impl); the hard
-    tier deliberately routes to a DIFFERENT model family so tier escalation
-    is a real escape hatch for per-model failure modes (e.g. Azure
-    content-filter blocks on deepseek completions, 2026-06-11) — and, since
-    2026-07-16, also a genuine capability jump (gpt-5.3-codex)."""
-    monkeypatch.delenv("FACTORY_PROVIDER", raising=False)
-    assert model_router.route("dev", "standard") == "azure/deepseek-v4-pro"
-    assert model_router.route("dev", "hard") == "azure/gpt-5.3-codex"
-    assert model_router.route("test_implementer") == "azure/deepseek-v4-pro"
+    """Both dev tiers route to deepseek-v4-pro.
 
+    It is the most capable open-weight model on the resource AND the only one
+    with throughput headroom: measured over n=706 real dev runs, dev averages
+    239,515 TPM and peaks at 546,860, while Kimi-K2.7-Code is capped at
+    100 TPM (quota maxed 100/100) and DeepSeek-V4-Flash at 250.
 
-def test_route_text_personas_use_gpt_5_4(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Structured-text personas route to gpt-5.4.
-
-    Code-judgment personas (reviewer / security) moved to the frontier-open
-    tier (GLM-5.2 via OpenRouter, 2026-07-15) — covered by
-    ``test_route_returns_azure_model_under_default_provider``. The
-    reviewer ≠ dev invariant holds because dev / test_implementer run on
-    deepseek-v4-pro. ``test_designer`` has no route (Loop-4 persona removal)
-    and falls back to ``azure_fallback``.
+    KNOWN REGRESSION pinned deliberately (2026-08-08): the hard tier is no
+    longer a different family, so escalation is a no-op. Under the open-weight
+    constraint there is no third capable family to escalate INTO. If this
+    assertion ever needs to change, the mitigation is in routes.yaml.
     """
     monkeypatch.delenv("FACTORY_PROVIDER", raising=False)
-    for persona in (
+    assert model_router.route("dev", "standard") == "azure/deepseek-v4-pro"
+    assert model_router.route("dev", "hard") == "azure/deepseek-v4-pro"
+    # test_implementer is dormant but MUST stay off dev.standard so the
+    # shared-model advisory stays clear.
+    assert model_router.route("test_implementer") == "azure/DeepSeek-V4-Flash"
+
+
+def test_route_text_personas_are_open_weight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No persona resolves to a closed-weight model (operator decision 2026-08-08).
+
+    This is the invariant that actually encodes the decision: the exact
+    per-persona assignment is a tuning choice, but "nothing closed-weight" is
+    the guarantee. ``test_designer`` has no route (Loop-4 persona removal) and
+    exercises ``azure_fallback``, which must also be open-weight.
+    """
+    monkeypatch.delenv("FACTORY_PROVIDER", raising=False)
+    open_weight = {
+        "azure/deepseek-v4-pro",
+        "azure/Kimi-K2.7-Code",
+        "azure/DeepSeek-V4-Flash",
+    }
+    personas = (
         "pm",
         "analyst",
         "sm",
         "tech_writer",
         "onboarder",
-        "test_designer",  # unrouted → azure_fallback
-    ):
-        assert model_router.route(persona) == "azure/gpt-5.4", persona
+        "reviewer",
+        "security",
+        "acceptance_author",
+        "ux_auditor",
+        "factory_self_context",
+        "test_implementer",
+        "test_designer",  # unrouted -> azure_fallback
+    )
+    for persona in personas:
+        model_id = model_router.route(persona)
+        assert model_id in open_weight, f"{persona} routed to non-open {model_id!r}"
+    for difficulty in ("standard", "hard"):
+        model_id = model_router.route("dev", difficulty)
+        assert model_id in open_weight, f"dev.{difficulty} routed to {model_id!r}"
 
 
 def test_factory_provider_env_override_takes_precedence(
@@ -424,7 +445,7 @@ def test_factory_provider_env_override_takes_precedence(
     monkeypatch.setenv("FACTORY_PROVIDER", "direct")
     assert model_router.route("pm") == "deepseek/deepseek-chat"
     monkeypatch.setenv("FACTORY_PROVIDER", "azure")
-    assert model_router.route("pm") == "azure/gpt-5.4"
+    assert model_router.route("pm") == "azure/deepseek-v4-pro"
 
 
 def test_route_uses_azure_fallback_when_persona_missing(tmp_path: Path) -> None:
