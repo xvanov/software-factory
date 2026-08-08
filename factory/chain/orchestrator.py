@@ -149,12 +149,9 @@ _DISPATCH = {
     # the dev-retry path.
     StoryState.REVIEWER_REQUESTED_CHANGES: "dev",
     StoryState.TESTS_GREEN: "review",
-    # TODO(phase-3-or-4): Invoke ``ux_designer`` (see
-    # ``factory/personas/ux_designer.md``) from inside the SM handler when
-    # the direction has UI scope and flow.md ambiguity is detected (no
-    # explicit user-visible steps, or contradictory descriptions). For now
-    # SM produces stories as-is; the ux_designer persona file is wired but
-    # not dispatched.
+    # The speculative ``ux_designer`` persona (never dispatched from
+    # anywhere — flow.md-ambiguity detection was never built) was deleted
+    # 2026-08-07 as an orphan persona — 019 AC5. SM produces stories as-is.
     StoryState.REVIEWER_DONE: "tech_writer",
     StoryState.TECH_WRITER_DONE: "docs_enforcer",
     # Docs chain dispatch (skips the TDD red→green loop).

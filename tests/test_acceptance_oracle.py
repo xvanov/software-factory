@@ -275,6 +275,25 @@ def test_spec_prompt_is_spec_only(tmp_path: Path) -> None:
     assert "def " not in prompt
 
 
+def test_spec_prompt_is_always_example_mode(tmp_path: Path) -> None:
+    """``build_spec_prompt`` is example-mode only (019 AC5 deleted EARS/ears.py).
+
+    Even an EARS-shaped acceptance criterion (``WHEN ... THE ... SHALL ...``)
+    gets no property-mode / Hypothesis section — the criteria appear verbatim
+    and that's the whole prompt body.
+    """
+    story = _story()
+    direction = _direction(
+        tmp_path,
+        ["WHEN the goal is missing, THE api SHALL return 404"],
+    )
+    prompt = build_spec_prompt(story, direction)
+    assert "WHEN the goal is missing, THE api SHALL return 404" in prompt
+    assert "Property-based testing mode" not in prompt
+    assert "Hypothesis" not in prompt
+    assert "EARS" not in prompt
+
+
 # --------------------------------------------------------------------------- #
 # (c) per-app opt-in (off by default)
 # --------------------------------------------------------------------------- #

@@ -1,7 +1,7 @@
 """Garbage-collect stale scheduled-persona directions nobody is acting on.
 
-Directions filed by the scheduled personas (ralph/bug_hunter/security/
-ux_auditor — ``source`` starting with ``scheduled-``) sometimes fail the
+Directions filed by the scheduled personas (security/ux_auditor —
+``source`` starting with ``scheduled-``) sometimes fail the
 backpressure gate and sit at ``status: needs-direction`` forever: nobody is
 watching for an operator to flesh them out, so the normal
 ``needs-direction`` re-check (which is operator-triggered, see

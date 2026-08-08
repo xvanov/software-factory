@@ -381,7 +381,7 @@ def _file_ci_health_direction(
         # "here's a broken check, fix it"), and the backpressure gate would
         # otherwise flag every ci-health direction as needs-direction and
         # never build it — the same reasoning ``scheduled_tasks`` uses for
-        # bug_hunter/ralph/security/ux_auditor findings.
+        # security/ux_auditor findings.
         explore=True,
         attach_files=None,
         software_factory_root=software_factory_root,

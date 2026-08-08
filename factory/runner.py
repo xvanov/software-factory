@@ -614,10 +614,10 @@ class Run(SQLModel, table=True):
     model_tier: str | None = None
     # D003 — complete per-unit attribution. ``story_id`` alone undercounts
     # per-direction / per-app rollups whenever a run predates story creation
-    # (PM/analyst) or is a scheduled app-level persona (ralph/bug_hunter/
-    # security/ux_auditor) — those legitimately have no story_id but DO have
-    # a known app. Chain-persona runs (sm/dev/reviewer/tech_writer/
-    # onboarder) are expected to carry all three.
+    # (PM/analyst) or is a scheduled app-level persona (security/ux_auditor)
+    # — those legitimately have no story_id but DO have a known app. Chain-
+    # persona runs (sm/dev/reviewer/tech_writer/onboarder) are expected to
+    # carry all three.
     direction_id: str | None = None
     app: str | None = None
     # D003 follow-up — the cached/fresh token SPLIT, not just the blended

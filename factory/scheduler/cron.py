@@ -5,7 +5,7 @@ Responsibilities:
 * Read schedules from ``factory_settings.yaml`` (top-level ``schedules:``).
 * Persist last-run metadata per schedule in ``state/factory.db.cron_schedules``.
 * Tell ``factory tick`` which schedules are due *now* (croniter-based).
-* Enforce per-schedule rate limits (e.g. ``ralph_runs_per_day``).
+* Enforce per-schedule rate limits (e.g. ``security_runs_per_day``).
 
 This module is intentionally NOT a daemon. It is invoked once per tick;
 the host's cron (or ``factory tick`` itself) provides the wall clock.
@@ -14,20 +14,17 @@ Schedule shape (factory_settings.yaml):
 
 ```yaml
 schedules:
-  - name: ralph
-    cron: "0 * * * *"      # hourly
-    persona: ralph
-    rate_limit_key: ralph_runs_per_day  # optional; references rate_limits
-  - name: bug_hunt
-    cron: "0 6 * * *"
-    persona: bug_hunter
   - name: ux_audit
     cron: "0 12 * * *"
     persona: ux_auditor
+    rate_limit_key: ux_auditor_runs_per_day  # optional; references rate_limits
   - name: security_weekly
     cron: "0 9 * * 1"
     persona: security
 ```
+
+(The ``ralph`` and ``bug_hunt`` schedules/personas were deleted 2026-08-07 —
+019 AC5 — along with ``factory/chain/idle.py``'s rotation through them.)
 """
 
 from __future__ import annotations
@@ -89,8 +86,6 @@ class Schedule:
 # Default schedules embedded so a fresh checkout has sane defaults even if
 # the operator hasn't added ``schedules:`` to factory_settings.yaml.
 _DEFAULT_SCHEDULES: list[Schedule] = [
-    Schedule("ralph", "0 * * * *", "ralph", rate_limit_key="ralph_runs_per_day"),
-    Schedule("bug_hunt", "0 6 * * *", "bug_hunter"),
     Schedule("ux_audit", "0 12 * * *", "ux_auditor"),
     Schedule("security_weekly", "0 9 * * 1", "security"),
 ]

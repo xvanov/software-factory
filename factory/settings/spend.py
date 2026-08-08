@@ -38,7 +38,7 @@ def persona_runs_today(
 ) -> int:
     """Count scheduled-persona runs today across ``runs`` and ``scheduled_runs``.
 
-    Phase 6 personas (ralph, bug_hunter, security, ux_auditor) use this
+    Phase 6 personas (security, ux_auditor) use this
     to feed ``can_dispatch`` so the per-persona daily-run cap trips.
     Both real-run (writes ``runs`` via ``_record_run``) and dry-run
     (writes ``scheduled_runs`` via ``ScheduledRunRecord``) contribute —

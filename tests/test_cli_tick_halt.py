@@ -9,15 +9,18 @@ The factory_improver sentinel this file used to monkeypatch
 ``factory/chain/factory_improver.py`` — see STATUS.md and the Exteroception
 v1 direction, P0. The halted-tick-dispatches-nothing behavior survives (it's
 enforced in ``factory.cli.tick_cmd`` before the scheduled-personas block), so
-these tests sentinel on THREE surviving dispatch points instead:
+these tests sentinel on TWO surviving dispatch points instead:
 
   * ``factory.chain.scheduled_tasks.run_scheduled_persona`` — the
     cron-scheduled-persona loop, right after the halt check.
-  * ``factory.chain.idle.maybe_generate_idle_work`` — the idle-work
-    generator, gated ``if not dry_run`` further down.
   * ``factory.chain.orchestrator.tick`` — the story-chain dispatch, last.
 
-A regression that moves the halt check below EITHER of the first two would
+(A third sentinel, ``factory.chain.idle.maybe_generate_idle_work``, was
+dropped 2026-08-07 — 019 AC5 deleted ``factory/chain/idle.py`` and the idle
+block in ``tick_cmd`` that called it. The halt-position property below is
+unaffected: it now needs only the remaining two points pinned.)
+
+A regression that moves the halt check below ``run_scheduled_persona`` would
 stay green if only ``orchestrator.tick`` were pinned (2026-08-07 review
 round: the previous version of this file pinned only ``tick``, missing that
 gap). ``factory.scheduler.cron.due_schedules`` is also patched to return one
@@ -102,7 +105,7 @@ def _one_due_schedule():  # type: ignore[no-untyped-def]
 def _install_dispatch_sentinels(monkeypatch: pytest.MonkeyPatch) -> dict[str, bool]:
     """Loud sentinels on every dispatch point between the halt check and the
     end of tick_cmd. Returns a dict of call flags the test can assert on."""
-    called = {"scheduled_persona": False, "idle_work": False, "tick": False}
+    called = {"scheduled_persona": False, "tick": False}
 
     def _loud(name: str):  # type: ignore[no-untyped-def]
         def _fn(*args: Any, **kwargs: Any) -> Any:
@@ -117,7 +120,6 @@ def _install_dispatch_sentinels(monkeypatch: pytest.MonkeyPatch) -> dict[str, bo
     monkeypatch.setattr(
         "factory.chain.scheduled_tasks.run_scheduled_persona", _loud("scheduled_persona")
     )
-    monkeypatch.setattr("factory.chain.idle.maybe_generate_idle_work", _loud("idle_work"))
     monkeypatch.setattr("factory.chain.orchestrator.tick", _loud("tick"))
     return called
 
@@ -126,8 +128,8 @@ def test_tick_cmd_skips_improver_when_halted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When halted, tick_cmd prints halt state and exits 0 without dispatching
-    to ANY of the three surviving dispatch points (scheduled personas, idle
-    work generation, or the story chain)."""
+    to EITHER of the two surviving dispatch points (scheduled personas or the
+    story chain)."""
     root = _make_root(tmp_path)
     _set_halt(root)
 
@@ -155,9 +157,7 @@ def test_tick_cmd_skips_improver_when_halted(
 def test_tick_cmd_skips_all_dispatch_when_halted_real_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Same guarantee as above, but WITHOUT ``--dry-run`` — so the
-    ``if not dry_run`` idle-work block in tick_cmd is on the exercised path
-    too (the dry-run test above never reaches that gate). A real (non-dry)
+    """Same guarantee as above, but WITHOUT ``--dry-run``. A real (non-dry)
     invocation needs an LLM provider key to get past tick_cmd's own
     precondition check; the halt check fires before any of that key is
     actually used, so no LLM call happens and no state file is written."""

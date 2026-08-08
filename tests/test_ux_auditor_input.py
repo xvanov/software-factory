@@ -160,7 +160,7 @@ def test_live_run_non_ux_prompt_is_unchanged(
     monkeypatch.setattr("factory.runner.text_run", _fake_text_run)
     monkeypatch.setattr("factory.chain.scheduled_tasks.route", lambda _persona: "fake-model")
 
-    _live_run("bug_hunter", "sacrifice", root)
+    _live_run("security", "sacrifice", root)
 
     assert "Scheduled UX Audit Runtime Inputs" not in str(captured["prompt"])
 

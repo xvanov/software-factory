@@ -35,11 +35,13 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.10",
   "types-PyYAML>=6",
-  # WS4.3: the acceptance oracle authors Hypothesis PROPERTY tests from
-  # EARS-form acceptance criteria; the factory's own tests generate + run
-  # such a property test through the gate, so hypothesis must be importable
-  # in the factory test env. Apps that opt into property-mode acceptance must
-  # likewise carry hypothesis in the env their acceptance_test_command runs in.
+  # The EARS-triggered property-mode acceptance test generation (WS4.3) was
+  # deleted 2026-08-07 (019 AC5, factory/chain/ears.py). Kept as a generic dev
+  # extra: the acceptance oracle's harness resolution (see
+  # factory/chain/gates/acceptance_verified.py) must not ModuleNotFoundError if
+  # an author still chooses to hand-write a Hypothesis property test for a
+  # story, and apps that opt into their own property-mode acceptance carry
+  # hypothesis in the env their acceptance_test_command runs in.
   "hypothesis>=6",
 ]
 

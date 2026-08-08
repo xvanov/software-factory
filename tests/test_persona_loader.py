@@ -53,10 +53,12 @@ def test_every_shipped_persona_loads() -> None:
     # from available_personas() (no silent drops), and vice versa. Was a bare
     # ``>= 20`` floor; 4 persona files (the deleted FMS LLM tiers + the
     # factory_improver) were removed 2026-08-07 — see the Exteroception v1
-    # direction, P0 — dropping the real count from 22 to 18.
+    # direction, P0 — dropping the real count from 22 to 18. A second batch
+    # (bug_hunter, ralph, architect, release_manager, ux_designer) was
+    # removed the same day — 019 AC5 — dropping the count again, 18 -> 13.
     on_disk = {p.stem for p in _REAL_PERSONAS.glob("*.md")}
     assert set(names) == on_disk, (set(names), on_disk)
-    assert len(names) >= 15, names
+    assert len(names) >= 12, names
     for name in names:
         persona = load_persona(name, personas_dir=_REAL_PERSONAS)
         assert persona.body.strip(), f"{name} has an empty body"

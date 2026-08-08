@@ -166,14 +166,6 @@ def can_dispatch(
     # Each tick path consults this BEFORE invoking the persona; the
     # caller supplies ``<persona>_runs_today`` based on a DB count.
     _DAILY_CAPS: dict[str, tuple[int, str]] = {
-        "ralph": (
-            settings.rate_limits.ralph_runs_per_day,
-            "ralph_rate_limit_exceeded",
-        ),
-        "bug_hunter": (
-            settings.rate_limits.bug_hunter_runs_per_day,
-            "bug_hunter_rate_limit_exceeded",
-        ),
         "security": (
             settings.rate_limits.security_runs_per_day,
             "security_rate_limit_exceeded",

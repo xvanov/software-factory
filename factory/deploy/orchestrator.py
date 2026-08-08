@@ -46,7 +46,9 @@ from factory.settings.loader import load_settings
 from factory.settings.modes import get_mode, set_mode
 from factory.settings.spend import hour_spend_usd, today_spend_usd
 
-# Phases in order, mirroring the release_manager persona's deploy_plan.
+# Phases in order (originally mirrored the orphan ``release_manager``
+# persona's deploy_plan; that persona had no dispatch path and was deleted
+# 2026-08-07 — 019 AC5 — this deploy orchestrator is the real implementation).
 PHASE_PRE_DEPLOY = "pre_deploy"
 PHASE_DEPLOY = "deploy"
 PHASE_HEALTH_CHECK = "health_check"

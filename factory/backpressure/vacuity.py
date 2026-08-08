@@ -173,8 +173,8 @@ _SUCCESS_WORD_RE = re.compile(
 # "no error is raised", which assert an absence in output the system never
 # had to produce in the first place — a no-op trivially has nothing to leak
 # and raises nothing. Treating both shapes the same would block every
-# regression/security-fix finding (bug_hunter's fixture criterion is exactly
-# this shape) on a technicality the direction's own Flow D disagrees with.
+# regression/security-fix finding of this shape on a technicality the
+# direction's own Flow D disagrees with.
 # --------------------------------------------------------------------------
 
 _NEGATION_RE = re.compile(
