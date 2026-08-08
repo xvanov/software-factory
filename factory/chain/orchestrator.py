@@ -180,6 +180,11 @@ _DISPATCH = {
     # Docs chain dispatch (skips the TDD red→green loop).
     StoryState.DOCS_SM_DONE: "docs_onboarder",
     StoryState.DOCS_ONBOARDER_DONE: "docs_enforcer",
+    # S4 (019 fail-silent audit): a failed ``gh pr create`` leaves the story
+    # HERE (not PR_OPEN) with ``pr_create_retries`` bumped — this entry is
+    # what makes the next tick actually retry PR creation instead of the
+    # story silently stranding (PR_OPEN has no dispatch entry at all).
+    StoryState.DOCS_ENFORCER_CHECK: "docs_enforcer",
     # Phase 5 — post-merge deploy. The auto-merge worker (and the webhook
     # path) flips a story to DEPLOY_PENDING; from there the orchestrator
     # tick drives handle_deploy.

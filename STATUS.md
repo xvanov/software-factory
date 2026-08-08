@@ -159,10 +159,32 @@ docstring, `factory/chain/gates/acceptance_verified.py`; none is closed by
 `DATABASE_URL` is now explicit in `acceptance_boot.env` (#253) rather than
 riding the operator's ambient shell.
 
-**Interim window, closed by #252:** between #249 (deleted the only writer of
+**`app_idle`/`healthy_drain` window — NOT fully closed by #252 (correction,
+019 fail-silent audit):** between #249 (deleted the only writer of
 `app_idle`) and #252 (re-added it via the idle→ping rewrite), nothing wrote
-`app_idle`, so `stalled_stories.healthy_drain` was permanently `False` in that
-window — it fails toward NOISE, not silence, so nothing was silently missed.
+`app_idle` at all, so `stalled_stories.healthy_drain` was permanently `False`
+in that window — it fails toward NOISE, not silence, so nothing was silently
+missed. But #252 did NOT close the window the way this file previously
+claimed: it wrote `app_idle` only ONCE PER IDLE EPISODE, and
+`stalled_stories.idle_recently` requires one within 30 minutes. A long or
+late-checked episode reads stale — measured live: last `app_idle` at 03:24,
+checked at 04:22 (55 min later) — `healthy_drain=False` for the entire
+window, identical in effect to #249's regression. Fixed on the writer side:
+`factory/chain/idle_ping.py::run_idle_ping_tick` now emits `app_idle` on
+EVERY idle tick (restoring the pre-#249 cadence) while keeping the
+human-facing `operator_ping` deduplicated once per episode — the two are
+different signals (a continuous liveness heartbeat vs. a deduplicated
+notification) and conflating them was the bug. No `factory/manager/**` change
+was needed: `stalled_stories`'s own freshness logic and its unit tests
+already assumed "one `app_idle` per idle tick" — the contract was only ever
+broken on the emission side. Separately, `healthy_drain`'s only live consumer
+(`factory/chain/detector_watch.py::_adapter_stalled_stories`) has a provably
+vacuous early-return — `healthy_drain=True` already implies its own `rows`
+list is empty by `stalled_stories()`'s own arithmetic (`stuck_in_progress`
+feeds `alarms` unconditionally; `stalled` is zeroed whenever `draining` is
+true), so the guard changes nothing either way. Left in place (not this
+fix's target — an available follow-up is deleting it, since
+`detector_watch` is disabled pending a soak regardless).
 
 `detector_watch` ships **off by default** (`factory_settings.yaml`); flip per
 app after a soak, never globally on merge.

@@ -470,6 +470,82 @@ def test_docs_current_fails_without_tech_writer_result(app_cfg_empty: AppConfig)
     assert not r.passed
 
 
+# --- S3 (019 fail-silent audit): no_updates_needed boolean is authoritative -- #
+
+
+def test_docs_current_passes_with_no_updates_needed_true_and_no_rationale(
+    app_cfg_empty: AppConfig,
+) -> None:
+    """The explicit boolean is sufficient on its own — no rationale needed."""
+    story = _story(tech_writer={"context_updates": [], "no_updates_needed": True})
+    pr = PRContext(pr_number=1, head_sha="a", base_branch="main", story=story)
+    r = docs_current.evaluate(pr, app_cfg_empty)
+    assert r.passed
+
+
+def test_docs_current_passes_with_no_updates_needed_true_and_off_script_rationale(
+    app_cfg_empty: AppConfig,
+) -> None:
+    """Prose phrasing outside the four legacy literals still passes when the
+    boolean is set — this is the exact defect: "the change is internal;
+    docs unaffected" matches none of ("no updates needed", "no context
+    updates", "no-op", "nothing to update")."""
+    story = _story(
+        tech_writer={
+            "context_updates": [],
+            "no_updates_needed": True,
+            "rationale": "the change is internal; docs unaffected",
+        }
+    )
+    pr = PRContext(pr_number=1, head_sha="a", base_branch="main", story=story)
+    r = docs_current.evaluate(pr, app_cfg_empty)
+    assert r.passed
+
+
+def test_docs_current_fails_when_no_updates_needed_false_despite_off_script_rationale(
+    app_cfg_empty: AppConfig,
+) -> None:
+    """An explicit false is not overridden by prose alone — the boolean is
+    authoritative in both directions, not just when true."""
+    story = _story(
+        tech_writer={
+            "context_updates": [],
+            "no_updates_needed": False,
+            "rationale": "the change is internal; docs unaffected",
+        }
+    )
+    pr = PRContext(pr_number=1, head_sha="a", base_branch="main", story=story)
+    r = docs_current.evaluate(pr, app_cfg_empty)
+    assert not r.passed
+
+
+def test_docs_current_legacy_rationale_fallback_still_works_without_the_boolean(
+    app_cfg_empty: AppConfig,
+) -> None:
+    """Backward compatibility: historical rows that predate the boolean
+    field (it's simply absent) still pass via the literal-phrase fallback."""
+    story = _story(tech_writer={"context_updates": [], "rationale": "No updates needed."})
+    pr = PRContext(pr_number=1, head_sha="a", base_branch="main", story=story)
+    r = docs_current.evaluate(pr, app_cfg_empty)
+    assert r.passed
+
+
+def test_docs_current_fails_on_parse_failure_placeholder_rationale(
+    app_cfg_empty: AppConfig,
+) -> None:
+    """The historical JSON-parse-failure fallback string
+    ("tech_writer JSON parse failed") matches none of the legacy literals and
+    carries no boolean — this was the unsatisfiable-gate half of S3 before
+    ``handle_tech_writer`` stopped persisting it at all. The gate itself must
+    still fail closed on any row shaped like it (defense in depth)."""
+    story = _story(
+        tech_writer={"context_updates": [], "rationale": "tech_writer JSON parse failed"}
+    )
+    pr = PRContext(pr_number=1, head_sha="a", base_branch="main", story=story)
+    r = docs_current.evaluate(pr, app_cfg_empty)
+    assert not r.passed
+
+
 # --- canonical_paths_only ----------------------------------------------- #
 
 

@@ -154,8 +154,11 @@ def test_realrun_uses_git_diff_not_tech_writer_declared(
 
     real_diff = ["backend/app/routes/auth.py", "stories/310-x.md"]
     monkeypatch.setattr(H, "_changed_files_for_story", lambda *a, **k: real_diff)
-    # Don't touch git/gh — PR opening is exercised elsewhere.
-    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: None)
+    # Don't touch git/gh — PR opening is exercised elsewhere. Returns a real
+    # number (not None — S4 made a None return refuse the PR_OPEN
+    # transition, which this test isn't about) so this test stays focused on
+    # the file-list-source assertion below.
+    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: 4242)
 
     result = handle_docs_enforcer(s, app_config, temp_root, dry_run=False, db_path=db)
     assert result.next_state == StoryState.PR_OPEN
@@ -231,7 +234,109 @@ def test_realrun_falls_back_to_tech_writer_when_git_diff_unavailable(
     persist_story(s, db)
 
     monkeypatch.setattr(H, "_changed_files_for_story", lambda *a, **k: None)
-    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: None)
+    # Returns a real number (not None — see S4 tests below for the failure
+    # path) so this test stays focused on the fallback-file-list assertion.
+    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: 4243)
     result = handle_docs_enforcer(s, app_config, temp_root, dry_run=False, db_path=db)
     assert result.next_state == StoryState.PR_OPEN
     assert "context/modules/auth.md" in result.payload["files"]
+
+
+# --------------------------------------------------------------------------- #
+# S4 (019 fail-silent audit): a failed ``gh pr create`` must NOT silently
+# advance to PR_OPEN with ``github_pr_number`` left ``None`` — that state has
+# no ``orchestrator._DISPATCH`` entry, so nothing ever drove the story again.
+# --------------------------------------------------------------------------- #
+
+
+def test_failed_pr_create_stays_dispatchable_and_visible_in_inbox(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factory.chain import handlers as H
+    from factory.chain import orchestrator as O
+
+    s = _story_at_tech_writer_done(temp_root)
+    s.github_branch = "factory/story-1-x"
+    db = temp_root / "state" / "factory.db"
+    persist_story(s, db)
+
+    monkeypatch.setattr(H, "_changed_files_for_story", lambda *a, **k: ["backend/app.py"])
+    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: None)
+
+    result = handle_docs_enforcer(s, app_config, temp_root, dry_run=False, db_path=db)
+
+    # Must NOT reach PR_OPEN with a placeholder github_pr_number.
+    assert result.next_state != StoryState.PR_OPEN
+    assert s.state != StoryState.PR_OPEN.value
+    assert s.github_pr_number is None
+    assert s.pr_create_retries == 1
+    # Visible to a human: error + last_rejection_reason set.
+    assert result.error is not None and "gh pr create failed" in result.error
+    assert s.error is not None
+    assert s.last_rejection_reason is not None
+    # Dispatchable: DOCS_ENFORCER_CHECK has an entry in the dispatch table,
+    # so the next tick retries PR creation instead of stranding the story.
+    assert O._DISPATCH.get(StoryState(s.state)) == "docs_enforcer"
+
+
+def test_pr_create_retry_succeeds_on_a_later_attempt(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient failure (bad network, gh auth blip) followed by a
+    successful retry must reach PR_OPEN with a real PR number, and the
+    retry counter/error state must be cleared on success."""
+    from factory.chain import handlers as H
+
+    s = _story_at_tech_writer_done(temp_root)
+    s.github_branch = "factory/story-1-x"
+    db = temp_root / "state" / "factory.db"
+    persist_story(s, db)
+
+    monkeypatch.setattr(H, "_changed_files_for_story", lambda *a, **k: ["backend/app.py"])
+    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: None)
+    first = handle_docs_enforcer(s, app_config, temp_root, dry_run=False, db_path=db)
+    assert first.next_state != StoryState.PR_OPEN
+    assert s.pr_create_retries == 1
+
+    # Next tick's dispatch re-enters via the SAME state — simulate the
+    # retry succeeding.
+    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: 555)
+    second = handle_docs_enforcer(s, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert second.next_state == StoryState.PR_OPEN
+    assert s.github_pr_number == 555
+    assert s.pr_create_retries == 0
+    assert s.error is None
+    assert s.last_rejection_reason is None
+
+
+def test_pr_create_exhausted_retries_parks_at_blocked_deploy_failed(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A persistently broken ``gh``/push must not retry forever — bounded by
+    ``_MAX_PR_CREATE_RETRIES`` (strictly below the hard cap of 3), then
+    parked for human action."""
+    from factory.chain import handlers as H
+
+    s = _story_at_tech_writer_done(temp_root)
+    s.github_branch = "factory/story-1-x"
+    db = temp_root / "state" / "factory.db"
+    persist_story(s, db)
+
+    monkeypatch.setattr(H, "_changed_files_for_story", lambda *a, **k: ["backend/app.py"])
+    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: None)
+
+    # Each call re-enters via the SAME state the orchestrator's ``_DISPATCH``
+    # entry for DOCS_ENFORCER_CHECK would re-dispatch on a later tick — no
+    # manual state reset needed; the handler's own top-of-function advance
+    # (self-loop) carries it forward.
+    result = None
+    for _ in range(H._MAX_PR_CREATE_RETRIES):
+        result = handle_docs_enforcer(s, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert H._MAX_PR_CREATE_RETRIES < 3, "hard cap is 3; the inner guard must stay below it"
+    assert s.pr_create_retries == H._MAX_PR_CREATE_RETRIES
+    assert result.next_state == StoryState.BLOCKED_DEPLOY_FAILED
+    assert s.state == StoryState.BLOCKED_DEPLOY_FAILED.value
+    assert "exhausted" in (s.error or "")
+    assert s.last_rejection_reason is not None

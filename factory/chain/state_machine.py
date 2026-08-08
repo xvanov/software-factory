@@ -386,6 +386,17 @@ class StoryRecord(SQLModel, table=True):
     # authoritatively and the tick self-heal re-authors from the spec on a later
     # tick — expected-but-missing never silently passes and never blocks forever.
     acceptance_expected: bool = False
+    # S4 (019 fail-silent audit): consecutive ``gh pr create`` (or the push
+    # ahead of it) failures for this story. ``handle_docs_enforcer`` used to
+    # advance to ``PR_OPEN`` even when PR creation returned ``None`` — a
+    # state with no ``orchestrator._DISPATCH`` entry, so nothing ever drove
+    # the story again and the failure was visible ONLY as a
+    # ``git_op result=error`` line in ``state/events/git.ndjson``. Now the
+    # story stays in ``DOCS_ENFORCER_CHECK`` (which DOES have a dispatch
+    # entry, so the next tick retries PR creation for free — no LLM call)
+    # until this counter hits ``handlers._MAX_PR_CREATE_RETRIES``, at which
+    # point it's parked in ``BLOCKED_DEPLOY_FAILED``. Reset to 0 on success.
+    pr_create_retries: int = 0
 
 
 # Event names — strings the chain emits when a handler completes.
@@ -412,6 +423,10 @@ EVENT_TECH_WRITER_DONE = "tech_writer_done"
 EVENT_DOCS_ENFORCER_CHECK = "docs_enforcer_check"
 EVENT_DOCS_ENFORCER_PASS = "docs_enforcer_pass"
 EVENT_DOCS_ENFORCER_FAIL = "docs_enforcer_fail"
+# S4 (019 fail-silent audit): ``gh pr create`` failed for the
+# ``_MAX_PR_CREATE_RETRIES``-th consecutive time — park the story instead of
+# retrying forever. See ``StoryRecord.pr_create_retries``.
+EVENT_PR_CREATE_EXHAUSTED = "pr_create_exhausted"
 # Docs chain events.
 EVENT_DOCS_SM_STARTED = "docs_sm_started"
 EVENT_DOCS_SM_DONE = "docs_sm_done"
@@ -515,6 +530,22 @@ _TRANSITIONS: dict[tuple[StoryState, str], StoryState] = {
         StoryState.DOCS_ENFORCER_CHECK,
         EVENT_DOCS_ENFORCER_FAIL,
     ): StoryState.REVIEWER_REQUESTED_CHANGES,
+    # S4 (019 fail-silent audit): a self-loop so a failed ``gh pr create`` can
+    # be retried on the NEXT tick — ``orchestrator._DISPATCH`` maps
+    # DOCS_ENFORCER_CHECK back to the ``docs_enforcer`` handler (which
+    # re-enters via this same EVENT_DOCS_ENFORCER_CHECK at its top), and
+    # retrying costs no LLM call (canonical-paths/vacuous-diff checks are
+    # deterministic). Bounded by ``pr_create_retries`` /
+    # ``handlers._MAX_PR_CREATE_RETRIES``, not by this transition itself.
+    (StoryState.DOCS_ENFORCER_CHECK, EVENT_DOCS_ENFORCER_CHECK): StoryState.DOCS_ENFORCER_CHECK,
+    # PR creation failed ``_MAX_PR_CREATE_RETRIES`` times in a row — park
+    # rather than retry forever. Same terminal sink ``EVENT_PR_UNMERGEABLE``
+    # uses for a PR that DOES exist but can't be merged; here the PR never
+    # existed at all.
+    (
+        StoryState.DOCS_ENFORCER_CHECK,
+        EVENT_PR_CREATE_EXHAUSTED,
+    ): StoryState.BLOCKED_DEPLOY_FAILED,
     # ---- Docs chain (chain_kind == "docs") ----
     # Skips the TDD red→green loop. Onboarder produces canonical doc files
     # in one sandbox pass; the enforcer + PR open path is shared with TDD.
@@ -574,6 +605,13 @@ _TRANSITIONS: dict[tuple[StoryState, str], StoryState] = {
     (StoryState.TECH_WRITER_DONE, EVENT_BUDGET_EXCEEDED): StoryState.BLOCKED_BUDGET_EXCEEDED,
     (StoryState.DOCS_SM_DONE, EVENT_BUDGET_EXCEEDED): StoryState.BLOCKED_BUDGET_EXCEEDED,
     (StoryState.DOCS_ONBOARDER_DONE, EVENT_BUDGET_EXCEEDED): StoryState.BLOCKED_BUDGET_EXCEEDED,
+    # S4 (019 fail-silent audit): DOCS_ENFORCER_CHECK joins ``_DISPATCH`` (it
+    # can now be re-entered on a PR-create retry), so it must be metered too
+    # — see the invariant test in tests/chain/test_per_story_budget.py.
+    (
+        StoryState.DOCS_ENFORCER_CHECK,
+        EVENT_BUDGET_EXCEEDED,
+    ): StoryState.BLOCKED_BUDGET_EXCEEDED,
     (StoryState.DEPLOY_PENDING, EVENT_DEPLOY_STARTED): StoryState.DEPLOY_PENDING,
     (StoryState.DEPLOY_PENDING, EVENT_DEPLOY_SUCCEEDED): StoryState.DEPLOYED,
     (StoryState.DEPLOY_PENDING, EVENT_DEPLOY_FAILED): StoryState.BLOCKED_DEPLOY_FAILED,

@@ -43,6 +43,9 @@ legal_edges:
   - {from: dev_retry, to: blocked_tests_need_clarification}
   - {from: dev_retry, to: blocked_underspecified}
   - {from: dev_retry, to: dev_in_progress}
+  - {from: docs_enforcer_check, to: blocked_budget_exceeded}
+  - {from: docs_enforcer_check, to: blocked_deploy_failed}
+  - {from: docs_enforcer_check, to: docs_enforcer_check}
   - {from: docs_enforcer_check, to: pr_open}
   - {from: docs_enforcer_check, to: reviewer_requested_changes}
   - {from: docs_onboarder_done, to: blocked_budget_exceeded}
