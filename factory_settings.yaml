@@ -27,6 +27,20 @@ caps:
   # headroom and leaves ``daily_spend_usd: 300`` — the real ceiling — untouched.
   # The hourly cap is a burst limiter, not the budget.
   hourly_spend_usd: 120
+  # Operator-declared 2026-08-08 (pre-sim hygiene, S5). Previously ABSENT
+  # here, which meant this cap silently defaulted to 5.0
+  # (``factory/settings/loader.py`` CapsConfig.per_story_spend_usd) while
+  # being enforced as a TERMINAL breaker (BLOCKED_BUDGET_EXCEEDED,
+  # ``factory/chain/orchestrator.py``) — a story that crosses it cannot
+  # resume. The repo's own MEASURED cost is $4.55/instance (see the
+  # hourly_spend_usd comment above), so the undeclared 5.0 default would
+  # have killed stories within ~10% of normal cost, and it made
+  # ``dev_convergence.per_story_budget_usd: 8.0`` below unreachable
+  # (8.0 > 5.0). Set to 12.0: headroom over BOTH the $4.55 measured figure
+  # and the 8.0 convergence budget it must exceed (8.0 < 12.0). Never park
+  # this near the measured cost — it is a terminal breaker, not a soft
+  # warning.
+  per_story_spend_usd: 12.0
 queues:
   human_review_max_open_prs: 5
   failing_ci_pause_threshold: 3
@@ -80,7 +94,27 @@ auto_pm_sync:
 # remains the primary defense. Advisory (non-required) reds never file a
 # direction regardless of this flag.
 ci_health:
-  enabled: true
+  # Disabled 2026-08-08 for the duration of the pre-sim simulation (S6).
+  # ``ci_health`` has no per-app scoping in code (``factory/settings/
+  # loader.py::CiHealthConfig`` is a single global flag; ``orchestrator.tick``
+  # calls ``main_ci_health_tick`` for every app once per tick), so it cannot
+  # be turned off for sacrifice alone — it is global or nothing.
+  #
+  # Why it must be off right now: sacrifice's ``main`` is lint-RED as of
+  # 2026-08-08 at commit 24c841f (28 ruff errors + 14 files needing ``ruff
+  # format``), and ``lint`` is a REQUIRED check there. With this flag on,
+  # the post-merge monitor would see that required check red and auto-file
+  # a direction with ``source="ci-health"`` — which IS in
+  # ``_DETERMINISTIC_SOURCES`` (``factory/directions/approval.py``) and
+  # therefore BYPASSES operator approval, auto-triaging straight into a
+  # second concurrent story that competes with the simulation's own stories
+  # for the ``pm_invocations_per_hour`` quota.
+  #
+  # Do NOT fix this by editing the sacrifice repo from here — out of scope.
+  # The real fix is to green sacrifice's lint (28 errors + format) upstream.
+  # Re-enabling this flag afterward is an OPERATOR decision, not automatic.
+  enabled: false
+
 # Detector -> direction trigger (019 AC7 / Flow D). When enabled, ``factory
 # tick`` runs every registered detector in factory/manager/detectors/ once
 # per app per real tick (the deleted FMS L1 Watcher used to be their only
@@ -148,7 +182,21 @@ schedules:
     persona: ux_auditor
     rate_limit_key: ux_auditor_runs_per_day
   - name: security_weekly
-    cron: "0 9 * * *"
+    # Fixed 2026-08-08 (pre-sim hygiene, S11): this cron was "0 9 * * *" —
+    # DAILY, despite the schedule's own name. ``factory/scheduler/cron.py``'s
+    # ``_DEFAULT_SCHEDULES`` fallback and module docstring both define
+    # ``security_weekly`` as "0 9 * * 1" (Monday), so the drift here was a
+    # dropped day-of-week field, not a deliberate change of cadence. Restored
+    # to match the name and the code's own default. ``security_runs_per_day:
+    # 2`` bounds same-day retries/reruns regardless of cron cadence — it is
+    # not evidence the cron itself should be daily. A daily security auditor
+    # is exactly the "auditor treadmill" pattern ``ux_audit`` above was
+    # throttled from 4/day down to yearly-disabled for: an auditor that can
+    # file its own work orders always finds something, and every finding is
+    # self-justifying. security_weekly filing two directions (117, 118) that
+    # parked at the operator-approval gate on 2026-08-08 is exactly that
+    # pattern recurring at daily cadence.
+    cron: "0 9 * * 1"
     persona: security
     rate_limit_key: security_runs_per_day
   # factory_improver (event-triggered self-improvement) was retired

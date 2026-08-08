@@ -189,9 +189,12 @@ from `factory_settings.yaml` at repo root (memoized per root by
 `factory/scheduler/cron.py` reads `factory_settings.yaml::schedules`
 (independent of `rate_limits`) for WHEN a persona is due; `rate_limits`
 (via `can_dispatch`'s daily-cap block) decides whether it's still ALLOWED
-to fire once due. Live schedule: `security_weekly` daily at 09:00
-(`0 9 * * *`, bounded by `security_runs_per_day: 2` despite the schedule's
-name), and `ux_audit` pinned to `0 9 1 1 *` (once a year) — a deliberate
+to fire once due. Live schedule: `security_weekly` weekly, Mondays at 09:00 (`0 9 * * 1`,
+bounded by `security_runs_per_day: 2`) — fixed 2026-08-08 (pre-sim hygiene,
+S11) after drift left the deployed cron as `0 9 * * *` (daily, despite the
+schedule's name) and it filed two operator-approval-gated directions in a
+single day; `_DEFAULT_SCHEDULES` in `factory/scheduler/cron.py` was the
+weekly cadence all along. `ux_audit` is pinned to `0 9 1 1 *` (once a year) — a deliberate
 near-total disable after the auditor filed self-referential directions
 faster than an operator could review them; `factory ux-audit-now` is the
 on-demand escape hatch. The `ralph` (hourly) and `bug_hunt` (every 4h)
