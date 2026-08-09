@@ -69,6 +69,24 @@ for BOTH sides of the gate, naming which is which. If an error condition can
 arise on an endpoint, define its code and body THERE; do not rely on having
 defined the same-sounding error on a different endpoint.
 
+**2d. Never invent a body for an error the app ALREADY produces.** Auth
+failures, rate limits, validation errors and the like come from shared
+dependencies that predate this direction and have their own wording. You are not
+shown that wording — the route table gives you paths, not the error bodies of
+middleware — so any body you write for them is a GUESS, and the oracle will
+enforce your guess literally against an implementation that (correctly) reused
+the existing dependency.
+
+Measured 2026-08-09, sacrifice story 179: the contract specified
+`401 -> {"detail": "Unauthorized"}` for an unauthenticated read. The app's
+``get_current_user`` raises `401 {"detail": "Invalid or expired token"}`. The
+implementation was RIGHT, the spec was WRONG, and the acceptance gate blocked a
+correct PR after six other gates had passed.
+
+So for any error path you did not introduce in THIS direction, set `body` to
+exactly `"(existing app behaviour — assert the status code only, not the body)"`.
+Specify a concrete body ONLY for a status this direction's own new code raises.
+
 **3. Out-of-band delivery needs an observable substitute.** This is the case
 that most often makes a direction ungradeable. If a flow delivers something
 outside HTTP — an email link, an SMS code, a webhook — a black-box grader can
