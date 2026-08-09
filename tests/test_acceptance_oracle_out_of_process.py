@@ -593,3 +593,70 @@ def test_boot_creates_directories_named_by_run_dir_env_values(tmp_path: Path) ->
 
         r = httpx.get(f"{app.base_url}/health", timeout=5)
         assert r.json()["media_exists"] is True
+
+
+def test_acceptance_run_id_is_unique_per_evaluation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KNOWN OPEN #2 regression: two evaluations of the SAME story must never
+    reuse an ``ACCEPTANCE_RUN_ID``.
+
+    The id used to be ``head-{sid}``/``base-{sid}`` — deterministic per story —
+    so a re-grade (every new dev commit re-evaluates gates) collided with its
+    own previous run's namespaced rows in a shared persistent DB: story 179
+    left ``accept_head-179_*`` users in the shared dev Postgres, and the next
+    evaluation's register would 409 into an unwaivable authoritative block.
+    The authoring prompt promises the id is "a value UNIQUE to this run"; this
+    pins that promise to the implementation.
+    """
+    from tests.oracle_repo import commit_all as _commit_all
+    from tests.oracle_repo import git as _git
+    from tests.oracle_repo import init_repo as _init_repo
+
+    # Bootable at BASE too (BAD_IMPL) — _bootable_repo's base carries no
+    # app_server.py, which sends the gate down the ablation route and the
+    # base run this test exists to pin would never execute.
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    write_bootable_app(repo, impl=BAD_IMPL)
+    _commit_all(repo, "base")
+    _git(repo, "checkout", "-q", "-b", "feat/story")
+    write_bootable_app(repo, impl=GOOD_IMPL)
+    (repo / "backend" / "app" / "story_marker.py").write_text("MARKER = 1\n", encoding="utf-8")
+    head = _commit_all(repo, "story work")
+
+    root = tmp_path / "factory"
+    ref = _store(root)
+
+    seen: list[str] = []
+    real_run_oracle = acceptance_verified.oracle_run.run_oracle
+
+    def _spy(oracle_src: str, *, base_url: str, run_id: str, dest_name: str, timeout_s: int):  # type: ignore[no-untyped-def]
+        seen.append(run_id)
+        return real_run_oracle(
+            oracle_src, base_url=base_url, run_id=run_id, dest_name=dest_name, timeout_s=timeout_s
+        )
+
+    monkeypatch.setattr(acceptance_verified.oracle_run, "run_oracle", _spy)
+    cfg = _cfg(boot=boot_cfg())
+
+    r1 = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), cfg)
+    assert r1.passed, r1.reason
+    r2 = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), cfg)
+    assert r2.passed, r2.reason
+
+    heads = [r for r in seen if r.startswith("head-7-")]
+    assert len(heads) >= 2, f"expected a live HEAD run per evaluation, saw {seen!r}"
+    assert heads[0] != heads[1], "ACCEPTANCE_RUN_ID must be unique per evaluation"
+
+    # The BASE half decides merge_base_red → passed=True, so it is the half
+    # that most needs pinning. Collect by the BARE prefix — filtering on
+    # "base-7-" would skip the assertion entirely if the base id regressed to
+    # the deterministic "base-7" (asserting a property by filtering on it is
+    # the criterion-vacuity failure class).
+    bases = [r for r in seen if r.startswith("base-")]
+    assert bases, f"expected at least one live BASE run, saw {seen!r}"
+    assert bases[0] != "base-7", "base run id must carry the per-evaluation nonce"
+    # Within one evaluation HEAD and BASE share the nonce but differ by prefix
+    # (that prefix split is what keeps them from colliding with each other).
+    assert bases[0].removeprefix("base-") == heads[0].removeprefix("head-")

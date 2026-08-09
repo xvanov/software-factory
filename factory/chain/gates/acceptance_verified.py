@@ -153,19 +153,49 @@ that remained open, #1 is now closed; #2-#4 still have a v1.1 candidate:
    2xx would; this is a deliberate, stated fail-safe trade-off (a non-5xx is
    still evidence the route ran past whatever wraps the broken dependency in
    a blanket 500), not a claim that the corroboration is airtight.
-2. **Shared-DB cross-run contamination.** A hardcoded identifier that passes
-   at HEAD can collide (409, or a stale row) at BASE in a real shared
-   Postgres, forging a red the RUN_ID namespacing convention (persona
-   instruction, not enforced) is supposed to prevent. v1.1: run the HEAD
-   oracle twice and require both green, or a per-run schema/transaction
-   rollback.
-3. **Non-2xx-status criteria evade the stub.** A criterion asserting "returns
-   404" or "returns 401" is satisfied by BOTH stub variants (which always
-   answer 200), so a criterion that only ever checks a non-2xx status is
-   structurally excluded from ``K`` no matter how meaningful it is elsewhere —
-   the opposite failure mode from vacuity (a real criterion wrongly excluded,
-   not a fake one wrongly credited; fail-safe, but a false NEGATIVE on
-   coverage). v1.1: a third stub variant that answers a plausible non-2xx.
+2. **Shared-DB cross-run contamination — the HEAD/BASE half is closed
+   (2026-08-09); two residuals remain.** The worst case was not the
+   hardcoded identifier the first writeup described: the run id itself was
+   ``head-{sid}``/``base-{sid}``, deterministic per story, so a CORRECTLY
+   namespaced oracle collided with its own previous evaluation's rows (every
+   new dev commit re-evaluates gates at the new head_sha) — observed as
+   story 179's ``accept_head-179_*`` users left in the shared dev Postgres.
+   ``_evaluate`` now appends a per-evaluation nonce, making
+   ``ACCEPTANCE_RUN_ID`` genuinely unique for the HEAD and BASE runs, as the
+   authoring prompt has always promised. RESIDUALS, still open:
+   (a) the ABLATION route (``_ablation_can_fail``) is untouched — its run id
+   is ``ablation-{head_ref[:12]}`` and, worse, ``mutation.check_can_fail``
+   runs its green baseline and every mutant with the IDENTICAL command
+   string, so an oracle that creates namespaced rows self-collides between
+   baseline and mutant. Mostly fail-safe (the mutant reds before reaching
+   the mutation → ``skipped`` → not proven → block), with one narrow
+   fail-open: a mutation whose raise is swallowed still "kills" via the
+   collision 409. Noncifying it needs a per-invocation nonce minted inside
+   ``oracle_probe`` AND an ablation cache key that stops hashing the command
+   string — deferred, not forgotten; the base-red route (the normal path)
+   does not use it. (b) an oracle that ignores the run id and hardcodes an
+   identifier still collides; enforcing "must reference ACCEPTANCE_RUN_ID"
+   statically would false-block oracles that create nothing (story 172's
+   reads it never). Also note: the nonce converts a loud self-collision into
+   silent growth of ``accept_*`` rows in the shared dev Postgres — nothing
+   reaps them today; ``details["run_ids"]`` preserves the mapping from row
+   to evaluation. Do NOT "fix" any of this by running the HEAD oracle twice
+   and requiring both green — before the nonce, that false-blocked the
+   persona-sanctioned namespacing pattern by construction.
+3. **Non-2xx-status criteria are credited too EASILY (docstring corrected
+   2026-08-09 — the previous text had this backwards).** Both stub variants
+   answer 200, so a bare ``assert status == 401`` FAILS the stub and is
+   CREDITED into ``K`` (verified on story 179's ``stub_runs.json``: its ac3
+   fails both variants), not excluded. The real risk is therefore mirror-
+   image: a broken app that 401s/404s EVERYTHING satisfies such a criterion,
+   so it discriminates less than its credit implies. Measured 2026-08-09 on
+   the authored oracles then under ``state/acceptance/sacrifice/`` (runtime
+   state, not reproducible from the repo): of 20 non-skipped criteria,
+   exactly 1 was a pure status-only criterion, and it PASSED at base,
+   contributing nothing to the verdict — immaterial that day. v1.1 if it
+   ever matters: a third stub variant
+   answering a plausible non-2xx (costs a STUB_VERSION bump, invalidates
+   every cached stub run, and strictly raises the block rate).
 4. **Behavioural mimicry.** Nothing here defends against production code that
    inspects its OWN request patterns (rate, path enumeration order, timing)
    to distinguish "being graded" from real traffic and behaves correctly only
@@ -194,6 +224,7 @@ already exists.
 
 from __future__ import annotations
 
+import secrets
 import shlex
 import subprocess
 import sys
@@ -525,6 +556,22 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
     details["oracle_sha256"] = oracle_sha[:16]
     sid = story.id if story.id is not None else pr.head_sha
     dest_name = f"{ORACLE_COPY_PREFIX}{sid}.py"
+    # ``ACCEPTANCE_RUN_ID`` must actually BE unique per evaluation, as the
+    # authoring prompt has always promised ("a value UNIQUE to this run").
+    # ``sid`` alone is deterministic per story, so a re-grade — every new dev
+    # commit re-evaluates gates at the new head_sha — collided with its OWN
+    # previous run's namespaced rows in a shared persistent DB (story 179 left
+    # ``accept_head-179_*`` users behind; the next evaluation's register would
+    # 409 and hard-block, unwaivably). Per-EVALUATION, not per-run: HEAD and
+    # BASE within one evaluation still differ via their prefix, which is what
+    # keeps them from colliding with each other. Deliberately absent from every
+    # run cache key (stub: oracle/variant/versions; base: shas/boot/version),
+    # so caching is unchanged.
+    run_nonce = secrets.token_hex(4)
+    # The nonce makes the DB rows an evaluation leaves behind untraceable from
+    # the row alone — record the ids so an operator staring at an
+    # ``accept_head-179-3f2a91bc_*`` user can map it back to this evaluation.
+    details["run_ids"] = {"head": f"head-{sid}-{run_nonce}", "base": f"base-{sid}-{run_nonce}"}
 
     boot_cfg = gates.acceptance_boot
     if boot_cfg is None or not (boot_cfg.command or "").strip():
@@ -731,7 +778,7 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
                 why=f"could not restore collection channel(s) {rolled.failed!r} from the merge base",
                 waiver_sha=oracle_sha,
             )
-        with boot_mod.boot_app(judge, boot_cfg, run_id=f"head-{sid}", label="oracle-head") as (head_app, boot_why):
+        with boot_mod.boot_app(judge, boot_cfg, run_id=f"head-{sid}-{run_nonce}", label="oracle-head") as (head_app, boot_why):
             if head_app is None:
                 return _unverifiable(
                     pr, details, kind="head_boot_failed",
@@ -740,7 +787,7 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
                 )
             details["head_boot"] = {"port": head_app.port}
             head_run = oracle_run.run_oracle(
-                oracle_src, base_url=head_app.base_url, run_id=f"head-{sid}",
+                oracle_src, base_url=head_app.base_url, run_id=f"head-{sid}-{run_nonce}",
                 dest_name=dest_name, timeout_s=boot_cfg.run_timeout_seconds,
             )
             head_alive = boot_mod.is_alive(head_app)
@@ -890,7 +937,7 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
     verdict, base_reason, base_details = _base_run(
         pr, boot_cfg, oracle_src, dest_name, credited,
         repo_root=repo_root, base_sha=base_sha, sid=sid, oracle_sha=oracle_sha,
-        probe_requests=probe_requests,
+        probe_requests=probe_requests, run_nonce=run_nonce,
     )
     details["base_run"] = base_details
     if verdict == "green":
@@ -950,6 +997,7 @@ def _base_run(
     sid: object,
     oracle_sha: str,
     probe_requests: list[str] | None = None,
+    run_nonce: str,
 ) -> tuple[str, str, dict[str, object]]:
     """Run the oracle at the merge base; grade OVER ``credited`` (``K``).
 
@@ -990,13 +1038,13 @@ def _base_run(
             return "unknown", f"could not check out the merge base ({err})", {
                 "base_sha": base_sha[:12], "reason": err[:300],
             }
-        with boot_mod.boot_app(base_tree, boot_cfg, run_id=f"base-{sid}", label="oracle-base") as (base_app, boot_why):
+        with boot_mod.boot_app(base_tree, boot_cfg, run_id=f"base-{sid}-{run_nonce}", label="oracle-base") as (base_app, boot_why):
             if base_app is None:
                 return "unknown", f"the app never became healthy at the merge base: {boot_why[:1000]}", {
                     "base_sha": base_sha[:12], "boot_failed": True,
                 }
             base_run = oracle_run.run_oracle(
-                oracle_src, base_url=base_app.base_url, run_id=f"base-{sid}",
+                oracle_src, base_url=base_app.base_url, run_id=f"base-{sid}-{run_nonce}",
                 dest_name=dest_name, timeout_s=boot_cfg.run_timeout_seconds,
             )
             if probe_requests:
