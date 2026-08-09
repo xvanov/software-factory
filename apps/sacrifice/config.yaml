@@ -174,6 +174,17 @@ gates:
   # (a false block, never a false green — see the memory
   # `acceptance_oracle_first_execution`), but it makes every auth-touching
   # story unmergeable. Re-verify these against the tree when auth changes.
+  # TEMPORARY BY DESIGN — this block is the MECHANISM `docs/BENCHMARK-READINESS-PLAN.md`
+  # exists to remove (Workstream A). Hand-maintained API facts that the dev-blind
+  # oracle author cannot verify have drifted three times, each blocking a CORRECT
+  # implementation (fabricated auth routes 2026-08-08; an invented 401 body
+  # #277/#278; the goal-creation schema absent, which blocked story 179 after it
+  # had passed six gates). Owner: loop-3 operator. Expiry: when A1's derived-surface
+  # cross-check lands, the ROUTE and REQUIRED-FIELD facts here become CI-verified
+  # against the app's real surface; the semantic facts (plugin-type enums, error
+  # vocabulary, response bodies) stay here because a FastAPI schema that declares
+  # no `responses=` and no `response_model` cannot express them. Adding a fact
+  # here is a stopgap, not the fix — re-read Workstream A before doing it again.
   acceptance_harness_hint: |
     - The backend is a FastAPI app, reachable at $ACCEPTANCE_BASE_URL. Health:
       `GET /api/health` -> `200 {"status": "ok"}`. (`GET /healthz` and
@@ -203,8 +214,13 @@ gates:
         -> `201` with `{"id", "title", "pledge_amount", "goal_type", "criteria",
         "status": "draft", ...}`.
       * REQUIRED fields, all of them, or it is `422`: `title` (str),
-        `deadline` (ISO-8601 datetime; use a FUTURE one — activation needs at
-        least an hour out), `pledge_amount` (int > 0), `goal_type` (str),
+        `deadline` (ISO-8601 datetime). COMPUTE IT AT RUNTIME, e.g.
+        `(datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()` — never a
+        hardcoded literal. The oracle is authored once and re-run later, so a
+        timestamp that was future when written expires and the create call starts
+        failing `422` for a reason unrelated to the behaviour under test.
+        Activation needs a deadline at least an hour out), `pledge_amount`
+        (int > 0), `goal_type` (str),
         `criteria` (object).
       * `goal_type` must be a REGISTERED plugin type — an arbitrary string is
         rejected at creation. `"youtube_video"` is a known-good value, and it

@@ -11,14 +11,28 @@ truthful, no false blocks from stale config, no hamster wheels, no terminal sink
 without a path back. The benchmark must measure the chain's capability, not the
 harness's drift.
 
-> **Why this is urgent and not cosmetic.** OpenAI's own SWE-Bench Pro audit names
-> **"overly strict tests — hidden tests require implementation details not in the
-> prompt → correct solutions fail"** as its single largest defect category
-> (**14.4%** of 731 tasks), and SWE-bench Verified filtered **68.3%** of the
-> original benchmark, flagging **61.1%** of samples for tests that unfairly fail
-> valid solutions. **That is our current failure mode.** If we benchmark before
-> fixing it, our numbers contain an unknown, unseparable false-block component
-> and cannot be compared to anything. See the research file for citations.
+> **Why this is urgent and not cosmetic.** In the two curated benchmarks that
+> have published audits, the largest named defect category is tests that fail
+> correct solutions — **our exact failure mode**:
+> * OpenAI's SWE-Bench Pro audit (July 2026): *"overly strict tests — hidden
+>   tests require implementation details not in the prompt → correct solutions
+>   fail"*, **14.4%** of 731 tasks; OpenAI retracted its recommendation to use the
+>   benchmark. Primary source returned HTTP 403; figures via
+>   https://explainx.ai/blog/openai-swe-bench-pro-audit-broken-tasks-july-2026 —
+>   **second-hand, treat the category percentages as indicative.**
+> * SWE-bench Verified: **68.3%** of the original benchmark filtered out,
+>   **61.1%** of samples flagged for *"unit tests that may unfairly mark valid
+>   solutions as incorrect"*. Primary (openai.com) also 403; via
+>   https://github.com/irthomasthomas/undecidability/issues/933 — **second-hand.**
+>
+> Bounded to those two audits deliberately; this is not a survey of all
+> benchmarks. The DIRECTION of the finding is well-supported, the precise
+> percentages are not ours to quote as settled — and per CLAUDE.md failure
+> pattern 8, a fetched NUMBER outranks a fetched NAME. Full citations and
+> confidence notes: `SOTA-RESEARCH-2026-08-oracle-authority.md`.
+>
+> If we benchmark before fixing this, our numbers carry an unknown, unseparable
+> false-block component and cannot be compared to anything.
 
 ---
 
@@ -67,7 +81,7 @@ aggressively for anything that is *reading, searching, or implementing in
 isolation*. Serialise ruthlessly for anything that *touches the live factory*.
 Getting this backwards produces fast, confident, wrong answers.
 
-### Delegate by difficulty — pick the cheapest model that can do the job
+## Delegate by difficulty — pick the cheapest model that can do the job
 
 Pass `model` explicitly on every `Agent` call. Do not let everything inherit Opus;
 most of this plan's work does not need it.
@@ -234,7 +248,7 @@ that a machine-derived surface cannot carry the semantic facts (plugin-type
 enums, error vocabulary, response bodies). So the goal changes from *replace the
 prose* to **make the prose impossible to drift undetected.**
 
-### A1. Derive the surface as an ADDITIVE CROSS-CHECK on the prose (not a replacement)
+## A1. Derive the surface as an ADDITIVE CROSS-CHECK on the prose (not a replacement)
 
 Keep `acceptance_harness_hint` as the source of semantic truth. Add a derived
 artifact and a **consistency test** between them.
@@ -369,8 +383,12 @@ ablation of oracle-author information budget. We can, cheaply — we already hav
 vacuity control, a reviewer-replay corpus, and a per-run cost meter.
 
 **Arms** (same stories, same models, `k` repeats):
-1. **no surface** — criteria only (today's nominal design)
-2. **prose hint** — today's actual behaviour, as a control
+1. **criteria-only** — the INTENDED design. Note this arm has never actually run:
+   `acceptance_harness_hint` is always supplied today, so this is a new condition,
+   not a baseline.
+2. **prose hint** — **today's ACTUAL behaviour, and therefore the real control.**
+   Report every comparison against this arm; comparing against arm 1 would be
+   comparing against a mode that has never run.
 3. **derived base surface** — A1
 4. *(optional, expect it to be bad)* **HEAD surface** — to demonstrate the
    false-green risk that justifies choosing base
@@ -408,7 +426,7 @@ arm 3 does *not* beat arm 2, **stop and report that** — do not ship A1 on fait
 
 Each of these is known and open. Fix or explicitly defer with a written reason.
 
-### C1. Late-stage failure rebuilds from `SM_DONE`
+## C1. Late-stage failure rebuilds from `SM_DONE`
 `orchestrator._recover_blocked_stories` re-enters `BLOCKED_REVIEW_NONCONVERGENT`
 at `SM_DONE`, re-running SM + dev + review to retry a **tech_writer** step. Story
 177 burned **$5.96** over two recoveries rediscovering that its tech_writer model
@@ -510,7 +528,7 @@ Where the work actually is:
   work time; making them free saves minutes out of hours.
 - Do not chase model speed for dev. 658 s is OpenHands doing real work.
 
-### E1. Kill the stall class — the single biggest latency, by an order of magnitude
+## E1. Kill the stall class — the single biggest latency, by an order of magnitude
 
 The 255-minute gap happened because `_prune_stale_in_progress`
 (`_STALE_THRESHOLD_SECONDS = 10 * 60`) only runs inside a tick, and **no tick was
@@ -555,7 +573,44 @@ output without touching per-story latency at all.
 whatever concurrency is chosen must be the configuration actually benchmarked —
 and docs stories still serialise per app (memory: `docs_chain_serialization`).
 
-### E5. Note the trade-off the retry cap makes
+### E6. The test suite is the slowest thing in the loop-3 feedback cycle
+
+**Measured 2026-08-09:** 3,008 tests across 219 files, **~19 min** locally and
+**19m12s in CI** (PR #280). CI's other jobs are noise beside it — lint 11 s,
+typecheck 61 s, changes 11 s — so **pytest alone sets PR merge latency.**
+
+At ~380 ms/test average for what are mostly unit tests, the cost is
+process-spawning: the acceptance-oracle executable tests boot real servers via
+`oracle_probe.py`, and several suites shell out.
+
+**The obvious lever is untaken: `pytest-xdist` is NOT installed and the machine
+has 16 cores.** The suite runs single-threaded on one of them.
+
+**But this is a project, not a flag flip**, and the repo has already been bitten
+three times by exactly the failure modes parallelism triggers:
+* `fms_sm_truncation_was_test_pollution` — tests wrote synthetic failures into
+  production telemetry (fixed with `FACTORY_STATE_ROOT` isolation);
+* `sacrifice_conftest_ddl_lock_contention` — an autouse `create_all` fabricated
+  **46 fake failures**;
+* `red_test_can_mean_nothing_too` — concurrent pytest runs contend and produce
+  mirages.
+
+And the oracle tests bind real ports, use docker, and touch the shared
+`sacrifice-db`.
+
+So: try `-n auto --dist loadfile` (same-file tests stay on one worker, which
+minimises fixture collisions), **measure**, and treat every new failure as a
+GENUINE isolation bug to fix — never as flakiness to retry. A parallel suite that
+is quietly wrong is far worse than a slow one that is right. Bank the wall-clock
+only once it is green twice in a row.
+
+**Scope note — this does NOT slow story throughput.** The factory's own CI suite
+gates FACTORY PRs (operator PRs and loop-2 self-edits). A sacrifice story's merge
+gate runs the app's own `test_command`, which is a different, much smaller suite.
+So E6 buys loop-3 and loop-2 iteration speed — which is most of what a readiness
+push spends its time waiting on — not Workstream D's numbers.
+
+## E5. Note the trade-off the retry cap makes
 
 Raising `max_dev_retries` 3 → 4 (2026-08-09) **trades latency for completion**:
 more stories finish, each slower, and a 4th attempt costs ~11 min. That is the

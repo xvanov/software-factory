@@ -189,9 +189,13 @@ budget, because one persona does both stages.
   out-of-process, HTTP-level oracle against a live API: 21–43%.** It is not
   frozen-before-dev, so it is an analogue, not a match.
 
-> **"Overly strict tests / hidden tests requiring details not in the prompt" is
-> the single most common named defect in professionally curated benchmarks, and
-> it is exactly our failure mode. Our prose config is the mechanism.**
+> **In the two audits cited above — SWE-bench Verified and SWE-Bench Pro —
+> "overly strict tests / hidden tests requiring details not in the prompt" is the
+> largest named defect category, and it is exactly our failure mode.** Bounded to
+> those two deliberately: it is not a survey of all benchmarks, and both sets of
+> category-level figures are second-hand (their primary hosts returned 403). The
+> direction of the finding is well-supported; the precise percentages are not
+> ours to quote as settled.
 
 ### False green (an incorrect implementation accepted)
 
@@ -252,9 +256,19 @@ hacking across 800 manually inspected runs**. Concludes the primary obstacle
 https://arxiv.org/abs/2510.23761
 
 **The reconciliation is test QUALITY.** Cheap self-generated tests are worth
-~nothing; correct independent tests are worth ~28 pp. Our oracle is trying to be
-the second thing, and the prose config is what keeps knocking it back to the
-first.
+~nothing; correct independent tests are worth ~28 pp *on SWE-Bench, in TDFlow's
+system*.
+
+> **That number is THEIRS, not ours, and it must not be read as a forecast for
+> this chain.** It was measured on a different benchmark, a different harness and
+> human-written tests. **This repository's own measured result is NO measurable
+> lift** from the chain over a single agent on the same model (37% vs 53%,
+> p=0.375, at 2.8x the cost — see `CLAUDE.md` and `bench/swebench/results.md`).
+> Nothing here changes that, and this file must not be cited as if it did. What
+> TDFlow supports is narrower and still useful: *if* an independent oracle is
+> correct, oracle quality is a lever worth paying for — which is an argument for
+> FIXING our oracle rather than deleting it, not evidence about how much it will
+> buy us. Our lift remains unproven.
 
 ---
 
