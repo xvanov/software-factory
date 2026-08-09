@@ -193,6 +193,25 @@ gates:
       * `GET /api/auth/me` with `Authorization: Bearer <access_token>` -> the
         same `user` dict. This is the ONLY "current user" route — there is no
         equivalent anywhere under `/api/users`.
+    - Creating a goal, verified against `backend/app/schemas/goal.py` +
+      `backend/app/routes/goals.py` + the app's own `VALID_GOAL` fixture
+      (`backend/tests/test_goals.py`) 2026-08-09. MANY criteria need a goal to
+      exist before they can observe anything, and a goal cannot be created from
+      `{"title": ...}` alone — that is `422`, which fails the criterion for a
+      reason that has nothing to do with the behaviour under test:
+      * `POST /api/goals` (no trailing slash) with `Authorization: Bearer <token>`
+        -> `201` with `{"id", "title", "pledge_amount", "goal_type", "criteria",
+        "status": "draft", ...}`.
+      * REQUIRED fields, all of them, or it is `422`: `title` (str),
+        `deadline` (ISO-8601 datetime; use a FUTURE one — activation needs at
+        least an hour out), `pledge_amount` (int > 0), `goal_type` (str),
+        `criteria` (object).
+      * `goal_type` must be a REGISTERED plugin type — an arbitrary string is
+        rejected at creation. `"youtube_video"` is a known-good value, and it
+        expects `criteria` shaped like
+        `{"min_duration_seconds": 300, "video_description": "..."}`.
+      * Optional: `description`, `charity_id`, `timezone` ("UTC"),
+        `recurrence` ("none"|"daily"|"weekly"|"monthly"), `currency` ("usd").
     - Data is a real, SHARED Postgres instance across runs (no per-run reset).
       Namespace any email/slug/identifier you create with `$ACCEPTANCE_RUN_ID`
       so two runs never collide and a stale record from a previous run can

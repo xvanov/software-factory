@@ -230,6 +230,8 @@ Keep prose for rationale. Optimize for clear, easy-to-diff docs.
 | product overview | `README.md` |
 | every diagnosed failure + its fix | `…/memory/MEMORY.md` → the linked files |
 | external SOTA literature | `SOTA-RESEARCH-2026-07.md` |
+| **why the acceptance oracle must NOT be blind to the app's API surface** | `SOTA-RESEARCH-2026-08-oracle-authority.md` |
+| the plan to make this repo benchmark-ready | `docs/BENCHMARK-READINESS-PLAN.md` |
 | generated subsystem deep-dives | `apps/factory/context/modules/*.md` |
 | how to write a direction | `.claude/skills/new-direction/` |
 | the retired plan + its correction ledger (history only) | `docs/archive/PLAN-2026-08-07-retired.md` |
