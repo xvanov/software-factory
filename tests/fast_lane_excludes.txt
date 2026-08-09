@@ -6,6 +6,7 @@
 # the workflow's 5-minute step timeout on the fast lane is the budget
 # backstop if a heavy file is left out.
 tests/chain/test_chain_step_retry_events.py
+tests/test_a3_arrange_assert_split.py
 tests/test_acceptance_oracle.py
 tests/test_acceptance_oracle_executable.py
 tests/test_acceptance_oracle_green_means_something.py

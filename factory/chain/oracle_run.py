@@ -98,6 +98,12 @@ class OracleRun:
     output: str = ""
     junit_ok: bool = False
     command: str = ""
+    # A3 (arrange/assert split): nodeids whose junit failure MESSAGE carries
+    # the author-side "SETUP:" prefix — the harness could not arrange the
+    # scenario (register/login/create-prerequisite failed), which is a
+    # category apart from "the feature's observable is wrong". Advisory:
+    # nothing here changes an outcome in ``criteria``.
+    setup_failures: list[str] = field(default_factory=list)
 
 
 def oracle_import_check(src: str) -> str | None:
@@ -205,9 +211,22 @@ def _tamper_check(tmpdir: Path, oracle_path: Path, pre_sha: str, expected_names:
     return None
 
 
-def _parse_junit(path: Path) -> dict[str, str] | None:
-    """``{nodeid: PASS|FAIL|ERROR|SKIP}`` from a junit-xml file, or ``None`` if
-    it cannot be parsed at all (missing, truncated, not XML)."""
+#: Author-side marker for arrange-step failures (A3). The authoring prompt
+#: instructs setup helpers to ``pytest.fail(f"SETUP: ...")`` on any unexpected
+#: response — such a failure means the harness could not ARRANGE the scenario,
+#: not that the feature under acceptance is wrong.
+SETUP_FAILURE_PREFIX = "SETUP:"
+
+
+def _parse_junit(path: Path) -> tuple[dict[str, str], list[str]] | None:
+    """``({nodeid: PASS|FAIL|ERROR|SKIP}, [setup-failure nodeids])`` from a
+    junit-xml file, or ``None`` if it cannot be parsed at all (missing,
+    truncated, not XML).
+
+    A nodeid lands in the setup list when its failure/error message starts
+    with :data:`SETUP_FAILURE_PREFIX` — purely diagnostic; the outcome map is
+    byte-identical to what it was before the split existed.
+    """
     try:
         tree = ET.parse(path)  # noqa: S314 - our own runner's own output file
     except (OSError, ET.ParseError):
@@ -215,21 +234,31 @@ def _parse_junit(path: Path) -> dict[str, str] | None:
     root = tree.getroot()
     suite = root if root.tag == "testsuite" else root.find("testsuite")
     if suite is None:
-        return {}
+        return {}, []
     out: dict[str, str] = {}
+    setup: list[str] = []
     for case in suite.iter("testcase"):
         classname = case.get("classname", "")
         name = case.get("name", "")
         key = f"{classname}::{name}" if classname else name
-        if case.find("failure") is not None:
-            out[key] = "FAIL"
-        elif case.find("error") is not None:
-            out[key] = "ERROR"
+        problem = case.find("failure")
+        if problem is None:
+            problem = case.find("error")
+        if problem is not None:
+            out[key] = "FAIL" if case.find("failure") is not None else "ERROR"
+            # pytest renders ``pytest.fail("SETUP: ...")`` as message
+            # "Failed: SETUP: ..." — match the prefix anywhere in the FIRST
+            # line only, so an assertion that merely QUOTES the word deeper
+            # in a diff cannot self-classify as setup.
+            message = (problem.get("message") or "").strip() or (problem.text or "").strip()
+            first_line = message.splitlines()[0] if message else ""
+            if SETUP_FAILURE_PREFIX in first_line:
+                setup.append(key)
         elif case.find("skipped") is not None:
             out[key] = "SKIP"
         else:
             out[key] = "PASS"
-    return out
+    return out, setup
 
 
 def run_oracle(
@@ -308,9 +337,9 @@ def run_oracle(
             )
 
         status, summary = classify_pytest_run(exit_code, output)
-        junit_criteria = _parse_junit(junit_path)
-        junit_ok = junit_criteria is not None
-        criteria = junit_criteria or {}
+        parsed = _parse_junit(junit_path)
+        junit_ok = parsed is not None
+        criteria, setup_failures = parsed if parsed is not None else ({}, [])
 
         if junit_ok and summary is not None and not summary.conflicting:
             counts = Counter(criteria.values())
@@ -325,6 +354,7 @@ def run_oracle(
         return OracleRun(
             status=status, summary=summary, criteria=criteria,
             exit_code=exit_code, output=output, junit_ok=junit_ok, command=command_str,
+            setup_failures=setup_failures,
         )
     finally:
         import shutil
@@ -332,4 +362,11 @@ def run_oracle(
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-__all__ = ["RUNNER_VERSION", "OracleRun", "OracleStatus", "oracle_import_check", "run_oracle"]
+__all__ = [
+    "RUNNER_VERSION",
+    "SETUP_FAILURE_PREFIX",
+    "OracleRun",
+    "OracleStatus",
+    "oracle_import_check",
+    "run_oracle",
+]
