@@ -64,7 +64,7 @@ class DirectionDefaults(BaseModel):
     require_user_flow_for_ui: bool = True
     require_api_spec_for_backend: bool = True
     allow_explore_tag: bool = True
-    max_dev_retries: int = 3
+    max_dev_retries: int = 4
     escalate_model_on_retry: bool = True
     require_context_update_per_pr: bool = True
     enforce_canonical_doc_paths: bool = True
