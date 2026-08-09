@@ -111,6 +111,17 @@ gates:
   #
   # To turn it off, set this false — do not delete the recipe below.
   acceptance_oracle: true
+  # A4 (operator decision 2026-08-09): with the oracle grading every story
+  # against the DIRECTION's criteria, a multi-story PM split is structurally
+  # broken — the first sibling to merge satisfies the direction and every
+  # later sibling grades green-at-base → waiver (direction 120: story 179
+  # shipped everything, siblings 180/181 were superseded by hand). With this
+  # flag on, an AC-carrying direction spawns exactly ONE story when the
+  # summed slice estimates fit the per-story ceilings; an oversized direction
+  # keeps its split and emits ``direction_not_single_story_sized`` (operator:
+  # split it into sibling directions). Default is off factory-wide; sacrifice
+  # opts in because it is the oracle's testbed.
+  single_story_per_ac_direction: true
   acceptance_boot:
     # Same shape as ``smoke_command`` (make smoke / scripts/smoke.sh): a real
     # uvicorn process on an ephemeral port, never a shared/reused server.
