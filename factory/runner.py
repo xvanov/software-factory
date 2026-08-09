@@ -1108,7 +1108,23 @@ def _extract_conversation_memory(
             )
             args_excerpt = _safe_truncate(_stringify_action_args(ev), _TOOL_FIELD_CHAR_CAP)
             tcid = getattr(ev, "tool_call_id", None)
-            record = {"tool": str(tool_name), "args": args_excerpt, "observation": ""}
+            # The agent's REASONING for this call. OpenHands carries it on the
+            # ActionEvent as ``thought``, NOT as an assistant MessageEvent —
+            # measured on a real 1800 s dev trajectory (story 177): 142
+            # ActionEvents, 129 with a non-empty ``thought``, and exactly ONE
+            # MessageEvent whose source was ``user`` (the initial prompt).
+            # An assistant MessageEvent only appears when the agent FINISHES, so
+            # a timed-out or crashed run has none at all and
+            # ``last_assistant_message`` is structurally always empty for it.
+            # Without this the richest cross-retry signal — what dev was trying
+            # and why — was discarded on exactly the runs that most need it.
+            thought = _safe_truncate(_stringify_thought(ev), _TOOL_FIELD_CHAR_CAP)
+            record = {
+                "tool": str(tool_name),
+                "args": args_excerpt,
+                "observation": "",
+                "thought": thought,
+            }
             if tcid is not None:
                 actions_by_id[str(tcid)] = record
             ordered_pairs.append(record)
@@ -1180,6 +1196,34 @@ def _stringify_message_content(ev: Any) -> str:
         if isinstance(node, list):
             return "\n".join(str(c.get("text", c)) if isinstance(c, dict) else str(c) for c in node)
     return ""
+
+
+def _stringify_thought(ev: Any) -> str:
+    """The agent's reasoning attached to an ActionEvent, if any.
+
+    OpenHands exposes this as ``ev.thought``. Observed shapes: a plain string,
+    or a list of content blocks (dicts with ``text``, or objects with ``.text``)
+    mirroring ``_stringify_message_content``. Defensive throughout — a shape we
+    do not recognise yields "" rather than raising, because this runs inside
+    memory capture on the failure path.
+    """
+    raw = getattr(ev, "thought", None)
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for c in raw:
+            if isinstance(c, dict):
+                parts.append(str(c.get("text") or c.get("content") or ""))
+            else:
+                parts.append(str(getattr(c, "text", None) or ""))
+        return "\n".join(p for p in parts if p).strip()
+    try:
+        return str(raw).strip()
+    except Exception:  # noqa: BLE001 - never raise from memory capture
+        return ""
 
 
 def _stringify_action_args(ev: Any) -> str:
@@ -1622,7 +1666,15 @@ def _build_initial_message(
                         tool = call.get("tool", "tool")
                         args = (call.get("args") or "")[:300]
                         obs = (call.get("observation") or "")[:300]
+                        # The agent's own reasoning for the call. On a timed-out
+                        # or crashed attempt this is the ONLY surviving "why" —
+                        # OpenHands emits no assistant MessageEvent until the
+                        # agent finishes, so ``self_summary`` and
+                        # ``last_assistant_message`` above are both empty there.
+                        thought = (call.get("thought") or "").strip()[:300]
                         parts.append(f"{i}. **{tool}** — args: `{args}`")
+                        if thought:
+                            parts.append(f"   _reasoning:_ {thought}")
                         if obs:
                             parts.append(f"   → `{obs}`")
     return "\n".join(parts) + "\n"
