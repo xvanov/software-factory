@@ -1,0 +1,553 @@
+{
+  "app": "sacrifice",
+  "generated_at": "2026-08-09T19:52:30.768037+00:00",
+  "generator": "scripts/generate_sacrifice_api_surface.py",
+  "source_commit": "e1e1bfcddd016d830a6d8444de64c830608a5f44",
+  "source_dirty": false,
+  "scope_note": "ALL discoverable routes, unpruned by design -- this snapshot is not fed to the acceptance author. The cross-check that reads it (tests/test_sacrifice_acceptance_harness_hint.py) narrows to only the routes the hint names; do not remove routes from here to narrow scope, narrow the consumer instead.",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/auth/cli/login/{provider}",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/csrf-token",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/dev/token",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/email/login",
+      "required_fields": [
+        "email",
+        "password"
+      ],
+      "all_fields": [
+        "email",
+        "password"
+      ],
+      "body_model": "EmailLoginRequest",
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/email/register",
+      "required_fields": [
+        "email",
+        "password"
+      ],
+      "all_fields": [
+        "display_name",
+        "email",
+        "password"
+      ],
+      "body_model": "EmailRegisterRequest",
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/exchange",
+      "required_fields": [
+        "code"
+      ],
+      "all_fields": [
+        "code"
+      ],
+      "body_model": "AuthCodeExchangeRequest",
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/github",
+      "required_fields": [
+        "code"
+      ],
+      "all_fields": [
+        "code"
+      ],
+      "body_model": "GitHubAuthRequest",
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/github/callback",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/github/login",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/google",
+      "required_fields": [
+        "token"
+      ],
+      "all_fields": [
+        "token"
+      ],
+      "body_model": "GoogleAuthRequest",
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/google/callback",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/google/login",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/password/reset/confirm",
+      "required_fields": [
+        "new_password",
+        "token"
+      ],
+      "all_fields": [
+        "new_password",
+        "token"
+      ],
+      "body_model": "PasswordResetConfirm",
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/password/reset/request",
+      "required_fields": [
+        "email"
+      ],
+      "all_fields": [
+        "email"
+      ],
+      "body_model": "PasswordResetRequest",
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/refresh",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/auth.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/charities",
+      "required_fields": [
+        "email",
+        "name"
+      ],
+      "all_fields": [
+        "email",
+        "name"
+      ],
+      "body_model": "CharityCreateRequest",
+      "source_file": "backend/app/routes/payment.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/charities/lookup",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/payment.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/charities/search",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/payment.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/sessions",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/chat.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/sessions/{session_id}/accept-generated-type",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/chat.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/sessions/{session_id}/create-goal",
+      "required_fields": [
+        "goal_payload"
+      ],
+      "all_fields": [
+        "goal_payload"
+      ],
+      "body_model": "CreateGoalRequest",
+      "source_file": "backend/app/routes/chat.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/sessions/{session_id}/generation-status",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/chat.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/sessions/{session_id}/iterate-generated-type",
+      "required_fields": [
+        "feedback"
+      ],
+      "all_fields": [
+        "feedback"
+      ],
+      "body_model": "IterateGeneratedTypeBody",
+      "source_file": "backend/app/routes/chat.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/sessions/{session_id}/messages",
+      "required_fields": [
+        "content"
+      ],
+      "all_fields": [
+        "content",
+        "timezone"
+      ],
+      "body_model": "SendMessageBody",
+      "source_file": "backend/app/routes/chat.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/sessions/{session_id}/request-new-goal-type",
+      "required_fields": [
+        "prompt_summary"
+      ],
+      "all_fields": [
+        "chat_history",
+        "goal_payload_draft",
+        "prompt_summary"
+      ],
+      "body_model": "RequestNewGoalTypeBody",
+      "source_file": "backend/app/routes/chat.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/history",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/dashboard.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/stats",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/dashboard.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/demo/generation-states",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/demo.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/goal-types",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/goals.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/goals",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/goals.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/goals",
+      "required_fields": [
+        "criteria",
+        "deadline",
+        "goal_type",
+        "pledge_amount",
+        "title"
+      ],
+      "all_fields": [
+        "charity_id",
+        "criteria",
+        "currency",
+        "deadline",
+        "description",
+        "goal_type",
+        "pledge_amount",
+        "recurrence",
+        "timezone",
+        "title"
+      ],
+      "body_model": "GoalCreate",
+      "source_file": "backend/app/routes/goals.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/goals/count",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/goal_count.py"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/goals/{goal_id}",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/goals.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/goals/{goal_id}",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/goals.py"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/goals/{goal_id}",
+      "required_fields": [],
+      "all_fields": [
+        "charity_id",
+        "criteria",
+        "deadline",
+        "description",
+        "pledge_amount",
+        "recurrence",
+        "status",
+        "timezone",
+        "title"
+      ],
+      "body_model": "GoalUpdate",
+      "source_file": "backend/app/routes/goals.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/goals/{goal_id}/submit-proof",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/goals.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/goals/{goal_id}/verification-status",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/goals.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/health.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/meta",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/meta.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/notifications",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/notifications.py"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/read-all",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/notifications.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/notifications/unread-count",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/notifications.py"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/notifications/{notification_id}/read",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/notifications.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/operator/blocked-goals",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/operator.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/payment/config",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/payment.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/payment/methods",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/payment.py"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/payment/methods/{method_id}",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/payment.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/payment/setup-intent",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/payment.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/payments",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/payment.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/uploads/video",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/uploads.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uploads/{upload_id}",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/uploads.py"
+    },
+    {
+      "method": "POST",
+      "path": "/api/webhooks/stripe",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/webhooks.py"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/github/callback",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/main.py"
+    },
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/health.py"
+    },
+    {
+      "method": "GET",
+      "path": "/healthz/db",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/health.py"
+    }
+  ]
+}
