@@ -28,7 +28,7 @@ from tests.oracle_boot_fixture import (
     boot_cfg,
     write_bootable_app,
 )
-from tests.oracle_repo import commit_all, two_commit_repo
+from tests.oracle_repo import commit_all, git, init_repo, two_commit_repo
 
 # --------------------------------------------------------------------------- #
 # oracle_run isolation
@@ -675,3 +675,166 @@ def test_acceptance_run_id_is_unique_per_evaluation(
     assert kinds.count("head") == 2, recorded
     assert kinds.count("base") == 1, recorded
     assert {e["run_id"] for e in recorded} == set(heads) | set(bases)
+
+
+# --------------------------------------------------------------------------- #
+# A2 (BENCHMARK-READINESS-PLAN.md) — base_failures_matching_stub: ADVISORY
+# instrumentation only. No taxonomy, no blocking: see the module docstring's
+# KNOWN OPEN #3 for why a status-code taxonomy INVERTS on this app (a 401
+# from an auth dependency shadowing a would-be 404).
+# --------------------------------------------------------------------------- #
+
+#: A single-route app whose response body is CONTROLLED BY AN ENV VAR, so the
+#: same ``/widget`` route answers "GOOD" at one boot and "BAD" at another
+#: without needing two different implementations to import. The oracle below
+#: asserts a fixed expected value; a stub's catch-all body and the "BAD" base
+#: response both fail that assertion for the SAME reason (wrong string), so
+#: the junit OUTCOME (``FAIL``) is identical across base and both stub
+#: variants — the exact "credited criterion whose base failure looks just
+#: like its stub failure" case A2 exists to surface for a human, without this
+#: gate ever asserting what that means.
+_WIDGET_APP_SERVER_SRC = '''\
+"""Stdlib-only bootable test app (fixture, not app code under test)."""
+import http.server
+import json
+import os
+import sys
+
+ECHO = os.environ.get("WIDGET_ECHO", "BAD")
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def _send_json(self, code, obj):
+        body = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _drain(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if length:
+            self.rfile.read(length)
+
+    def do_GET(self):
+        if self.path == "/health":
+            self._send_json(200, {"ok": True})
+            return
+        self._send_json(404, {})
+
+    def do_POST(self):
+        self._drain()
+        if self.path == "/widget":
+            self._send_json(200, {"echo": ECHO})
+            return
+        self._send_json(404, {})
+
+    def log_message(self, *args):
+        pass
+
+
+def main():
+    port = 8000
+    if "--port" in sys.argv:
+        port = int(sys.argv[sys.argv.index("--port") + 1])
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+#: Asserts a FIXED expected value (not a status code, not a KeyError-prone
+#: access) so every failing world — both gutted stubs (neither has an "echo"
+#: key matching "GOOD") and a "BAD"-echoing base — fails via the SAME junit
+#: outcome, ``FAIL`` (an ``AssertionError``, never an ``ERROR``).
+_WIDGET_ORACLE = (
+    "import os\n"
+    "import httpx\n"
+    "\n"
+    "def test_ac1_widget_echoes_good():\n"
+    "    base = os.environ['ACCEPTANCE_BASE_URL']\n"
+    "    r = httpx.post(f'{base}/widget', json={}, timeout=5)\n"
+    "    assert r.json().get('echo') == 'GOOD'\n"
+)
+
+
+def _widget_repo(tmp_path: Path):
+    """``main`` boots with ``WIDGET_ECHO=BAD`` baked into base's server file;
+    the story branch overwrites it with ``WIDGET_ECHO=GOOD`` baked into
+    HEAD's — no env passthrough needed, so the boot config stays the plain
+    ``boot_cfg()`` every other test in this module uses."""
+    repo = tmp_path / "repo"
+    base_src = _WIDGET_APP_SERVER_SRC.replace('os.environ.get("WIDGET_ECHO", "BAD")', '"BAD"')
+    head_src = _WIDGET_APP_SERVER_SRC.replace('os.environ.get("WIDGET_ECHO", "BAD")', '"GOOD"')
+    base_sha, head_sha = two_commit_repo(
+        repo,
+        base={"backend/app_server.py": base_src, "backend/app/__init__.py": ""},
+        head={"backend/app_server.py": head_src, "backend/app/story_marker.py": "MARKER = 1\n"},
+    )
+    return repo, base_sha, head_sha
+
+
+def test_base_failures_matching_stub_flags_a_credited_criterion(tmp_path: Path) -> None:
+    """The criterion PASSES at HEAD (echo == "GOOD"), is credited (it fails
+    BOTH gutted-implementation stub variants — neither answers "GOOD"), and
+    fails at the merge base with the exact same junit outcome (``FAIL``) it
+    also produced against both stubs. A2's advisory diagnostic must name it in
+    ``details["base_failures_matching_stub"]`` — and must NOT change the
+    verdict: this is a completely ordinary red-at-base/green-at-HEAD story,
+    which is why the gate still PASSES it."""
+    repo, _base, head = _widget_repo(tmp_path)
+    root = tmp_path / "factory"
+    ref = _store(root, content=_WIDGET_ORACLE)
+    cfg = boot_cfg()
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg(boot=cfg))
+
+    assert r.passed, r.reason
+    assert r.details["failability_route"] == "merge_base_red"
+    nodeid = next(iter(r.details["credited_criteria"]))
+    assert r.details["base_failures_matching_stub"] == [nodeid]
+
+
+def test_base_failures_matching_stub_never_changes_the_verdict(tmp_path: Path) -> None:
+    """A2 must be PURE INSTRUMENTATION: rerun the exact story shape
+    ``test_D1_real_oracle_red_at_base_green_at_head_passes``
+    (``test_acceptance_oracle_green_means_something.py``) already pins to a
+    ``passed``/``verified``/``authoritative``/``tests_passed==1``/
+    ``merge_base_red`` verdict — bootable at BOTH base and head (the
+    ``test_acceptance_run_id_is_unique_per_evaluation`` construction;
+    ``_bootable_repo`` leaves base unbootable, which steers onto the
+    ablation route and never exercises ``_base_run`` at all) — and assert
+    every ONE of those pre-existing fields is untouched by the new
+    instrumentation, regardless of what it reports.
+
+    It DOES report this criterion here: the empty stub's ``KeyError`` and the
+    plausible stub's wrong-value ``AssertionError`` are BOTH classified
+    ``FAIL`` by pytest's own junit-xml (``<error>`` is reserved for
+    setup/collection failures, never for an exception raised during the test
+    body itself), and the base's wrong-value ``AssertionError`` is the same
+    ``FAIL`` — so this credited criterion legitimately matches on all three.
+    That is exactly the kind of ordinary, ship-it story A2 must never block:
+    proof the flag is advisory is that ``r.passed`` stays ``True`` anyway."""
+    repo = tmp_path / "repo"
+    init_repo(repo)
+    write_bootable_app(repo, impl=BAD_IMPL)
+    commit_all(repo, "base")
+    git(repo, "checkout", "-q", "-b", "feat/story")
+    write_bootable_app(repo, impl=GOOD_IMPL)
+    (repo / "backend" / "app" / "story_marker.py").write_text("MARKER = 1\n", encoding="utf-8")
+    head = commit_all(repo, "story work")
+
+    root = tmp_path / "factory"
+    ref = _store(root)
+    cfg = boot_cfg()
+    r = acceptance_verified.evaluate(_pr(root, repo, _story(ref=ref), head), _cfg(boot=cfg))
+
+    assert r.passed, r.reason
+    assert r.details["verified"] is True
+    assert r.details["authoritative"] is True
+    assert r.details["tests_passed"] == 1
+    assert r.details["failability_route"] == "merge_base_red"
+    nodeid = next(iter(r.details["credited_criteria"]))
+    assert r.details["base_failures_matching_stub"] == [nodeid]
