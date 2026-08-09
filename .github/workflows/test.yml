@@ -71,14 +71,16 @@ jobs:
     outputs:
       docs_only: ${{ steps.detect.outputs.docs_only }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
+      # E6: no checkout. This job sits on the critical path of every PR's
+      # required checks, and a full-history checkout made it ~15 s; the PR
+      # files API answers the same question in ~2 s. Pagination cap at 3
+      # pages (300 files) resolves to fail-safe like every other branch.
       - id: detect
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
 
@@ -91,16 +93,15 @@ jobs:
             exit 0
           fi
 
-          git fetch --no-tags origin "$BASE_REF" >/dev/null 2>&1 || true
-
-          if ! CHANGED="$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null)"; then
-            echo "could not diff against origin/${BASE_REF} -> full suite"
+          if ! CHANGED="$(gh api "repos/${REPO}/pulls/${PR}/files?per_page=100" \
+              --paginate --jq '.[].filename' 2>/dev/null | head -301)"; then
+            echo "could not list PR files -> full suite"
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [ -z "$CHANGED" ]; then
-            echo "empty diff -> full suite"
+          if [ -z "$CHANGED" ] || [ "$(echo "$CHANGED" | wc -l)" -gt 300 ]; then
+            echo "empty or oversized diff -> full suite"
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -197,18 +198,17 @@ jobs:
           COUNT=$(grep -c "error:" mypy.out || true)
           echo "::warning::mypy: ${COUNT} package-wide findings (advisory — tracked debt)"
 
+  # The REQUIRED `pytest` context. PRs get the fast lane; a merge queue (if
+  # ever enabled) gets the full suite. Push-to-main coverage lives in
+  # `pytest-full` below — keeping the coverage action out of this job saves
+  # ~9 s of docker-action build on every PR's critical path.
   pytest:
+    if: github.event_name != 'push'
     needs: changes
     runs-on: ubuntu-latest
-    # Full lane (push / merge_group): bumped 15 -> 25 (2026-08-08) after three
-    # runs were cancelled at ~15m with zero failures. The fast PR lane
-    # finishes in ~1 min; the cap stays sized for the full lane.
+    # Sized for the merge_group full suite; the fast-lane STEP carries its
+    # own 5-minute budget backstop.
     timeout-minutes: 25
-    permissions:
-      # python-coverage-comment-action stores badge data on a repo branch
-      # (push to main).
-      contents: write
-      pull-requests: write
     steps:
       - name: Skip notice
         if: needs.changes.outputs.docs_only == 'true'
@@ -229,10 +229,12 @@ jobs:
 
       # -------- FAST LANE: pull_request only ---------------------------------
       # The suite minus tests/fast_lane_excludes.txt (capability rule: server
-      # boots / sandboxes / docker run post-merge), no coverage, xdist with
-      # loadfile so file-scoped fixtures never split across workers. The
-      # manifest guard (tests/test_fast_lane_manifest.py) runs IN this lane,
-      # so a rotten manifest fails the PR that rotted it.
+      # boots / sandboxes / docker / bulk subprocess spawners run post-merge),
+      # no coverage, xdist with loadfile so file-scoped fixtures never split
+      # across workers. -n 6 on a 4-vCPU runner is deliberate mild
+      # oversubscription: the lane is a mix of CPU work and short waits.
+      # The manifest guard (tests/test_fast_lane_manifest.py) runs IN this
+      # lane, so a rotten manifest fails the PR that rotted it.
       - name: pytest (fast lane — PR-blocking)
         if: needs.changes.outputs.docs_only != 'true' && github.event_name == 'pull_request'
         # The 5-minute step timeout is the budget backstop: an unclassified
@@ -240,20 +242,41 @@ jobs:
         timeout-minutes: 5
         run: |
           IGNORES=$(grep -vE '^\s*(#|$)' tests/fast_lane_excludes.txt | sed 's/^/--ignore=/' | tr '\n' ' ')
-          uv run pytest -q --tb=short -n 4 --dist loadfile $IGNORES
+          uv run pytest -q --tb=short -n 6 --dist loadfile $IGNORES
 
-      # -------- FULL LANE: push to main + merge queue -------------------------
-      # Everything, exactly as before E6, plus COVERAGE_CORE=sysmon (Python
-      # 3.12 + coverage >= 7.4): sys.monitoring instead of the classic trace
-      # function — same numbers, far less overhead.
+      # -------- MERGE QUEUE: full suite, no coverage --------------------------
+      - name: pytest (full suite — merge queue)
+        if: needs.changes.outputs.docs_only != 'true' && github.event_name == 'merge_group'
+        run: uv run pytest -q --tb=short
+
+  # -------- FULL LANE: push to main (post-merge) ------------------------------
+  # Everything, exactly as before E6, plus COVERAGE_CORE=sysmon (Python 3.12 +
+  # coverage >= 7.4): sys.monitoring instead of the classic trace function —
+  # same numbers, far less overhead. Not a required PR context; the interim
+  # rule (red main outranks everything) and the stage-2 main-green guard are
+  # what make this a gate.
+  pytest-full:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      # python-coverage-comment-action stores badge data on a repo branch
+      # (push to main).
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: uv sync --all-extras
+        run: uv sync --all-extras
       - name: pytest with coverage (full lane)
-        if: needs.changes.outputs.docs_only != 'true' && github.event_name != 'pull_request'
         env:
           COVERAGE_CORE: sysmon
         run: uv run pytest -q --tb=short --cov=factory --cov-report=
-
       - name: Coverage comment + badge
-        if: needs.changes.outputs.docs_only != 'true' && github.event_name != 'pull_request'
         uses: py-cov-action/python-coverage-comment-action@v3
         with:
           GITHUB_TOKEN: ${{ github.token }}
