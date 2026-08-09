@@ -1364,6 +1364,45 @@ def _isolated_test_env() -> dict[str, str]:
     return env
 
 
+#: Lines emitted by the venv/dependency bootstrap that ``test_command`` runs
+#: BEFORE pytest (``uv run`` re-syncs the environment on every invocation).
+#: They carry no failure information, they land on stderr — which is appended
+#: AFTER pytest's stdout — and the persisted signal is a TAIL, so they evict
+#: exactly the assertion detail a retry needs. Measured on sacrifice story 178:
+#: of an 1800-char ``test_output_tail``, ~400 chars were this bootstrap noise,
+#: and the surviving text held the FAILED test NAMES with no ``assert`` or
+#: traceback line anywhere — dev could see WHICH tests broke and never WHY.
+_TEST_NOISE_PREFIXES = (
+    "Using CPython",
+    "Creating virtual environment",
+    "Building ",
+    "Built ",
+    "Installed ",
+    "Resolved ",
+    "Audited ",
+    "Downloading ",
+    "Prepared ",
+    "Uninstalled ",
+    " Updated ",
+    "warning: `VIRTUAL_ENV=",
+)
+
+
+def _strip_bootstrap_noise(output: str) -> str:
+    """Drop dependency-bootstrap chatter, keeping every other line verbatim.
+
+    Deliberately prefix-matched against a fixed list rather than a clever
+    heuristic: a filter that guesses risks eating a real traceback, and losing
+    failure detail is the bug this exists to fix. Anything unrecognised is KEPT.
+    """
+    kept = [
+        ln
+        for ln in output.splitlines()
+        if not ln.lstrip().startswith(_TEST_NOISE_PREFIXES)
+    ]
+    return "\n".join(kept)
+
+
 def _run_pytest(repo_path: Path, test_command: str | None = None) -> tuple[bool, str]:
     """Return (passed, captured_output) for the chain's post-sandbox test gate.
 
@@ -1399,7 +1438,10 @@ def _run_pytest(repo_path: Path, test_command: str | None = None) -> tuple[bool,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
             return (False, f"test_command invocation failed: {exc}")
-        return (result.returncode == 0, result.stdout + "\n" + result.stderr)
+        return (
+            result.returncode == 0,
+            _strip_bootstrap_noise(result.stdout + "\n" + result.stderr),
+        )
 
     if not (repo_path / "tests").exists() and not list(repo_path.glob("test_*.py")):
         return (False, "no tests directory")
@@ -1415,7 +1457,10 @@ def _run_pytest(repo_path: Path, test_command: str | None = None) -> tuple[bool,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         return (False, f"pytest invocation failed: {exc}")
-    return (result.returncode == 0, result.stdout + "\n" + result.stderr)
+    return (
+        result.returncode == 0,
+        _strip_bootstrap_noise(result.stdout + "\n" + result.stderr),
+    )
 
 
 # --------------------------------------------------------------------------- #
