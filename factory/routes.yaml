@@ -32,6 +32,11 @@ default_provider: azure
 routes:
   pm: deepseek/deepseek-chat
   analyst: deepseek/deepseek-chat
+  # Interface-contract author. Reads the app's real route table + the spec and
+  # writes the direction's api_spec.md, which dev AND the dev-blind acceptance
+  # author both consume. Interface design is high-leverage and cheap (one call
+  # per direction), so it gets a capable model.
+  contract: deepseek/deepseek-chat
   # SM emits a structured JSON plan; deepseek-chat intermittently returns a
   # tiny malformed body falsely flagged finish_reason=length (operator-approved
   # 2026-05-29). Use gpt-5.4 (JSON-reliable) here too so SM is consistent
@@ -107,6 +112,12 @@ azure_routes:
   #     not measurably load-bearing and paying a premium for it is poor value.
   pm: azure/deepseek-v4-pro
   analyst: azure/deepseek-v4-pro
+  # Interface-contract author (see the routes: block above). One call per
+  # DIRECTION, not per story, and its output is the substrate every later
+  # persona reads — so it gets the most capable open-weight model rather than
+  # the cheapest. It is not the grader, so it shares no independence
+  # constraint with dev; the grader (acceptance_author) still differs from dev.
+  contract: azure/deepseek-v4-pro
   # SM emits a structured JSON plan. KNOWN RISK: gpt-5.4 held this route
   # because ``deepseek-chat`` once intermittently returned a tiny malformed
   # body falsely flagged finish_reason=length (2026-05-29). deepseek-v4-pro is

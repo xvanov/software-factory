@@ -607,6 +607,100 @@ def directions_backfill_cmd(
     console.print(Panel.fit(body, title=f"directions-backfill — app={app_name}"))
 
 
+@app.command("write-contract")
+def write_contract_cmd(
+    app_name: str = typer.Option(..., "--app", help="App name"),
+    direction_id: str = typer.Option(..., "--direction", help="Direction id, e.g. 117"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the contract without writing api_spec.md"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite an existing api_spec.md"
+    ),
+) -> None:
+    """Author a direction's ``api_spec.md`` — the contract dev and the oracle share.
+
+    The acceptance oracle is dev-blind (019 AC3): its only spec inputs are the
+    direction's acceptance criteria and its ``flow.md`` / ``api_spec.md``. When a
+    direction names no routes, the grader must either guess (an oracle that 404s
+    at HEAD however correct the code is) or decline to test (a vacuous oracle).
+    Both block. This writes the missing contract from the criteria plus the app's
+    REAL route table, parsed from source rather than recalled by a model.
+
+    Also reports a GRADEABILITY verdict: a criterion the author cannot make
+    observable over HTTP proves the direction is unbuildable as written, for a
+    few cents, before any story spawns.
+    """
+    load_dotenv()
+    load_dotenv(_FACTORY_ROOT / ".env", override=False)
+
+    from factory.app_config import load_app_config, resolve_app_repo_path
+    from factory.chain.contract import author_contract, write_contract
+    from factory.directions.parser import list_direction_dirs, parse_direction_dir
+    from factory.model_router import max_output_tokens_for, route
+    from factory.runner import text_run
+
+    direction = None
+    for d in list_direction_dirs(app_name, _FACTORY_ROOT):
+        parsed = parse_direction_dir(app_name, d, software_factory_root=_FACTORY_ROOT)
+        if (parsed.id or "") == direction_id:
+            direction = parsed
+            break
+    if direction is None:
+        console.print(f"[red]no direction {direction_id!r} under app {app_name!r}[/red]")
+        raise typer.Exit(code=1)
+
+    target = direction.dir_path / "api_spec.md"
+    if target.exists() and target.stat().st_size > 0 and not (force or dry_run):
+        console.print(
+            f"[yellow]{target} already exists.[/yellow] Re-run with --force to overwrite, "
+            "or --dry-run to preview."
+        )
+        raise typer.Exit(code=1)
+
+    app_config = load_app_config(app_name, _FACTORY_ROOT)
+    repo = resolve_app_repo_path(app_config, _FACTORY_ROOT)
+    hint = getattr(app_config.gates, "acceptance_harness_hint", "") or ""
+    model_id = route("contract")
+
+    result = author_contract(
+        direction=direction,
+        app_repo_path=Path(repo),
+        harness_hint=hint,
+        text_run=text_run,
+        model_id=model_id,
+        app=app_name,
+        max_tokens=max_output_tokens_for(model_id),
+        db_path=_FACTORY_ROOT / "state" / "factory.db",
+    )
+
+    if dry_run:
+        console.print(result.markdown)
+    else:
+        written = write_contract(direction.dir_path, result.markdown)
+        console.print(f"[green]wrote[/green] {written}")
+
+    if result.gradeable:
+        console.print(
+            Panel.fit(
+                f"[green]GRADEABLE[/green] — {len(result.oracle_criteria)} criterion(s) graded "
+                f"by the acceptance oracle over HTTP; {len(result.other_gate_criteria)} "
+                "verified by the implementation's own test suite.",
+                title=f"contract — {app_name}/{direction_id} — model={model_id}",
+            )
+        )
+    else:
+        console.print(
+            Panel.fit(
+                "[red]NOT GRADEABLE[/red] — this direction cannot be verified as written:\n\n"
+                + "\n".join(f"  - {c}" for c in result.ungradeable_criteria)
+                + "\n\n[yellow]Fix the direction (or accept an observability "
+                "affordance) before building it.[/yellow]",
+                title=f"contract — {app_name}/{direction_id} — model={model_id}",
+            )
+        )
+
+
 @app.command("directions-regenerate-state")
 def directions_regenerate_state_cmd(
     app_name: str = typer.Option(..., "--app", help="App name"),
