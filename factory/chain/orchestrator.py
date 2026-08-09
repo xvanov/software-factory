@@ -556,6 +556,31 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
     reaching ``deployed`` nor is deadlock-terminalized when alt-a dies in an
     alt-a-specific sink. A non-alt lower-id story is still a real foundation and
     stays in the dependency set unchanged.
+
+    SUPERSEDED exemption (2026-08-09): a sibling in ``superseded_by_sibling`` is
+    NOT a dependency at all — not a pending one, and not a dead-end one either.
+    That state means "another story took this story's work over", so there is no
+    foundation left un-built: whatever it was going to do is now some other
+    story's job. Counting it as a pending dep made it a permanent dead end (it is
+    in ``_DEAD_END_DEP_STATES``), which deadlocked every dependent behind it:
+
+      * RE-TRIAGE became impossible. Close a direction's failed stories as
+        superseded, re-file the work as a fresh higher-id story, and the new
+        story instantly parked in ``blocked_dependency_unmet`` on the very
+        siblings it was created to replace (observed 2026-08-09: sacrifice
+        direction 120, story 182 deadlocked on 179/180/181 twice). A direction
+        whose stories fail could never be cleanly rebuilt.
+      * DUAL-DRAFT downstream stories deadlocked too. When alt-a wins and merges,
+        ``close_abandoned_draft_sibling`` parks alt-b HERE. A later NON-alt story
+        (which gets no dual-draft exemption) then saw alt-b as its only pending
+        dep — deployed alt-a having dropped out of the set — and was terminalized
+        the first time the gate ran. The whole dual-draft feature stranded
+        everything filed after it.
+
+    Excluding rather than dead-ending is also the FAIL-SAFE direction here: the
+    worst case is a dependent building slightly early against a replacement that
+    has not landed yet, which the merge gates catch and a retry fixes. The old
+    behaviour's worst case was a terminal park no tick could ever undo.
     """
     if story.id is None:
         return []
@@ -576,6 +601,9 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
         if s.id is not None
         and s.id < story.id
         and s.state != StoryState.DEPLOYED.value
+        # A superseded sibling's work belongs to another story now — it is not an
+        # un-built foundation, so it is not a dependency (see the docstring).
+        and s.state != StoryState.SUPERSEDED_BY_SIBLING.value
         # Exempt same-direction dual-draft siblings from each other's deps.
         and not (story_is_alt and _draft_alt_suffix(s.slug or "") is not None)
     )
@@ -597,6 +625,14 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
 # abandoned.
 _DEAD_END_DEP_STATES = frozenset(
     {
+        # UNREACHABLE BY CONSTRUCTION since 2026-08-09: ``_direction_deps_pending``
+        # now drops superseded siblings from the dependency set entirely (see its
+        # docstring), so no caller can ever hand this value in. Retained
+        # deliberately, not deleted: every consumer of this set reads it as "states
+        # from which no story ever deploys", which is still TRUE of a superseded
+        # story — so if a second producer of dep-id lists is ever added, it
+        # inherits the safe classification rather than silently treating a
+        # superseded row as live.
         StoryState.SUPERSEDED_BY_SIBLING.value,
         StoryState.BLOCKED_CI_UNRESOLVED.value,
         StoryState.BLOCKED_DEPENDENCY_UNMET.value,

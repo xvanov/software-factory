@@ -104,9 +104,15 @@ zero human-visible outcomes; see "Idle detection was deleted" below.
 - **Dependency-ordering gate.** `_direction_deps_pending()` returns lower-id,
   not-yet-`DEPLOYED` siblings in the same direction (SM emits foundation-first,
   so id order is build order); dual-draft `-alt-*` siblings are exempt from
-  each other. If every pending dep is in `_DEAD_END_DEP_STATES`
-  (`superseded_by_sibling`, `blocked_ci_unresolved`, `blocked_dependency_unmet`,
-  `closed_by_operator`) the story is a permanent deadlock and parks in
+  each other. **`superseded_by_sibling` siblings are excluded entirely**
+  (2026-08-09) — that state means another story took the work over, so nothing
+  is left un-built. While they counted as pending they were also permanent dead
+  ends, which made re-triage after any story failure impossible (the replacement
+  deadlocked on the very rows it replaced) and stranded every non-alt story
+  filed after a dual-draft pair. If every pending dep is in
+  `_DEAD_END_DEP_STATES` (`blocked_ci_unresolved`, `blocked_dependency_unmet`,
+  `closed_by_operator`; `superseded_by_sibling` is still listed there but is now
+  unreachable by construction) the story is a permanent deadlock and parks in
   `BLOCKED_DEPENDENCY_UNMET` immediately. If every pending dep is merely
   human-blocked (`_STALLED_DEP_STATES` — dead ends plus
   `_PENDING_HUMAN_STATES` plus `quarantined_invalid_state`) for

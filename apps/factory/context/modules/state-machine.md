@@ -174,15 +174,15 @@ are absent from `_DISPATCH` and `auto_merge._MERGEABLE_STATES`:
 | State | Set by | Recovery |
 |---|---|---|
 | `DEPLOYED` | `EVENT_DEPLOY_SUCCEEDED` / `EVENT_DEPLOY_SKIPPED` | n/a — success |
-| `BLOCKED_TESTS_NEED_CLARIFICATION` | dev/docs-onboarder exhaustion | auto-recovered to `SM_DONE` (capped) or human |
+| `BLOCKED_TESTS_NEED_CLARIFICATION` | dev/docs-onboarder exhaustion | auto-recovered to `SM_DONE` (capped), `factory resume-story`, or human |
 | `BLOCKED_DEPLOY_FAILED` | `EVENT_DEPLOY_FAILED` / `EVENT_PR_UNMERGEABLE` | `auto_merge._attempt_pr_reconcile`, or human |
-| `BLOCKED_REVIEW_NONCONVERGENT` | `EVENT_REVIEW_NONCONVERGENT` (stuck/non-improving/capped review cycles, empty-diff short-circuit, or an unfetchable diff at review/tech_writer time) | auto-recovered to `SM_DONE` (capped) or human |
-| `BLOCKED_BUDGET_EXCEEDED` | `EVENT_BUDGET_EXCEEDED` | manual: reset state AND zero `total_attempts`/`total_spend_usd`, or raise `caps.per_story_*` |
-| `SUPERSEDED_BY_SIBLING` | `dual_draft.close_abandoned_draft_sibling` (direct assignment) | none — permanent |
-| `BLOCKED_CI_UNRESOLVED` | `auto_merge._handle_ci_failure` giving up (direct assignment) | operator re-opens PR / re-files direction |
-| `BLOCKED_DEPENDENCY_UNMET` | dependency-deadlock OR dependency-deferral cap (see below) | deadlock: manual; cap: automatic once blockers move |
-| `QUARANTINED_INVALID_STATE` | `factory.manager.recovery` playbook `quarantine-invalid-enum-story` | manual — operator repairs root cause, clears `error` |
-| `CLOSED_BY_OPERATOR` | `orchestrator.reconcile_closed_trackers` (direct assignment) | operator re-opens tracker issue, resets state |
+| `BLOCKED_REVIEW_NONCONVERGENT` | `EVENT_REVIEW_NONCONVERGENT` (stuck/non-improving/capped review cycles, empty-diff short-circuit, or an unfetchable diff at review/tech_writer time) | auto-recovered to `SM_DONE` (capped), `factory resume-story`, or human |
+| `BLOCKED_BUDGET_EXCEEDED` | `EVENT_BUDGET_EXCEEDED` | `factory resume-story` (zeroes `total_attempts`, NEVER the spend ledger; refuses over-cap without `--force`) or raise `caps.per_story_*` |
+| `SUPERSEDED_BY_SIBLING` | `dual_draft.close_abandoned_draft_sibling` (direct assignment) | `factory resume-story` (offered only while the direction has nothing deployed AND the row banked real work) |
+| `BLOCKED_CI_UNRESOLVED` | `auto_merge._handle_ci_failure` giving up (direct assignment) | `factory resume-story --at gates` (reopens the PR and re-grades it; no persona re-runs) |
+| `BLOCKED_DEPENDENCY_UNMET` | dependency-deadlock OR dependency-deferral cap (see below) | deadlock: `factory resume-story`; cap: automatic once blockers move |
+| `QUARANTINED_INVALID_STATE` | `factory.manager.recovery` playbook `quarantine-invalid-enum-story` | operator repairs root cause, then `factory resume-story` |
+| `CLOSED_BY_OPERATOR` | `orchestrator.reconcile_closed_trackers` (direct assignment) | operator re-opens tracker issue, then `factory resume-story` |
 
 ### Dependency ordering and the deferral cap
 
@@ -190,7 +190,10 @@ are absent from `_DISPATCH` and `auto_merge._MERGEABLE_STATES`:
 direction as build order (SM emits foundational-first): a story is
 dependency-ready only when every lower-id sibling in its direction has
 reached `DEPLOYED`. Dual-draft `-alt-a`/`-alt-b` pairs are exempt from each
-other (competing interpretations, not a serial dependency).
+other (competing interpretations, not a serial dependency). A
+`SUPERSEDED_BY_SIBLING` sibling is exempt from **everything** (2026-08-09): its
+work belongs to another story now, so it is not an un-built foundation and never
+enters the dependency set.
 
 Two outcomes for a story stuck behind unmet dependencies:
 
