@@ -62,7 +62,11 @@ def test_ac1_observable():
     base = os.environ["ACCEPTANCE_BASE_URL"]
     with httpx.Client(base_url=base) as c:
         r = c.get("/")
-        assert r.json().get("value") == "never-this", "SETUP is quoted here, deep in a diff"
+        # The compared literal contains "SETUP:" so the junit first line —
+        # the REPR of this comparison (production-controlled text) — contains
+        # the marker mid-line. A substring classifier would let the app under
+        # test disguise a genuine feature failure as an arrange failure.
+        assert r.json() == {"note": "SETUP: expected note"}
 """
 
 
@@ -81,9 +85,11 @@ def test_setup_prefixed_failure_is_classified() -> None:
 
 
 def test_plain_assertion_failure_is_not_classified_as_setup() -> None:
-    """The prefix must be matched on the failure message's FIRST LINE only —
-    an assertion that merely quotes the word 'SETUP' inside its message body
-    must never self-classify as an arrange failure."""
+    """The classifier must match author-side prefixes by STARTSWITH, never by
+    substring: a bare assert's junit first line is the repr of the APP'S
+    RESPONSE — production-controlled text — so an app whose body contains
+    'SETUP:' must not be able to disguise a genuine feature failure as an
+    arrange failure (adversarial review finding #1)."""
     with stub_server.stub_app() as stub:
         run = oracle_run.run_oracle(
             _PLAIN_FAIL_ORACLE, base_url=stub.base_url, run_id="a3-plain",

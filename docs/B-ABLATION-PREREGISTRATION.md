@@ -17,7 +17,12 @@ reduce false blocks without increasing the false-green (waiver) rate?
    NEVER run in production (the hint is always supplied today); it is a new
    condition, not a baseline.
 2. **prose hint** — today's ACTUAL behaviour. **This is the control.** Every
-   comparison is reported against this arm.
+   comparison is reported against this arm. CONFOUND, stated before any run:
+   today's author ALSO receives the direction's `api_spec.md` verbatim, and
+   since factory PR #269 that file is written by the contract persona from a
+   PARSED route table — so arm 2 is already partially derived-surface-informed
+   for any direction with a contract-written api_spec. Arm comparisons must
+   report whether each story's direction carried one.
 3. **derived base surface** — the author additionally receives the routes the
    direction's api_spec names (plus auth) from a surface derived at the BASE
    commit (`scripts/generate_sacrifice_api_surface.py` mechanism).

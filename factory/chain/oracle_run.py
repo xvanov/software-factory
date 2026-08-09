@@ -236,7 +236,7 @@ def _parse_junit(path: Path) -> tuple[dict[str, str], list[str]] | None:
     if suite is None:
         return {}, []
     out: dict[str, str] = {}
-    setup: list[str] = []
+    setup_keys: set[str] = set()
     for case in suite.iter("testcase"):
         classname = case.get("classname", "")
         name = case.get("name", "")
@@ -247,18 +247,36 @@ def _parse_junit(path: Path) -> tuple[dict[str, str], list[str]] | None:
         if problem is not None:
             out[key] = "FAIL" if case.find("failure") is not None else "ERROR"
             # pytest renders ``pytest.fail("SETUP: ...")`` as message
-            # "Failed: SETUP: ..." — match the prefix anywhere in the FIRST
-            # line only, so an assertion that merely QUOTES the word deeper
-            # in a diff cannot self-classify as setup.
+            # "Failed: SETUP: ..." (and, from inside a fixture, as
+            # 'failed on setup with "Failed: SETUP: ..."'). Match by
+            # STARTSWITH on those exact author-side shapes — never by
+            # substring: a bare assert's junit first line is the REPR OF THE
+            # APP'S RESPONSE (`assert {'detail': 'SETUP: db down'} == ...`),
+            # i.e. production-controlled text, and a contains-match would let
+            # the app under test classify a genuine feature failure as an
+            # arrange failure (proxy ≠ real: the classifier's input must be
+            # the author's intent, not the response body).
             message = (problem.get("message") or "").strip() or (problem.text or "").strip()
             first_line = message.splitlines()[0] if message else ""
-            if SETUP_FAILURE_PREFIX in first_line:
-                setup.append(key)
+            is_setup = first_line.startswith(
+                (
+                    SETUP_FAILURE_PREFIX,
+                    f"Failed: {SETUP_FAILURE_PREFIX}",
+                    f'failed on setup with "Failed: {SETUP_FAILURE_PREFIX}',
+                )
+            )
+            # Per-key, last-write-wins alignment with ``out`` — a rerun
+            # plugin replaying a nodeid must not leave a stale setup mark
+            # from an earlier attempt.
+            if is_setup:
+                setup_keys.add(key)
+            else:
+                setup_keys.discard(key)
         elif case.find("skipped") is not None:
             out[key] = "SKIP"
         else:
             out[key] = "PASS"
-    return out, setup
+    return out, sorted(setup_keys)
 
 
 def run_oracle(

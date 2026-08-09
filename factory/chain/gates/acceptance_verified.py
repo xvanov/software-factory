@@ -203,6 +203,18 @@ that remained open, #1 is now closed; #2-#4 still have a v1.1 candidate:
    to distinguish "being graded" from real traffic and behaves correctly only
    under grading. Not evidenced, not defended against, structurally hard to
    rule out for ANY black-box oracle.
+5. **Arrange-blind base runs (A3's other half, open 2026-08-09).** A3
+   classifies SETUP failures at HEAD for REPORTING only. ``_base_run`` and
+   the ablation probe still read a base-red produced by an ARRANGE failure
+   (the prerequisite route the story adds does not exist at base — the
+   normal shape for prerequisite-state stories) as genuine discrimination:
+   the criterion "fails at base", is credited, and the gate PASSES. That is
+   in the false-GREEN direction and it is the exact D-2 shape. Any fix must
+   NOT naively exclude setup-failing criteria from base-red (that would
+   false-block the legitimate prerequisite-route case); it needs the
+   arrange step's own target route distinguished from the criterion's.
+   Until then: ``base_runs.json`` + ``setup_failures`` in run artifacts are
+   the audit trail.
 
 Compositional note (F4×ablation; distinct from the closed #1 above — this is
 the base failing to BOOT AT ALL, not booting healthy-but-broken): a HEAD that
@@ -929,6 +941,16 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
                     else "(assertion failed at HEAD)"
                 )
             )
+            if all_setup:
+                # Same channel the tampered branch uses: without this the
+                # improved reason reaches no surface anyone reads (it is not
+                # on the waiver path, and gate reasons are never fed back to
+                # dev) — an operator would only ever see it via
+                # `factory trace`. Recording puts it in `factory inbox`.
+                record_gate_block(
+                    pr.software_factory_root, story.app, story.id,
+                    kind="oracle_setup_failed", reason=reason,
+                )
             return GateResult(
                 label=_LABEL, passed=False,
                 reason=reason,
