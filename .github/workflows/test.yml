@@ -25,19 +25,29 @@ permissions:
 # under 60 seconds. Two lanes, one workflow:
 #
 #   pull_request  -> FAST lane: the suite MINUS tests/fast_lane_excludes.txt
-#                    (files that boot servers / run sandboxes / touch docker —
-#                    the capability rule, not a speed rule), parallel via
-#                    pytest-xdist, no coverage. Measured 2026-08-09: 2,187
-#                    tests in 41 s at -n 4, two consecutive green runs.
+#                    (hand-curated capability rule: boots a server / runs a
+#                    sandbox or docker / parallelism-hostile subprocess
+#                    spawners — never "it was slow"), parallel via
+#                    pytest-xdist, no coverage. The 5-minute step timeout is
+#                    the budget backstop if a heavy file goes unclassified.
 #   push / queue  -> FULL suite with coverage (COVERAGE_CORE=sysmon), exactly
-#                    what gated every merge before E6. Runs post-merge; the
-#                    `main-green` job below makes a red full suite BLOCK
-#                    further merges, so the full suite still gates the repo —
-#                    it moved, it did not disappear.
+#                    what gated every merge before E6. Runs post-merge.
 #
-# The exclude manifest cannot rot: tests/test_fast_lane_manifest.py (which
-# itself runs in the fast lane) pins list == capability-signature set in both
-# directions.
+# RED-BLOCKS-MERGES IS NOT WIRED YET — deferred deliberately (stage 2), not
+# forgotten. Adversarial review (2026-08-09) showed the naive version (a
+# required `main-green` check failing while main's full lane is red) would
+# make auto_merge's CI-failure handler burn a dev run per open PR and then
+# CLOSE every chain PR and terminally park its story two ticks after main
+# goes red. Stage 2 = the guard PLUS an auto_merge change that treats a red
+# main-guard as a HOLD (wait, don't dispatch, don't park) PLUS a
+# head-SHA-pinned query (newest-completed-run masks an older red one).
+# UNTIL THEN: a red full lane on main must be fixed before anything else
+# merges — operator-enforced. Do not turn the factory's unattended merging
+# on while this interim holds.
+#
+# Manifest guards (tests/test_fast_lane_manifest.py, runs in the fast lane):
+# stale entries fail; unlisted heavy files run slow-but-safe until the step
+# timeout forces classification.
 # ---------------------------------------------------------------------------
 
 jobs:
@@ -109,7 +119,7 @@ jobs:
           #   apps/**/context/*.md    drive test_context_loader / canonical_paths
           #   apps/**/directions/*.md drive test_direction_parser
           # Those carve-outs must survive any future widening.
-          if echo "$CHANGED" | grep -qvE '^([^/]+\.md|docs/.+)$'; then
+          if echo "$CHANGED" | grep -qvE '^([^/]+\.md|docs/.+\.md)$'; then
             echo "-> paths beyond root-markdown/docs present; full suite"
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           else
@@ -225,8 +235,11 @@ jobs:
       # so a rotten manifest fails the PR that rotted it.
       - name: pytest (fast lane — PR-blocking)
         if: needs.changes.outputs.docs_only != 'true' && github.event_name == 'pull_request'
+        # The 5-minute step timeout is the budget backstop: an unclassified
+        # heavy file makes the lane loudly slow, never silently unguarded.
+        timeout-minutes: 5
         run: |
-          IGNORES=$(sed 's/^/--ignore=/' tests/fast_lane_excludes.txt | tr '\n' ' ')
+          IGNORES=$(grep -vE '^\s*(#|$)' tests/fast_lane_excludes.txt | sed 's/^/--ignore=/' | tr '\n' ' ')
           uv run pytest -q --tb=short -n 4 --dist loadfile $IGNORES
 
       # -------- FULL LANE: push to main + merge queue -------------------------
@@ -246,56 +259,3 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           MINIMUM_GREEN: 80
           MINIMUM_ORANGE: 60
-
-  # ---------------------------------------------------------------------------
-  # E6 red-blocks-merges: the full suite moved post-merge, so this REQUIRED
-  # check is what keeps it a gate. It fails every PR while the most recent
-  # COMPLETED full-lane run on main is anything but success — a regression
-  # that slipped past the fast lane blocks all further merges until main is
-  # fixed (or the failing run is re-run green). Fail SAFE: an API error after
-  # retries blocks rather than waves through; a repo with no completed push
-  # run yet (bootstrap) passes.
-  #
-  # DELIBERATE consequence: while main is red, even the FIX PR is blocked by
-  # this check — red main stops the line, including loop-2 self-merges. The
-  # escape hatch is an operator admin-merge (enforce_admins is off on this
-  # repo's protection), or re-running the red main run if it was environmental.
-  # Do not "fix" this by exempting fix-shaped PRs; that is a false-green
-  # channel.
-  # ---------------------------------------------------------------------------
-  main-green:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: latest full-lane run on main must be green
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if CONCLUSION=$(gh api \
-                "repos/${REPO}/actions/workflows/test.yml/runs?branch=main&event=push&status=completed&per_page=1" \
-                --jq '.workflow_runs[0].conclusion // "bootstrap"' 2>err.txt); then
-              break
-            fi
-            echo "API attempt ${attempt} failed:"; cat err.txt
-            CONCLUSION="api_error"
-            sleep 5
-          done
-          echo "latest completed full-lane conclusion on main: ${CONCLUSION}"
-          case "$CONCLUSION" in
-            success|bootstrap)
-              echo "main is green — merges may proceed." ;;
-            *)
-              URL=$(gh api \
-                "repos/${REPO}/actions/workflows/test.yml/runs?branch=main&event=push&status=completed&per_page=1" \
-                --jq '.workflow_runs[0].html_url // "unknown"' 2>/dev/null || echo unknown)
-              echo "::error::main's full suite is not green (${CONCLUSION}): ${URL}."
-              echo "::error::The full lane runs post-merge; a red one blocks ALL merges until main is fixed or the run is re-run green."
-              exit 1 ;;
-          esac
