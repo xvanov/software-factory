@@ -312,3 +312,55 @@ def test_a_status_code_without_a_body_still_renders_rather_than_crashing() -> No
     payload["endpoints"][0]["status_codes"] = [{"code": "200", "when": "created"}]
     md = render_markdown("D117", payload)
     assert "`200` — created" in md
+
+
+def test_markdown_in_a_criterion_does_not_read_as_unaddressed(tmp_path: Path) -> None:
+    """A FALSE block, measured on direction 120.
+
+    Directions are markdown, so criteria routinely carry backticks around a
+    route. The contract author quotes the prose. Before this, the mismatch made
+    a fully addressed criterion read as "(not addressed by the contract author)"
+    and blocked the direction as ungradeable.
+    """
+    acs = [
+        "`GET /api/goals/count` returns the authenticated caller's own goal total",
+        "**An unauthenticated request** is rejected rather than returning a count",
+    ]
+    payload = {
+        "endpoints": [],
+        "security_notes": "",
+        "criteria": [
+            {
+                "criterion": "GET /api/goals/count returns the authenticated caller's own goal total",
+                "verified_by": "oracle", "how": "call it", "endpoints": ["/api/goals/count"],
+            },
+            {
+                "criterion": "An unauthenticated request is rejected rather than returning a count",
+                "verified_by": "oracle", "how": "call it without a token", "endpoints": ["/api/goals/count"],
+            },
+        ],
+    }
+    res = author_contract(
+        direction=_Direction(acceptance=acs, dir_path=tmp_path),
+        app_repo_path=tmp_path,
+        harness_hint="",
+        text_run=_runner(payload),
+        model_id="stub/model",
+    )
+    assert res.gradeable is True, res.ungradeable_criteria
+    assert res.ungradeable_criteria == []
+
+
+def test_a_genuinely_missing_criterion_is_still_caught(tmp_path: Path) -> None:
+    """CONTROL — loosening the match must not blind the coverage check."""
+    payload = {
+        "endpoints": [], "security_notes": "",
+        "criteria": [{"criterion": "something else entirely", "verified_by": "oracle",
+                      "how": "x", "endpoints": []}],
+    }
+    res = author_contract(
+        direction=_Direction(acceptance=["`GET /api/goals/count` returns the total"], dir_path=tmp_path),
+        app_repo_path=tmp_path, harness_hint="", text_run=_runner(payload), model_id="stub/model",
+    )
+    assert res.gradeable is False
+    assert any("not addressed" in c for c in res.ungradeable_criteria)
