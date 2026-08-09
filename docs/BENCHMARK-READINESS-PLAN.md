@@ -26,14 +26,27 @@ harness's drift.
 
 All of these, verified against **real artifacts**, never a recorded flag:
 
-1. No acceptance oracle is authored from hand-maintained API prose.
-2. A malformed oracle is detected at **authoring time**, not at merge time.
-3. The information-budget ablation has been run and its numbers are committed.
-4. Every open harness defect below is either fixed or explicitly deferred with a
+1. Every route path and required field in `acceptance_harness_hint` is
+   mechanically cross-checked against the app's real surface by a CI test, so a
+   drifted API fact cannot reach an oracle author undetected. (The semantic facts
+   — plugin-type enums, error vocabulary, response bodies — stay prose. That is
+   an accepted limit, not an oversight; see A1.)
+2. Base-run status observation is recorded as **advisory diagnosis only**, with
+   ≥20 runs of data accumulated before any classification is proposed.
+3. The `explore` + AC-scope decision (A4) is made and implemented.
+4. The information-budget ablation has been run and its numbers are committed,
+   including the **waiver / `oracle_not_discriminating` rate** (A1 can make
+   oracles WEAKER, and that is the dangerous direction — see B).
+5. Every open harness defect below is either fixed or explicitly deferred with a
    written reason.
-5. **Three fresh stories drive end-to-end, unattended, to `deployed`** with no
-   operator intervention, no block, and no repeated-work loop.
-6. `factory audit-chain` reports no tampering; `factory inbox` is empty of
+6. **Three fresh stories drive end-to-end, unattended, each to a MERGE COMMIT on
+   GitHub** with `acceptance-verified` in `merge_actions.gates_passed_json` and
+   `stub_runs.json` + `base_runs.json` on disk — no operator intervention, no
+   block, no repeated-work loop. **Not "deployed":** `deploy.enabled: false` on
+   sacrifice, so `deployed` is a STATE NAME, not a deploy (`STATUS.md`: all 102
+   `deploy_actions` rows skipped or errored). Using it as evidence is `proxy ≠
+   real`, this repo's most common bug class, in its own readiness plan.
+7. `factory audit-chain` reports no tampering; `factory inbox` is empty of
    needs-human rows; `uv run pytest -q` exits 0; live tree == `origin/main`.
 
 **None of 1–6 may be claimed from a green test run alone.** Name the commit SHA
@@ -60,7 +73,7 @@ most of this plan's work does not need it.
 |---|---|---|
 | **haiku** | mechanical, verifiable, low-judgment | grep sweeps for a pattern; listing routes/config keys; collecting `factory trace` output; checking for leaked docker networks; tallying spend from `factory audit` |
 | **sonnet** | standard implementation and analysis with a clear spec | C3 (resume the two parked stories); C7 (environment hygiene); writing the D-1/D-2/D-3 directions; most test-writing; doc refreshes |
-| **opus** | design judgment, adversarial review, anything where being wrong is expensive | A1's base-vs-HEAD design; A2's failure-reason taxonomy; C1 (shared control flow); the adversarial pass on every fix; interpreting B's ablation numbers |
+| **opus** | design judgment, adversarial review, anything where being wrong is expensive | A1's cross-check design; **A4's `explore`/AC-scope call**; C1 (shared control flow); the adversarial pass on every fix; interpreting B's ablation numbers |
 
 Rule of thumb: **if the task has one right answer that can be checked by running
 something, go cheaper. If it involves a trade-off, an invariant, or a safety
@@ -75,9 +88,18 @@ concurrently:
 - **Investigation fan-out**: C2 (tech_writer JSON), C4 (oracle KNOWN OPEN #2–#4),
   C6 (the config-fact sweep) are three independent read-only questions. One agent
   each, in parallel, at the tier the question deserves.
-- **Independent implementation**: A1 and A2 touch different code paths
-  (`acceptance.py` authoring vs `acceptance_verified.py` base run). Give each its
-  own **git worktree** (`isolation: "worktree"`) so they cannot collide.
+- **Independent implementation**, with a caveat found by adversarial review:
+  A1 and A2 look independent (`acceptance.py` authoring vs
+  `acceptance_verified.py` base run) but **do collide**. Both are referenced by
+  `tests/test_acceptance_oracle.py` and `tests/test_acceptance_oracle_executable.py`;
+  A2 needs a `RUNNER_VERSION` bump (`oracle_run.py:73`) that is in BOTH the
+  stub-run and base-run cache keys; and A1 changes the prompt, so `oracle_sha256`
+  changes, invalidating every cached run **and every `waiver.json`** (waivers are
+  scoped to oracle content, `acceptance.py:652`). **Serialise A1 and A2**, or
+  scope A1 to production code and land its test changes in an integration pass.
+  After either lands: delete `state/acceptance/*/*/[base|stub]_runs.json` and
+  re-check waivers — a stale cache keyed on an old `RUNNER_VERSION` is the classic
+  `compose-bugs between fixes` shape.
 - **Direction drafting**: D-1, D-2, D-3 are three separate documents — draft
   concurrently, review together.
 - **Research**: any external-literature question. Warn every research agent about
@@ -97,6 +119,10 @@ concurrently:
 - **The full test suite.** ~17–19 min locally. Run it once, at the end of a batch
   of changes, not per-agent. Concurrent pytest runs contend and produce mirages
   (memory: `red_test_can_mean_nothing_too`).
+- **Docs stories.** Running D-1/D-2/D-3 concurrently produces three concurrent
+  `tech_writer` docs stories; parallel docs PRs conflict and only one docs story
+  may be in flight per app (memory: `docs_chain_serialization`). This matters
+  doubly because C1/C2 are *about* tech_writer failures.
 
 ### Ground everything in a running factory — nothing counts until the factory did it
 
@@ -109,7 +135,7 @@ not by a report:
 | "the fix is in" | a commit SHA or merged PR — a session's summary is a self-report, and one prior session reported two fixes that were never committed (memory: `session_fix_claims_need_git_verification`) |
 | "the oracle is correct now" | a real gate run: `state/acceptance/<app>/<id>/stub_runs.json` + `base_runs.json`. **The gate emits NO events** — those files are the only proof it ran (memory: `acceptance_oracle_validated_live_2026_08_08`) |
 | "the story merged" | GitHub's merge commit. Never a local flag |
-| "it deployed" | `factory story <id>` = `deployed` **and** the change present on `origin/main` |
+| "it deployed" | the change present on `origin/main`. **`deployed` the STATE is not a deploy** — `deploy.enabled: false` on sacrifice, so every `deploy_actions` row is skipped |
 | "no hamster wheel" | `factory audit --app <app>` showing no repeated spend on the same persona/story, and `factory trace <id>` with no repeating event signature |
 | "the services sustain" | `systemctl --user status` Result + `errors=` across **two** runs. "Services up" ≠ "sustains" |
 
@@ -156,96 +182,182 @@ report incorrect or misleading results, and a confident summary is not evidence.
 
 ---
 
+> **REVISED 2026-08-09 after adversarial review.** The first draft of this
+> workstream rested on two premises that are FALSE against this codebase, and
+> shipping it would have made the gate worse. Both are recorded here rather than
+> quietly deleted, because the next person will have the same two ideas:
+>
+> **False premise 1 — "OpenAPI carries the missing facts."** It does not.
+> `grep -n "responses=" backend/app/routes/*.py` returns **zero hits** in
+> sacrifice; every non-2xx is raised via bare `HTTPException`. Measured directly:
+> `POST /api/goals` declares only `['201', '422']` — **no 401**. Key routes
+> (`GET /api/auth/me`, `POST /api/goals`) have no `response_model`, so OpenAPI
+> reports an untyped `{}`. And the constraint that actually blocked story 179 —
+> `goal_type` must be a REGISTERED PLUGIN TYPE, and `"youtube_video"` expects
+> `criteria: {min_duration_seconds, video_description}` — lives in a
+> `field_validator` (`backend/app/schemas/goal.py:33-48`) and the plugin
+> registry, **invisible to the schema**. The current prose carries facts the
+> derived surface does not (`config.yaml`: "a duplicate email is
+> `409 {"error": "account_exists"}`; a weak password is `400`"). Replacing prose
+> with OpenAPI is a NET LOSS of exactly the facts that caused the incidents.
+>
+> **False premise 2 — "the base run can classify HTTP status."** It cannot.
+> `_base_run` sees only junit `{nodeid: PASS|FAIL|ERROR|SKIP}`
+> (`oracle_run.py:208-232`; `OracleRun` carries no HTTP data), plus
+> `boot.probe_paths`, which is explicitly *"a BLIND replay — no request body, no
+> auth headers"* (`boot.py:358-397`). A blind `POST /api/auth/email/register` is
+> **422 by construction, always** — as recorded in story 179's own
+> `base_runs.json`.
+
 # Workstream A — oracle source of authority
 
-**The defect.** The acceptance author is dev-blind (correct). But it needs route
-paths, request schemas and status codes it structurally cannot obtain, so those
-come from **hand-written prose** (`gates.acceptance_harness_hint`). The author
-cannot detect drift — being unable to check is the point — so a stale fact is
-laundered into an authoritative oracle that blocks a correct implementation.
-Three instances, three patches at the fact, zero at the mechanism.
+**The defect.** The acceptance author is dev-blind (correct — that is the
+anti-reward-hack freeze). But it needs route paths, request schemas and status
+codes it *structurally cannot obtain*, so those come from **hand-written prose**
+(`gates.acceptance_harness_hint`). The author cannot detect drift — being unable
+to check is the point — so a stale fact is laundered into an authoritative oracle
+that blocks a correct implementation. Three instances, three patches at the fact,
+zero at the mechanism.
 
 **The principle is already right**: `acceptance.build_spec_prompt`'s docstring
-already argues the hint is not an independence leak. Total blindness was already
-rejected (it produced `No module named 'app'` on 2026-08-05). **Only the delivery
-mechanism is broken.** Do not re-litigate the freeze; it is well-supported
-(ImpossibleBench arXiv:2510.20270 — but note its mitigation is denying the *dev*
-test access, never denying the *author* the API surface).
+already argues the hint is not an independence leak. Total blindness was rejected
+in practice (it produced `No module named 'app'`, 2026-08-05). Do not re-litigate
+the freeze; it is well-supported (ImpossibleBench arXiv:2510.20270 — whose
+mitigation is denying the **dev** test access, never denying the **author** the
+API surface).
 
-### A1. Derive the invocation surface at the story's BASE commit
+**But the prose is not going away.** The honest conclusion from the review is
+that a machine-derived surface cannot carry the semantic facts (plugin-type
+enums, error vocabulary, response bodies). So the goal changes from *replace the
+prose* to **make the prose impossible to drift undetected.**
 
-Replace the API-fact portion of the harness hint with a generated artifact.
+### A1. Derive the surface as an ADDITIVE CROSS-CHECK on the prose (not a replacement)
 
-- **Source**: the app at the story's **base commit** (`origin/main` at authoring
-  time). FastAPI exposes `app.openapi()`; `sacrifice` is a plain
-  `FastAPI(title="Sacrifice API", ...)`, so both the import path and the
-  boot-then-`GET /openapi.json` path work.
-- **Content**: routes, methods, required request fields, response status
-  vocabulary. Prune descriptions/examples to keep the prompt small.
-- **Storage**: beside the oracle, e.g.
-  `state/acceptance/<app>/<story>/api_surface.json`, keyed and cached on the base
-  sha, frozen with the oracle and hashed like it.
-- **Prompt**: `build_spec_prompt` gains an `api_surface` section replacing the
-  route/schema half of `harness_hint`.
-- **Keep as prose**: environment facts only — shared Postgres with no per-run
-  reset, namespace identifiers with `$ACCEPTANCE_RUN_ID`. Those are not API facts
-  and do not drift.
+Keep `acceptance_harness_hint` as the source of semantic truth. Add a derived
+artifact and a **consistency test** between them.
 
-**BASE, never HEAD — this is the load-bearing decision.** It does three jobs at
-once:
-1. at base the story's own endpoint does not exist, so the exclusion falls out of
-   the revision choice instead of needing a policy;
-2. the artifact is frozen per-story, so it cannot drift into
-   *implementation-derived* authority (arXiv:2607.05031's explicit warning);
-3. it is generated from a commit already on `main`, outside the dev worktree, so
-   the dev cannot edit it — which answers the strongest objection, that every
-   information channel is also a leak channel.
+- **Derive** the OpenAPI surface, scoped to **the routes the direction's
+  `api_spec.md` names, plus auth** — never all 55 routes. sacrifice has 55 route
+  decorators and 31 schema classes; an unpruned dump is 10–20× the current
+  2,895-char hint and would dilute the acceptance criteria in a 4096-token
+  authoring call. Add a size assertion.
+- **Cross-check**: every route path and required field named in the prose hint
+  must exist in the derived surface. Extend
+  `tests/test_sacrifice_acceptance_harness_hint.py`, which already pins the auth
+  routes as a deliberate invariant (*"that coupling is the point"*). **Do not
+  weaken that test** — extend it.
+- **This catches incidents 1 and 3-part-A mechanically at CI time**, with no boot,
+  no per-story cost, and no new terminal sink. It does not catch the semantic
+  half; that stays prose, and that is an accepted limit, stated here rather than
+  wished away.
+- **Optional app-side follow-up:** file a direction adding `responses=`
+  declarations to sacrifice's routes. That is what would make the error
+  vocabulary genuinely derivable. Until then it is prose by necessity.
 
-**Fail closed.** If the surface cannot be derived, the gate BLOCKS with a named
-reason. It must never silently fall back to letting the author guess — that is
-today's behaviour and it is the bug.
+**If a per-story derived surface is later fed to the author** (beyond the
+cross-check), these become binding:
 
-**Verify A1 by:** authoring an oracle for a story whose criterion needs a
-prerequisite `POST`, and confirming the emitted oracle sends the *real* required
-fields with no human having typed them anywhere.
+- **Base sha must be verified, not assumed.** Authoring runs at spawn
+  (`handlers.py:373`, during pm-sync, before any branch exists); the gate computes
+  `base_sha = merge-base(origin/<base>, HEAD)` (`red_green.py:426-439`) from a
+  branch created later at dispatch. `auto_merge.enabled: true` with
+  `per_repo_concurrent_agents: 10` means **main routinely moves between those two
+  moments** — story 179's graded base (`679c091a4219`) was a commit merged in the
+  same session. So: record the surface's sha and have the gate **BLOCK on
+  `api_surface.base_sha != base_sha`**. Silent drift becomes a named block.
+- **Never re-derive on a `force=True` re-author.** Two `explore: true` alternates
+  are competing full attempts, not slices (memory:
+  `oracle_grades_direction_acs_not_story_scope` — 23 pairs, 20 superseded). If a
+  loser's oracle is re-authored later, re-deriving from a *current* origin/main
+  would hand it the winner's implementation of the same spec — a genuine
+  implementation leak into the channel this design asserts cannot leak. Reuse the
+  stored surface, or refuse.
+- **Fail-closed must keep a path back.** The "expected but no oracle" gate branch
+  (`acceptance_verified.py:495-507`) returns a `GateResult` directly with
+  `authoritative: True` and never calls `_unverifiable`, so there is **no
+  `waiver_sha` and `factory acceptance-waive` cannot touch it** — operator-only,
+  forever. Before adding any new way to reach it: route it through
+  `_unverifiable(..., waiver_sha=oracle_sha)` or add `factory
+  acceptance-rederive`. Also call `boot.check_prerequisite` first and treat
+  "prerequisite down" as **not a failed authoring pass** — a down `sacrifice-db`
+  must never burn one of the three `_MAX_AUTHOR_PASSES`. Cap derivation at **1
+  per tick**, not `max_per_pass: 10`.
 
-### A2. Require the base run to fail for the RIGHT REASON
+### A2. Base-run status observation — ADVISORY INSTRUMENTATION ONLY
 
-We have the vacuity control (the oracle must fail against a gutted
-implementation). Its dual is missing. `_base_run` in
-`factory/chain/gates/acceptance_verified.py` already checks out the merge base
-into a worktree and boots the app — the infrastructure exists.
+> **The first draft made this the "cheapest, highest-value, ship-it-regardless"
+> item. It was the opposite on all three counts, and it would have blocked story
+> 179 — the correct, deployed story this plan cites as its success case.**
 
-Classify the base failure per criterion:
+The proposed taxonomy was *404/501 = feature absent (valid red); 400/422 =
+malformed oracle (block)*. It inverts on this app. Story 179's own
+`base_runs.json` records, at a base where `goal_count.py` did not exist:
 
-| Base response | Meaning | Action |
-|---|---|---|
-| `404` / `501` | feature genuinely absent | **valid red** — proceed |
-| `400` / `422` | request malformed | **the ORACLE is broken** — block, re-author |
-| `401` / `403` on a setup call | oracle misusing auth | **the ORACLE is broken** |
-| `5xx` | app not really up | `unknown` — existing corroboration path (PR #256) |
+```json
+{"method":"GET","path":"/api/goals/count","status":401}
+```
 
-**This is the highest-value item in the plan and the cheapest.** It would have
-caught all three historical incidents *at authoring time, before the dev
-started*, instead of at merge time after full spend. Ship it even if A1 slips.
+`GET /api/goals/count` is shadowed at base by `@router.get("/{goal_id}")`
+(`goals.py:163`), whose `Depends(get_current_user)` fires **before** a 404 can be
+produced. In a FastAPI app with parameterised routes behind an auth dependency —
+most of sacrifice's 55 — **"feature absent" presents as 401/403, and 404 is the
+exception.** A blocking taxonomy here is a false-block *generator*, shipped into a
+live required merge gate in the name of curing false blocks.
 
-**Verify A2 by:** deliberately planting a malformed oracle (omit a required
-field) and confirming the run is classified as oracle-broken, not feature-absent.
+**So: record, classify nothing, block on nothing.**
 
-### A3. Separate arrange from assert
+- Add observed base statuses to the gate's `details` for diagnosis.
+- Accumulate **≥20 base runs** before proposing any classification.
+- A future blocking version needs per-request statuses out of the oracle
+  process — a new channel from `run_oracle`, whose entire design point is that
+  nothing crosses back except junit (`oracle_run.py:1-52`), plus a
+  `RUNNER_VERSION` bump (`oracle_run.py:73`) that **invalidates every cached stub
+  and base run**. That is the most invasive item in this plan, not the cheapest.
+- **Strike the claim that this catches anything "at authoring time".**
+  `_base_run` is called from `_evaluate` (`acceptance_verified.py:890`) — the
+  merge gate, after full dev spend. Of the three incidents it would have caught
+  at most one, and only at merge time: incident 1 yields 404 → "valid red,
+  proceed"; incident 2 is body-level and the gate has no body data at all.
+
+A cheaper diagnostic that carries **no route-topology assumption**, using data the
+gate already holds (`stub_criteria_by_variant`, `acceptance_verified.py:665`):
+flag when a credited criterion's base failure is **identical to its failure
+against the `200 {}` stub**. That is suspicious without asserting what any status
+code means.
+
+### A3. Separate arrange from assert — MOVED BEFORE A2
 
 Setup ("create a goal so the count can increment") is not a behavioural judgment
 and carries no independence requirement. Today a `422` on setup is reported as a
-verdict on the story — a category error, and exactly what blocked story 179.
+verdict on the story — a category error, and what blocked story 179.
+
+**A2 depends on this, which is why it now comes first.** The proposed
+"401/403 *on a setup call*" row presupposes an arrange/assert distinction that
+does not exist yet: in 179's oracle (`test_acceptance.py:63-67`) the 401 arrives
+on the *assertion* call while `_register` (setup) succeeds — one criterion, two
+roles, one junit verdict.
 
 Minimum: classify and report setup failures distinctly from assertion failures so
 they can never be read as "the feature is wrong". Better: let setup use the app's
-own fixtures/factories rather than oracle-authored HTTP bodies. This is inference,
-not a cited finding, but it is the split arXiv:2504.07244 found *necessary* in
-industry (scenario stage 95% helpful from the story alone; executable stage
-required the page HTML, semantic relevance 60% → 92%).
+own fixtures/factories rather than oracle-authored HTTP bodies. Inference, not a
+cited finding — but it is the split arXiv:2504.07244 found *necessary* in industry
+(scenario stage 95% helpful from the story alone; executable stage required the
+page HTML, semantic relevance 60% → 92%).
 
----
+### A4. Decide the `explore` + AC-scope block — NEW, and it will dominate D
+
+Memory `oracle_grades_direction_acs_not_story_scope` (2026-08-08/09) documents
+three mechanisms that **jointly guarantee** a block: `explore: true` emits
+competing alternates; SM writes them as if they were slices and descopes ACs to
+"siblings" that never exist; and the author grades against `direction.acceptance`
+(`acceptance.py:422`), not the story's scope. The memory ends *"Not yet decided —
+needs an operator call."* **That call is still outstanding, and it is the
+structural cause of the 173/177/178 family** — not the shape A1/A3 address.
+
+Pick one and implement it: scope the oracle to the story, forbid SM descoping
+under `explore`, or make `explore` emit real slices plus an integration story.
+Until then every AC-carrying `explore` direction carries a ~50% structural block
+rate that would swamp Workstream D's signal.
 
 # Workstream B — measure before benchmarking
 
@@ -263,6 +375,20 @@ vacuity control, a reviewer-replay corpus, and a per-run cost meter.
 **Measure**: false-block rate (correct implementation rejected), false-green rate
 (gutted implementation accepted — the stub control already gives this), authoring
 cost, and time-to-merge.
+
+**AND the metric adversarial review says is the real risk — pre-register a
+threshold on it.** More base information means more oracles that MIRROR the base
+contract. Such an oracle **passes at base**, so `verdict_over` returns `green` →
+`oracle_not_discriminating` (`acceptance_verified.py:896-905`) → which is
+**waivable** (`waiver_sha=oracle_sha`) → and `_unverifiable` then returns
+`passed=True` with the text *"the oracle did NOT verify this story"*. Under a
+2 h/day ratification budget, a rising waiver rate is a **false-green pipeline**.
+The first draft of this plan asserted "false-block is recoverable, false-green is
+not" and never noticed that its recovery mechanism for false blocks IS the
+false-green channel. So: track `oracle_not_discriminating` + waivers-granted per
+arm, add a waiver counter to `factory inbox`, and **if that rate rises versus the
+prose control, A1 has made oracles weaker regardless of what the false-block
+number does.**
 
 **Pre-register the arms and the metric before running** — the ablation gate has
 been misused before (memory: `ablation_gate_dormant_and_broken`; never flip
@@ -330,16 +456,43 @@ block. Report what you find even if you fix nothing.
 
 # Workstream D — end-to-end proof
 
-**This is the acceptance test for the whole plan, and it cannot be shortcut.**
+**The necessary condition for benchmarking. Not, on its own, a readiness proof —
+see the power note at the end.**
 
-Write **three fresh directions** against `sacrifice`, deliberately spanning the
-shapes that have broken before:
+Write **three fresh directions** against `sacrifice`, all with **`explore: false`,
+stated explicitly in each direction and justified there.** Under `explore: true`
+SM emits two competing alternates and `superseded_by_sibling` is the NORMAL,
+CORRECT outcome for half of them (measured: 23 pairs → 23 deployed / 20
+superseded, memory `oracle_grades_direction_acs_not_story_scope`). The first draft
+listed that sink as a plan failure, which would have auto-failed on correct
+behaviour. The trade-off is explicit: `explore: false` is not the shipping
+configuration, so D tests the chain's *mechanics*, and the explore path is
+covered by A4 instead.
 
-| # | Shape | Exercises |
-|---|---|---|
-| D-1 | a new read endpoint, no setup state | the simple path end-to-end |
-| D-2 | a criterion needing **prerequisite state** (create an entity, then observe) | **A1 + A3** — the exact shape that blocked 179 |
-| D-3 | a change to an **existing** endpoint's behaviour | base-surface handling when the route already exists |
+| # | Shape | Exercises | Constraint |
+|---|---|---|---|
+| D-1 | a new read endpoint, no setup state | the simple path end-to-end | purely additive |
+| D-2 | a criterion needing **prerequisite state** (create an entity, then observe) | **A1 + A3** — the setup-vs-assert split | purely additive; see the KNOWN OPEN #2 note below |
+| D-3 | a change to an **existing** endpoint's behaviour | how the harness handles a route that already exists | **blast-radius bounded — see below** |
+
+**D-3 is the shape that has already killed a direction.** Direction 117 gated an
+existing route (`POST /api/goals`), broke ~40 sibling tests, exhausted both
+alternates and 6 dev attempts, burned ~$14, and terminated as story 177
+(`blocked_review_nonconvergent`) + 178 (`blocked_budget_exceeded`) — measured
+2026-08-09, the same day as this plan (memory:
+`direction_117_was_oversized_for_one_story`). And `caps.per_story_spend_usd: 12.0`
+is a **terminal** breaker. So: before filing D-3, run
+`grep -rl "<route>" backend/tests/` and **pre-register the number in the
+direction**; require ≤3 files. Prefer adding a field to an existing response over
+changing existing behaviour. **Decide in advance** whether a
+`blocked_budget_exceeded` on D-3 falsifies the plan or is out of scope — do not
+decide after seeing the result.
+
+**KNOWN OPEN #2 and D-2.** `acceptance_boot.env` points at the **shared** dev
+Postgres (`config.yaml`, and its own comment says so), and D-2 is precisely the
+shape that trips cross-run contamination. Either close #2 before D-2 (run the HEAD
+oracle twice, require both green), or state in the direction that a D-2 red will
+be re-run before being believed.
 
 Use the `new-direction` skill. Then run them through **unattended**:
 
@@ -349,7 +502,8 @@ factory on                                   # or drive with `factory tick --app
 ```
 
 **Watch for, and treat each as a FAILURE of this plan:**
-- any story reaching a `blocked_*` or `superseded_by_sibling` sink
+- any story reaching a `blocked_*` sink, or `superseded_by_sibling` **given
+  `explore: false`** (under `explore: true` it would be normal)
 - any story needing an operator to advance
 - **any hamster wheel**: repeated identical work with no state change — check
   `factory audit --app sacrifice` for repeated spend on the same persona/story,
@@ -358,14 +512,36 @@ factory on                                   # or drive with `factory tick --app
   this plan exists to remove)
 - any gate passing on a story whose implementation is wrong (**false green — stop
   everything and report; this is worse than every other outcome combined**)
+- a rising **waiver / `oracle_not_discriminating`** rate (the false-green channel
+  identified in B)
 
-**Exit criterion:** all three reach `deployed`, merged on GitHub (verify the merge
-commit — never a local flag), with zero operator interventions, and the total
-per-story spend within cap.
+**Exit criterion — artifacts, not state names.** For each of the three:
+1. a **merge commit on GitHub** (never a local flag);
+2. `acceptance-verified` present in `merge_actions.gates_passed_json`;
+3. `state/acceptance/sacrifice/<id>/stub_runs.json` **and** `base_runs.json` on
+   disk, showing a credited `K` and a corroborated base — **the gate emits no
+   events, so these files are the only proof it ran**;
+4. zero rows in `factory inbox`; zero operator interventions; spend within cap.
+
+**`deployed` is NOT an exit criterion.** `deploy.enabled: false` on sacrifice, so
+it is a state name and every `deploy_actions` row is skipped.
+
+**ABORT TRIGGER.** `gates.acceptance_oracle: true` is live. If A1/A3/A4 regress,
+every AC-carrying story blocks and this phase becomes unrunnable. So:
+**if two consecutive fresh stories block for an acceptance reason, set
+`gates.acceptance_oracle: false`, stop, and diagnose.** Do not push through.
 
 If a story blocks: diagnose, fix the *class* not the instance, record a memory
 file, then **re-run from a fresh story** — a resumed story proves the resume path,
 not the unattended path. Both matter; do not confuse them.
+
+**What D can and cannot establish.** Three stories, k=1, three different shapes is
+**n=1 per shape**. This repo's own MDE is ±38 pp at n=19 (`STATUS.md`); the 95% CI
+on 3/3 is roughly [29%, 100%], i.e. 3/3 is consistent with a true per-story
+success rate of 30%. So: **3/3 is a necessary condition for benchmarking, not
+evidence of a rate.** 0/3 or 1/3 is decisive evidence *against* readiness. If you
+want a rate, the 45 held-out pm-validated sacrifice directions (`STATUS.md`) are
+the pool — run 10 and pre-register the threshold.
 
 ---
 
@@ -378,28 +554,44 @@ needs the previous phase's *observed* result, not its predicted one.
 - `haiku`: environment sweep — leaked docker networks/containers, `factory power`,
   `factory mode`, live tree == `origin/main`, local suite baseline timing (C7)
 - `haiku`: collect current parked/blocked state, spend rollups, open PRs
-- `sonnet`: C2 tech_writer JSON-parse diagnosis (read-only)
+- `sonnet`: C2 tech_writer JSON diagnosis — **read `factory trace 177` FIRST.**
+  This plan's C1/C2 attribute 177 to a tech_writer parse failure, while memory
+  `direction_117_was_oversized_for_one_story` attributes it to contract ambiguity
+  at review. Resolve the discrepancy before designing any fix around tech_writer.
 - `sonnet`: C6 sweep for other unverifiable config facts
-- `opus`: C4 read the oracle's KNOWN OPEN #2–#4 and recommend fix/accept
+- `opus`: C4 read the oracle's KNOWN OPEN #2–#4 and recommend fix/accept —
+  **#2 gates D-2, so this is on the critical path**
 
-**Phase 1 — cheap high-value fix + clear the decks (parallel)**
-- `opus` in a worktree: **A2**, the base-run failure-reason control
-- `sonnet`: **C3**, resume stories 177/178 (serialise the actual `resume-story`
-  calls — they write the DB)
-- Then: one full suite run, one adversarial `opus` review, PR, CI, merge, deploy.
-- **Observe**: run a tick, confirm A2 fires on a deliberately malformed oracle.
+**Phase 1 — the decision that dominates everything downstream**
+- `opus`: **A4** — make the `explore`/AC-scope call the memory has been waiting
+  for, and implement it. Until this lands, every AC-carrying `explore` direction
+  carries a ~50% structural block rate that would swamp D's signal.
+- `sonnet` (serialise the actual `resume-story` calls — they write the DB): **C3**,
+  resume stories 177/178.
+- Then: full suite, adversarial `opus` review, PR, CI, merge, deploy.
+- **Observe**: run a tick and watch real stories move.
 
-**Phase 2 — the real fix (parallel implementation, serial validation)**
-- `opus` in a worktree: **A1** derived base surface
-- `opus` in a second worktree: **A3** arrange/assert split
-- `sonnet`: draft D-1/D-2/D-3 directions concurrently (not yet run)
-- Then: suite, adversarial review, PR, merge, deploy. **Observe a real authoring
-  run** and read the emitted oracle before believing anything.
+**Phase 2 — the cheap mechanical guard**
+- `sonnet`: **A1's cross-check test** — hint-vs-derived-surface consistency in CI.
+  No boot, no per-story cost, no new terminal sink. Extends
+  `tests/test_sacrifice_acceptance_harness_hint.py`; **do not weaken it**.
+- `haiku`: **A2's advisory instrumentation** — record base statuses in `details`.
+  Classify nothing. Block on nothing.
+- These two are genuinely independent. Everything richer in A1 (a per-story
+  derived surface fed to the author) is **deferred** until the cross-check has
+  been live and the A1 preconditions — base-sha verification, no re-derive on
+  `force`, `_unverifiable` path back — are all implemented.
 
-**Phase 3 — measure (B)**
-Pre-register arms and metric. Archive artifacts per run — re-running a sweep
-destroys published-number artifacts. `opus` interprets the numbers.
-**If the derived surface does not beat the prose control, STOP and report.**
+**Phase 3 — A3, then measure (B)**
+- `opus`: **A3** arrange/assert split. **A3 precedes any blocking version of A2**,
+  which presupposes the distinction A3 creates.
+- `sonnet`: draft D-1/D-2/D-3 concurrently, with blast-radius numbers
+  pre-registered and `explore: false` justified in each.
+- Then **B**: pre-register arms and metric *including the waiver /
+  `oracle_not_discriminating` rate*. Archive artifacts per run — re-running a
+  sweep destroys published-number artifacts. `opus` interprets.
+  **If the derived surface does not beat the prose control on false-block, OR the
+  waiver rate rises, STOP and report.**
 
 **Phase 4 — remaining harness integrity (parallel)**
 - `opus`: C1 (shared control flow — re-verify everything keyed off it)
@@ -408,8 +600,8 @@ destroys published-number artifacts. `opus` interprets the numbers.
 
 **Phase 5 — the unattended proof (D) — SERIAL, and the point of all of it**
 Run the three directions through the real factory and watch. No agent may
-"conclude" this phase from a summary; it is closed by three `deployed` stories
-with merge commits on GitHub and zero operator interventions.
+"conclude" this phase from a summary; it is closed by the four artifacts listed in
+D. Honour the abort trigger.
 
 ## Reporting
 
