@@ -46,7 +46,10 @@ All of these, verified against **real artifacts**, never a recorded flag:
    sacrifice, so `deployed` is a STATE NAME, not a deploy (`STATUS.md`: all 102
    `deploy_actions` rows skipped or errored). Using it as evidence is `proxy ≠
    real`, this repo's most common bug class, in its own readiness plan.
-7. `factory audit-chain` reports no tampering; `factory inbox` is empty of
+7. No story in the Workstream D run stalls: nothing sits in an `*_in_progress`
+   state beyond the stale threshold without being surfaced (`E1`), and no dev run
+   times out without being charged and counted (`E3`).
+8. `factory audit-chain` reports no tampering; `factory inbox` is empty of
    needs-human rows; `uv run pytest -q` exits 0; live tree == `origin/main`.
 
 **None of 1–6 may be claimed from a green test run alone.** Name the commit SHA
@@ -454,6 +457,111 @@ block. Report what you find even if you fix nothing.
 
 ---
 
+### A5. AC-precision gate — extracted from the closed Karpathy direction
+
+Rescued from direction `002-karpathy-quality-layers` (P1.2) before closing it as
+superseded: **the backpressure validator should check that each acceptance
+criterion is observable and testable, and reject the vague ones.**
+
+It belongs here, not there, because it is the upstream half of this workstream's
+problem. A vague AC produces an oracle that cannot discriminate, which lands in
+`oracle_not_discriminating` → waiver → `_unverifiable` returning `passed=True` —
+the false-green channel Workstream B now measures. Catching an untestable AC at
+triage costs one PM call; catching it at the gate costs a full dev cycle and an
+operator waiver.
+
+Related but distinct from criterion VACUITY (memory:
+`criterion_vacuity_is_the_second_sensor_failure`): vacuity is "a no-op satisfies
+it", precision is "nobody can tell what would satisfy it". Both end at the same
+gate.
+
+# Workstream E — make it faster, on measured causes
+
+**Measured 2026-08-09 over 196 dev runs and the per-story event logs. Read the
+numbers before optimising anything, because the intuitive answers are wrong
+here.**
+
+**The factory is NOT slow when it is working.** Story 179 went creation → PR in
+**22.7 min wall clock against 26.5 min of LLM work — ~0% dead time**, entirely
+work-bound. That is its real speed.
+
+**It is slow when a story stalls.** Story 172: **289 min wall, 21.4 min of work —
+92.6% dead**, and **255 of those minutes were a SINGLE gap** between
+`handler_start` and `stale_recovery`. A handler died without writing
+`handler_end`, and the row sat in `*_in_progress` until a sweep noticed. Two of
+its three largest gaps are that same pattern.
+
+Where the work actually is:
+
+| persona | n | avg | total | share of work time |
+|---|---|---|---|---|
+| **dev** | 196 | **658 s** | **35.9 h** | **~97%** |
+| tech_writer | 83 | 92 s | 2.1 h | 6% |
+| acceptance_author | 13 | 118 s | 0.4 h | 1% |
+| sm / reviewer / pm / contract | 241 | 5–17 s | 0.6 h | ~2% |
+
+(`manager_watcher`'s 17 h is the deleted FMS tier and no longer runs.)
+
+**What NOT to do — ruled out by the measurements:**
+- Do not shorten the 5-min tick. Handlers already chain within a tick
+  (`max_advances_per_story = 10`), so the local SM→dev→review→tech_writer segment
+  does not wait on ticks at all.
+- Do not micro-optimise SM / reviewer / pm / contract. Together they are ~2% of
+  work time; making them free saves minutes out of hours.
+- Do not chase model speed for dev. 658 s is OpenHands doing real work.
+
+### E1. Kill the stall class — the single biggest latency, by an order of magnitude
+
+The 255-minute gap happened because `_prune_stale_in_progress`
+(`_STALE_THRESHOLD_SECONDS = 10 * 60`) only runs inside a tick, and **no tick was
+running**. That is an availability failure presenting as a performance one.
+
+- **A dead-man's check that does not depend on the thing that died.** Today the
+  only detector of a stalled story is a sweep inside the loop that stalls. At
+  minimum, surface it: `factory inbox` should show any story in an
+  `*_in_progress` state older than the stale threshold, so a human sees it
+  without a tick.
+- **Make "the factory is off while stories are in flight" loud.** `factory power`
+  reporting OFF is not the same as anyone noticing.
+- Verify `_prune_stale_in_progress` actually fires at 10 min in a live run — it
+  has never been observed doing so in the data reviewed here.
+
+### E2. Cut dev RETRIES, not dev speed
+
+Dev is 97% of work time and one clean pass is ~11 min. The cost is repetition:
+stories 177 and 178 burned **6 dev calls each — 88 and 146 minutes of dev alone**.
+Every retry cause removed is worth more than any per-call speedup.
+
+**This means Workstreams A and C ARE the performance work.** A false-blocking
+oracle, a wrong contract fact, and an ambiguous AC each cost a full dev cycle.
+Do not treat "make it faster" as separate from them.
+
+### E3. Timed-out dev runs — 30 minutes for nothing, invisible to the breakers
+
+**8 of 196 dev runs hit the 1800 s cap.** Each spent 30 minutes producing nothing,
+and per memory `sandbox_timeout_loses_usage_and_retry` a timed-out run records
+**$0**, so the budget breakers cannot see it and the retry bounces free. Fix the
+accounting first (a timeout must charge and count), then decide whether the cap
+should fail faster.
+
+### E4. Throughput is a concurrency lever, not a latency one
+
+`per_repo_concurrent_agents: 10`, but in-flight has been **2**. Since the operator
+thesis is **throughput at an acceptable defect rate, not $/task** (memory:
+`operator_decisions_2026_08_07`), running 8–10 stories concurrently multiplies
+output without touching per-story latency at all.
+
+**Caveat that must be honoured:** Workstream D measures *unattended behaviour*, so
+whatever concurrency is chosen must be the configuration actually benchmarked —
+and docs stories still serialise per app (memory: `docs_chain_serialization`).
+
+### E5. Note the trade-off the retry cap makes
+
+Raising `max_dev_retries` 3 → 4 (2026-08-09) **trades latency for completion**:
+more stories finish, each slower, and a 4th attempt costs ~11 min. That is the
+right direction for a throughput thesis, but it is a hypothesis — **Workstream B
+should measure completion rate and per-story wall clock at 3 vs 4**, not assume.
+
 # Workstream D — end-to-end proof
 
 **The necessary condition for benchmarking. Not, on its own, a readiness proof —
@@ -593,10 +701,14 @@ needs the previous phase's *observed* result, not its predicted one.
   **If the derived surface does not beat the prose control on false-block, OR the
   waiver rate rises, STOP and report.**
 
-**Phase 4 — remaining harness integrity (parallel)**
+**Phase 4 — remaining harness integrity + speed (parallel)**
 - `opus`: C1 (shared control flow — re-verify everything keyed off it)
 - `sonnet`: C5 detector_watch read-only soak, then decide
 - `sonnet`: C2 fix, if Phase 0 identified a real cause
+- `sonnet`: **E1** (stall visibility) and **E3** (timeout accounting). E2 needs no
+  separate work — Workstreams A and C ARE the retry-reduction work. **E4**
+  (concurrency) is a decision to make BEFORE Phase 5, because it changes the
+  configuration Phase 5 measures.
 
 **Phase 5 — the unattended proof (D) — SERIAL, and the point of all of it**
 Run the three directions through the real factory and watch. No agent may
