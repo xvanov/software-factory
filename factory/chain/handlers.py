@@ -1029,17 +1029,6 @@ def handle_sm(
 # --------------------------------------------------------------------------- #
 
 
-# Cheap cap for personas that emit small structured updates (docs_sm,
-# tech_writer). "Strong" personas (SM, Test-Designer, Test-Implementer,
-# Dev, Reviewer) now resolve their cap per-model via
-# ``max_output_tokens_for(model_id)``, which reads ``model_limits`` in
-# routes.yaml — Claude 4.x gets 32k, GPT-5.4 gets 16k, DeepSeek-V4 gets
-# 8k, etc. The previous single 8192 constant under-utilized every model
-# except DeepSeek and the legacy 4096 truncated SM JSON mid-string on
-# multi-story directions.
-_CHEAP_MAX_TOKENS = 2048
-
-
 _TEST_DESIGN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["test_plan", "e2e_required", "summary"],
@@ -1131,6 +1120,66 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
         if obj is not None:
             return obj
     return None
+
+
+def _parse_tech_writer_result(result_any: Any) -> dict[str, Any] | None:
+    """Parse + shape-check tech_writer output. Returns ``None`` on anything
+    that is not a usable result — the caller retries, then blocks fail-closed.
+
+    Deliberately STRICTER than the reviewer's ``_extract_json_object``: no
+    brace-slice. The tech_writer prompt embeds a complete example object, so
+    slicing the outermost ``{...}`` out of a prose response can capture the
+    prompt's own echoed example — one such shape (``context_updates: []`` with
+    ``no_updates_needed: false``) parks the story behind a docs-current gate
+    that can never pass, and another (``no_updates_needed: true``) is a FALSE
+    GREEN on a merged PR with stale context docs. Fence-stripping alone covers
+    the observed failure (story 177 attempt 1: a fully valid object inside a
+    ```json fence, rejected by the old bare ``json.loads``); everything
+    stranger stays a loud parse failure.
+
+    The shape check exists so a syntactically valid but wrong-shaped body
+    (e.g. ``context_updates`` as a list of strings) fails HERE — a retryable
+    parse failure — rather than as an uncaught ``TypeError`` in the
+    ``ContextUpdate`` build after the result was already persisted.
+    """
+    candidate: dict[str, Any] | None = None
+    if isinstance(result_any, dict):
+        candidate = result_any
+    elif isinstance(result_any, str):
+        text = result_any.strip()
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            parsed = None
+            if text.startswith("```"):
+                body = text[3:]
+                if body[:4].lower() == "json":
+                    body = body[4:]
+                body = body.strip()
+                if body.endswith("```"):
+                    body = body[:-3].strip()
+                try:
+                    parsed = json.loads(body)
+                except (json.JSONDecodeError, ValueError):
+                    parsed = None
+        candidate = parsed if isinstance(parsed, dict) else None
+    if candidate is None:
+        return None
+
+    updates = candidate.get("context_updates")
+    no_updates = bool(candidate.get("no_updates_needed"))
+    if updates is None:
+        return candidate if no_updates else None
+    if not isinstance(updates, list):
+        return None
+    for u in updates:
+        if not isinstance(u, dict) or not isinstance(u.get("path"), str) or not u["path"]:
+            return None
+    if not updates and not no_updates:
+        # "Docs are stale but here are zero updates" — the docs-current gate
+        # can never satisfy this; persisting it strands the story terminally.
+        return None
+    return candidate
 
 
 def _parse_reviewer_result(result_any: Any) -> dict[str, Any]:
@@ -3800,16 +3849,22 @@ def handle_tech_writer(
                 prompt=full_prompt,
                 model_id=model_id,
                 schema=None,
-                max_tokens=_CHEAP_MAX_TOKENS,
+                # Per-model cap, NOT a small constant: routes.yaml documents
+                # tech_writer as "the largest JSON of any text persona", and a
+                # 2048 start burned all 4 of the runner's doubling retries
+                # (2048+4096+8192+16384 = story 177's exact tokens_out) before
+                # returning a still-truncated body as success.
+                max_tokens=max_output_tokens_for(model_id),
                 story_id=story.id,
                 app=story.app,
                 direction_id=story.direction_id,
                 db_path=db,
             )
-            try:
-                candidate = json.loads(result_any) if isinstance(result_any, str) else result_any
-            except (TypeError, json.JSONDecodeError):
-                candidate = None
+            # Fence-strip + shape-check, NOT the reviewer's brace-slice — see
+            # _parse_tech_writer_result for why leniency here is a false-green
+            # channel (story 177 attempt 1: a fully valid fenced object was
+            # rejected by the old bare json.loads; that case parses now).
+            candidate = _parse_tech_writer_result(result_any)
             if isinstance(candidate, dict):
                 parsed = candidate
                 parse_error = None

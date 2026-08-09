@@ -240,3 +240,186 @@ def test_parse_failure_then_success_recovers_within_the_retry_budget(
     assert result.next_state == StoryState.TECH_WRITER_DONE
     tw = json.loads(s.tech_writer_result_json)
     assert tw["no_updates_needed"] is True
+
+
+def test_fenced_json_is_accepted_on_the_first_attempt(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fully valid object wrapped in a ```json fence must parse on attempt 1.
+
+    Regression for sacrifice story 177: Kimi returned 22,882 chars of valid
+    JSON inside a Markdown fence, the bare ``json.loads`` rejected it, and the
+    story terminally parked after burning both parse retries. tech_writer now
+    shares the reviewer's ``_extract_json_object`` recovery.
+    """
+    s = _story_at_reviewer_done(temp_root)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, s)
+    _commit_a_change(worktree)
+
+    _patch_tech_writer_prep(monkeypatch)
+
+    calls: list[dict[str, Any]] = []
+    import factory.runner as runner_mod
+
+    def _fake_text_run(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        payload = json.dumps(
+            {"context_updates": [], "no_updates_needed": True, "rationale": "ok"}
+        )
+        return f"```json\n{payload}\n```"
+
+    monkeypatch.setattr(runner_mod, "text_run", _fake_text_run)
+
+    result = handle_tech_writer(s, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert len(calls) == 1, "fenced-but-valid JSON must not burn a parse retry"
+    assert result.next_state == StoryState.TECH_WRITER_DONE
+    tw = json.loads(s.tech_writer_result_json)
+    assert tw["no_updates_needed"] is True
+
+
+def test_tech_writer_requests_the_models_full_output_budget(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """tech_writer must ask for the routed model's real output cap, not a
+    small constant.
+
+    Regression for sacrifice story 177 attempt 2: a 2048-token starting cap
+    burned all four of the runner's doubling retries (2048+4096+8192+16384 —
+    the run's exact tokens_out) and still returned a truncated body.
+    routes.yaml documents tech_writer as the largest JSON emitter of any text
+    persona.
+    """
+    from factory.model_router import max_output_tokens_for
+
+    s = _story_at_reviewer_done(temp_root)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, s)
+    _commit_a_change(worktree)
+
+    _patch_tech_writer_prep(monkeypatch)
+
+    calls: list[dict[str, Any]] = []
+    import factory.runner as runner_mod
+
+    def _fake_text_run(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return json.dumps({"context_updates": [], "no_updates_needed": True, "rationale": "ok"})
+
+    monkeypatch.setattr(runner_mod, "text_run", _fake_text_run)
+
+    handle_tech_writer(s, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert calls, "text_run must be invoked"
+    expected = max_output_tokens_for("azure/gpt-5.4")  # _patch routes tech_writer here
+    assert calls[0]["max_tokens"] == expected
+    assert calls[0]["max_tokens"] > 2048, "a small constant cap is the story-177 bug"
+
+
+def test_prose_echo_of_the_prompts_example_object_is_a_parse_failure(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A prose response that merely ECHOES an example object must be rejected,
+    not brace-sliced into an answer.
+
+    Two echo shapes are pinned because each is worse than a parse failure:
+    ``no_updates_needed: false`` with zero updates parks the story behind a
+    docs-current gate that can never pass, and ``no_updates_needed: true`` is
+    a FALSE GREEN (merged PR, stale context docs). Both must burn a retry and
+    end in the loud fail-closed block, exactly like non-JSON garbage.
+    """
+    from factory.chain.handlers import _MAX_TECH_WRITER_PARSE_RETRIES
+
+    echo = (
+        # prose + echoed example + truncated real answer (story-177-adjacent)
+        'The shape I must return is:\n'
+        '{"context_updates": [], "no_updates_needed": false, "rationale": ""}\n'
+        'Now the real answer:\n```json\n{"context_updates": [{"path": "context/mod'
+    )
+    s = _story_at_reviewer_done(temp_root)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, s)
+    _commit_a_change(worktree)
+    _patch_tech_writer_prep(monkeypatch)
+
+    calls: list[dict[str, Any]] = []
+    import factory.runner as runner_mod
+
+    def _fake_text_run(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return echo
+
+    monkeypatch.setattr(runner_mod, "text_run", _fake_text_run)
+    result = handle_tech_writer(s, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert len(calls) == _MAX_TECH_WRITER_PARSE_RETRIES
+    assert result.next_state == StoryState.BLOCKED_REVIEW_NONCONVERGENT
+    assert s.tech_writer_result_json is None or "no_updates_needed" not in (
+        s.tech_writer_result_json or ""
+    ), "an echoed example must never be persisted as the result"
+
+
+def test_refusal_restating_the_contract_is_never_a_false_green(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refusal whose prose CONTAINS ``{"no_updates_needed": true, ...}``
+    must be a parse failure — brace-slicing it out would pass the required
+    docs-current gate green on a merged PR with stale context docs, the worst
+    direction this handler can fail in."""
+    from factory.chain.handlers import _MAX_TECH_WRITER_PARSE_RETRIES
+
+    s = _story_at_reviewer_done(temp_root)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, s)
+    _commit_a_change(worktree)
+    _patch_tech_writer_prep(monkeypatch)
+
+    calls: list[dict[str, Any]] = []
+    import factory.runner as runner_mod
+
+    def _fake_text_run(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return (
+            "I cannot determine updates from this diff. The expected format is "
+            '{"no_updates_needed": true, "rationale": "n/a"} but I have no data.'
+        )
+
+    monkeypatch.setattr(runner_mod, "text_run", _fake_text_run)
+    result = handle_tech_writer(s, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert len(calls) == _MAX_TECH_WRITER_PARSE_RETRIES
+    assert result.next_state == StoryState.BLOCKED_REVIEW_NONCONVERGENT
+    assert s.state == StoryState.BLOCKED_REVIEW_NONCONVERGENT.value
+
+
+def test_wrong_shaped_context_updates_is_a_parse_failure_not_a_crash(
+    temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``context_updates`` as a list of STRINGS is syntactically valid JSON but
+    would crash the ``ContextUpdate`` build (``u["path"]`` on a str) AFTER the
+    result was persisted. It must be treated as a parse failure instead —
+    retried, then blocked fail-closed."""
+    s = _story_at_reviewer_done(temp_root)
+    db = temp_root / "state" / "factory.db"
+    worktree = _writing_worktree(app_config, temp_root, s)
+    _commit_a_change(worktree)
+    _patch_tech_writer_prep(monkeypatch)
+
+    calls: list[dict[str, Any]] = []
+    import factory.runner as runner_mod
+
+    def _fake_text_run(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return json.dumps(
+            {"context_updates": ["context/modules/api.md"], "rationale": "x"}
+        )
+
+    monkeypatch.setattr(runner_mod, "text_run", _fake_text_run)
+    result = handle_tech_writer(s, app_config, temp_root, dry_run=False, db_path=db)
+
+    from factory.chain.handlers import _MAX_TECH_WRITER_PARSE_RETRIES
+
+    assert len(calls) == _MAX_TECH_WRITER_PARSE_RETRIES
+    assert result.next_state == StoryState.BLOCKED_REVIEW_NONCONVERGENT
+    assert s.state == StoryState.BLOCKED_REVIEW_NONCONVERGENT.value
