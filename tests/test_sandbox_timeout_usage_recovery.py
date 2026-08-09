@@ -246,3 +246,139 @@ def test_unreadable_telemetry_falls_back_to_the_safe_old_shape(
     assert result.success is False
     assert result.cost_usd == 0.0
     assert result.premodel_infra is True
+
+
+# --------------------------------------------------------------------------- #
+# Cross-retry MEMORY, not just usage
+# --------------------------------------------------------------------------- #
+
+
+class _Msg:
+    """An assistant message event in the SDK's observed shape."""
+
+    kind = "MessageEvent"
+    role = "assistant"
+
+    def __init__(self, text: str) -> None:
+        self.llm_message = type("_M", (), {"content": [{"type": "text", "text": text}]})()
+
+
+class _Action:
+    kind = "ActionEvent"
+
+    def __init__(self, tool: str, args: str) -> None:
+        self.tool_name = tool
+        self.tool_call_id = f"call-{tool}"
+        self.action = type("_A", (), {"command": args})()
+
+
+def _install_stalling_sdk_with_events(
+    monkeypatch: pytest.MonkeyPatch, events: list[Any]
+) -> None:
+    """A stalled conversation that HAS accumulated events and spend."""
+
+    class _Conv:
+        def __init__(self, **kwargs: Any) -> None:
+            self.state = type("_S", (), {"events": events})()
+
+        def send_message(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def run(self) -> None:
+            time.sleep(30)
+
+        def close(self) -> None:
+            pass
+
+        @property
+        def conversation_stats(self) -> Any:
+            class _S:
+                def get_combined_metrics(self) -> Any:
+                    return type(
+                        "_M",
+                        (),
+                        {
+                            "accumulated_token_usage": type(
+                                "U", (), {
+                                    "prompt_tokens": 4_730_000,
+                                    "completion_tokens": 38_400,
+                                    "cache_read_tokens": 0,
+                                },
+                            )(),
+                            "accumulated_cost": 1.9243,
+                        },
+                    )()
+
+            return _S()
+
+    _install_stalling_sdk(monkeypatch, prompt_tokens=1, completion_tokens=1, cost=1.0)
+    sys.modules["openhands.sdk"].Conversation = _Conv  # type: ignore[attr-defined]
+
+
+def test_timeout_carries_forward_what_the_attempt_actually_did(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The three cross-retry memory fields must survive a mid-run timeout.
+
+    ``handle_dev`` stores them in ``dev_attempts_json`` and
+    ``_build_initial_message`` renders them into the NEXT attempt's prompt. Empty
+    means every retry after a timeout restarts COLD — the live shape of sacrifice
+    story 173, which burned two ~30-minute attempts with no cumulative progress.
+    """
+    _install_stalling_sdk_with_events(
+        monkeypatch,
+        [
+            _Action("execute_bash", "pytest backend/tests -x"),
+            _Msg("I added require_verified_email and wired it to /api/goals."),
+        ],
+    )
+    monkeypatch.setenv("AZURE_API_KEY", "test-key")
+
+    result = _run_until_timeout(tmp_path, tmp_path / "state" / "factory.db")
+
+    assert "require_verified_email" in result.last_assistant_message
+    assert result.recent_tool_calls, "the tool trail must survive the timeout"
+    assert result.recent_tool_calls[0]["tool"] == "execute_bash"
+
+
+def test_timeout_with_no_events_yields_empty_memory_not_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CONTROL — a stall before any turn has nothing to carry, and must not raise."""
+    _install_stalling_sdk_with_events(monkeypatch, [])
+    monkeypatch.setenv("AZURE_API_KEY", "test-key")
+
+    result = _run_until_timeout(tmp_path, tmp_path / "state" / "factory.db")
+
+    assert result.last_assistant_message == ""
+    assert result.recent_tool_calls == []
+    assert result.success is False
+
+
+def test_unreadable_event_state_degrades_instead_of_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A memory read must never convert a timeout into a crash."""
+
+    class _Boom:
+        @property
+        def events(self) -> Any:
+            raise RuntimeError("SDK shape changed")
+
+    _install_stalling_sdk_with_events(monkeypatch, [])
+    conv_cls = sys.modules["openhands.sdk"].Conversation  # type: ignore[attr-defined]
+    original_init = conv_cls.__init__
+
+    def _init(self: Any, **kwargs: Any) -> None:
+        original_init(self, **kwargs)
+        self.state = _Boom()
+
+    conv_cls.__init__ = _init  # type: ignore[method-assign]
+    monkeypatch.setenv("AZURE_API_KEY", "test-key")
+
+    result = _run_until_timeout(tmp_path, tmp_path / "state" / "factory.db")
+
+    assert result.success is False
+    assert result.last_assistant_message == ""
+    # The usage recovery is independent of the memory recovery and must still work.
+    assert result.cost_usd == pytest.approx(1.9243)
