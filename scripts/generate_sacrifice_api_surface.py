@@ -61,7 +61,30 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-_DEFAULT_APP_ROOT = Path(__file__).resolve().parents[1].parent / "sacrifice"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _default_app_root() -> Path:
+    """The app checkout the operator config names — never a guessed sibling.
+
+    ``apps/sacrifice/config.yaml``'s ``app_repo_path`` is the operator-written
+    source of truth for where the sacrifice checkout lives; a relative
+    ``../sacrifice`` guess broke the moment this script ran from a git
+    worktree (adversarial review finding #15).
+    """
+    cfg = _REPO_ROOT / "apps" / "sacrifice" / "config.yaml"
+    try:
+        import yaml
+
+        loaded = yaml.safe_load(cfg.read_text())
+        path = Path(loaded["app_repo_path"]).expanduser()
+        if path.is_dir():
+            return path
+    except Exception:  # noqa: BLE001 - fall through to the historical default
+        pass
+    return Path("/home/k/sacrifice")
+
+
 _DEFAULT_OUTPUT = (
     Path(__file__).resolve().parents[1] / "apps" / "sacrifice" / "derived" / "api_surface.json"
 )
@@ -77,6 +100,7 @@ class RouteFact:
     method: str
     path: str
     required_fields: list[str] = field(default_factory=list)
+    all_fields: list[str] = field(default_factory=list)
     body_model: str | None = None
     source_file: str = ""
 
@@ -132,10 +156,20 @@ def _field_is_required(assign: ast.expr | None) -> bool:
     return False
 
 
-def parse_schema_models(schemas_dir: Path) -> dict[str, dict[str, bool]]:
-    """Return {ClassName: {field_name: required}} for every ``class X(BaseModel)``."""
+def parse_schema_models(*dirs: Path) -> dict[str, dict[str, bool]]:
+    """Return {ClassName: {field_name: required}} for every ``class X(BaseModel)``.
+
+    Scans EVERY directory given — sacrifice declares six request-body models
+    INLINE in ``routes/*.py`` (GoogleAuthRequest, SendMessageBody, ...), and a
+    schemas-only scan recorded ``required_fields: []`` for their routes: the
+    cross-check then instructed a human to DELETE a true hint fact
+    (adversarial review finding #1). Duplicate class names across files
+    collide last-sorted-file-wins; none exist today, and the consumer treats
+    an unresolvable body as UNKNOWN, never as "no fields".
+    """
     models: dict[str, dict[str, bool]] = {}
-    for py_file in sorted(schemas_dir.glob("*.py")):
+    py_files = [f for d in dirs for f in sorted(d.glob("*.py"))]
+    for py_file in py_files:
         tree = ast.parse(py_file.read_text(), filename=str(py_file))
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
@@ -286,11 +320,13 @@ def parse_routes(
                     if body_model
                     else []
                 )
+                all_fields = sorted(schema_models[body_model]) if body_model else []
                 facts.append(
                     RouteFact(
                         method=method.upper(),
                         path=full_path,
                         required_fields=required,
+                        all_fields=all_fields,
                         body_model=body_model,
                         source_file=str(py_file.relative_to(app_root)),
                     )
@@ -304,7 +340,7 @@ def build_surface(app_root: Path) -> dict:
     main_file = app_root / _MAIN_FILE
     if not routes_dir.is_dir():
         raise SystemExit(f"routes dir not found: {routes_dir}")
-    schema_models = parse_schema_models(schemas_dir)
+    schema_models = parse_schema_models(schemas_dir, routes_dir)
     facts = parse_routes(routes_dir, main_file, schema_models, app_root)
     facts.sort(key=lambda f: (f.path, f.method))
     return {
@@ -325,6 +361,7 @@ def build_surface(app_root: Path) -> dict:
                 "method": f.method,
                 "path": f.path,
                 "required_fields": f.required_fields,
+                "all_fields": f.all_fields,
                 "body_model": f.body_model,
                 "source_file": f.source_file,
             }
@@ -335,11 +372,11 @@ def build_surface(app_root: Path) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--app-root", type=Path, default=_DEFAULT_APP_ROOT)
+    parser.add_argument("--app-root", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=_DEFAULT_OUTPUT)
     args = parser.parse_args(argv)
 
-    app_root = args.app_root.resolve()
+    app_root = (args.app_root or _default_app_root()).resolve()
     surface = build_surface(app_root)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(surface, indent=2, sort_keys=False) + "\n")

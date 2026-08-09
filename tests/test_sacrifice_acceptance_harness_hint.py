@@ -127,9 +127,19 @@ def _load_surface() -> dict:
     return data
 
 
-def _surface_index(surface: dict) -> dict[tuple[str, str], set[str]]:
+def _surface_index(surface: dict) -> dict[tuple[str, str], dict]:
+    """Index routes keeping body_model — the consumer must distinguish "this
+    route has no body" / "the generator could not resolve the body model"
+    (``body_model: null``) from "the body has no required fields". Asserting
+    ``[]`` against an unresolved body once instructed a human to DELETE a
+    true hint fact (adversarial review finding #1)."""
     return {
-        (r["method"], r["path"]): set(r.get("required_fields") or []) for r in surface["routes"]
+        (r["method"], r["path"]): {
+            "required": set(r.get("required_fields") or []),
+            "all": set(r.get("all_fields") or []),
+            "body_model": r.get("body_model"),
+        }
+        for r in surface["routes"]
     }
 
 
@@ -185,8 +195,20 @@ def _parse_hint_route_facts(
             if claimed_fields:
                 for route in routes_in_block:
                     required[route] |= claimed_fields
-        elif "required fields" in block.lower() and last_route is not None:
-            required[last_route] |= set(bare_ident_re.findall(block))
+        # Deliberately NOT an elif: a "REQUIRED fields" bullet that also
+        # mentions its route inline used to fall into the branch above only,
+        # silently disabling the whole claim (adversarial review finding #3 —
+        # prefixing the goal-creation bullet with `POST /api/goals` dropped
+        # all five claimed fields from the check while staying green).
+        if "required fields" in block.lower():
+            target = routes_in_block[-1] if routes_in_block else last_route
+            if target is not None:
+                idents = set(bare_ident_re.findall(block))
+                # Bare backticked idents in such a bullet are field names;
+                # strip anything that parsed as a route mention token.
+                required[target] |= {
+                    i for i in idents if not i.upper() in ("GET", "POST", "PUT", "PATCH", "DELETE")
+                }
 
     return mentioned, dict(required)
 
@@ -225,17 +247,58 @@ def test_hint_required_fields_match_derived_surface() -> None:
     index = _surface_index(surface)
     mentioned, required_claims = _parse_hint_route_facts(hint)
     assert required_claims, "mechanical required-field parse found nothing to check"
+
+    # Parse-yield pins: these counts degrade toward zero silently when a hint
+    # reformat slips past the mention regex (adversarial review finding #4) —
+    # a deliberate hint edit updates them consciously, same discipline as the
+    # hand-written auth-route pins above.
+    assert len(set(mentioned)) == 7, (
+        f"route-mention parse yield changed ({len(set(mentioned))} != 7): "
+        "either the hint deliberately added/removed a route (update this pin) "
+        "or a reformat broke the mechanical parse (fix the hint format)"
+    )
+    # 2, not 3: the login bullet claims its body via "the same JSON body"
+    # cross-reference prose, which the mechanical parse deliberately does not
+    # chase (stated limit in _parse_hint_route_facts).
+    assert len(required_claims) == 2, (
+        f"required-claim parse yield changed ({len(required_claims)} != 2) — "
+        "same rule: deliberate edit updates the pin, reformat is a bug"
+    )
+
     errors = []
     for route, claimed in required_claims.items():
         if route not in index:
             continue  # already reported by test_hint_routes_exist_in_derived_surface
-        real_required = index[route]
-        drifted = sorted(claimed - real_required)
-        if drifted:
+        entry = index[route]
+        if entry["body_model"] is None:
             errors.append(
-                f"{route[0]} {route[1]}: hint claims required field(s) "
-                f"{drifted}, but the derived surface says the required "
-                f"fields are {sorted(real_required)}"
+                f"{route[0]} {route[1]}: the hint claims body field(s) "
+                f"{sorted(claimed)} but the derived surface has NO resolved "
+                "body model for this route — regenerate the snapshot (the "
+                "generator may not resolve this body shape) before trusting "
+                "either side. UNKNOWN is never treated as 'no fields'."
+            )
+            continue
+        # Direction 1 — fabrication: a claimed field must exist on the model
+        # at all (optional fields in example bodies are legitimate prose).
+        invented = sorted(claimed - entry["all"])
+        if invented:
+            errors.append(
+                f"{route[0]} {route[1]}: hint claims field(s) {invented} that "
+                f"do not exist on {index[route]['body_model']} "
+                f"(fields: {sorted(entry['all'])})"
+            )
+        # Direction 2 — omission: every genuinely required field must appear
+        # in the hint's claim. This is the actual #277/#278 incident class (a
+        # goal cannot be created from {"title": ...} alone — that is 422);
+        # the first cut only checked direction 1 and would not have caught
+        # the incident it cited (adversarial review finding #2).
+        omitted = sorted(entry["required"] - claimed)
+        if omitted:
+            errors.append(
+                f"{route[0]} {route[1]}: hint OMITS required field(s) "
+                f"{omitted} — a dev-blind oracle author following the hint "
+                "would build bodies that 422 forever"
             )
     assert not errors, "\n".join(errors)
 
@@ -249,6 +312,15 @@ def test_api_surface_snapshot_is_not_stale() -> None:
     This is the ONLY test in this file that may skip; every other assertion
     here is hermetic against the checked-in config/snapshot and must run
     everywhere, including CI.
+
+    STATED HONESTLY (adversarial review findings #6/#7): NOTHING AUTOMATED
+    RUNS THIS TEST. It executes only when someone runs the suite on a box
+    with the sacrifice checkout — the operator's, in practice. Until a
+    chain-integrated regeneration exists, snapshot freshness is
+    operator-owned, and the failure the snapshot cannot catch on its own is
+    a route REMOVED from sacrifice while the hint still names it (the stale
+    snapshot keeps vouching for it — fail-open in exactly the fabricated-
+    route direction). Run this locally after any sacrifice route change.
     """
     app_root = Path(os.environ.get("SACRIFICE_APP_ROOT", "/home/k/sacrifice"))
     if not app_root.is_dir():
@@ -269,14 +341,29 @@ def test_api_surface_snapshot_is_not_stale() -> None:
 
     fresh = generator.build_surface(app_root)
     snapshot = _load_surface()
-    fresh_routes = {(r["method"], r["path"]) for r in fresh["routes"]}
-    snap_routes = {(r["method"], r["path"]) for r in snapshot["routes"]}
-    added = sorted(fresh_routes - snap_routes)
-    removed = sorted(snap_routes - fresh_routes)
-    assert not added and not removed, (
+    # Compare required/all FIELDS too, not just route names — a schema field
+    # gaining or losing a default is exactly the drift the required-field
+    # cross-check consumes, and a routes-only diff left it invisible even on
+    # the operator box (adversarial review finding #8).
+    def _facts(surface: dict) -> dict[tuple[str, str], tuple[tuple[str, ...], tuple[str, ...]]]:
+        return {
+            (r["method"], r["path"]): (
+                tuple(sorted(r.get("required_fields") or [])),
+                tuple(sorted(r.get("all_fields") or [])),
+            )
+            for r in surface["routes"]
+        }
+
+    fresh_facts, snap_facts = _facts(fresh), _facts(snapshot)
+    added = sorted(set(fresh_facts) - set(snap_facts))
+    removed = sorted(set(snap_facts) - set(fresh_facts))
+    changed = sorted(
+        k for k in set(fresh_facts) & set(snap_facts) if fresh_facts[k] != snap_facts[k]
+    )
+    assert not (added or removed or changed), (
         f"{_SURFACE_PATH.relative_to(_ROOT)} is stale against "
         f"{app_root} @ {fresh.get('source_commit', '?')[:12]}: "
-        f"added={added} removed={removed}. Regenerate with "
-        f"`uv run python {_GENERATOR_PATH.relative_to(_ROOT)} "
+        f"added={added} removed={removed} field_drift={changed}. Regenerate "
+        f"with `uv run python {_GENERATOR_PATH.relative_to(_ROOT)} "
         f"--app-root {app_root}` and commit the result."
     )
