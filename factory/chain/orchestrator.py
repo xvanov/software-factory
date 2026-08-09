@@ -1033,7 +1033,7 @@ def _prune_stale_in_progress(
     from datetime import datetime as _dt
 
     from factory.chain.event_log import log_story_event
-    from factory.chain.handlers import _MAX_DEV_RETRIES, persist_story
+    from factory.chain.handlers import _max_dev_retries, persist_story
 
     now_ts = (now or _dt.now(UTC)).timestamp()
     eng = create_engine(f"sqlite:///{db}", echo=False)
@@ -1058,8 +1058,8 @@ def _prune_stale_in_progress(
         # Clamp dev_retries so the recovered row gets one fresh shot
         # under whatever the current cap is, instead of insta-exhausting
         # on a stale count from a previous cap regime.
-        if from_state == "dev_in_progress" and story.dev_retries >= _MAX_DEV_RETRIES:
-            story.dev_retries = max(0, _MAX_DEV_RETRIES - 1)
+        if from_state == "dev_in_progress" and story.dev_retries >= _max_dev_retries(root):
+            story.dev_retries = max(0, _max_dev_retries(root) - 1)
         story.error = (
             f"stale-state recovery: rolled back from {from_state!r} "
             f"(no row update for >{_STALE_THRESHOLD_SECONDS // 60} min)"

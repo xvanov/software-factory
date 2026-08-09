@@ -58,8 +58,14 @@ def _enable_convergence(temp_root: Path, **overrides: Any) -> None:
         "per_story_budget_usd": 8.0,
         "dev_sandbox_timeout_s": 1800,
     }
+    # The dev-retry cap is operator-configurable (2026-08-09). A test whose
+    # arithmetic depends on it must PIN it rather than inherit whatever the
+    # default happens to be; it lives under a different settings section.
+    max_dev_retries = overrides.pop("max_dev_retries", None)
     cfg.update(overrides)
     body = "dev_convergence:\n" + "".join(f"  {k}: {v}\n" for k, v in cfg.items())
+    if max_dev_retries is not None:
+        body += f"direction_defaults:\n  max_dev_retries: {max_dev_retries}\n"
     (temp_root / "factory_settings.yaml").write_text(body, encoding="utf-8")
 
 
@@ -198,9 +204,17 @@ def test_attempts_cap_stops_loop_with_event(
 def test_retry_headroom_leaves_last_attempt_to_tick_path(
     temp_root: Path, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # dev_retries=1, cap 3: one attempt -> retries 2; 2+1 >= 3 stops the loop
-    # so exhaustion bookkeeping never runs inside a loop iteration.
-    _enable_convergence(temp_root)
+    # PINS the dev-retry cap locally instead of inheriting the global default.
+    # The behaviour under test is the headroom mechanism — "stop the inner loop
+    # while one chain retry remains, so exhaustion bookkeeping never runs inside a
+    # loop iteration" — not the default's value. When the cap became
+    # operator-configurable and its default moved 3 -> 4 (2026-08-09), raising the
+    # starting `dev_retries` to compensate collided with
+    # `_MAX_DEV_SANDBOX_INFRA_RETRIES` (also 3) and the story exhausted down the
+    # sandbox-infra path instead. Pinning keeps this test's arithmetic about ONE
+    # constant.
+    _enable_convergence(temp_root, max_dev_retries=3)
+    # dev_retries=1, cap 3: one attempt -> retries 2; 2+1 >= 3 stops the loop.
     story = _story(temp_root, dev_retries=1)
     calls = _script_sandbox(monkeypatch, [_red()])
 

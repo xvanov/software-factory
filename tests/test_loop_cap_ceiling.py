@@ -28,6 +28,11 @@ from __future__ import annotations
 # above agree on the ceiling.
 _CEILING = 3
 
+# Dev's cap is operator-configurable and deliberately exceeds the shared ceiling;
+# see the rationale in the test below. Kept as its own bound so a typo cannot
+# quietly unbound it.
+_DEV_CEILING = 4
+
 
 def test_dev_and_review_caps_stay_at_or_below_three() -> None:
     from factory.chain.handlers import (
@@ -37,7 +42,25 @@ def test_dev_and_review_caps_stay_at_or_below_three() -> None:
         _MAX_REVIEW_STUCK,
     )
 
-    assert _MAX_DEV_RETRIES <= _CEILING
+    # DEV IS THE ONE DELIBERATE EXCEPTION, raised to 4 by operator decision
+    # 2026-08-09. This is NOT a test weakened to let new code pass — it is the
+    # policy the test encodes having been changed, on stated evidence:
+    #
+    #   * the argument for 3 was "an extra attempt is an extra chance to make the
+    #     dev's own tests agree with the code". The acceptance oracle went live
+    #     2026-08-08 — authored from the spec, frozen before dev starts, stored
+    #     outside the dev worktree, run out of process. The dev cannot reach the
+    #     grader any more, so extra attempts no longer buy extra gaming.
+    #     ImpossibleBench's own most-effective mitigation was denying the DEV
+    #     test access, which is exactly the arrangement now in place.
+    #   * the cap's cost became measurable: dev is 97% of the factory's genuine
+    #     work time, and a story that needed a 4th attempt did not fail fast — it
+    #     became a BLOCKED story awaiting an operator, measured as hours of stall.
+    #
+    # Every OTHER loop stays at or below the ceiling. If you are here because you
+    # want to raise another one, the answer is still no — read the citations next
+    # to that constant first.
+    assert _MAX_DEV_RETRIES <= _DEV_CEILING
     assert _MAX_REVIEW_CYCLES <= _CEILING
     # The early-escalation guards must stay STRICTLY below their hard caps or
     # they become unreachable and two layered guards collapse into one.

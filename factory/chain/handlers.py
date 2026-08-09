@@ -1337,7 +1337,69 @@ _MAX_DEV_SANDBOX_INFRA_RETRIES = 3
 # own tests, so an extra attempt is also an extra chance to make the check
 # agree with the code. Do not raise this cap as an "improvement" — see the
 # ``_MAX_REVIEW_CYCLES`` note below for the same argument in full.
-_MAX_DEV_RETRIES = 3
+#
+# RAISED TO 4 AND MADE CONFIGURABLE, 2026-08-09, by operator decision. Two
+# things changed since the argument above was written (2026-08-01):
+#
+# 1. THE ARGUMENT'S PREMISE WEAKENED. "An extra attempt is an extra chance to
+#    make the check agree with the code" was true when the dev's own tests were
+#    the only check. The acceptance oracle went live 2026-08-08: it is authored
+#    from the spec before the dev starts, frozen, stored outside the dev
+#    worktree, and run out of process. The dev cannot see or edit it. So an
+#    extra dev attempt is no longer an extra chance to game the grader — the
+#    grader is now independent of the dev. ImpossibleBench's own finding points
+#    the same way: its most effective mitigation was denying the DEV access to
+#    the tests, which is exactly what the oracle now does.
+# 2. THE COST OF THE CAP BECAME VISIBLE. Measured 2026-08-09 over 196 dev runs:
+#    dev is 658 s average and 97% of all genuine work time in the factory. The
+#    cap does not make anything faster — it converts a story that needed a
+#    fourth attempt into a BLOCKED story that needs an operator, which measured
+#    as hours of stall (story 172: 92.6% dead time).
+#
+# The "nothing loops more than 3" guardrail in CLAUDE.md still binds every OTHER
+# loop. This one is now an operator-tunable threshold with a hard invariant
+# enforced below, because the evidence that set it at 3 was specifically about
+# a grader the dev could reach, and that is no longer the arrangement.
+_DEFAULT_MAX_DEV_RETRIES = 4
+
+
+def _max_dev_retries(software_factory_root: Path | None = None) -> int:
+    """The dev-retry cap, from ``direction_defaults.max_dev_retries``.
+
+    Until 2026-08-09 this key existed in ``factory_settings.yaml`` and in
+    ``DirectionDefaults`` and **nothing read it** — the authoritative value was a
+    hardcoded constant here. An operator could set it to 6, restart, and observe
+    no change. That is the same defect class as the acceptance harness hint: a
+    configuration fact whose consumer cannot verify it, so it drifts silently.
+
+    INVARIANT (the CLAUDE.md guardrail this cap must not break): the
+    early-escalation guard ``_MAX_DEV_SAME_SIGNATURE`` must stay STRICTLY BELOW
+    the hard cap, or it becomes unreachable and two deliberately layered guards
+    silently collapse into one. A configured value at or below it is refused and
+    the floor is used instead — fail SAFE toward keeping both guards live.
+    """
+    try:
+        from factory.settings.loader import load_settings
+
+        root = software_factory_root or Path(__file__).resolve().parent.parent.parent
+        configured = int(
+            getattr(load_settings(root).direction_defaults, "max_dev_retries", 0) or 0
+        )
+    except Exception:  # noqa: BLE001 - an unreadable settings file must not unbound the cap
+        return _DEFAULT_MAX_DEV_RETRIES
+    if configured <= _MAX_DEV_SAME_SIGNATURE:
+        # Would make the early-escalation guard unreachable. Refuse it.
+        return _MAX_DEV_SAME_SIGNATURE + 1
+    return configured
+
+
+# Module-level FALLBACK only — deliberately NOT the authoritative value.
+# ``orchestrator._prune_stale_in_progress`` imports this name; it now calls
+# ``_max_dev_retries()`` instead, so the value the orchestrator compares against
+# and the value the handler enforces come from one place and cannot disagree.
+# Resolving it at import time was rejected: it would do settings I/O during
+# module import and risk an import cycle.
+_MAX_DEV_RETRIES = _DEFAULT_MAX_DEV_RETRIES
 
 # Same-failure-signature fast-escalation cap. When consecutive dev runs fail
 # with the IDENTICAL normalized failure signature (the same assertions/errors,
@@ -1840,7 +1902,7 @@ def _dev_inner_loop_stop_reason(
     # Leave the LAST chain retry to the normal tick path so exhaustion
     # bookkeeping (WIP commit/push, factory_needs_redesign) never runs
     # inside a tight loop iteration.
-    if story.dev_retries + 1 >= _MAX_DEV_RETRIES:
+    if story.dev_retries + 1 >= _max_dev_retries(software_factory_root):
         return "retry_headroom"
     if elapsed_s >= conv.per_story_wall_clock_s:
         return "wall_clock"
@@ -2208,7 +2270,7 @@ def _handle_dev_once(
         to_state=story.state,
         outcome="retried",
         software_factory_root=software_factory_root,
-        extra={"retry_attempt": story.dev_retries, "retry_cap": _MAX_DEV_RETRIES},
+        extra={"retry_attempt": story.dev_retries, "retry_cap": _max_dev_retries(software_factory_root)},
     )
     if not dry_run:
         # Capture rich cross-retry memory: the file diff + test tail are
@@ -2264,7 +2326,7 @@ def _handle_dev_once(
         same_sig_count = _consecutive_same_dev_signature(_attempts_now, _cur_sig)
     same_sig_stall = same_sig_count >= _MAX_DEV_SAME_SIGNATURE
 
-    if story.dev_retries >= _MAX_DEV_RETRIES or same_sig_stall:
+    if story.dev_retries >= _max_dev_retries(software_factory_root) or same_sig_stall:
         # Preserve whatever dev produced so the work doesn't evaporate
         # into a stash when the next story takes the working tree. Commit
         # any uncommitted changes, push the branch to origin, and surface
@@ -2424,7 +2486,7 @@ def _handle_dev_once(
             {
                 "kind": "dev_same_signature_stall" if same_sig_stall else "dev_exhausted",
                 "retries_used": story.dev_retries,
-                "max_retries": _MAX_DEV_RETRIES,
+                "max_retries": _max_dev_retries(software_factory_root),
                 "same_signature_count": same_sig_count if same_sig_stall else None,
                 "last_test_output_tail": last_tail[-600:],
                 "suggestions": suggestions,
@@ -2491,7 +2553,7 @@ def _handle_dev_once(
             {
                 "kind": "dev_retry_observed",
                 "retries": story.dev_retries,
-                "max_retries": _MAX_DEV_RETRIES,
+                "max_retries": _max_dev_retries(software_factory_root),
                 "model_tier": story.current_model_tier,
                 "last_test_output_tail": (payload.get("summary") or "")[-600:],
                 "files_changed": payload.get("files_changed", [])[:10],
@@ -4314,7 +4376,7 @@ def _post_factory_needs_redesign_comment(
     body_parts = [
         f"## :warning: factory_needs_redesign — story #{story.id} ({story.slug})",
         "",
-        f"Dev exhausted **{story.dev_retries}/{_MAX_DEV_RETRIES}** chain-level "
+        f"Dev exhausted **{story.dev_retries}/{_max_dev_retries(software_factory_root)}** chain-level "
         f"retries with prior-attempt feed-forward enabled. That's a strong "
         f"signal something upstream of dev needs work — not that dev needs more chances.",
         "",
