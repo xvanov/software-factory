@@ -609,7 +609,6 @@ def test_acceptance_run_id_is_unique_per_evaluation(
     The authoring prompt promises the id is "a value UNIQUE to this run"; this
     pins that promise to the implementation.
     """
-    from tests.oracle_repo import commit_all as _commit_all
     from tests.oracle_repo import git as _git
     from tests.oracle_repo import init_repo as _init_repo
 
@@ -619,11 +618,11 @@ def test_acceptance_run_id_is_unique_per_evaluation(
     repo = tmp_path / "repo"
     _init_repo(repo)
     write_bootable_app(repo, impl=BAD_IMPL)
-    _commit_all(repo, "base")
+    commit_all(repo, "base")
     _git(repo, "checkout", "-q", "-b", "feat/story")
     write_bootable_app(repo, impl=GOOD_IMPL)
     (repo / "backend" / "app" / "story_marker.py").write_text("MARKER = 1\n", encoding="utf-8")
-    head = _commit_all(repo, "story work")
+    head = commit_all(repo, "story work")
 
     root = tmp_path / "factory"
     ref = _store(root)
@@ -660,3 +659,19 @@ def test_acceptance_run_id_is_unique_per_evaluation(
     # Within one evaluation HEAD and BASE share the nonce but differ by prefix
     # (that prefix split is what keeps them from colliding with each other).
     assert bases[0].removeprefix("base-") == heads[0].removeprefix("head-")
+
+    # run_ids.json must record exactly the ids that ACTUALLY executed — two
+    # head runs, one base run (the second evaluation's base is a cache hit).
+    # Gate details survive only on the fail path, so this file is the only
+    # durable row→evaluation mapping for the shared DB's accept_* leftovers.
+    import json as _json
+
+    from factory.chain.acceptance import acceptance_dir
+
+    recorded = _json.loads(
+        (acceptance_dir(root, "sacrifice", 7) / "run_ids.json").read_text(encoding="utf-8")
+    )
+    kinds = [e["kind"] for e in recorded]
+    assert kinds.count("head") == 2, recorded
+    assert kinds.count("base") == 1, recorded
+    assert {e["run_id"] for e in recorded} == set(heads) | set(bases)

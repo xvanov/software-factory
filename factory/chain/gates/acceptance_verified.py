@@ -178,8 +178,10 @@ that remained open, #1 is now closed; #2-#4 still have a v1.1 candidate:
    statically would false-block oracles that create nothing (story 172's
    reads it never). Also note: the nonce converts a loud self-collision into
    silent growth of ``accept_*`` rows in the shared dev Postgres — nothing
-   reaps them today; ``details["run_ids"]`` preserves the mapping from row
-   to evaluation. Do NOT "fix" any of this by running the HEAD oracle twice
+   reaps them today; ``run_ids.json`` next to the run caches records every
+   id that ACTUALLY executed (gate ``details`` survive only on the fail
+   path), preserving the mapping from row to evaluation. Do NOT "fix" any
+   of this by running the HEAD oracle twice
    and requiring both green — before the nonce, that false-blocked the
    persona-sanctioned namespacing pattern by construction.
 3. **Non-2xx-status criteria are credited too EASILY (docstring corrected
@@ -434,6 +436,38 @@ def _cache_path(pr: PRContext, name: str) -> Path | None:
     return acceptance_dir(Path(root), story.app, story.id) / name
 
 
+def _record_run_id(pr: PRContext, kind: str, run_id: str) -> None:
+    """Append a run id that ACTUALLY executed to ``run_ids.json`` next to the
+    gate's other on-disk artifacts (best-effort, never raises).
+
+    The nonce makes leftover ``accept_*`` DB rows untraceable from the row
+    alone, and gate ``details`` survive only on the FAIL path
+    (``gates_passed`` records bare labels) — while a PASSING evaluation is
+    exactly the one that leaves a complete set of created rows behind.
+    Recorded at the point of use, cache hits excluded, so every entry names a
+    run that really hit the shared DB.
+    """
+    path = _cache_path(pr, "run_ids.json")
+    if path is None:
+        return
+    try:
+        import json as _json
+        from datetime import UTC, datetime
+
+        entries: list[dict[str, str]] = []
+        if path.exists():
+            loaded = _json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                entries = loaded
+        entries.append(
+            {"ts": datetime.now(UTC).isoformat(), "kind": kind, "run_id": run_id}
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_json.dumps(entries[-200:], indent=1), encoding="utf-8")
+    except Exception:  # noqa: BLE001 - forensic breadcrumb, never fail the gate
+        pass
+
+
 def _stub_run(
     oracle_src: str, oracle_sha: str, cache_path: Path | None, run_id: str, timeout_s: int,
     dest_name: str, variant: str,
@@ -568,10 +602,14 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
     # run cache key (stub: oracle/variant/versions; base: shas/boot/version),
     # so caching is unchanged.
     run_nonce = secrets.token_hex(4)
-    # The nonce makes the DB rows an evaluation leaves behind untraceable from
-    # the row alone — record the ids so an operator staring at an
-    # ``accept_head-179-3f2a91bc_*`` user can map it back to this evaluation.
-    details["run_ids"] = {"head": f"head-{sid}-{run_nonce}", "base": f"base-{sid}-{run_nonce}"}
+    # PLANNED ids — an early return or a base cache hit means one or both
+    # never execute; the ids that actually ran are appended to run_ids.json
+    # by _record_run_id at each point of use (details survive only on the
+    # FAIL path, while a PASSING evaluation leaves the most rows behind).
+    details["run_ids_planned"] = {
+        "head": f"head-{sid}-{run_nonce}",
+        "base": f"base-{sid}-{run_nonce}",
+    }
 
     boot_cfg = gates.acceptance_boot
     if boot_cfg is None or not (boot_cfg.command or "").strip():
@@ -786,6 +824,7 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
                     waiver_sha=oracle_sha,
                 )
             details["head_boot"] = {"port": head_app.port}
+            _record_run_id(pr, "head", f"head-{sid}-{run_nonce}")
             head_run = oracle_run.run_oracle(
                 oracle_src, base_url=head_app.base_url, run_id=f"head-{sid}-{run_nonce}",
                 dest_name=dest_name, timeout_s=boot_cfg.run_timeout_seconds,
@@ -1043,6 +1082,7 @@ def _base_run(
                 return "unknown", f"the app never became healthy at the merge base: {boot_why[:1000]}", {
                     "base_sha": base_sha[:12], "boot_failed": True,
                 }
+            _record_run_id(pr, "base", f"base-{sid}-{run_nonce}")
             base_run = oracle_run.run_oracle(
                 oracle_src, base_url=base_app.base_url, run_id=f"base-{sid}-{run_nonce}",
                 dest_name=dest_name, timeout_s=boot_cfg.run_timeout_seconds,
