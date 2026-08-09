@@ -30,10 +30,23 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from factory.app_config import AppConfig, AppGatesConfig
 from factory.chain.handlers import _with_full_coverage_mandate, handle_stories_spawned
 from factory.chain.state_machine import StoryRecord
 from factory.directions.parser import Direction
+
+
+@pytest.fixture(autouse=True)
+def _no_llm_authoring(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real-run spawns author the acceptance oracle, which is a PAID LLM call
+    (``_author_acceptance_oracle`` → ``acceptance_author`` persona) — stub it
+    for every test here so ``pytest -q`` never spends money or hits the
+    network."""
+    import factory.chain.handlers as handlers_mod
+
+    monkeypatch.setattr(handlers_mod, "_author_acceptance_oracle", lambda *a, **k: None)
 
 
 def _mk_direction(
@@ -163,23 +176,20 @@ def test_chain_kind_is_never_position_inherited(tmp_path: Path) -> None:
     assert len(stories) == 1
     assert stories[0].chain_kind == "tdd"
     # scope: modal over implementation scopes only (docs/test never win);
-    # backend vs frontend ties break by count — here 1:1, max() picks a
-    # deterministic member of the set; assert it is an implementation scope.
-    assert stories[0].scope in ("backend", "frontend")
-    assert stories[0].scope != "docs"
+    # a backend/frontend 1:1 tie breaks deterministically (count, then
+    # alphabetical) — never by PYTHONHASHSEED.
+    assert stories[0].scope == "backend"
 
 
 def test_oversized_direction_keeps_its_split(tmp_path: Path) -> None:
-    """Summed estimates over the per-story ceilings must NOT collapse — the
-    PM's re-prompt loop validated each slice against those ceilings, and
-    merging them silently voids that guard (36 of 37 multi-child held-out
-    directions would exceed it). The split proceeds unchanged, and the
-    operator-facing signal says the direction needs splitting into sibling
-    directions."""
+    """Summed estimates over the whole-DIRECTION budget must NOT collapse —
+    merging N validated slices into one over-budget story voids the size
+    guard the PM re-prompt loop enforces (36 of 37 multi-child held-out
+    directions are this shape). The split proceeds unchanged."""
     children = [
-        _child("slice 1", new_files=4, modified=2, iterations=150),
-        _child("slice 2", new_files=4, modified=2, iterations=150),
-        _child("slice 3", new_files=4, modified=2, iterations=150),
+        _child("slice 1", new_files=4, modified=2, iterations=200),
+        _child("slice 2", new_files=4, modified=2, iterations=200),
+        _child("slice 3", new_files=4, modified=2, iterations=200),
     ]
     stories = handle_stories_spawned(
         direction=_mk_direction(acceptance=["Observable outcome."]),
@@ -191,11 +201,34 @@ def test_oversized_direction_keeps_its_split(tmp_path: Path) -> None:
     assert len(stories) == 3, "oversized → refuse to collapse, keep the split"
 
 
+def test_missing_estimates_refuse_to_collapse(tmp_path: Path) -> None:
+    """A child WITHOUT size estimates means the direction's size is unknown —
+    the guard must refuse, not sum missing-as-zero and collapse the one
+    direction whose size nobody validated (adversarial replay: the only
+    held-out direction the zero-sum version collapsed was the pm.md
+    anti-example D007, precisely because its children carry no estimates)."""
+    unsized = {
+        "title": "slice without estimates",
+        "scope": "backend",
+        "chain_kind": "tdd",
+        "points": 2,
+        "rationale": "r",
+    }
+    stories = handle_stories_spawned(
+        direction=_mk_direction(acceptance=["Observable outcome."]),
+        pm_result=_pm([unsized, _child("sized slice")]),
+        app_config=_cfg(),
+        software_factory_root=_root(tmp_path),
+        dry_run=True,
+    )
+    assert len(stories) == 2, "unknown size → refuse to collapse, keep the split"
+
+
 def test_oversized_direction_emits_the_operator_signal(tmp_path: Path) -> None:
     root = _root(tmp_path)
     children = [
-        _child("slice 1", new_files=4, modified=2, iterations=150),
-        _child("slice 2", new_files=4, modified=2, iterations=150),
+        _child("slice 1", new_files=6, modified=2, iterations=150),
+        _child("slice 2", new_files=6, modified=2, iterations=150),
     ]
     handle_stories_spawned(
         direction=_mk_direction(acceptance=["Observable outcome."]),
@@ -209,7 +242,8 @@ def test_oversized_direction_emits_the_operator_signal(tmp_path: Path) -> None:
     events = [json.loads(line) for line in stream.read_text().splitlines() if line.strip()]
     hits = [e for e in events if e.get("event") == "direction_not_single_story_sized"]
     assert hits, f"expected direction_not_single_story_sized, saw {[e.get('event') for e in events]}"
-    assert hits[0]["summed_estimates"]["estimated_new_files"] == 8
+    assert hits[0]["summed_estimates"]["estimated_new_files"] == 12
+    assert hits[0]["estimates_complete"] is True
 
 
 def test_fitting_collapse_emits_the_collapsed_event_in_real_run(tmp_path: Path) -> None:

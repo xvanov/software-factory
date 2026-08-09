@@ -54,6 +54,7 @@ from factory.chain.state_machine import (
     StoryRecord,
     StoryState,
     advance,
+    is_terminal,
 )
 from factory.chain.step_events import emit_chain_step
 from factory.chain.worktree import ensure_worktree_for_story
@@ -341,6 +342,22 @@ def stories_in_flight(app: str, db_path: Path) -> list[StoryRecord]:
 # --------------------------------------------------------------------------- #
 
 
+# A4 whole-DIRECTION budget for the single-story collapse (operator decision
+# 2026-08-09). Deliberately NOT pm_sync's per-slice ceilings: those exist to
+# keep each slice inside ONE dev pass's comfort zone, and applying a per-slice
+# cap (modified_files <= 2) to a SUM refuses any 3-slice split where each
+# slice touches one file — i.e. the exact direction-120 shape the collapse
+# was built for. These are sized to what one dev sandbox run can do: the
+# sandbox allows 600 iterations per story (runner.sandbox_run), so 400 leaves
+# retry headroom; the file counts allow ~1.5-3x the per-slice caps because a
+# split duplicates per-slice overhead (tests, plumbing) that a single story
+# pays once. A direction over THESE budgets keeps its split and is flagged
+# for the operator to cut into sibling directions.
+A4_MAX_NEW_FILES_PER_DIRECTION = 8
+A4_MAX_MODIFIED_FILES_PER_DIRECTION = 6
+A4_MAX_ITERATIONS_PER_DIRECTION = 400
+
+
 _SLUG_RE = re.compile(r"[^A-Za-z0-9]+")
 
 
@@ -571,30 +588,38 @@ def handle_stories_spawned(
         and app_config.gates.single_story_per_ac_direction
         and acceptance_expected_for(app_config, direction)
     ):
-        from factory.chain.pm_sync import (
-            MAX_MODIFIED_FILES_PER_STORY,
-            MAX_NEW_FILES_PER_STORY,
-            MAX_SANDBOX_ITERATIONS_PER_STORY,
+        estimate_keys = (
+            "estimated_new_files",
+            "estimated_modified_files",
+            "estimated_sandbox_iterations",
         )
 
-        def _summed(key: str) -> int:
+        def _summed(key: str) -> int | None:
+            """Sum ``key`` over all children; ``None`` when ANY child omits it.
+
+            Polarity matters: in pm_sync a missing estimate is a soft warning
+            that KEEPS the split (safe); here summing missing-as-zero would
+            COLLAPSE the one direction whose size is unknown (adversarial
+            replay over the 48 held-out directions: the only collapse
+            candidate was the pm.md anti-example D007, precisely because its
+            children carry no estimates). Unknown size ⇒ refuse.
+            """
             total = 0
             for c in child_stories:
                 try:
                     total += max(0, int(c.get(key)))
                 except (TypeError, ValueError):
-                    pass  # missing estimate counts 0, same as pm_sync's soft path
+                    return None
             return total
 
-        sums = {
-            "estimated_new_files": _summed("estimated_new_files"),
-            "estimated_modified_files": _summed("estimated_modified_files"),
-            "estimated_sandbox_iterations": _summed("estimated_sandbox_iterations"),
-        }
+        maybe_sums = {k: _summed(k) for k in estimate_keys}
+        sums: dict[str, int] = {k: v for k, v in maybe_sums.items() if v is not None}
+        estimates_complete = len(sums) == len(estimate_keys)
         fits = (
-            sums["estimated_new_files"] <= MAX_NEW_FILES_PER_STORY
-            and sums["estimated_modified_files"] <= MAX_MODIFIED_FILES_PER_STORY
-            and sums["estimated_sandbox_iterations"] <= MAX_SANDBOX_ITERATIONS_PER_STORY
+            estimates_complete
+            and sums["estimated_new_files"] <= A4_MAX_NEW_FILES_PER_DIRECTION
+            and sums["estimated_modified_files"] <= A4_MAX_MODIFIED_FILES_PER_DIRECTION
+            and sums["estimated_sandbox_iterations"] <= A4_MAX_ITERATIONS_PER_DIRECTION
         )
 
         if not dry_run:  # dry-run is a pure preview — write no telemetry
@@ -618,14 +643,22 @@ def handle_stories_spawned(
                             if fits
                             else []
                         ),
+                        "estimates_complete": estimates_complete,
                         "reason": (
                             "acceptance oracle grades direction criteria; "
                             "one story per AC-carrying direction"
                             if fits
-                            else "summed slice estimates exceed the per-story "
-                            "ceilings — this direction cannot be one story and, "
-                            "under direction-scoped acceptance grading, cannot "
-                            "safely be many; split it into sibling directions"
+                            else (
+                                "summed slice estimates exceed the whole-"
+                                "direction budget — this direction cannot be "
+                                "one story and, under direction-scoped "
+                                "acceptance grading, cannot safely be many; "
+                                "split it into sibling directions"
+                                if estimates_complete
+                                else "one or more slices carry no size "
+                                "estimates — size unknown, refusing to "
+                                "collapse into a single unbounded story"
+                            )
                         ),
                     },
                     software_factory_root=software_factory_root,
@@ -649,8 +682,13 @@ def handle_stories_spawned(
                 for c in child_stories
                 if str(c.get("scope") or "").strip() not in ("", "docs", "test")
             ]
+            # Deterministic tie-break: by count, then alphabetically —
+            # ``max(set(...), key=count)`` varies with PYTHONHASHSEED on ties,
+            # and one-backend-one-frontend ties are the common shape.
             scope = (
-                max(set(impl_scopes), key=impl_scopes.count) if impl_scopes else "backend"
+                sorted(set(impl_scopes), key=lambda s: (-impl_scopes.count(s), s))[0]
+                if impl_scopes
+                else "backend"
             )
             # Points: the SUM (the one story does all the slices' work),
             # snapped up to the next Fibonacci value so EBS baselines keyed on
@@ -1184,8 +1222,12 @@ def handle_sm(
     # the story blocks at the gate: a recoverable false-block, never a
     # false-green.
     ac_single_story = False
-    if app_config.gates.single_story_per_ac_direction and direction is not None:
-        try:
+    try:
+        if (
+            app_config is not None
+            and app_config.gates.single_story_per_ac_direction
+            and direction is not None
+        ):
             from factory.chain.acceptance import acceptance_expected_for
 
             if acceptance_expected_for(app_config, direction):
@@ -1199,9 +1241,22 @@ def handle_sm(
                             StoryRecord.app == story.app,
                         )
                     ).all()
-                ac_single_story = all(s.id == story.id for s in sibs)
-        except Exception:  # noqa: BLE001 - no stamp is the recoverable direction
-            ac_single_story = False
+                # "Only story" means only LIVE story: terminal rows
+                # (superseded losers, closed_by_operator, prior blocked
+                # attempts) do no further work, so their existence must not
+                # stop the stamp — else any direction with history never
+                # earns it again. The story must also actually be in the
+                # query result (an empty result proves nothing).
+                others_live = [
+                    s
+                    for s in sibs
+                    if s.id != story.id and not is_terminal(StoryState(s.state))
+                ]
+                ac_single_story = (
+                    any(s.id == story.id for s in sibs) and not others_live
+                )
+    except Exception:  # noqa: BLE001 - no stamp is the recoverable direction
+        ac_single_story = False
 
     target_abs = software_factory_root / "apps" / story.app / target_path_rel
     target_abs.parent.mkdir(parents=True, exist_ok=True)
