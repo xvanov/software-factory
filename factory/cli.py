@@ -1368,6 +1368,15 @@ def inbox_cmd(
     app_name: str | None = typer.Option(
         None, "--app", help="Filter inbox to a single app; default: all apps"
     ),
+    show_parked: bool = typer.Option(
+        False,
+        "--parked",
+        help=(
+            "Also list PARKED stories that `factory resume-story` can recover with "
+            "their work intact. Off by default: these are recoverable work, not "
+            "pending decisions, and most are historical."
+        ),
+    ),
 ) -> None:
     """Aggregate items needing human attention across apps.
 
@@ -1670,6 +1679,56 @@ def inbox_cmd(
         console.print(ping_table)
     else:
         console.print("[dim]No idle-app pings.[/dim]")
+
+    # PARKED-BUT-RESUMABLE stories — OPT-IN via ``--parked``.
+    #
+    # Several parked sinks (``blocked_dependency_unmet`` after a deadlock,
+    # ``superseded_by_sibling``, the real-CI-failure ``blocked_ci_unresolved``
+    # park) are on the tracker-closer's resolved-states allowlist and carry no
+    # ``last_rejection_reason``, so they appear in NO operator surface — sacrifice
+    # story 182 was deadlock-parked twice and showed up in no inbox category at
+    # all. Now that ``factory resume-story`` can actually recover them, they are
+    # worth being able to see.
+    #
+    # But this stays OFF by default, for two reasons that are the same reason:
+    #
+    # * ``inbox``'s default output answers "what needs a human DECISION", and two
+    #   tests pin specific rows as invisible there precisely so the inbox and the
+    #   tracker-closer can never disagree about that. A parked row is recoverable
+    #   work, not a pending decision — a different claim, which must not be
+    #   smuggled into the default view by widening a deliberate invariant.
+    # * On the live DB this is ~20 rows of mostly-historical abandoned work.
+    #   Volunteering it unasked buries the one or two rows that do need action —
+    #   the detector-storm failure mode, one surface over.
+    #
+    # Discovery without the flood: ``factory why <id>`` names the remedy on the
+    # specific story an operator is already looking at, and
+    # ``factory resume-story --list`` is the full list on demand.
+    from factory.chain.resume import infer_point, resumable_stories
+
+    parked = (
+        sorted((s for a in apps for s in resumable_stories(db, a)), key=lambda s: s.id or 0)
+        if show_parked
+        else []
+    )
+    if parked:
+        parked_table = Table(
+            title="parked stories — resumable with their work intact",
+            caption="resume with: factory resume-story <id> --at <point> --dry-run",
+        )
+        for col in ("app", "id", "slug", "state", "pr", "spent", "suggested"):
+            parked_table.add_column(col)
+        for s in parked:
+            parked_table.add_row(
+                s.app,
+                str(s.id),
+                s.slug[:38],
+                s.state,
+                f"#{s.github_pr_number}" if s.github_pr_number else "—",
+                f"${s.total_spend_usd:.2f}",
+                f"--at {infer_point(s)}",
+            )
+        console.print(parked_table)
 
     # Phase 7: pinned ``factory-status`` issue numbers (one per app).
     # These are the operators' single GH-side entry point for live state.
@@ -2113,6 +2172,160 @@ def budget_cmd() -> None:
         )
 
 
+@app.command("resume-story")
+def resume_story_cmd(
+    # Optional so ``--list`` (which takes no story) can run at all. A required
+    # positional made the documented listing flag unusable: `factory resume-story
+    # --list` exited 2 with "Missing argument 'STORY_ID'".
+    story_id: int | None = typer.Argument(
+        None, help="StoryRecord.id to resume (omit with --list)"
+    ),
+    at: str = typer.Option(
+        "auto",
+        "--at",
+        help=(
+            "Re-entry point: auto (infer from banked artifacts) | gates (re-grade the "
+            "existing PR — no persona runs) | tech_writer | review | dev | sm (full rebuild)"
+        ),
+    ),
+    reason: str = typer.Option(
+        "", "--reason", help="Why this story is being resumed (recorded in the event log)"
+    ),
+    reauthor_oracle: bool = typer.Option(
+        False,
+        "--reauthor-oracle",
+        help=(
+            "Delete the stored acceptance oracle so the next tick re-authors it from the "
+            "CURRENT spec. Use when the contract/criteria were wrong, not the code."
+        ),
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would happen and change NOTHING (pure preview)"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Proceed despite an exhausted per-story spend cap"
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+    list_only: bool = typer.Option(
+        False, "--list", help="List resumable (parked) stories and exit"
+    ),
+    app_name: str | None = typer.Option(None, "--app", help="Filter --list to one app"),
+) -> None:
+    """Put a PARKED story back into the chain, keeping the work it already did.
+
+    OPERATOR-ONLY. Six terminal sinks document their recovery as "an operator
+    moves the row back to a live dispatch state"; this is that command. The
+    default (``--at auto``) picks the cheapest re-entry that still re-runs
+    whatever was broken — for a story that died at the merge gates with a good
+    diff, that is ``gates``: the existing PR is re-graded and NO persona runs, so
+    a bad oracle or a red host can be fixed and retested without paying to
+    rebuild the story.
+
+    Refuses (rather than silently re-parking one tick later) when the budget
+    breaker, the dependency gate, or a closed/merged PR would immediately undo it.
+    """
+    from factory.app_config import load_app_config, resolve_app_repo_path
+    from factory.chain.handlers import _engine
+    from factory.chain.resume import (
+        apply_resume,
+        load_story,
+        plan_resume,
+        resumable_stories,
+    )
+
+    db = _FACTORY_ROOT / "state" / "factory.db"
+    _engine(db)
+
+    if list_only:
+        rows = resumable_stories(db, app_name)
+        if not rows:
+            console.print("[green]No parked stories — nothing to resume.[/green]")
+            return
+        table = Table(title="resumable (parked) stories")
+        for col in ("id", "app", "slug", "state", "pr", "spend"):
+            table.add_column(col)
+        for r in sorted(rows, key=lambda s: s.id or 0):
+            table.add_row(
+                str(r.id),
+                r.app,
+                r.slug[:44],
+                r.state,
+                f"#{r.github_pr_number}" if r.github_pr_number else "—",
+                f"${r.total_spend_usd:.2f}",
+            )
+        console.print(table)
+        return
+
+    if story_id is None:
+        console.print("[red]Missing STORY_ID. Pass a story id, or --list to see what is parked.[/red]")
+        raise typer.Exit(code=2)
+
+    story = load_story(db, story_id)
+    if story is None:
+        console.print(f"[red]No story with id={story_id}.[/red]")
+        raise typer.Exit(code=1)
+
+    try:
+        app_repo: Path | None = resolve_app_repo_path(
+            load_app_config(story.app, _FACTORY_ROOT), _FACTORY_ROOT
+        )
+    except Exception:  # noqa: BLE001 - plan_resume treats None as "unknown", which blocks
+        app_repo = None
+
+    plan = plan_resume(
+        story=story,
+        db=db,
+        root=_FACTORY_ROOT,
+        point=at,
+        reason=reason,
+        reauthor_oracle=reauthor_oracle,
+        app_repo=app_repo,
+        force=force,
+    )
+
+    body = [
+        f"story  {plan.story_id}  [bold]{plan.slug}[/bold]  (app={plan.app})",
+        f"state  {plan.from_state} -> [bold]{plan.to_state}[/bold]   (point={plan.point})",
+        "",
+        "[bold]preserved[/bold] (not re-done, not re-paid for):",
+    ]
+    body += [f"  · {k} = {v}" for k, v in plan.preserved.items()]
+    body += ["", "[bold]reset[/bold] (so it cannot re-park on the first tick):"]
+    body += [f"  · {item}" for item in plan.resets]
+    if plan.pr_needs_reopen:
+        body += ["", f"[yellow]PR #{story.github_pr_number} is CLOSED and will be reopened.[/]"]
+    for warning in plan.warnings:
+        body += [f"[yellow]warning: {warning}[/yellow]"]
+    for refusal in plan.refusals:
+        body += [f"[red]REFUSED: {refusal}[/red]"]
+    console.print(
+        Panel.fit("\n".join(body), title="resume-story" + (" — DRY RUN" if dry_run else ""))
+    )
+
+    if not plan.ok:
+        raise typer.Exit(code=1)
+    if dry_run:
+        console.print("[dim]Dry run — nothing was changed.[/dim]")
+        return
+    if not yes and not typer.confirm("Resume this story?", default=False):
+        console.print("[yellow]Aborted.[/yellow]")
+        raise typer.Exit(code=0)
+
+    try:
+        apply_resume(plan=plan, story=story, db=db, root=_FACTORY_ROOT, app_repo=app_repo)
+    except RuntimeError as exc:
+        console.print(f"[red]Resume failed: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        Panel.fit(
+            f"[bold green]Story {plan.story_id} resumed[/bold green] at `{plan.to_state}`.\n"
+            f"Next `factory tick --app {plan.app}` picks it up.\n"
+            f"Audited as a `story_resumed` event (`factory trace {plan.story_id}`).",
+            title="resume-story",
+        )
+    )
+
+
 @app.command("why")
 def why_cmd(
     target: str = typer.Argument(..., help="Story id (StoryRecord.id) or slug"),
@@ -2268,6 +2481,23 @@ def why_cmd(
         else "recent events: (none recorded yet)"
     )
 
+    # A parked story's docstring says "an operator moves the row back to a live
+    # dispatch state", and for a long time no command did that — so `why` told the
+    # operator the story was terminal and stopped. Naming the remedy here is what
+    # turns this from a diagnosis into a next action (the detect-without-remediate
+    # gap, at the operator surface).
+    from factory.chain.resume import infer_point, resumable_stories
+
+    remedy = ""
+    if any(r.id == story.id for r in resumable_stories(db, story.app)):
+        remedy = (
+            f"\nremedy: this story is PARKED and can be resumed with its work intact —\n"
+            f"  [bold]factory resume-story {story.id} --at {infer_point(story)} "
+            f'--reason "..." --dry-run[/bold]\n'
+            f"  (`--at gates` re-grades the existing PR without re-running any persona; "
+            f"add `--reauthor-oracle` when the SPEC was wrong, not the code)"
+        )
+
     lines = [
         f"id=[bold]{story.id}[/bold]  slug=[bold]{story.slug}[/bold]",
         f"app=[bold]{story.app}[/bold]  state=[bold]{story.state}[/bold]",
@@ -2276,7 +2506,7 @@ def why_cmd(
         f"error=[bold]{story.error or '(none)'}[/bold]",
         f"branch={story.github_branch}  pr=#{story.github_pr_number}",
         f"next legal transitions: {next_edges_str}",
-        projection_line,
+        projection_line + remedy,
         "",
         events_block,
     ]

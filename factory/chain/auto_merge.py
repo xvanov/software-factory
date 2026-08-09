@@ -948,13 +948,32 @@ def _gate_block_history(
     gates. A NEW commit produces a NEW ``head_sha``, so both the count and the
     skip reset for free the moment the story pushes a fix — nothing here needs
     to notice a commit happened, it just stops matching.
+
+    OPERATOR RESUME (2026-08-09): a ``story_resumed`` event RESETS this window —
+    only ``merge_gates_failed`` events logged AFTER the most recent resume are
+    counted. Without that, ``factory resume-story`` was a no-op wearing a
+    success message: the common resume is "the GATE was wrong (a bad oracle, a
+    leaked docker network, a spec that named a body the app never produces), the
+    CODE is fine", so there is no new commit and the head sha is unchanged — the
+    very next evaluation re-read its own three historical blocks, hit the cap on
+    evaluation #1, and re-parked the story before the fixed gate ever ran. The
+    reset is derived from the event stream exactly like the count itself, so the
+    two can never disagree and no counter column is introduced.
     """
     from factory.chain.event_log import read_story_events
 
     events = read_story_events(story_id, software_factory_root=root, slug_hint=slug or "")
+    # Everything before the last operator resume is history, not evidence about
+    # the current attempt. ``story_resumed`` is not head-sha-scoped on purpose: a
+    # resume clears the slate for whatever head the story is on, including the
+    # unchanged one it was parked at.
+    resume_idx = -1
+    for i, e in enumerate(events):
+        if e.get("event") == "story_resumed":
+            resume_idx = i
     matches = [
         e
-        for e in events
+        for e in events[resume_idx + 1 :]
         if e.get("event") == "merge_gates_failed"
         and e.get("head_sha") == head_sha
         and e.get("missing_labels")
