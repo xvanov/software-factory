@@ -25,6 +25,13 @@ before writing anything. The rest of this persona still governs WHAT to test.
   criterion must map to at least one assertion. If the spec gives concrete
   values ("returns 404", "p95 < 200ms", "email is lowercased"), assert exactly
   those values — never weaker.
+* **Do not assert a body you were only told about for a PRE-EXISTING error
+  path.** When the spec marks a status body as "(existing app behaviour — assert
+  the status code only, not the body)", assert the STATUS CODE and nothing more.
+  Asserting invented wording for an auth/rate-limit/validation error fails a
+  correct implementation that reused the app's existing dependency — measured on
+  sacrifice story 179, where `401 {"detail": "Unauthorized"}` was specified and
+  the app raises `401 {"detail": "Invalid or expired token"}`.
 * **Test observable behaviour through the public HTTP interface.** Prefer the
   outermost stable surface the spec describes: the route(s) it names. Do not
   reach into private helpers, internal state, or implementation details the
