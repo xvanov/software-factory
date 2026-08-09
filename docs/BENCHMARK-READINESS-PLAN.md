@@ -300,7 +300,7 @@ cross-check), these become binding:
   must never burn one of the three `_MAX_AUTHOR_PASSES`. Cap derivation at **1
   per tick**, not `max_per_pass: 10`.
 
-### A2. Base-run status observation — ADVISORY INSTRUMENTATION ONLY
+## A2. Base-run status observation — ADVISORY INSTRUMENTATION ONLY
 
 > **The first draft made this the "cheapest, highest-value, ship-it-regardless"
 > item. It was the opposite on all three counts, and it would have blocked story
@@ -342,7 +342,7 @@ flag when a credited criterion's base failure is **identical to its failure
 against the `200 {}` stub**. That is suspicious without asserting what any status
 code means.
 
-### A3. Separate arrange from assert — MOVED BEFORE A2
+## A3. Separate arrange from assert — MOVED BEFORE A2
 
 Setup ("create a goal so the count can increment") is not a behavioural judgment
 and carries no independence requirement. Today a `422` on setup is reported as a
@@ -361,7 +361,7 @@ cited finding — but it is the split arXiv:2504.07244 found *necessary* in indu
 (scenario stage 95% helpful from the story alone; executable stage required the
 page HTML, semantic relevance 60% → 92%).
 
-### A4. Decide the `explore` + AC-scope block — NEW, and it will dominate D
+## A4. Decide the `explore` + AC-scope block — NEW, and it will dominate D
 
 Memory `oracle_grades_direction_acs_not_story_scope` (2026-08-08/09) documents
 three mechanisms that **jointly guarantee** a block: `explore: true` emits
@@ -434,37 +434,37 @@ would not emit parseable JSON. PR #279 added `--at tech_writer` for the operator
 the automatic path is still blunt. Re-enter at the failed step's own predecessor.
 *Shared control flow — re-verify everything keyed off it.*
 
-### C2. tech_writer JSON-parse fragility
+## C2. tech_writer JSON-parse fragility
 Story 177's model never returned a parseable JSON object in 2 attempts, then
 burned 2 full recoveries. Establish whether this is prompt, model routing, or
 parser strictness. A persona that cannot emit its output format is a benchmark
 confound.
 
-### C3. Resolve the two remaining parked stories
+## C3. Resolve the two remaining parked stories
 177 (`blocked_review_nonconvergent`, $5.96) and 178 (`blocked_budget_exceeded`,
 $12.41 vs a $12.00 cap). Use `factory resume-story`; 178 needs either a cap
 raise or `--force` (never zero the ledger). The inbox must be empty before the
 benchmark.
 
-### C4. Oracle runner KNOWN OPEN #2–#4
+## C4. Oracle runner KNOWN OPEN #2–#4
 From `factory/chain/gates/acceptance_verified.py`'s module docstring. #1 was
 closed by PR #256. Each open one has a named v1.1 candidate — read them before
 any soak. Decide per risk: fix, or accept with a written justification.
 
-### C5. `detector_watch` soak
+## C5. `detector_watch` soak
 Ships disabled (`detector_watch.enabled: false`). The first cut would have filed
 **48 unfixable directions in ~16 ticks**; liveness+recency scoping was added but
 has **never run in production**. Either soak it read-only against live state and
 enable, or leave disabled and say so. Do not enable it untested during a
 benchmark.
 
-### C6. Sweep for the same class as A1
+## C6. Sweep for the same class as A1
 The defect class is "a hand-maintained fact the consumer cannot verify." Grep the
 config surface for others: `acceptance_boot`, gate commands, route tables,
 `app_repo_path`. Anything a persona is told and cannot check is a latent false
 block. Report what you find even if you fix nothing.
 
-### C7. Environment hygiene
+## C7. Environment hygiene
 - Leaked docker networks/containers make host-only test gates red invisibly
   (sacrifice #394). Verify none are leaked before the run.
 - The dirty-app-tree redeploy failure (memory:
@@ -475,7 +475,7 @@ block. Report what you find even if you fix nothing.
 
 ---
 
-### A5. AC-precision gate — extracted from the closed Karpathy direction
+## A5. AC-precision gate — extracted from the closed Karpathy direction
 
 Rescued from direction `002-karpathy-quality-layers` (P1.2) before closing it as
 superseded: **the backpressure validator should check that each acceptance
@@ -544,7 +544,7 @@ running**. That is an availability failure presenting as a performance one.
 - Verify `_prune_stale_in_progress` actually fires at 10 min in a live run — it
   has never been observed doing so in the data reviewed here.
 
-### E2. Cut dev RETRIES, not dev speed
+## E2. Cut dev RETRIES, not dev speed
 
 Dev is 97% of work time and one clean pass is ~11 min. The cost is repetition:
 stories 177 and 178 burned **6 dev calls each — 88 and 146 minutes of dev alone**.
@@ -554,7 +554,7 @@ Every retry cause removed is worth more than any per-call speedup.
 oracle, a wrong contract fact, and an ambiguous AC each cost a full dev cycle.
 Do not treat "make it faster" as separate from them.
 
-### E3. Timed-out dev runs — 30 minutes for nothing, invisible to the breakers
+## E3. Timed-out dev runs — 30 minutes for nothing, invisible to the breakers
 
 **8 of 196 dev runs hit the 1800 s cap.** Each spent 30 minutes producing nothing,
 and per memory `sandbox_timeout_loses_usage_and_retry` a timed-out run records
@@ -562,7 +562,7 @@ and per memory `sandbox_timeout_loses_usage_and_retry` a timed-out run records
 accounting first (a timeout must charge and count), then decide whether the cap
 should fail faster.
 
-### E4. Throughput is a concurrency lever, not a latency one
+## E4. Throughput is a concurrency lever, not a latency one
 
 `per_repo_concurrent_agents: 10`, but in-flight has been **2**. Since the operator
 thesis is **throughput at an acceptable defect rate, not $/task** (memory:
@@ -573,42 +573,66 @@ output without touching per-story latency at all.
 whatever concurrency is chosen must be the configuration actually benchmarked —
 and docs stories still serialise per app (memory: `docs_chain_serialization`).
 
-### E6. The test suite is the slowest thing in the loop-3 feedback cycle
+## E6. The test suite sets PR merge latency — fix it BOTH locally and on CI
 
-**Measured 2026-08-09:** 3,008 tests across 219 files, **~19 min** locally and
+**Measured 2026-08-09:** 3,008 tests across 219 files, **~19 min locally** and
 **19m12s in CI** (PR #280). CI's other jobs are noise beside it — lint 11 s,
-typecheck 61 s, changes 11 s — so **pytest alone sets PR merge latency.**
+typecheck 61 s, `changes` 11 s — so **pytest alone sets PR merge latency**, and
+the job cap has already been raised 15 -> 25 min once (2026-08-08) after three
+consecutive runs were cancelled at ~15m with zero failures. It is on a trajectory
+to hit 25 too.
 
-At ~380 ms/test average for what are mostly unit tests, the cost is
-process-spawning: the acceptance-oracle executable tests boot real servers via
-`oracle_probe.py`, and several suites shell out.
+At ~380 ms/test for mostly-unit tests, the weight is process-spawning: the
+acceptance-oracle tests boot real servers via `oracle_probe.py`.
 
-**The obvious lever is untaken: `pytest-xdist` is NOT installed and the machine
-has 16 cores.** The suite runs single-threaded on one of them.
+**CI and local need DIFFERENT fixes — the runner is not your workstation.**
+`runs-on: ubuntu-latest` is a GitHub-hosted standard runner (2–4 vCPU), not the
+16-core dev box. So parallelism buys far less there, and the CI-specific wins are
+elsewhere:
 
-**But this is a project, not a flag flip**, and the repo has already been bitten
-three times by exactly the failure modes parallelism triggers:
+### CI (do these first — cheapest, and they are where merges actually wait)
+
+1. **`COVERAGE_CORE=sysmon`.** CI runs `pytest --cov=factory`; coverage tracing is
+   pure overhead on every test. Python 3.12 + coverage.py ≥7.4 support
+   `sys.monitoring`, which is dramatically cheaper than the classic trace
+   function. One environment variable on the pytest step. **Measure the before
+   and after** — do not assume a number.
+2. **Broaden the `docs_only` skip.** It currently means *"every changed path is a
+   ROOT-LEVEL `*.md`"*. PR #280 was documentation plus one `apps/*/config.yaml`
+   line and therefore paid the **full 19 minutes**. A plan/research/memory PR that
+   cannot affect a code path should not run the suite. Widen carefully — the
+   narrow rule exists because `factory/personas/*.md` are prompts covered by
+   contract tests, and that carve-out must survive.
+3. **Consider a larger runner** for the pytest job only. It is a paid knob, but it
+   is the one lever that needs no test-isolation work at all.
+4. `uv` caching is already enabled — nothing to win there.
+
+### Local (the loop-3 iteration cost)
+
+**`pytest-xdist` is NOT installed and the box has 16 cores** — the suite runs
+single-threaded on one of them. That is the big local win, but treat it as a
+project, not a flag flip: this repo has been bitten three times by exactly what
+parallelism triggers —
 * `fms_sm_truncation_was_test_pollution` — tests wrote synthetic failures into
   production telemetry (fixed with `FACTORY_STATE_ROOT` isolation);
 * `sacrifice_conftest_ddl_lock_contention` — an autouse `create_all` fabricated
   **46 fake failures**;
-* `red_test_can_mean_nothing_too` — concurrent pytest runs contend and produce
-  mirages.
+* `red_test_can_mean_nothing_too` — concurrent runs contend and produce mirages.
 
-And the oracle tests bind real ports, use docker, and touch the shared
-`sacrifice-db`.
+And the oracle tests bind real ports, use docker, and share `sacrifice-db`.
 
-So: try `-n auto --dist loadfile` (same-file tests stay on one worker, which
-minimises fixture collisions), **measure**, and treat every new failure as a
-GENUINE isolation bug to fix — never as flakiness to retry. A parallel suite that
-is quietly wrong is far worse than a slow one that is right. Bank the wall-clock
-only once it is green twice in a row.
+So: `-n auto --dist loadfile` (same-file tests stay on one worker, minimising
+fixture collisions), **measure**, and treat every new failure as a GENUINE
+isolation bug to fix — never as flakiness to retry. **A parallel suite that is
+quietly wrong is far worse than a slow one that is right.** Bank the wall-clock
+only after it is green twice consecutively. If it lands clean, enabling it on CI
+too is then free.
 
-**Scope note — this does NOT slow story throughput.** The factory's own CI suite
-gates FACTORY PRs (operator PRs and loop-2 self-edits). A sacrifice story's merge
-gate runs the app's own `test_command`, which is a different, much smaller suite.
-So E6 buys loop-3 and loop-2 iteration speed — which is most of what a readiness
-push spends its time waiting on — not Workstream D's numbers.
+**Scope note, so this is not mis-sold.** E6 buys **loop-3 and loop-2 iteration
+speed** — which is most of what a readiness push spends its time waiting on — and
+**not** Workstream D's story throughput. The factory's suite gates FACTORY PRs
+(operator PRs, loop-2 self-edits). A sacrifice story's merge gate runs the app's
+own, much smaller `test_command`.
 
 ## E5. Note the trade-off the retry cap makes
 
@@ -616,6 +640,63 @@ Raising `max_dev_retries` 3 → 4 (2026-08-09) **trades latency for completion**
 more stories finish, each slower, and a 4th attempt costs ~11 min. That is the
 right direction for a throughput thesis, but it is a hypothesis — **Workstream B
 should measure completion rate and per-story wall clock at 3 vs 4**, not assume.
+
+# Appendix — what closing direction 002 (Karpathy quality layers) leaves behind
+
+`apps/factory/directions/002-karpathy-quality-layers` + GitHub issue **#122**
+are closed as **substantially delivered and partly superseded**. Recorded here so
+the reasoning is not lost with the issue, and so the live parts are not
+re-discovered from scratch in three months.
+
+**Status audited 2026-08-09, against the tree, not the doc:**
+
+| Item | State |
+|---|---|
+| P0.1 `smoke-green` gate, config-guarded, per-app required set | **SHIPPED** — story 179 lists `smoke-green` in its passed gates |
+| P0.2 app-side smoke harness | **SHIPPED** — `smoke_harness_ready: true` (the direction text still says FALSE; it rotted) |
+| P2.1 per-app `CLAUDE.md` | **SHIPPED** — `/home/k/sacrifice/CLAUDE.md` exists |
+| P0.4 deploy probe | **MOOT** — `deploy.enabled: false`; `deployed` is a state name, not a deploy |
+| P0.3 adversarial refute-critic | not shipped |
+| P1.1 goal-discovery persona | not shipped |
+| P1.3 agile first-slice checkpoint | not shipped |
+| P2.2 reusable per-app skills | not shipped |
+| P2.3 tool-level forbidden-path guardrails | not shipped |
+| **P1.2 AC-precision gate** | **not shipped — RESCUED into A5 above** |
+
+**Why closing is right, not lossy:**
+
+1. **Every one of its formal acceptance criteria is about P0.1, and P0.1
+   shipped.** By the direction's own definition of done, it is complete.
+2. **Its central thesis was delivered by a stronger mechanism than it asked
+   for.** "Green must mean the product runs" is now enforced by the acceptance
+   oracle (direction 019): authored from the spec, frozen before dev starts,
+   booted and exercised OUT OF PROCESS over HTTP, with a gutted-implementation
+   control. That is a better verifier than the deploy probe P0.4 specified.
+3. **It has been parked in `needs-direction` since 2026-07-29** for missing
+   `user_flow` / `api_spec` / `explore_tag` — artifacts that do not fit a
+   *factory* direction. It blocks nothing and clutters the approval queue.
+
+**What survives, and where it went:** P1.2 (each acceptance criterion must be
+observable and testable) is now **A5** in Workstream A, because it is the
+upstream half of the oracle problem — a vague AC produces an oracle that cannot
+discriminate, which is the `oracle_not_discriminating` → waiver → false-green
+channel Workstream B measures.
+
+**What is genuinely dropped, and should be re-filed if wanted:** P0.3
+(refute-critic), P1.1 (goal-discovery persona), P1.3 (first-slice checkpoint),
+P2.2 (reusable skills), P2.3 (tool-level guardrails). None is load-bearing for
+benchmark readiness. P2.3 is the most defensible of them — forbidden paths are
+still a *prompt request* rather than a tool-level block — but it is a hardening
+item, not a correctness gate, and the staging twin already bounds self-edit blast
+radius.
+
+**The transferable lesson, which is why this appendix exists:** the direction's
+own text asserted `smoke_harness_ready: false` and "no per-app CLAUDE.md" long
+after both had shipped. **A long-lived direction document rots into a false
+account of the system**, and anyone reading it to decide what to build next is
+reading fiction. Audit a direction against the tree before acting on it — the
+same failure as memory `stale_context_doc_refiles_shipped_work`, where a stale
+context doc caused the same direction to be re-filed five times.
 
 # Workstream D — end-to-end proof
 
