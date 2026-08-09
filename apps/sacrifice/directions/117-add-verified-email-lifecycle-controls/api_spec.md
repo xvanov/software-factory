@@ -66,8 +66,8 @@ Expire the verification token early (invalidate before its natural TTL) so a sin
 ### 1. New email/password accounts require successful verification before sensitive operations
 
 - **Status:** graded by the acceptance oracle (HTTP)
-- **How:** 1. POST /api/auth/email/register with a unique email (using $ACCEPTANCE_RUN_ID) and a valid password. Capture the access_token and assert the user.email_verified field in the 200 response is `false`. 2. Attempt a sensitive operation. Since no sensitive-operation endpoint exists in the route table, the contract designates GET /api/auth/me as the observable gating point: it must return 200 and the user dict regardless of verification state, but the `email_verified` field must be `false`, proving the account is unverified. 3. POST /api/auth/email/verify-request with the Bearer token to obtain a verification_token. 4. POST /api/auth/email/verify with {"verification_token": "<token>"}. Expect 200 and `{"message": "email_verified"}`. 5. GET /api/auth/me again with the same Bearer token. Assert `email_verified` is now `true`. This sequence proves the account transitions from unverified to verified and that the verification state is observable.
-- **Endpoints:** `/api/auth/email/register`, `/api/auth/me`, `/api/auth/email/verify-request`, `/api/auth/email/verify`
+- **How:** 1. POST /api/auth/email/register with a unique email (using $ACCEPTANCE_RUN_ID) and a valid password; capture the access_token. 2. **Prove the GATE, not just the flag:** with that bearer token, POST /api/goals with a valid goal body. It MUST be refused with 403 — an unverified account cannot perform a sensitive operation. (`POST /api/goals` is a real route, is authenticated, and creates state, so a no-op implementation cannot satisfy this the way a status-code-only or field-inspection check could.) 3. POST /api/auth/email/verify-request with the Bearer token to obtain a verification_token. 4. POST /api/auth/email/verify with {"verification_token": "<token>"}. Expect 200 and `{"message": "email_verified"}`. 5. Re-issue the bearer token via POST /api/auth/email/login, then POST /api/goals again with an equivalent body. It MUST now succeed (2xx) and the response MUST carry the created goal's `id`. The before/after pair on the SAME sensitive route is the evidence: refused while unverified, allowed once verified. Assert `email_verified` is `true` on GET /api/auth/me as a secondary check only — never as the primary observable.
+- **Endpoints:** `/api/auth/email/register`, `/api/goals`, `/api/auth/email/login`, `/api/auth/email/verify-request`, `/api/auth/email/verify`, `/api/auth/me`
 
 ### 2. Verification tokens are single-use, short-lived, and invalidated after use
 
@@ -83,3 +83,26 @@ Expire the verification token early (invalidate before its natural TTL) so a sin
 ## Observability affordances and their constraints
 
 POST /api/auth/email/verify-request returns the verification_token in the response body as an observable substitute for the out-of-band email. This is acceptable only if the token is also sent via email in production; the response-body leak must be guarded by an environment check (e.g., only in a non-production or acceptance environment) so it is never exposed in live traffic. DELETE /api/auth/email/verify-token exists solely to invalidate tokens on demand for grading; it must require a valid Bearer token and must not be usable to invalidate another user's token. Neither affordance may weaken the production flow.
+
+---
+
+## Operator ratification — 2026-08-09
+
+Ratified with one correction, recorded here because the reasoning matters more
+than the edit.
+
+**AC1's observable was too weak as generated.** The contract author concluded
+"no sensitive-operation endpoint exists in the route table" and designated
+`GET /api/auth/me` as the gating point, checking that `email_verified` is
+`false`. That inspects a FLAG; it does not prove a GATE. An implementation that
+adds the field to the response and enforces nothing would satisfy it — green
+meaning less than it appears.
+
+`POST /api/goals` does exist in the route table, is authenticated, creates
+state, and is exactly the route the earlier dev attempt gated. AC1 now asserts
+the before/after pair on that route: **403 while unverified, 2xx once
+verified**. The flag check is retained as a secondary signal only.
+
+This is the failure mode the ratification step exists for: the author cannot
+audit its own choice of observable, and the weakness is invisible in a green
+run. See `apps/factory/context/modules/personas.md` (Failure modes).
