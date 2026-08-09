@@ -13,11 +13,32 @@ on:
   # the branch-protection required checks are real on the queue — a required
   # check that never triggered on merge_group would silently pass the queue
   # (the vacuous-required-check false-green). Kills "passed in isolation,
-  # broke main".
+  # broke main". The queue (like push) runs the FULL suite — the fast lane is
+  # a pull_request-only concession.
   merge_group:
 
 permissions:
   contents: read
+
+# ---------------------------------------------------------------------------
+# E6 (operator decision 2026-08-09): the PR-BLOCKING lane must finish in
+# under 60 seconds. Two lanes, one workflow:
+#
+#   pull_request  -> FAST lane: the suite MINUS tests/fast_lane_excludes.txt
+#                    (files that boot servers / run sandboxes / touch docker —
+#                    the capability rule, not a speed rule), parallel via
+#                    pytest-xdist, no coverage. Measured 2026-08-09: 2,187
+#                    tests in 41 s at -n 4, two consecutive green runs.
+#   push / queue  -> FULL suite with coverage (COVERAGE_CORE=sysmon), exactly
+#                    what gated every merge before E6. Runs post-merge; the
+#                    `main-green` job below makes a red full suite BLOCK
+#                    further merges, so the full suite still gates the repo —
+#                    it moved, it did not disappear.
+#
+# The exclude manifest cannot rot: tests/test_fast_lane_manifest.py (which
+# itself runs in the fast lane) pins list == capability-signature set in both
+# directions.
+# ---------------------------------------------------------------------------
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -77,21 +98,22 @@ jobs:
           echo "changed files:"
           echo "$CHANGED" | sed 's/^/  /'
 
-          # "Docs only" means EVERY changed path is a ROOT-LEVEL *.md file.
+          # "Docs only" means EVERY changed path is a ROOT-LEVEL *.md file or
+          # lives under docs/ (prose and archives; no test reads them).
           #
-          # Deliberately narrow, because markdown in this repo is often code:
+          # Deliberately narrow beyond that, because markdown in this repo is
+          # often code:
           #   factory/personas/*.md   are prompts, covered by contract tests
           #                           (tests/handlers/test_prompt_contracts.py,
           #                            tests/test_persona_loader.py)
           #   apps/**/context/*.md    drive test_context_loader / canonical_paths
           #   apps/**/directions/*.md drive test_direction_parser
-          # Only CLAUDE.md, README.md, STATUS.md, PLAN.md, AGENTS.md and
-          # SOTA-RESEARCH-*.md sit at the root, and no test reads them.
-          if echo "$CHANGED" | grep -qvE '^[^/]+\.md$'; then
-            echo "-> non-root-markdown paths present; full suite"
+          # Those carve-outs must survive any future widening.
+          if echo "$CHANGED" | grep -qvE '^([^/]+\.md|docs/.+)$'; then
+            echo "-> paths beyond root-markdown/docs present; full suite"
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           else
-            echo "-> root-level markdown only; skipping build/test steps"
+            echo "-> root-level markdown / docs/ only; skipping build/test steps"
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -134,6 +156,18 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
+      # E6: mypy is incremental — a warm .mypy_cache turns the package-wide
+      # run from ~40 s of re-analysis into seconds. Keyed on the lockfile
+      # (dependency stubs change the cache shape); restore-keys tolerates a
+      # stale-but-mostly-valid cache, which mypy revalidates per module.
+      - uses: actions/cache@v4
+        if: needs.changes.outputs.docs_only != 'true'
+        with:
+          path: .mypy_cache
+          key: mypy-${{ runner.os }}-${{ hashFiles('uv.lock') }}-${{ github.sha }}
+          restore-keys: |
+            mypy-${{ runner.os }}-${{ hashFiles('uv.lock') }}-
+            mypy-${{ runner.os }}-
       - name: uv sync
         if: needs.changes.outputs.docs_only != 'true'
         run: uv sync --all-extras
@@ -156,22 +190,13 @@ jobs:
   pytest:
     needs: changes
     runs-on: ubuntu-latest
-    # Bumped 15 -> 25 (2026-08-08): the last five merges before this one each
-    # ran ~13m51s-14m05s — already within a minute of the old cap before this
-    # PR added anything. This PR's own fix (boot._poll_health's consecutive-
-    # poll requirement + probe_health's retry-with-backoff, both real added
-    # wall-clock across dozens of genuine subprocess boots in the acceptance-
-    # oracle test files) pushed three consecutive CI attempts to ~15m09s-15m15s
-    # — cancelled by the job cap with ZERO test failures each time (verified
-    # via the raw step log: every attempt reached 90-100% with no F/E marker
-    # before "The operation was canceled"). This is a real, small latency cost
-    # of closing a genuine fail-open (KNOWN OPEN #1), not a flaky test and not
-    # a semantics bug — the fix is correct and the added latency is the price
-    # of the extra evidence it requires. Headroom, not a new correctness gate.
+    # Full lane (push / merge_group): bumped 15 -> 25 (2026-08-08) after three
+    # runs were cancelled at ~15m with zero failures. The fast PR lane
+    # finishes in ~1 min; the cap stays sized for the full lane.
     timeout-minutes: 25
     permissions:
       # python-coverage-comment-action stores badge data on a repo branch
-      # (push to main) and comments coverage on PRs.
+      # (push to main).
       contents: write
       pull-requests: write
     steps:
@@ -192,14 +217,85 @@ jobs:
         if: needs.changes.outputs.docs_only != 'true'
         run: uv sync --all-extras
 
-      - name: pytest with coverage
-        if: needs.changes.outputs.docs_only != 'true'
+      # -------- FAST LANE: pull_request only ---------------------------------
+      # The suite minus tests/fast_lane_excludes.txt (capability rule: server
+      # boots / sandboxes / docker run post-merge), no coverage, xdist with
+      # loadfile so file-scoped fixtures never split across workers. The
+      # manifest guard (tests/test_fast_lane_manifest.py) runs IN this lane,
+      # so a rotten manifest fails the PR that rotted it.
+      - name: pytest (fast lane — PR-blocking)
+        if: needs.changes.outputs.docs_only != 'true' && github.event_name == 'pull_request'
+        run: |
+          IGNORES=$(sed 's/^/--ignore=/' tests/fast_lane_excludes.txt | tr '\n' ' ')
+          uv run pytest -q --tb=short -n 4 --dist loadfile $IGNORES
+
+      # -------- FULL LANE: push to main + merge queue -------------------------
+      # Everything, exactly as before E6, plus COVERAGE_CORE=sysmon (Python
+      # 3.12 + coverage >= 7.4): sys.monitoring instead of the classic trace
+      # function — same numbers, far less overhead.
+      - name: pytest with coverage (full lane)
+        if: needs.changes.outputs.docs_only != 'true' && github.event_name != 'pull_request'
+        env:
+          COVERAGE_CORE: sysmon
         run: uv run pytest -q --tb=short --cov=factory --cov-report=
 
       - name: Coverage comment + badge
-        if: needs.changes.outputs.docs_only != 'true'
+        if: needs.changes.outputs.docs_only != 'true' && github.event_name != 'pull_request'
         uses: py-cov-action/python-coverage-comment-action@v3
         with:
           GITHUB_TOKEN: ${{ github.token }}
           MINIMUM_GREEN: 80
           MINIMUM_ORANGE: 60
+
+  # ---------------------------------------------------------------------------
+  # E6 red-blocks-merges: the full suite moved post-merge, so this REQUIRED
+  # check is what keeps it a gate. It fails every PR while the most recent
+  # COMPLETED full-lane run on main is anything but success — a regression
+  # that slipped past the fast lane blocks all further merges until main is
+  # fixed (or the failing run is re-run green). Fail SAFE: an API error after
+  # retries blocks rather than waves through; a repo with no completed push
+  # run yet (bootstrap) passes.
+  #
+  # DELIBERATE consequence: while main is red, even the FIX PR is blocked by
+  # this check — red main stops the line, including loop-2 self-merges. The
+  # escape hatch is an operator admin-merge (enforce_admins is off on this
+  # repo's protection), or re-running the red main run if it was environmental.
+  # Do not "fix" this by exempting fix-shaped PRs; that is a false-green
+  # channel.
+  # ---------------------------------------------------------------------------
+  main-green:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: latest full-lane run on main must be green
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if CONCLUSION=$(gh api \
+                "repos/${REPO}/actions/workflows/test.yml/runs?branch=main&event=push&status=completed&per_page=1" \
+                --jq '.workflow_runs[0].conclusion // "bootstrap"' 2>err.txt); then
+              break
+            fi
+            echo "API attempt ${attempt} failed:"; cat err.txt
+            CONCLUSION="api_error"
+            sleep 5
+          done
+          echo "latest completed full-lane conclusion on main: ${CONCLUSION}"
+          case "$CONCLUSION" in
+            success|bootstrap)
+              echo "main is green — merges may proceed." ;;
+            *)
+              URL=$(gh api \
+                "repos/${REPO}/actions/workflows/test.yml/runs?branch=main&event=push&status=completed&per_page=1" \
+                --jq '.workflow_runs[0].html_url // "unknown"' 2>/dev/null || echo unknown)
+              echo "::error::main's full suite is not green (${CONCLUSION}): ${URL}."
+              echo "::error::The full lane runs post-merge; a red one blocks ALL merges until main is fixed or the run is re-run green."
+              exit 1 ;;
+          esac

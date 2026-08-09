@@ -102,9 +102,14 @@ Always `uv`, always the dev extras, always `uv run`:
 
 ```bash
 uv sync --all-extras
-uv run pytest -q                          # ~5 min
+uv run pytest -q -n 8 --dist loadfile     # full suite, ~2-4 min parallel (~15 min single-threaded)
 uv run ruff check . && uv run mypy factory
 ```
+
+CI runs two lanes (E6, 2026-08-09): PRs are gated by a <60 s fast lane (the
+suite minus `tests/fast_lane_excludes.txt` — files that boot servers, run
+sandboxes, or touch docker); the full suite runs post-merge on main, and the
+required `main-green` check blocks all merges while it is red.
 
 `ModuleNotFoundError` for `frontmatter` / `sqlmodel` / `pytest` means the env,
 not the code — re-sync before debugging. `mypy` has a standing non-zero error
