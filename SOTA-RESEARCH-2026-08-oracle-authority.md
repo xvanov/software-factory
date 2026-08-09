@@ -260,8 +260,17 @@ first.
 
 ## Other techniques, ranked for applicability here
 
-1. **Derive the invocation surface mechanically, freeze it with the oracle** —
-   highest value, lowest risk, fixes all three incidents. Precedent:
+1. **Derive the invocation surface mechanically, and cross-check the prose
+   against it** — **REVISED 2026-08-09 after adversarial review.** The first draft
+   of this list said "highest value, lowest risk, fixes all three incidents". That
+   was measured and is FALSE for this codebase: `POST /api/goals` declares only
+   `['201','422']` (no 401), `grep -n "responses=" backend/app/routes/*.py`
+   returns zero hits, key routes have no `response_model`, and the constraint that
+   actually blocked story 179 (`goal_type` must be a registered plugin type with a
+   type-specific `criteria` shape) lives in a `field_validator` invisible to the
+   schema. A derived surface fixes the ROUTE and REQUIRED-FIELD incidents (1 and
+   3) and is silent on the semantic ones. Use it as an additive CI cross-check on
+   the prose, not a replacement. Precedent:
    arXiv:2601.12735 (OOPS: LLM static analysis of server code → OpenAPI),
    arXiv:2504.16833 (LRASGen), and ARMeta which "treats the OpenAPI Specification
    as a strict source of truth for selecting valid endpoints and parameters".
@@ -316,10 +325,28 @@ well-supported. **Contract-blindness is a conflation of the two, is not what any
 cited work does, and has cost three false blocks — the exact failure mode OpenAI
 names as the top cause of broken tasks in its own benchmarks.**
 
-The fix that preserves every property we currently rely on: **derive the
-invocation surface mechanically at the story's BASE commit and freeze it
-alongside the oracle**, instead of maintaining it as prose. Base rather than HEAD
-does three jobs at once — the story's own endpoint does not exist yet, so the
-exclusion falls out of the revision choice; the artifact is frozen per-story, so
-it cannot drift into implementation-derived authority; and it is generated from a
-commit already on `main`, outside the dev worktree, so the dev cannot edit it.
+The fix — **revised 2026-08-09 after an adversarial review that falsified the
+first version, and measured against this codebase rather than assumed:**
+
+Derive the invocation surface mechanically and use it as an **additive CI
+cross-check** on the prose hint (every route and required field named in prose
+must exist in the derived surface). That catches the ROUTE and REQUIRED-FIELD
+incidents at CI time with no boot and no per-story cost. It does NOT catch the
+semantic ones — status vocabulary, response bodies, plugin-type enums are absent
+from a FastAPI schema that declares no `responses=` and no `response_model`, so
+those stay prose. State that limit rather than wishing it away.
+
+If a per-story derived surface is ever fed to the AUTHOR, three things become
+binding, and none were in the first draft: the base sha must be **verified against
+the gate's own `base_sha`** (authoring runs at pm-sync, the gate's base comes from
+a branch created later, and main moves between them); it must **never be
+re-derived on a `force=True` re-author** (an `explore` loser would then be handed
+the winner's implementation of the same spec — a real leak); and the fail-closed
+path must route through `_unverifiable` so it is waivable, or it creates a
+terminal sink no operator command can reach.
+
+And the risk the first draft missed entirely: **more base information produces
+more oracles that MIRROR the base contract**, which pass at base →
+`oracle_not_discriminating` → *waivable* → `_unverifiable` returns `passed=True`.
+The recovery mechanism for false blocks is itself a false-green channel, so the
+waiver rate must be pre-registered as a metric alongside the false-block rate.
