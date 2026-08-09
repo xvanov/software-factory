@@ -276,6 +276,16 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Serialize full-lane runs. E6 made back-to-back merges cheap, so
+    # post-merge full lanes now overlap — and every run's badge step pushes to
+    # the SAME python-coverage-comment-action-data branch, where the loser of
+    # the non-fast-forward race fails the whole job (observed first day out:
+    # three merges, three concurrent runs, e5374ec4's run red with a GREEN
+    # test step). cancel-in-progress stays false: every merged SHA must get
+    # its own full-suite verdict — cancelling one is a silent coverage gap.
+    concurrency:
+      group: pytest-full-main
+      cancel-in-progress: false
     permissions:
       # python-coverage-comment-action stores badge data on a repo branch
       # (push to main).
