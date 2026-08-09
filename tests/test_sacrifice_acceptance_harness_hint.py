@@ -207,7 +207,7 @@ def _parse_hint_route_facts(
                 # Bare backticked idents in such a bullet are field names;
                 # strip anything that parsed as a route mention token.
                 required[target] |= {
-                    i for i in idents if not i.upper() in ("GET", "POST", "PUT", "PATCH", "DELETE")
+                    i for i in idents if i.upper() not in ("GET", "POST", "PUT", "PATCH", "DELETE")
                 }
 
     return mentioned, dict(required)
