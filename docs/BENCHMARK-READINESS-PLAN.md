@@ -42,6 +42,99 @@ a prior session reported two fixes that were never committed).
 
 ---
 
+---
+
+# How to execute this — be efficient, parallelise, but ground everything in a running factory
+
+**Two rules that fight each other, and the second one wins.** Fan out
+aggressively for anything that is *reading, searching, or implementing in
+isolation*. Serialise ruthlessly for anything that *touches the live factory*.
+Getting this backwards produces fast, confident, wrong answers.
+
+### Delegate by difficulty — pick the cheapest model that can do the job
+
+Pass `model` explicitly on every `Agent` call. Do not let everything inherit Opus;
+most of this plan's work does not need it.
+
+| Model | Use for | Examples from this plan |
+|---|---|---|
+| **haiku** | mechanical, verifiable, low-judgment | grep sweeps for a pattern; listing routes/config keys; collecting `factory trace` output; checking for leaked docker networks; tallying spend from `factory audit` |
+| **sonnet** | standard implementation and analysis with a clear spec | C3 (resume the two parked stories); C7 (environment hygiene); writing the D-1/D-2/D-3 directions; most test-writing; doc refreshes |
+| **opus** | design judgment, adversarial review, anything where being wrong is expensive | A1's base-vs-HEAD design; A2's failure-reason taxonomy; C1 (shared control flow); the adversarial pass on every fix; interpreting B's ablation numbers |
+
+Rule of thumb: **if the task has one right answer that can be checked by running
+something, go cheaper. If it involves a trade-off, an invariant, or a safety
+direction, go to opus.** The adversarial review pass is always opus — it has
+caught ~5 production bugs that green tests hid.
+
+### Parallelise these (independent, no shared mutable state)
+
+Send them in **one message with multiple `Agent` calls** so they actually run
+concurrently:
+
+- **Investigation fan-out**: C2 (tech_writer JSON), C4 (oracle KNOWN OPEN #2–#4),
+  C6 (the config-fact sweep) are three independent read-only questions. One agent
+  each, in parallel, at the tier the question deserves.
+- **Independent implementation**: A1 and A2 touch different code paths
+  (`acceptance.py` authoring vs `acceptance_verified.py` base run). Give each its
+  own **git worktree** (`isolation: "worktree"`) so they cannot collide.
+- **Direction drafting**: D-1, D-2, D-3 are three separate documents — draft
+  concurrently, review together.
+- **Research**: any external-literature question. Warn every research agent about
+  the fetched-text corruption (see below).
+
+### Do NOT parallelise these
+
+- **Anything writing `state/factory.db`.** One writer per fact. Two agents
+  ticking, resuming, or repairing stories at once will corrupt state, and a DB
+  edit races a live tick.
+- **`factory tick` / `factory on` / deploys.** Serialise. The tick is the
+  factory's single-threaded heartbeat; running two is not a speedup, it is a race.
+- **The Workstream D proof itself.** It is a *measurement of unattended
+  behaviour*. Running three stories concurrently is fine **only if that is the
+  real configuration you intend to benchmark** — otherwise you have measured
+  something you will not ship. Decide, then keep it constant.
+- **The full test suite.** ~17–19 min locally. Run it once, at the end of a batch
+  of changes, not per-agent. Concurrent pytest runs contend and produce mirages
+  (memory: `red_test_can_mean_nothing_too`).
+
+### Ground everything in a running factory — nothing counts until the factory did it
+
+This is the part that cannot be delegated away. Subagents produce *claims*; the
+factory produces *evidence*. Every claim in this plan is closed by an artifact,
+not by a report:
+
+| Claim | What actually closes it |
+|---|---|
+| "the fix is in" | a commit SHA or merged PR — a session's summary is a self-report, and one prior session reported two fixes that were never committed (memory: `session_fix_claims_need_git_verification`) |
+| "the oracle is correct now" | a real gate run: `state/acceptance/<app>/<id>/stub_runs.json` + `base_runs.json`. **The gate emits NO events** — those files are the only proof it ran (memory: `acceptance_oracle_validated_live_2026_08_08`) |
+| "the story merged" | GitHub's merge commit. Never a local flag |
+| "it deployed" | `factory story <id>` = `deployed` **and** the change present on `origin/main` |
+| "no hamster wheel" | `factory audit --app <app>` showing no repeated spend on the same persona/story, and `factory trace <id>` with no repeating event signature |
+| "the services sustain" | `systemctl --user status` Result + `errors=` across **two** runs. "Services up" ≠ "sustains" |
+
+**Therefore: after every fix, run the factory and watch it.** Do not batch six
+changes and then look. The repo's own history is a list of fixes that were green,
+reviewed, and still did not work unattended — that is failure pattern
+`marked-solved ≠ soak-validated`, and it is the single most repeated mistake here.
+
+**Never take a subagent's result at face value.** If an agent reports a story
+merged, check GitHub. If it reports a gate passing, read the artifact. Agents
+report incorrect or misleading results, and a confident summary is not evidence.
+
+### Two standing hazards when delegating
+
+1. **Research agents and fetched text.** The org-level `DESIGN → ENGINEERING`
+   rewrite is applied to *fetched web content*, not only authored prose — it was
+   **confirmed live** during this plan's research. Instruct every research agent:
+   cite by URL + arXiv id, treat a fetched **name** as lower-confidence than a
+   fetched **number**, and flag any suspicious title rather than reporting it as
+   fact.
+2. **Wait-loops that never exit.** `until ! pgrep -f "<pattern>"` matches the
+   waiting shell's **own argv** and loops forever (three such loops were left
+   running during this session's work). Wait on a *file* or an exit code, or match
+   a pattern that cannot match the watcher itself.
+
 ## Guardrails that bind this whole plan
 
 - **Gate on the real artifact.** Never a recorded flag, an `--auto` *enable*, a
@@ -276,14 +369,47 @@ not the unattended path. Both matter; do not confuse them.
 
 ---
 
-## Suggested order
+## Suggested order — sequential phases, parallel inside each
 
-1. **A2** — cheapest, highest value, catches the class at authoring time.
-2. **C3, C7** — clear the decks so later signal is clean.
-3. **A1** — the real fix. **A3** alongside it.
-4. **B** — measure. If A1 does not beat the prose control, stop and report.
-5. **C1, C2, C4, C5, C6** — remaining harness integrity.
-6. **D** — the unattended proof. Last, because everything else is a precondition.
+Everything inside a phase runs concurrently; phases are barriers because each one
+needs the previous phase's *observed* result, not its predicted one.
+
+**Phase 0 — look before touching (all parallel, mostly cheap)**
+- `haiku`: environment sweep — leaked docker networks/containers, `factory power`,
+  `factory mode`, live tree == `origin/main`, local suite baseline timing (C7)
+- `haiku`: collect current parked/blocked state, spend rollups, open PRs
+- `sonnet`: C2 tech_writer JSON-parse diagnosis (read-only)
+- `sonnet`: C6 sweep for other unverifiable config facts
+- `opus`: C4 read the oracle's KNOWN OPEN #2–#4 and recommend fix/accept
+
+**Phase 1 — cheap high-value fix + clear the decks (parallel)**
+- `opus` in a worktree: **A2**, the base-run failure-reason control
+- `sonnet`: **C3**, resume stories 177/178 (serialise the actual `resume-story`
+  calls — they write the DB)
+- Then: one full suite run, one adversarial `opus` review, PR, CI, merge, deploy.
+- **Observe**: run a tick, confirm A2 fires on a deliberately malformed oracle.
+
+**Phase 2 — the real fix (parallel implementation, serial validation)**
+- `opus` in a worktree: **A1** derived base surface
+- `opus` in a second worktree: **A3** arrange/assert split
+- `sonnet`: draft D-1/D-2/D-3 directions concurrently (not yet run)
+- Then: suite, adversarial review, PR, merge, deploy. **Observe a real authoring
+  run** and read the emitted oracle before believing anything.
+
+**Phase 3 — measure (B)**
+Pre-register arms and metric. Archive artifacts per run — re-running a sweep
+destroys published-number artifacts. `opus` interprets the numbers.
+**If the derived surface does not beat the prose control, STOP and report.**
+
+**Phase 4 — remaining harness integrity (parallel)**
+- `opus`: C1 (shared control flow — re-verify everything keyed off it)
+- `sonnet`: C5 detector_watch read-only soak, then decide
+- `sonnet`: C2 fix, if Phase 0 identified a real cause
+
+**Phase 5 — the unattended proof (D) — SERIAL, and the point of all of it**
+Run the three directions through the real factory and watch. No agent may
+"conclude" this phase from a summary; it is closed by three `deployed` stories
+with merge commits on GitHub and zero operator interventions.
 
 ## Reporting
 
