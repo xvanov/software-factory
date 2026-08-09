@@ -161,14 +161,38 @@ gates:
   # Repo-layout facts for the (dev-blind) acceptance author — HTTP routes now,
   # not an import path: the oracle runs out of process and never imports the
   # app (019 AC3), so it needs where to send requests, not where to import from.
+  # CORRECTED 2026-08-08. The auth lines below used to name
+  # `POST /api/auth/register` and `POST /api/auth/login`. NEITHER ROUTE EXISTS
+  # — and never has. The real ones carry an `/email` segment
+  # (`backend/app/routes/auth.py`, `APIRouter(prefix="/api/auth")`). Story 172,
+  # the only story graded before this was found, asserted `/api/meta` and never
+  # touched auth, so the error stayed invisible until direction 117 (verified
+  # email) made an oracle follow it. A dev-blind author cannot check a route
+  # fact against the tree, and this hint tells it "never a guessed variant" —
+  # so a wrong fact here is laundered into an authoritative-looking oracle that
+  # 404s at HEAD no matter how correct the implementation is. That fails SAFE
+  # (a false block, never a false green — see the memory
+  # `acceptance_oracle_first_execution`), but it makes every auth-touching
+  # story unmergeable. Re-verify these against the tree when auth changes.
   acceptance_harness_hint: |
     - The backend is a FastAPI app, reachable at $ACCEPTANCE_BASE_URL. Health:
-      `GET /api/health` -> `200 {"status": "ok", ...}`.
+      `GET /api/health` -> `200 {"status": "ok"}`. (`GET /healthz` and
+      `GET /healthz/db` also exist and are deliberately NOT under `/api`.)
     - Every other route is prefixed `/api`. Use the exact paths and methods the
       direction's api_spec.md states, never a guessed variant.
-    - Auth: `POST /api/auth/register` then `POST /api/auth/login` returns a
-      bearer token; send it as `Authorization: Bearer <token>` on subsequent
-      calls.
+    - Auth, verified against `backend/app/routes/auth.py` 2026-08-08 — these
+      exact paths, including the `/email` segment:
+      * `POST /api/auth/email/register` with `{"email": ..., "password": ...}`
+        -> `200 {"access_token": ..., "user": {"id", "email", "display_name",
+        "avatar_url", "auth_provider"}}`. It ALREADY returns a bearer token, so
+        a separate login call is not needed to get one. A duplicate email is
+        `409 {"error": "account_exists"}`; a weak password is `400`. The email
+        is lowercased on the way in.
+      * `POST /api/auth/email/login` with the same JSON body -> the same shape.
+        It is JSON, not OAuth2 form-encoded.
+      * `GET /api/auth/me` with `Authorization: Bearer <access_token>` -> the
+        same `user` dict. This is the ONLY "current user" route — there is no
+        equivalent anywhere under `/api/users`.
     - Data is a real, SHARED Postgres instance across runs (no per-run reset).
       Namespace any email/slug/identifier you create with `$ACCEPTANCE_RUN_ID`
       so two runs never collide and a stale record from a previous run can
