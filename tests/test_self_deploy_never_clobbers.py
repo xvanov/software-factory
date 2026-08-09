@@ -72,7 +72,16 @@ def _run_script(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """
     import os
 
-    env = {**os.environ, "FACTORY_DIR": str(repo)}
+    env = {
+        **os.environ,
+        "FACTORY_DIR": str(repo),
+        # Per-fixture lock, like the sibling test file already does: the
+        # script's default is a GLOBAL /tmp/factory-self-deploy.lock, and a
+        # held lock makes it exit 0 having deployed nothing — under a live
+        # factory-self-deploy.timer or a parallel test run that surfaced as a
+        # bare stdout-assertion failure with no hint of the cause.
+        "LOCK_FILE": str(repo / ".test-self-deploy.lock"),
+    }
     return subprocess.run(
         ["bash", str(repo / "scripts" / SCRIPT.name), *args],
         cwd=str(repo),

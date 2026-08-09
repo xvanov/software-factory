@@ -13,11 +13,42 @@ on:
   # the branch-protection required checks are real on the queue — a required
   # check that never triggered on merge_group would silently pass the queue
   # (the vacuous-required-check false-green). Kills "passed in isolation,
-  # broke main".
+  # broke main". The queue (like push) runs the FULL suite — the fast lane is
+  # a pull_request-only concession.
   merge_group:
 
 permissions:
   contents: read
+
+# ---------------------------------------------------------------------------
+# E6 (operator decision 2026-08-09): the PR-BLOCKING lane must finish in
+# under 60 seconds. Two lanes, one workflow:
+#
+#   pull_request  -> FAST lane: the suite MINUS tests/fast_lane_excludes.txt
+#                    (hand-curated capability rule: boots a server / runs a
+#                    sandbox or docker / parallelism-hostile subprocess
+#                    spawners — never "it was slow"), parallel via
+#                    pytest-xdist, no coverage. The 5-minute step timeout is
+#                    the budget backstop if a heavy file goes unclassified.
+#   push / queue  -> FULL suite with coverage (COVERAGE_CORE=sysmon), exactly
+#                    what gated every merge before E6. Runs post-merge.
+#
+# RED-BLOCKS-MERGES IS NOT WIRED YET — deferred deliberately (stage 2), not
+# forgotten. Adversarial review (2026-08-09) showed the naive version (a
+# required `main-green` check failing while main's full lane is red) would
+# make auto_merge's CI-failure handler burn a dev run per open PR and then
+# CLOSE every chain PR and terminally park its story two ticks after main
+# goes red. Stage 2 = the guard PLUS an auto_merge change that treats a red
+# main-guard as a HOLD (wait, don't dispatch, don't park) PLUS a
+# head-SHA-pinned query (newest-completed-run masks an older red one).
+# UNTIL THEN: a red full lane on main must be fixed before anything else
+# merges — operator-enforced. Do not turn the factory's unattended merging
+# on while this interim holds.
+#
+# Manifest guards (tests/test_fast_lane_manifest.py, runs in the fast lane):
+# stale entries fail; unlisted heavy files run slow-but-safe until the step
+# timeout forces classification.
+# ---------------------------------------------------------------------------
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -40,14 +71,16 @@ jobs:
     outputs:
       docs_only: ${{ steps.detect.outputs.docs_only }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
+      # E6: no checkout. This job sits on the critical path of every PR's
+      # required checks, and a full-history checkout made it ~15 s; the PR
+      # files API answers the same question in ~2 s. Pagination cap at 3
+      # pages (300 files) resolves to fail-safe like every other branch.
       - id: detect
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
 
@@ -60,16 +93,15 @@ jobs:
             exit 0
           fi
 
-          git fetch --no-tags origin "$BASE_REF" >/dev/null 2>&1 || true
-
-          if ! CHANGED="$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null)"; then
-            echo "could not diff against origin/${BASE_REF} -> full suite"
+          if ! CHANGED="$(gh api "repos/${REPO}/pulls/${PR}/files?per_page=100" \
+              --paginate --jq '.[].filename' 2>/dev/null | head -301)"; then
+            echo "could not list PR files -> full suite"
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [ -z "$CHANGED" ]; then
-            echo "empty diff -> full suite"
+          if [ -z "$CHANGED" ] || [ "$(echo "$CHANGED" | wc -l)" -gt 300 ]; then
+            echo "empty or oversized diff -> full suite"
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -77,21 +109,22 @@ jobs:
           echo "changed files:"
           echo "$CHANGED" | sed 's/^/  /'
 
-          # "Docs only" means EVERY changed path is a ROOT-LEVEL *.md file.
+          # "Docs only" means EVERY changed path is a ROOT-LEVEL *.md file or
+          # lives under docs/ (prose and archives; no test reads them).
           #
-          # Deliberately narrow, because markdown in this repo is often code:
+          # Deliberately narrow beyond that, because markdown in this repo is
+          # often code:
           #   factory/personas/*.md   are prompts, covered by contract tests
           #                           (tests/handlers/test_prompt_contracts.py,
           #                            tests/test_persona_loader.py)
           #   apps/**/context/*.md    drive test_context_loader / canonical_paths
           #   apps/**/directions/*.md drive test_direction_parser
-          # Only CLAUDE.md, README.md, STATUS.md, PLAN.md, AGENTS.md and
-          # SOTA-RESEARCH-*.md sit at the root, and no test reads them.
-          if echo "$CHANGED" | grep -qvE '^[^/]+\.md$'; then
-            echo "-> non-root-markdown paths present; full suite"
+          # Those carve-outs must survive any future widening.
+          if echo "$CHANGED" | grep -qvE '^([^/]+\.md|docs/.+\.md)$'; then
+            echo "-> paths beyond root-markdown/docs present; full suite"
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           else
-            echo "-> root-level markdown only; skipping build/test steps"
+            echo "-> root-level markdown / docs/ only; skipping build/test steps"
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -134,6 +167,18 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
+      # E6: mypy is incremental — a warm .mypy_cache turns the package-wide
+      # run from ~40 s of re-analysis into seconds. Keyed on the lockfile
+      # (dependency stubs change the cache shape); restore-keys tolerates a
+      # stale-but-mostly-valid cache, which mypy revalidates per module.
+      - uses: actions/cache@v4
+        if: needs.changes.outputs.docs_only != 'true'
+        with:
+          path: .mypy_cache
+          key: mypy-${{ runner.os }}-${{ hashFiles('uv.lock') }}-${{ github.sha }}
+          restore-keys: |
+            mypy-${{ runner.os }}-${{ hashFiles('uv.lock') }}-
+            mypy-${{ runner.os }}-
       - name: uv sync
         if: needs.changes.outputs.docs_only != 'true'
         run: uv sync --all-extras
@@ -153,51 +198,102 @@ jobs:
           COUNT=$(grep -c "error:" mypy.out || true)
           echo "::warning::mypy: ${COUNT} package-wide findings (advisory — tracked debt)"
 
+  # The REQUIRED pytest contexts are the two shard legs, "pytest (1)" and
+  # "pytest (2)" — branch protection names them directly (no fan-in gate job:
+  # every jobs-graph hop costs ~10 s of runner pickup latency on the critical
+  # path). PRs get the fast lane split in two; a merge queue (if ever
+  # enabled) gets the FULL suite split the same way. Push-to-main coverage
+  # lives in `pytest-full` below. Deliberately NO `needs: changes` and no
+  # docs_only skip here: a docs-only PR just pays the ~40 s lane, which is
+  # cheaper than the hop it would take to skip it.
   pytest:
-    needs: changes
+    if: github.event_name != 'push'
+    name: pytest (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     runs-on: ubuntu-latest
-    # Bumped 15 -> 25 (2026-08-08): the last five merges before this one each
-    # ran ~13m51s-14m05s — already within a minute of the old cap before this
-    # PR added anything. This PR's own fix (boot._poll_health's consecutive-
-    # poll requirement + probe_health's retry-with-backoff, both real added
-    # wall-clock across dozens of genuine subprocess boots in the acceptance-
-    # oracle test files) pushed three consecutive CI attempts to ~15m09s-15m15s
-    # — cancelled by the job cap with ZERO test failures each time (verified
-    # via the raw step log: every attempt reached 90-100% with no F/E marker
-    # before "The operation was canceled"). This is a real, small latency cost
-    # of closing a genuine fail-open (KNOWN OPEN #1), not a flaky test and not
-    # a semantics bug — the fix is correct and the added latency is the price
-    # of the extra evidence it requires. Headroom, not a new correctness gate.
-    timeout-minutes: 25
-    permissions:
-      # python-coverage-comment-action stores badge data on a repo branch
-      # (push to main) and comments coverage on PRs.
-      contents: write
-      pull-requests: write
+    # Sized for a merge_group full-suite half; the fast-lane STEP carries its
+    # own 5-minute budget backstop.
+    timeout-minutes: 20
     steps:
-      - name: Skip notice
-        if: needs.changes.outputs.docs_only == 'true'
-        run: echo "Root-level markdown only — no code path can have changed."
-
       - uses: actions/checkout@v4
-        if: needs.changes.outputs.docs_only != 'true'
 
       - uses: astral-sh/setup-uv@v4
-        if: needs.changes.outputs.docs_only != 'true'
         with:
           enable-cache: true
           python-version: "3.12"
 
       - name: uv sync --all-extras
-        if: needs.changes.outputs.docs_only != 'true'
         run: uv sync --all-extras
 
-      - name: pytest with coverage
-        if: needs.changes.outputs.docs_only != 'true'
-        run: uv run pytest -q --tb=short --cov=factory --cov-report=
+      # Deterministic halves: sorted test files, alternating by line number.
+      # The per-file wall distribution is flat (max ~8 s of ~137 s serial),
+      # so alternation splits evenly without a timing database.
+      - name: compute shard file list
+        env:
+          SHARD: ${{ matrix.shard }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            # Fast lane: everything minus the hand-curated capability excludes.
+            grep -vE '^\s*(#|$)' tests/fast_lane_excludes.txt | sort > /tmp/excluded.txt
+            find tests -name "test_*.py" | sort | comm -23 - /tmp/excluded.txt > /tmp/pool.txt
+          else
+            # Merge queue: the FULL suite, split the same way.
+            find tests -name "test_*.py" | sort > /tmp/pool.txt
+          fi
+          awk -v s="$SHARD" 'NR % 2 == s % 2' /tmp/pool.txt > /tmp/shard.txt
+          echo "$(wc -l < /tmp/shard.txt) files in shard $SHARD"
 
+      # -------- FAST LANE: pull_request only ---------------------------------
+      # Capability rule (tests/fast_lane_excludes.txt): server boots /
+      # sandboxes / docker / bulk subprocess spawners run post-merge. No
+      # coverage. xdist loadfile keeps file-scoped fixtures on one worker.
+      # The manifest guard (tests/test_fast_lane_manifest.py) runs IN this
+      # lane, so a rotten manifest fails the PR that rotted it. The 5-minute
+      # step timeout is the budget backstop: an unclassified heavy file makes
+      # the lane loudly slow, never silently unguarded.
+      - name: pytest (fast lane — PR-blocking)
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 5
+        run: uv run pytest -q --tb=short -n 4 --dist loadfile $(tr '\n' ' ' < /tmp/shard.txt)
+
+      # -------- MERGE QUEUE: full suite, no coverage --------------------------
+      - name: pytest (full suite — merge queue)
+        if: github.event_name == 'merge_group'
+        run: uv run pytest -q --tb=short $(tr '\n' ' ' < /tmp/shard.txt)
+
+  # -------- FULL LANE: push to main (post-merge) ------------------------------
+  # Everything, exactly as before E6, plus COVERAGE_CORE=sysmon (Python 3.12 +
+  # coverage >= 7.4): sys.monitoring instead of the classic trace function —
+  # same numbers, far less overhead. Not a required PR context; the interim
+  # rule (red main outranks everything) and the stage-2 main-green guard are
+  # what make this a gate.
+  pytest-full:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      # python-coverage-comment-action stores badge data on a repo branch
+      # (push to main).
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: uv sync --all-extras
+        run: uv sync --all-extras
+      - name: pytest with coverage (full lane)
+        env:
+          COVERAGE_CORE: sysmon
+        run: uv run pytest -q --tb=short --cov=factory --cov-report=
       - name: Coverage comment + badge
-        if: needs.changes.outputs.docs_only != 'true'
         uses: py-cov-action/python-coverage-comment-action@v3
         with:
           GITHUB_TOKEN: ${{ github.token }}

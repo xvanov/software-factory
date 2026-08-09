@@ -32,6 +32,10 @@ dev = [
   "pytest>=8",
   "pytest-asyncio>=0.23",
   "pytest-cov>=5",
+  # E6: the PR-blocking fast lane runs the CPU-light majority of the suite in
+  # parallel (-n auto --dist loadfile). loadfile keeps same-file tests on one
+  # worker so file-scoped fixtures never split across processes.
+  "pytest-xdist>=3.5",
   "ruff>=0.6",
   "mypy>=1.10",
   "types-PyYAML>=6",

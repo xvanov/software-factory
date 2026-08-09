@@ -42,3 +42,24 @@ def _isolate_factory_state(
         _runner, "_DEFAULT_DB_PATH", state_root / "state" / "factory.db", raising=True
     )
     yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_provider_bootstrap_memo() -> None:
+    """The Azure provider bootstrap is memoized process-wide
+    (``azure_foundry._bootstrapped``). Several test files monkeypatch a FAKE
+    ``litellm`` into ``sys.modules``; if such a test triggers the bootstrap,
+    the pricing registration lands in the fake and the memo records "done" —
+    then a LATER test in the same process introspects the REAL
+    ``litellm.model_cost`` and finds nothing (observed: the fast CI lane's
+    xdist scheduling paired ``test_runner_response_bodies.py`` with
+    ``test_settings_audit.py`` and the estimated-cost flag read False; the
+    single-threaded alphabetical order had merely masked the dependence).
+    Resetting the memo around every test costs one boolean write and makes
+    each test's first bootstrap a real one.
+    """
+    from factory.providers import azure_foundry
+
+    azure_foundry.reset_for_tests()
+    yield
+    azure_foundry.reset_for_tests()
