@@ -25,11 +25,25 @@ Initiate the email verification flow. Generates a single-use, short-lived verifi
 - **Request:** Authorization: Bearer <access_token> (from registration). No body required.
 - **Response:** {"verification_token": "string"}
 - **Status codes:**
-  - `200` — Token generated and returned. The token is also what would be sent via email; returning it here is the grading-observable substitute.
-  - `401` — No valid access token is provided.
-  - `409` — The account is already verified. Response body: {"error": "already_verified"}.
+  - `200` (non-production, i.e. the token-exposing environment) — body EXACTLY
+    `{"verification_token": "<string>"}`. The token is also what would be sent
+    via email; returning it here is the grading-observable substitute.
+  - `200` (production, token hidden) — body EXACTLY `{"status": "sent"}`. The
+    `verification_token` key MUST be absent — not present-and-null, not an
+    empty object. This is the shape the acceptance oracle never exercises (it
+    always runs non-production), so it is fixed here purely to stop the
+    implementer and the reviewer disagreeing about an unstated body.
+  - `401` — No valid access token is provided. Body: `{"error": "unauthorized"}`.
+  - `409` — The account is already verified. Body: `{"error": "already_verified"}`.
 
 ### `POST /api/auth/email/verify` **(new)**
+
+> **Error vocabulary for this endpoint, fixed 2026-08-09.** This route returns
+> EXACTLY two error codes and no others. A token belonging to an
+> already-verified account is `{"error": "invalid_token"}` — the same shape as
+> any other unusable token, deliberately: a caller must not be able to probe
+> which addresses are verified. Do NOT introduce an `already_verified` error
+> here; that code exists only on `verify-request` (409).
 
 Consume a verification token to mark the account as verified.
 
@@ -106,3 +120,23 @@ verified**. The flag check is retained as a secondary signal only.
 This is the failure mode the ratification step exists for: the author cannot
 audit its own choice of observable, and the weakness is invisible in a green
 run. See `apps/factory/context/modules/personas.md` (Failure modes).
+
+## Ratification addendum — 2026-08-09 (second pass)
+
+Story 177 reached `blocked_review_nonconvergent` after two review cycles with an
+unmoved score (0.85 → 0.85). Diagnosis: **not** a dev or reviewer failure — two
+response bodies were never specified, so every choice the implementer made was
+a contract violation to the reviewer.
+
+1. `verify-request` 200 in the token-HIDDEN environment. The implementer tried
+   `{"verification_token": null}` (cycle 1 finding) then `{}` (cycle 2 finding);
+   the contract defined only the token-exposing shape. Now fixed to
+   `{"status": "sent"}`, key absent.
+2. The already-verified case on `verify`. The implementer moved from
+   `invalid_token` to `already_verified`; the reviewer then noted, correctly,
+   that the spec does not define `already_verified` on that route. Now fixed to
+   `invalid_token`, with the reason (no verification-status oracle for an
+   unauthenticated caller).
+
+Generalised into the `contract` persona as rule 2c and enforced by requiring a
+`body` on every status code — see the paired factory PR.

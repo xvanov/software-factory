@@ -51,7 +51,7 @@ def _payload(vb: tuple[str, str, str] = ("oracle", "oracle", "test-suite")) -> d
                 "purpose": "Register an email/password account.",
                 "request": '{"email": str, "password": str}',
                 "response": '{"access_token": str, "user": {...}}',
-                "status_codes": [{"code": "200", "when": "created"}],
+                "status_codes": [{"code": "200", "when": "created", "body": '{"access_token": str, "user": {...}}'}],
             },
             {
                 "method": "POST", "path": "/api/auth/email/verify", "new": True,
@@ -59,8 +59,10 @@ def _payload(vb: tuple[str, str, str] = ("oracle", "oracle", "test-suite")) -> d
                 "request": '{"token": str}',
                 "response": '{"email_verified": true}',
                 "status_codes": [
-                    {"code": "200", "when": "token valid and unused"},
-                    {"code": "410", "when": "token already redeemed"},
+                    {"code": "200", "when": "token valid and unused",
+                     "body": '{"email_verified": true}'},
+                    {"code": "410", "when": "token already redeemed",
+                     "body": '{"error": "invalid_token"}'},
                 ],
             },
         ],
@@ -284,3 +286,29 @@ def test_all_criteria_delegated_elsewhere_is_still_a_block(tmp_path: Path) -> No
     )
     assert res.gradeable is False
     assert "vacuous" in res.blocked_reason
+
+
+def test_status_code_bodies_are_rendered_so_the_implementer_can_see_them() -> None:
+    """The fix for sacrifice 117's review ping-pong.
+
+    A contract that lists status codes without their bodies leaves the
+    implementer guessing: it picks a shape, the reviewer calls it a contract
+    violation, it picks the opposite, and the reviewer objects again. Story 177
+    reached ``blocked_review_nonconvergent`` with an unmoved score across two
+    cycles for exactly this reason — the contract said the verify-request token
+    must be hidden outside non-production but never said what the body IS when
+    hidden.
+    """
+    md = render_markdown("D117", _payload())
+    assert '{"access_token": str, "user": {...}}' in md
+    assert '{"error": "invalid_token"}' in md
+    assert "body:" in md
+
+
+def test_a_status_code_without_a_body_still_renders_rather_than_crashing() -> None:
+    """CONTROL — the schema requires ``body``, but a legacy/hand-written payload
+    must degrade to the old rendering, never raise."""
+    payload = _payload()
+    payload["endpoints"][0]["status_codes"] = [{"code": "200", "when": "created"}]
+    md = render_markdown("D117", payload)
+    assert "`200` — created" in md
