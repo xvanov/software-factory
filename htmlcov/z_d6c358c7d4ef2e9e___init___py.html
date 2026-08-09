@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_d6c358c7d4ef2e9e_models_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-08-09 14:19 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
+            created at 2026-08-09 16:25 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -80,14 +80,14 @@
     </div>
 </header>
 <main id="source">
-    <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="str">"""Generic post-merge deploy orchestrator.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="str">&quot;&quot;&quot;Generic post-merge deploy orchestrator.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2" href="#t2">2</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">Phase 5: the factory invokes the app's configured deploy commands in a</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">Phase 5: the factory invokes the app&#x27;s configured deploy commands in a</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">fixed sequence &#8212; pre_deploy &#8594; deploy &#8594; health_check &#8594; smoke_test &#8212; and</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="str">runs ``rollback_command`` on any failure. NOTHING in this package knows</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="str">about Docker / Compose / Fly / Vercel / Kubernetes / Heroku; every</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="str">command is an opaque shell string from ``apps/&lt;app>/config.yaml``.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t"><span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="str">command is an opaque shell string from ``apps/&lt;app&gt;/config.yaml``.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t"><span class="str">&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="key">from</span> <span class="nam">factory</span><span class="op">.</span><span class="nam">deploy</span><span class="op">.</span><span class="nam">models</span> <span class="key">import</span> <span class="nam">DeployActionRecord</span><span class="op">,</span> <span class="nam">DeployQueueEntry</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t"><span class="key">from</span> <span class="nam">factory</span><span class="op">.</span><span class="nam">deploy</span><span class="op">.</span><span class="nam">orchestrator</span> <span class="key">import</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -107,19 +107,19 @@
     <p class="run run2"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t"><span class="nam">__all__</span> <span class="op">=</span> <span class="op">[</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">    <span class="str">"CommandResult"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">    <span class="str">"DeployAction"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">    <span class="str">"DeployActionRecord"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">    <span class="str">"DeployQueueEntry"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t">    <span class="str">"StepResult"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t">    <span class="str">"deploy_action_as_dict"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t">    <span class="str">"deploy_post_merge"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">    <span class="str">"deploy_tick"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t">    <span class="str">"drain_deploy_queue"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t">    <span class="str">"enqueue_deploy"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t">    <span class="str">"is_destructive"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">    <span class="str">"run_command"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t">    <span class="str">"run_command_sequence"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">    <span class="str">&quot;CommandResult&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">    <span class="str">&quot;DeployAction&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">    <span class="str">&quot;DeployActionRecord&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">    <span class="str">&quot;DeployQueueEntry&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t">    <span class="str">&quot;StepResult&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t">    <span class="str">&quot;deploy_action_as_dict&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t">    <span class="str">&quot;deploy_post_merge&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">    <span class="str">&quot;deploy_tick&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t">    <span class="str">&quot;drain_deploy_queue&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t">    <span class="str">&quot;enqueue_deploy&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t">    <span class="str">&quot;is_destructive&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">    <span class="str">&quot;run_command&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t">    <span class="str">&quot;run_command_sequence&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t41" href="#t41">41</a></span><span class="t"><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
@@ -129,8 +129,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_d6c358c7d4ef2e9e_models_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-08-09 14:19 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
+            created at 2026-08-09 16:25 +0000
         </p>
     </div>
 </footer>

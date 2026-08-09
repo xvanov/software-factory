@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_e9a7df8e5f9c7fda_queries_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-08-09 14:19 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
+            created at 2026-08-09 16:25 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -80,13 +80,13 @@
     </div>
 </header>
 <main id="source">
-    <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="str">"""Live-handler heartbeat helpers.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="str">&quot;&quot;&quot;Live-handler heartbeat helpers.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2" href="#t2">2</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">A ``live_handlers`` row is inserted when a runner enters and deleted when</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">it exits, so the TUI can show what's *currently* executing. Stale rows</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">it exits, so the TUI can show what&#x27;s *currently* executing. Stale rows</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="str">(from crashed processes) are reaped on every read by checking the</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="str">recorded pid against ``os.kill(pid, 0)``.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="str">&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="key">from</span> <span class="nam">__future__</span> <span class="key">import</span> <span class="nam">annotations</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -103,7 +103,7 @@
     <p class="pln"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t"><span class="key">def</span> <span class="nam">_engine</span><span class="op">(</span><span class="nam">db_path</span><span class="op">:</span> <span class="nam">Path</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">    <span class="nam">migrate</span><span class="op">(</span><span class="nam">db_path</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t">    <span class="key">return</span> <span class="nam">create_engine</span><span class="op">(</span><span class="fst">f"</span><span class="fst">sqlite:///</span><span class="op">{</span><span class="nam">db_path</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span> <span class="nam">echo</span><span class="op">=</span><span class="key">False</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t">    <span class="key">return</span> <span class="nam">create_engine</span><span class="op">(</span><span class="fst">f&quot;</span><span class="fst">sqlite:///</span><span class="op">{</span><span class="nam">db_path</span><span class="op">}</span><span class="fst">&quot;</span><span class="op">,</span> <span class="nam">echo</span><span class="op">=</span><span class="key">False</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t"><span class="key">def</span> <span class="nam">start_heartbeat</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -115,8 +115,8 @@
     <p class="run run2"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t">    <span class="nam">story_id</span><span class="op">:</span> <span class="nam">int</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t">    <span class="nam">app</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">    <span class="nam">direction_id</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t"><span class="op">)</span> <span class="op">-></span> <span class="nam">int</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t">    <span class="str">"""Insert a ``live_handlers`` row and return its id."""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">int</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Insert a ``live_handlers`` row and return its id.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t">    <span class="nam">engine</span> <span class="op">=</span> <span class="nam">_engine</span><span class="op">(</span><span class="nam">db_path</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">    <span class="key">with</span> <span class="nam">Session</span><span class="op">(</span><span class="nam">engine</span><span class="op">)</span> <span class="key">as</span> <span class="nam">session</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t">        <span class="nam">row</span> <span class="op">=</span> <span class="nam">LiveHandler</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -136,8 +136,8 @@
     <p class="run"><span class="n"><a id="t54" href="#t54">54</a></span><span class="t">        <span class="key">return</span> <span class="nam">row</span><span class="op">.</span><span class="nam">id</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t55" href="#t55">55</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t56" href="#t56">56</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t57" href="#t57">57</a></span><span class="t"><span class="key">def</span> <span class="nam">end_heartbeat</span><span class="op">(</span><span class="nam">db_path</span><span class="op">:</span> <span class="nam">Path</span><span class="op">,</span> <span class="nam">hb_id</span><span class="op">:</span> <span class="nam">int</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t">    <span class="str">"""Delete the heartbeat row identified by ``hb_id``. Idempotent."""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t57" href="#t57">57</a></span><span class="t"><span class="key">def</span> <span class="nam">end_heartbeat</span><span class="op">(</span><span class="nam">db_path</span><span class="op">:</span> <span class="nam">Path</span><span class="op">,</span> <span class="nam">hb_id</span><span class="op">:</span> <span class="nam">int</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Delete the heartbeat row identified by ``hb_id``. Idempotent.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t59" href="#t59">59</a></span><span class="t">    <span class="nam">engine</span> <span class="op">=</span> <span class="nam">_engine</span><span class="op">(</span><span class="nam">db_path</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t60" href="#t60">60</a></span><span class="t">    <span class="key">with</span> <span class="nam">Session</span><span class="op">(</span><span class="nam">engine</span><span class="op">)</span> <span class="key">as</span> <span class="nam">session</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t61" href="#t61">61</a></span><span class="t">        <span class="nam">row</span> <span class="op">=</span> <span class="nam">session</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">LiveHandler</span><span class="op">,</span> <span class="nam">hb_id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -146,7 +146,7 @@
     <p class="run"><span class="n"><a id="t64" href="#t64">64</a></span><span class="t">            <span class="nam">session</span><span class="op">.</span><span class="nam">commit</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t66" href="#t66">66</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t"><span class="key">def</span> <span class="nam">_pid_alive</span><span class="op">(</span><span class="nam">pid</span><span class="op">:</span> <span class="nam">int</span><span class="op">)</span> <span class="op">-></span> <span class="nam">bool</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t"><span class="key">def</span> <span class="nam">_pid_alive</span><span class="op">(</span><span class="nam">pid</span><span class="op">:</span> <span class="nam">int</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">bool</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t">    <span class="key">if</span> <span class="nam">pid</span> <span class="op">&lt;=</span> <span class="num">0</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t">        <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -160,8 +160,8 @@
     <p class="run"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t">    <span class="key">return</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t80" href="#t80">80</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t"><span class="key">def</span> <span class="nam">reap_stale_heartbeats</span><span class="op">(</span><span class="nam">db_path</span><span class="op">:</span> <span class="nam">Path</span><span class="op">)</span> <span class="op">-></span> <span class="nam">int</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t">    <span class="str">"""Delete heartbeat rows whose pid is no longer alive. Returns count."""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t"><span class="key">def</span> <span class="nam">reap_stale_heartbeats</span><span class="op">(</span><span class="nam">db_path</span><span class="op">:</span> <span class="nam">Path</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">int</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Delete heartbeat rows whose pid is no longer alive. Returns count.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t83" href="#t83">83</a></span><span class="t">    <span class="nam">engine</span> <span class="op">=</span> <span class="nam">_engine</span><span class="op">(</span><span class="nam">db_path</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t84" href="#t84">84</a></span><span class="t">    <span class="nam">removed</span> <span class="op">=</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t85" href="#t85">85</a></span><span class="t">    <span class="key">with</span> <span class="nam">Session</span><span class="op">(</span><span class="nam">engine</span><span class="op">)</span> <span class="key">as</span> <span class="nam">session</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -185,15 +185,15 @@
     <p class="run run2"><span class="n"><a id="t103" href="#t103">103</a></span><span class="t">    <span class="nam">story_id</span><span class="op">:</span> <span class="nam">int</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t">    <span class="nam">app</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t">    <span class="nam">direction_id</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t"><span class="op">)</span> <span class="op">-></span> <span class="nam">Iterator</span><span class="op">[</span><span class="key">None</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">    <span class="str">"""Context manager: inserts a heartbeat on enter, deletes on exit.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t"><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">Iterator</span><span class="op">[</span><span class="key">None</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Context manager: inserts a heartbeat on enter, deletes on exit.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t"><span class="str">    Use as::</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t"><span class="str">        with live_handler(db_path, persona="dev", model=m, mode="sandbox",</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t"><span class="str">        with live_handler(db_path, persona=&quot;dev&quot;, model=m, mode=&quot;sandbox&quot;,</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t112" href="#t112">112</a></span><span class="t"><span class="str">                          story_id=story.id, app=story.app):</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t113" href="#t113">113</a></span><span class="t"><span class="str">            ...do the work...</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t"><span class="str">    &quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t">    <span class="nam">hb_id</span> <span class="op">=</span> <span class="nam">start_heartbeat</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">        <span class="nam">db_path</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">        <span class="nam">persona</span><span class="op">=</span><span class="nam">persona</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -218,8 +218,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_e9a7df8e5f9c7fda_queries_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-08-09 14:19 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
+            created at 2026-08-09 16:25 +0000
         </p>
     </div>
 </footer>
