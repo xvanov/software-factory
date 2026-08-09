@@ -115,7 +115,11 @@ class PRContext:
     base_branch: str
     files_changed: list[str] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
-    ci_state: str | None = None  # "success" | "failure" | "pending" | None
+    # "success" | "failure" | "hold" | "pending" | None. Only "success" ever
+    # passes ``tests-green`` — "hold" (E6 stage 2: main's own lane is red, see
+    # ``auto_merge._CI_STATE_HOLD``) is a non-merge exactly like "failure", it
+    # merely suppresses the CI-failure ACTIONS upstream in ``auto_merge_tick``.
+    ci_state: str | None = None
     repo_root: Path | None = None  # local checkout for real-run gate execution
     # Factory root — needed by the acceptance-verified gate to resolve a story's
     # ``acceptance_test_ref`` (stored relative to this root, outside repo_root).

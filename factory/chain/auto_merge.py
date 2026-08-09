@@ -63,6 +63,93 @@ _MERGEABLE_STATES = {
     StoryState.READY_FOR_MERGE.value,
 }
 
+# ``gh pr checks`` status buckets that mean "this required check is RED".
+# Factored out of ``_query_ci_state`` so the ``main-green`` hold discrimination
+# below reduces over exactly the same set the failure verdict does — two copies
+# would drift and the hold would silently start swallowing real failures.
+_CI_FAILURE_BUCKETS = frozenset(
+    {"fail", "failing", "failure", "cancel", "cancelled", "timed_out", "error"}
+)
+
+# --------------------------------------------------------------------------- #
+# E6 STAGE 2 — "main is red" is an ENVIRONMENT HOLD, not a PR defect.
+#
+# `.github/workflows/test.yml`'s ``main-green`` job is a PR check that reports
+# whether MAIN's own post-merge full lane is green. Once an operator makes it a
+# REQUIRED check, a PR whose ``main-green`` ran while main was red carries a red
+# required-check aggregate — which, without this, would have been read as "this
+# PR failed CI":
+#
+#   tick 1: ``_handle_ci_failure`` burns a dev-sandbox run per affected PR on a
+#           finding the dev cannot act on (main's breakage is not in its diff);
+#   tick 2: ``_ci_failure_signature`` is stable -> ``identical_failure_signature``
+#           -> ``_park``, and ``_ci_failure_is_genuine`` says True (the check IS
+#           required and its conclusion IS FAILURE) -> the PR is CLOSED and the
+#           story parked terminally in ``blocked_ci_unresolved``.
+#
+# Two ticks of a red main would therefore have destroyed those stories. So a red
+# required-check set whose ONLY red member is ``main-green`` resolves to
+# ``_CI_STATE_HOLD`` instead of ``"failure"``:
+#
+#   * no dev dispatch, no ``ci_fix_redispatch``, no ``ci_fix_exhausted``;
+#   * no ``_park``, no PR close, no story-state write of ANY kind;
+#   * no gate evaluation either — so it also cannot feed
+#     ``_gate_block_history``'s ``_MAX_GATE_BLOCK_CYCLES`` counter and park the
+#     story through THAT sink three ticks later (the second destroyer, which
+#     lives on the missing-labels path rather than the CI-failure path);
+#   * one deduped ``ci_hold_main_red`` event AND one ``merge_actions`` row per
+#     hold episode, then the story is simply re-checked next tick.
+#
+# WHICH PRs A RED MAIN ACTUALLY AFFECTS (adversarial review, 2026-08-09 —
+# corrects an earlier claim here that a red main "turns EVERY open PR's
+# aggregate red"; it does not). ``main-green`` runs on ``pull_request``, and
+# GitHub does NOT re-run pull_request checks when the BASE branch moves. The
+# verdict is computed at open/synchronize and then FROZEN on that head SHA. So:
+#
+#   * a PR opened or pushed-to AFTER main went red gets a red ``main-green`` and
+#     is held — this is the guard working;
+#   * a PR already open with a green ``main-green`` KEEPS it. A red main does
+#     NOT stop the standing queue. The guard bounds NEW work, not in-flight
+#     work.
+#   * symmetrically, a hold NEVER SELF-CLEARS. Making main green does not
+#     re-run the held PR's checks; something has to re-run them. This is the
+#     starvation the review flagged, and it is why the checklist below exists.
+#
+# ACTIVATION CHECKLIST — ``main-green`` MUST NOT be added to branch protection
+# until all three are done. The hold is safe (it destroys nothing); it is NOT
+# yet complete (it can starve), and a starved story is silent.
+#
+#   (a) BOUND THE HOLD. After N consecutive held evaluations, set
+#       ``last_rejection_reason`` so the story surfaces in ``factory inbox``
+#       (the ``blocked_ci_unresolved`` inbox carve-out in ``cli.py`` is the
+#       precedent). Do NOT park and do NOT close the PR — the whole point of
+#       the hold is that the PR is innocent. An unbounded hold is an invisible
+#       stall, which is the ``detect-without-remediate`` failure class.
+#   (b) GIVE IT A RECOVERY TRIGGER. Either re-run the PR's checks once per hold
+#       episode when main's head SHA has moved since the hold began (``gh run
+#       rerun`` / an empty synchronize), or write the operator runbook step
+#       that says clearing a hold means re-running checks on EVERY open PR.
+#       Without one of these, "main is green again" never reaches the PRs.
+#   (c) ACCEPT (or close) THE ``.github/**`` SELF-EDIT GAP. A chain PR that
+#       touches ONLY ``.github/**`` does not trip the factory self-edit staging
+#       twin, so nothing runs a clone before it lands. Such a PR could rename a
+#       workflow job to ``main-green`` and thereby convert its OWN genuine CI
+#       failure into an eternal hold — the one shape in which the hold does
+#       suppress a real red. It requires a PR that edits workflow YAML and
+#       names the job exactly ``main-green``; it is ACCEPTED FOR NOW and
+#       recorded here rather than mitigated. Closing it means either adding
+#       ``.github/**`` to the staging-gated self-edit paths or deriving the
+#       hold name from something a PR cannot rewrite.
+#
+# FAIL DIRECTION: any uncertainty (an unparseable check name, a second red
+# required check, a red ``main-green`` next to a red ``pytest``) resolves to the
+# historical ``"failure"`` path. A hold must never be a way for a real failure
+# to be waved through — it only ever SUPPRESSES action, never authorizes a
+# merge: ``tests_green`` compares ``ci_state == "success"``, so a hold is a
+# non-merge exactly like a failure is.
+_MAIN_GREEN_CHECK_NAME = "main-green"
+_CI_STATE_HOLD = "hold"
+
 # CI-failure -> dev re-fix loop (the operator's "run the real CI, check the
 # output, and if it craps out, fix what crapped out" loop). Bounds how many
 # times ``_handle_ci_failure`` will re-dispatch the SAME story back to dev
@@ -1714,13 +1801,15 @@ def _query_ci_state(*, app_config: AppConfig, pr_number: int) -> str | None:
     """Query the REAL CI conclusion for a PR via the ``gh`` CLI.
 
     Returns ``"success"`` (every REQUIRED check passed/skipped), ``"failure"``
-    (at least one required check failed/cancelled/errored), ``"pending"``
-    (required checks still queued/running), or ``None`` when there is nothing
-    to gate on — no branch protection / no required checks, ``gh``
-    missing/timeout, a placeholder (non-positive) PR number, or unparseable
-    output. ``None`` makes the ``tests-green`` gate fall back to the recorded
-    dev flag, so apps without CI/protection (e.g. sacrifice pre-CI) are
-    unaffected while protected repos gate on their real Actions run.
+    (at least one required check failed/cancelled/errored), ``"hold"`` (the
+    ONLY failing required check is the E6 environment guard ``main-green`` —
+    see ``_CI_STATE_HOLD``), ``"pending"`` (required checks still
+    queued/running), or ``None`` when there is nothing to gate on — no branch
+    protection / no required checks, ``gh`` missing/timeout, a placeholder
+    (non-positive) PR number, or unparseable output. ``None`` makes the
+    ``tests-green`` gate fall back to the recorded dev flag, so apps without
+    CI/protection (e.g. sacrifice pre-CI) are unaffected while protected repos
+    gate on their real Actions run.
 
     This replaces the historical hardcoded ``ci_state="success"``, which let
     the gate pass on a string literal instead of a real signal (the "thinks
@@ -1754,15 +1843,42 @@ def _query_ci_state(*, app_config: AppConfig, pr_number: int) -> str | None:
     if "no required checks" in combined or "no checks reported" in combined:
         # No protection / no required checks → nothing real to gate on.
         return None
-    # Each row: "<name>\t<status>\t<elapsed>\t<url>"; status is the 2nd column.
+    # Each row: "<name>\t<status>\t<elapsed>\t<url>"; name is the 1st column and
+    # status the 2nd. The NAME is only load-bearing for the ``main-green``
+    # environment-hold discrimination below; every other verdict reduces over
+    # statuses exactly as before.
     statuses: set[str] = set()
+    failing_names: list[str] = []
+    name_parse_uncertain = False
     for line in (proc.stdout or "").splitlines():
         parts = line.split("\t")
         if len(parts) >= 2 and parts[1].strip():
-            statuses.add(parts[1].strip().lower())
+            status = parts[1].strip().lower()
+            statuses.add(status)
+            if status in _CI_FAILURE_BUCKETS:
+                name = parts[0].strip()
+                if not name:
+                    # A failing row we cannot NAME must never be discounted as
+                    # an environment hold. Fail towards today's behaviour.
+                    name_parse_uncertain = True
+                failing_names.append(name.lower())
     if not statuses:
         return None
-    if statuses & {"fail", "failing", "failure", "cancel", "cancelled", "timed_out", "error"}:
+    if statuses & _CI_FAILURE_BUCKETS:
+        # E6 STAGE 2 — ENVIRONMENT HOLD, not a PR defect. ``main-green`` is the
+        # required check that reports whether MAIN's own post-merge full lane is
+        # green (see .github/workflows/test.yml). When it is the ONLY red
+        # required check, this PR's own code is fine and nothing about it should
+        # be touched: the whole repo is held until an operator fixes main. Any
+        # OTHER red required check means the PR really did fail CI, and we take
+        # the historical failure path unchanged — including the case where
+        # main-green is red *alongside* a real failure.
+        if (
+            not name_parse_uncertain
+            and failing_names
+            and set(failing_names) == {_MAIN_GREEN_CHECK_NAME}
+        ):
+            return _CI_STATE_HOLD
         return "failure"
     if statuses & {"pending", "in_progress", "queued", "waiting"}:
         return "pending"
@@ -2098,6 +2214,78 @@ def _fetch_ci_failure_logs(*, app_config: AppConfig, pr_number: int) -> str:
     return digest[-4000:]
 
 
+def _handle_main_green_hold(
+    *,
+    story: StoryRecord | None,
+    pr_number: int,
+    root: Path,
+) -> bool:
+    """Record that this PR is held because MAIN is red — and do NOTHING else.
+
+    Returns True iff this call is the TRANSITION into a hold episode (i.e. it
+    just emitted the event). The caller uses that to decide whether to persist a
+    ``merge_actions`` row too — see below.
+
+    The whole point of the hold (see ``_CI_STATE_HOLD``) is that no state is
+    written: no story row is touched, no dev run is dispatched, no PR is
+    closed. The only side effect is one auditable event, so ``factory trace``
+    can explain a queue that suddenly stopped moving.
+
+    DEDUPE — "emit on transition into the hold". Ticks run every minute and a
+    red main can last hours; one event per tick per PR would bury the story's
+    real history. We emit only when the story's most recent event is not
+    already ``ci_hold_main_red``, so a hold episode costs exactly one event and
+    a hold that clears and returns is legible as two. Nothing else writes to a
+    held story's stream, so "last event" is a sound episode boundary.
+
+    The SAME transition test gates the ``merge_actions`` row (adversarial
+    review, 2026-08-09). A held PR is re-evaluated every tick and a per-tick row
+    is 1,440 rows/PR/day on a 60 s timer — the exact unbounded-row pathology
+    ``_MAX_GATE_BLOCK_CYCLES`` was introduced for after PR 88 accumulated 436
+    identical evaluations. One row per hold EPISODE says everything a repeated
+    row would.
+
+    NO STORY, NO ROW: a PR with no ``StoryRecord`` has no event stream, so there
+    is no substrate to detect a transition against. We return False rather than
+    write a row every tick — an unbounded audit trail is worse than a missing
+    one, and a storyless PR is not part of the story queue a hold is explaining
+    anyway. (It is still held: the short-circuit is unconditional.)
+
+    Best-effort throughout: an unwritable event log must never turn a hold into
+    an action, so any failure returns False (hold, but record nothing).
+    """
+    from factory.chain.event_log import log_story_event, read_story_events
+
+    if story is None or story.id is None:
+        return False
+    try:
+        events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+        if events and events[-1].get("event") == "ci_hold_main_red":
+            return False
+        log_story_event(
+            story.id,
+            "ci_hold_main_red",
+            {
+                "pr_number": pr_number,
+                "required_check": _MAIN_GREEN_CHECK_NAME,
+                "detail": (
+                    f"main's post-merge full lane is red, so this PR's required "
+                    f"`{_MAIN_GREEN_CHECK_NAME}` check is failing. This is an "
+                    "ENVIRONMENT hold, not a defect in this PR: the story is left "
+                    "exactly where it is and re-checked next tick. An operator must "
+                    "make main green — and then RE-RUN THIS PR'S CHECKS, because "
+                    "GitHub does not re-run pull_request checks when the base branch "
+                    "moves (see _CI_STATE_HOLD's ACTIVATION CHECKLIST item (b))."
+                ),
+            },
+            software_factory_root=root,
+            slug_hint=story.slug,
+        )
+        return True
+    except Exception:  # noqa: BLE001 - a hold must never fail louder than it holds
+        return False
+
+
 def _handle_ci_failure(
     *,
     story: StoryRecord,
@@ -2140,7 +2328,8 @@ def _handle_ci_failure(
     ``orchestrator._recover_blocked_stories``:
 
       * a hard cap (``_MAX_CI_FIX_CYCLES``) on prior ``ci_fix_redispatch``
-        events for THIS story;
+        events for THIS story, counted only SINCE the most recent
+        ``story_resumed`` (the ``_gate_block_history`` precedent);
       * a signature guard — if the current CI failure digest hashes
         identically to the one recorded at the story's most recent
         ``ci_fix_redispatch``, the dev's last attempt didn't actually fix it,
@@ -2161,8 +2350,23 @@ def _handle_ci_failure(
         return "left"
 
     events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
-    prior_redispatches = [e for e in events if e.get("event") == "ci_fix_redispatch"]
-    already_escalated = any(e.get("event") == "ci_fix_exhausted" for e in events)
+    # OPERATOR RESUME (2026-08-09): scope the CI-fix window to events logged
+    # AFTER the most recent ``story_resumed``, exactly the way
+    # ``_gate_block_history`` already does it (see its OPERATOR RESUME note —
+    # same precedent, same derivation from the event stream, no counter column).
+    # Without this, ``factory resume-story`` could not undo a CI park: the
+    # redispatch count was read over ALL history, so a resumed story hit
+    # ``cap_reached``/``identical_failure_signature`` on its very first
+    # evaluation and re-parked before the fixed environment ever got a turn.
+    # That is exactly the shape a red main produces — the redispatches were
+    # never the story's fault, and the resume is the operator saying so.
+    _resume_idx = -1
+    for _i, _e in enumerate(events):
+        if _e.get("event") == "story_resumed":
+            _resume_idx = _i
+    scoped_events = events[_resume_idx + 1 :]
+    prior_redispatches = [e for e in scoped_events if e.get("event") == "ci_fix_redispatch"]
+    already_escalated = any(e.get("event") == "ci_fix_exhausted" for e in scoped_events)
 
     def _escalate(reason: str) -> None:
         if already_escalated:
@@ -2873,6 +3077,43 @@ def auto_merge_tick(
 
     actions: list[MergeAction] = []
     for f in fixtures:
+        # E6 STAGE 2 — ENVIRONMENT HOLD (main is red). Checked BEFORE the
+        # CI-failure loop AND before ``_evaluate_one_pr``, because both of the
+        # downstream sinks would destroy the queue on a red main:
+        #   * ``_handle_ci_failure`` -> dev dispatch, then PR close + terminal
+        #     park two ticks later (see ``_CI_STATE_HOLD``);
+        #   * ``_evaluate_one_pr`` -> ``tests-green`` fails (ci_state != success)
+        #     -> a ``merge_gates_failed`` event with missing_labels every tick ->
+        #     ``_MAX_GATE_BLOCK_CYCLES`` -> ``_park_gate_block_exhausted``.
+        # Skipping the whole evaluation is what makes "the story simply stays
+        # where it is" true rather than merely intended. Real-run only, real PRs
+        # only — dry-run previews and placeholder fixtures behave as before.
+        if not dry_run and f.pr_number > 0 and f.ci_state == _CI_STATE_HOLD:
+            hold_is_new = _handle_main_green_hold(
+                story=f.story, pr_number=f.pr_number, root=root
+            )
+            action = MergeAction(
+                app=app,
+                pr_number=f.pr_number,
+                merged=False,
+                reason=(
+                    f"held: main is red (required `{_MAIN_GREEN_CHECK_NAME}` check "
+                    "failing) — environment hold, not a PR defect; story untouched, "
+                    "re-checked next tick"
+                ),
+                gates_passed=[],
+                blocking_labels=[],
+            )
+            # PERSIST ON TRANSITION ONLY. The in-memory action is always
+            # returned (the tick's own report must not lie about what it did
+            # with this PR), but the ``merge_actions`` ROW is written once per
+            # hold episode — see ``_handle_main_green_hold``. A per-tick row is
+            # the PR-88 unbounded-row pathology at 1,440 rows/PR/day.
+            if hold_is_new:
+                _record_merge_action(action, f.head_sha, db)
+            actions.append(action)
+            continue
+
         # CI-failure -> dev re-fix loop. Real CI reporting "failure" used to
         # just make the merge gate decline; now the failure is fed back to
         # dev BEFORE the normal gate/merge decision runs, so a story with a
