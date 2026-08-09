@@ -219,6 +219,40 @@ def test_recovery_handles_unparseable_timestamps(tmp_path: Path) -> None:
     assert recovered == [("garbo", "dev_in_progress", "dev_retry")]
 
 
+def test_boundary_exactly_at_threshold_fires(tmp_path: Path) -> None:
+    """E1 (BENCHMARK-READINESS-PLAN.md): the plan calls out that this pass has
+    'never been observed firing' at exactly 10 min in a live run. Pin the exact
+    boundary with an explicit ``now=`` so the check is deterministic, not a race
+    against wall-clock time. The comparison in ``_prune_stale_in_progress`` is
+    ``if (now - updated) < _STALE_THRESHOLD_SECONDS: continue`` — so a row whose
+    age EQUALS the threshold is NOT skipped, i.e. it recovers on the dot."""
+    db = _seed_db(tmp_path)
+    fixed_now = datetime(2026, 1, 1, tzinfo=UTC)
+    exactly_at_threshold = fixed_now - timedelta(seconds=_STALE_THRESHOLD_SECONDS)
+    _story(db, state="dev_in_progress", updated_at=exactly_at_threshold, slug="boundary")
+
+    recovered = _prune_stale_in_progress(
+        db, "sacrifice", settings=FactorySettings(), root=tmp_path, now=fixed_now
+    )
+    assert len(recovered) == 1
+    assert recovered[0][0] == "boundary"
+
+
+def test_boundary_one_second_under_threshold_is_not_yet_stale(tmp_path: Path) -> None:
+    """The other side of the same boundary: one second YOUNGER than the
+    threshold must NOT recover, with the same fixed ``now=`` so the two tests
+    bracket the exact cutover with no wall-clock slop."""
+    db = _seed_db(tmp_path)
+    fixed_now = datetime(2026, 1, 1, tzinfo=UTC)
+    just_under_threshold = fixed_now - timedelta(seconds=_STALE_THRESHOLD_SECONDS - 1)
+    _story(db, state="dev_in_progress", updated_at=just_under_threshold, slug="justunder")
+
+    recovered = _prune_stale_in_progress(
+        db, "sacrifice", settings=FactorySettings(), root=tmp_path, now=fixed_now
+    )
+    assert recovered == []
+
+
 def test_recovery_idempotent_on_second_run(tmp_path: Path) -> None:
     """Recovering twice has no effect on the second pass — once a row is
     back in ``dev_retry`` it's no longer matched by the recovery map."""
