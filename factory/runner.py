@@ -2041,6 +2041,32 @@ async def sandbox_run(
         except Exception:  # noqa: BLE001 - telemetry must never break teardown
             _partial_usage.clear()
 
+    def _snapshot_live_memory() -> tuple[str, list[dict[str, Any]], str]:
+        """Best-effort cross-retry memory from a conversation that has NOT returned.
+
+        A timed-out sandbox used to record ``last_assistant_message=""``,
+        ``recent_tool_calls=[]``, ``self_summary=""``. Those three fields are the
+        "what dev was thinking" layer that ``handle_dev`` stores in
+        ``dev_attempts_json`` and ``_build_initial_message`` renders into the NEXT
+        attempt's prompt. Empty means every retry after a timeout restarts COLD —
+        which is why sacrifice story 173 burned two ~30-minute attempts
+        ($1.92 then $2.64) with no cumulative progress: attempt 2 could not know
+        what attempt 1 had already tried.
+
+        Reading a live conversation is safe here: ``_extract_conversation_memory``
+        snapshots ``state.events`` into a new list inside its own try/except
+        before walking it, so a worker thread still appending cannot corrupt the
+        walk. Wrapped again anyway — this runs on the failure path, where a
+        telemetry read must never turn a timeout into a crash.
+        """
+        conv = _live_conversation.get("conv")
+        if conv is None:
+            return "", [], ""
+        try:
+            return _extract_conversation_memory(conv)
+        except Exception:  # noqa: BLE001 - memory capture must never break teardown
+            return "", [], ""
+
     def _do_run() -> tuple[int, int, int, float, str, list[dict[str, Any]], str]:
         # ``Conversation`` is a factory that returns LocalConversation/RemoteConversation
         # depending on the workspace type. Treat as Any for mypy purposes.
@@ -2181,6 +2207,10 @@ async def sandbox_run(
             # before any model work has no usage to be un/reliable about.
             usage_reliable=_usage_meta.get("reliable") if model_did_work else None,
         )
+        # Carry forward what the timed-out attempt actually did. Without this the
+        # next retry re-derives everything from scratch — see
+        # ``_snapshot_live_memory``.
+        _t_last_msg, _t_calls, _t_finish = _snapshot_live_memory()
         return RunResult(
             success=False,
             # Model completed then teardown timed out → a real red attempt;
@@ -2191,9 +2221,9 @@ async def sandbox_run(
             cost_usd=_cost,
             error=err,
             summary=err,
-            last_assistant_message="",
-            recent_tool_calls=[],
-            self_summary="",
+            last_assistant_message=_t_last_msg,
+            recent_tool_calls=_t_calls,
+            self_summary=_extract_self_summary(_t_last_msg, _t_finish),
             premodel_infra=not model_did_work,
             usage_reliable=_usage_meta.get("reliable") if model_did_work else None,
         )
@@ -2214,6 +2244,7 @@ async def sandbox_run(
         # with ``_partial_usage`` empty, because that holder is only written
         # once ``run()`` returns. Recover from the live conversation first.
         _snapshot_live_usage()
+        _x_last_msg, _x_calls, _x_finish = _snapshot_live_memory()
         _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
         _cost = float(_partial_usage.get("cost", 0.0) or 0.0)
         model_did_work = _t_out > 0 or _cost > 0.0
@@ -2252,9 +2283,9 @@ async def sandbox_run(
             cost_usd=_cost,
             error=err,
             summary=err,
-            last_assistant_message="",
-            recent_tool_calls=[],
-            self_summary="",
+            last_assistant_message=_x_last_msg,
+            recent_tool_calls=_x_calls,
+            self_summary=_extract_self_summary(_x_last_msg, _x_finish),
             premodel_infra=not model_did_work,
             usage_reliable=_usage_meta.get("reliable") if model_did_work else None,
         )
