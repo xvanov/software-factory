@@ -27,6 +27,18 @@ treats the directory's `*.md` glob as the registry.
   changes via file-edit/Bash calls; the chain checks `git diff`/`git
   status`/exit code after the sandbox exits, so chat-only "I changed X" is a
   failed run.
+- **Interface contract (`contract`, 2026-08-09).** The ONLY role that reads
+  both the real app and the spec. Runs per DIRECTION, before any story exists,
+  and writes `apps/<app>/directions/<id>/api_spec.md` — the document `sm`/`dev`
+  AND the dev-blind `acceptance_author` both consume (`acceptance._compose_spec`
+  reads it verbatim). Its route table is PARSED from the app's source
+  (`factory/chain/route_table.py`), never recalled by the model: a model asked
+  to remember routes confabulates them, and a fabricated route becomes an oracle
+  that 404s at HEAD however correct the implementation is. Invoked by
+  `factory write-contract --app X --direction N`; output needs operator
+  ratification (it can pick a weak observable — see Failure modes). Also emits a
+  GRADEABILITY verdict classifying each criterion `oracle` / `test-suite` /
+  `none`; only `none` (or nothing oracle-graded at all) blocks.
 - **Canonical handoff chain (`chain_kind="tdd"`, default):** `pm` triages +
   decomposes a `Direction` → `architect` (only above the architectural
   threshold) rewrites current-state/diagrams → `sm` writes one BMAD story
@@ -154,6 +166,10 @@ treats the directory's `*.md` glob as the registry.
   registry; `factory/personas/validator.py` — output-schema validation.
 - `factory/personas/{pm,analyst,architect,sm,ux_designer}.md` — direction
   triage through story prep (see chain diagram above for each one's role).
+- `factory/personas/contract.md` + `factory/chain/contract.py` — the interface
+  contract author and its gradeability verdict; `factory/chain/route_table.py`
+  parses the app's real routes (prefix-joined) so the contract can only reuse or
+  knowingly extend paths that exist. CLI: `factory write-contract`.
 - `factory/personas/acceptance_author.md` — spec-blind oracle author;
   `factory/chain/acceptance.py` is the calling code.
 - `factory/personas/{test_designer,test_implementer,dev,reviewer}.md` — the
@@ -171,6 +187,23 @@ treats the directory's `*.md` glob as the registry.
   context-module doc for the factory's own subsystems.
 
 ## Failure modes
+
+- **The spec gap (root cause of the 2026-08-08/09 direction-117 stall).** When a
+  direction names no routes, `dev` and the dev-blind `acceptance_author` must
+  independently invent the same interface. They converge only by luck. The
+  author has exactly two moves, both blocking: GUESS a route (oracle 404s at
+  HEAD regardless of the code — cost ~$4.56 on 117 before it was known), or
+  DECLINE (all-`pytest.skip` vacuous oracle — cost ~$0.13). Cure: run
+  `contract` first so both sides read one frozen `api_spec.md`. A direction
+  whose criteria cannot be made observable is returned to the operator instead
+  of spawning stories that cannot pass.
+- **A ratified contract can still pick a weak observable.** On direction 117 the
+  contract author concluded "no sensitive-operation endpoint exists in the route
+  table" and settled for observing `email_verified` state, when `POST /api/goals`
+  exists and is exactly the route dev gated — grading AC1 as state-observability
+  rather than gate-enforcement. Green would then mean less than it appears. The
+  author cannot catch this about itself; this is what operator ratification is
+  for.
 
 - **JSON/protocol mismatch.** A JSON-only persona emits prose, wrong schema,
   or a field outside contract. Symptom: chain parser rejects it, downstream
