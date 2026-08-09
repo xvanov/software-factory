@@ -1415,11 +1415,80 @@ def inbox_cmd(
     _sched_engine(db)
     _status_engine(db)
     apps = [app_name] if app_name else _list_apps()
+    eng = create_engine(f"sqlite:///{db}", echo=False)
+
+    # E1 (stall visibility, BENCHMARK-READINESS-PLAN.md): story 172 once sat
+    # 255 minutes in a *_in_progress state because the only stale-detector
+    # (``orchestrator._prune_stale_in_progress``) runs INSIDE the tick, and no
+    # tick was running. Both checks below are PURE READS — no mutation, no
+    # dependency on a tick — so they work with the factory off, which is
+    # exactly the situation that hid story 172.
+    from datetime import UTC, datetime
+
+    from factory.chain.orchestrator import _STALE_RECOVERY_MAP, _STALE_THRESHOLD_SECONDS
+    from factory.chain.state_machine import is_terminal
+
+    now_ts = datetime.now(UTC).timestamp()
+    stale_table = Table(
+        title=f"stale *_in_progress stories (no update for >{_STALE_THRESHOLD_SECONDS // 60} min)"
+    )
+    stale_table.add_column("app")
+    stale_table.add_column("id")
+    stale_table.add_column("slug")
+    stale_table.add_column("state")
+    stale_table.add_column("minutes stale")
+    have_stale = False
+    any_in_flight = False
+    with Session(eng) as session:
+        for a in apps:
+            rows = session.exec(select(StoryRecord).where(StoryRecord.app == a)).all()
+            for r in rows:
+                try:
+                    if not is_terminal(StoryState(r.state)):
+                        any_in_flight = True
+                except ValueError:
+                    pass
+                # ``_STALE_RECOVERY_MAP`` keys are exactly the six
+                # ``*_in_progress`` states the prune pass would touch — reusing
+                # its keys (rather than a second hardcoded state list) means
+                # this table and the pass it previews can never drift apart.
+                if r.state not in _STALE_RECOVERY_MAP:
+                    continue
+                try:
+                    updated_iso = r.updated_at or r.created_at
+                    updated_ts = datetime.fromisoformat(updated_iso).timestamp()
+                except (TypeError, ValueError):
+                    updated_ts = 0.0  # unparseable -> treat as ancient, same as the prune pass
+                age_s = now_ts - updated_ts
+                if age_s < _STALE_THRESHOLD_SECONDS:
+                    continue
+                stale_table.add_row(a, str(r.id), r.slug, r.state, f"{age_s / 60:.1f}")
+                have_stale = True
+    if have_stale:
+        console.print(stale_table)
+    else:
+        console.print("[dim]No stale *_in_progress stories.[/dim]")
+
+    # Loud top-of-inbox warning: stories in flight but nothing is running to
+    # progress them. A non-terminal story making no progress while the
+    # factory is off is easy to miss otherwise — direction trackers stayed
+    # open the same way while the factory was OFF (see the section below).
+    if any_in_flight:
+        power_is_off, power_skip_note = _factory_power_is_off()
+        if power_is_off:
+            console.print(
+                Panel.fit(
+                    "[bold red]Stories are in flight but the factory is OFF[/bold red] — "
+                    "nothing will progress them until 'factory on' runs.",
+                    title="WARNING",
+                )
+            )
+        elif power_skip_note:
+            console.print(f"[dim]power check skipped: {power_skip_note}[/dim]")
 
     # Stories with last_rejection_reason or in BLOCKED state -> needs human.
     from factory.directions.tracker_issue import _story_is_resolved
 
-    eng = create_engine(f"sqlite:///{db}", echo=False)
     needs_human_table = Table(title="Needs human action (stories)")
     needs_human_table.add_column("app")
     needs_human_table.add_column("id")
@@ -1615,6 +1684,77 @@ def inbox_cmd(
                 have_trk = True
     if have_trk:
         console.print(trk_table)
+
+    # E1 (stall visibility): a direction's LOCAL status can reach a terminal
+    # one (``closed`` — see ``factory.directions.schema.RESOLVED_DIRECTION_STATUSES``;
+    # the vocabulary has no "rejected" status, only ``created`` / ``pm-validated``
+    # / ``needs-direction`` / ``closed``) while its GitHub tracker issue stays
+    # OPEN — the same "factory was off" gap that let stale ``*_in_progress``
+    # story rows go unnoticed. The GitHub call is best-effort: on ANY error
+    # (no token, network, a repo/issue lookup failure) this prints exactly one
+    # skip note and moves on — it must never crash `inbox`, and must never
+    # silently omit the section either.
+    tracker_open_rows: list[tuple[str, str, str, str]] = []
+    tracker_check_skip_note: str | None = None
+    try:
+        from factory.app_config import load_app_config
+        from factory.directions.schema import RESOLVED_DIRECTION_STATUSES, DirectionRecord
+        from factory.directions.watcher import _engine as _directions_engine
+        from factory.providers.github import build_github_client
+
+        _directions_engine(db)
+        with Session(eng) as session:
+            all_dir_rows = session.exec(select(DirectionRecord)).all()
+        # Rate/scope: only directions that actually have a tracker_issue
+        # recorded, capped at ~20 issue lookups per inbox run.
+        direction_candidates = [
+            drow
+            for drow in all_dir_rows
+            if drow.app in apps
+            and drow.tracker_issue
+            and drow.status in RESOLVED_DIRECTION_STATUSES
+        ][:20]
+        if direction_candidates:
+            gh_client = build_github_client()
+            if gh_client is None:
+                tracker_check_skip_note = "no GitHub token available"
+            else:
+                app_cfg_cache: dict[str, Any] = {}
+                for drow in direction_candidates:
+                    tracker_issue_num = drow.tracker_issue
+                    if tracker_issue_num is None:
+                        continue  # filtered above; mypy can't see through the comprehension
+                    if drow.app not in app_cfg_cache:
+                        app_cfg_cache[drow.app] = load_app_config(drow.app, _FACTORY_ROOT)
+                    cfg = app_cfg_cache[drow.app]
+                    repo = gh_client.get_repo(cfg.repo)
+                    issue = repo.get_issue(int(tracker_issue_num))
+                    if str(getattr(issue, "state", "")).lower() == "open":
+                        tracker_open_rows.append(
+                            (drow.app, drow.direction_id, drow.status, f"#{tracker_issue_num}")
+                        )
+    except Exception as exc:  # noqa: BLE001 - the GH tracker check must never crash inbox
+        tracker_check_skip_note = tracker_check_skip_note or str(exc)[:160]
+
+    if tracker_check_skip_note:
+        console.print(
+            f"[yellow]tracker check skipped ({tracker_check_skip_note}) — cannot verify "
+            "whether closed/terminal directions' tracker issues are still open on "
+            "GitHub.[/yellow]"
+        )
+    elif tracker_open_rows:
+        tracker_open_table = Table(title="terminal directions with a still-OPEN tracker issue")
+        tracker_open_table.add_column("app")
+        tracker_open_table.add_column("direction")
+        tracker_open_table.add_column("local status")
+        tracker_open_table.add_column("tracker issue")
+        for trow in tracker_open_rows:
+            tracker_open_table.add_row(*trow)
+        console.print(tracker_open_table)
+    else:
+        console.print(
+            "[dim]No terminal directions with a still-open tracker issue.[/dim]"
+        )
 
     # Phase 6: recent scheduled runs (last 24h).
     from datetime import UTC as _UTC
@@ -1929,6 +2069,32 @@ def resume_cmd(
 
         new = set_mode("normal", _FACTORY_ROOT)
         console.print(Panel.fit(f"factory mode -> [bold green]{new}[/bold green]", title="resume"))
+
+
+def _factory_power_is_off() -> tuple[bool | None, str | None]:
+    """Read-only factory power check for ``inbox``'s in-flight-while-off
+    warning (E1). Built on the same ``factory.power.power_status`` read
+    ``power_cmd`` below uses, so "OFF" here and "OFF" in ``factory power``
+    can never disagree about the underlying systemd state.
+
+    Returns ``(True, None)`` when every discovered unit is stopped, ``(False,
+    None)`` when at least one unit is running (on or half-up), or ``(None,
+    <note>)`` when the check itself could not run — no factory systemd units
+    installed on this machine, or ``systemctl`` errored/timed out/is missing.
+    Callers must treat ``None`` as "skip, do not warn" and surface the note
+    instead of guessing.
+    """
+    from factory.power import power_status
+
+    try:
+        units = power_status(root=_FACTORY_ROOT)
+    except Exception as exc:  # noqa: BLE001 - a broken systemctl must never crash inbox
+        return None, f"systemctl check failed ({exc})"
+    installed = [u for u in units if u.installed]
+    if not installed:
+        return None, "no factory systemd units installed on this machine"
+    running = [u for u in installed if u.running]
+    return (len(running) == 0), None
 
 
 def _render_power_units(units: list[Any], title: str) -> None:
