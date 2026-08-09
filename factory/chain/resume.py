@@ -422,16 +422,42 @@ def apply_resume(
     ORDER MATTERS. The PR is reopened FIRST, and a failure there aborts before
     anything is persisted: a story moved to ``pr_open`` whose PR is really closed
     is a phantom the auto-merge poller re-evaluates every tick forever. Then the
-    oracle/sidecar files, then the DB row, then the audit event LAST — the event
-    is what resets the gate-block window, so writing it before the row would open
-    a window where a concurrent tick sees a reset count on a still-parked story.
+    oracle/sidecar files, then the ``story_resumed`` event, and the DB row LAST.
+
+    The event goes BEFORE the row deliberately. It is not a record of the reset —
+    it IS the reset: ``auto_merge._gate_block_history`` reads it to decide whether
+    the historical blocks at this head sha still count. And ``log_story_event`` is
+    best-effort by design; it swallows ``OSError`` and returns early if the log
+    path cannot be resolved. So the two orderings fail very differently:
+
+    * event first, row-write fails  -> the story stays parked (visible, safe) and
+      a stale reset sits on a row that no poller evaluates, because parked states
+      are not in ``auto_merge._MERGEABLE_STATES``. Harmless.
+    * row first, event lost         -> the story is resumed with its window NOT
+      reset, so the next evaluation re-parks it at the unchanged head sha — the
+      exact bug this module exists to fix — while the operator reads a green
+      "resumed" panel. A silent re-park wearing a success message.
+
+    So the event is written first AND read back, and a missing one aborts before
+    the row moves.
     """
     from factory.chain.acceptance import clear_gate_block
-    from factory.chain.event_log import log_story_event
+    from factory.chain.event_log import log_story_event, read_story_events
     from factory.chain.handlers import persist_story
 
     if not plan.ok:
         raise RuntimeError(f"refusing to resume story {plan.story_id}: {plan.refusals}")
+
+    # ``plan`` and ``story`` arrive as independent arguments, and every mutation
+    # below is applied to ``story`` while every decision above was computed from
+    # whatever row ``plan`` was built from. A mismatch would silently write one
+    # story's resume onto another row — no state string in ``RESUME_POINTS`` is
+    # invalid, so nothing downstream would object.
+    if plan.story_id != int(story.id or 0):
+        raise RuntimeError(
+            f"plan/story mismatch: the plan targets story {plan.story_id} but was handed "
+            f"story.id={story.id}. Refusing rather than mutating an unplanned row."
+        )
 
     if plan.pr_needs_reopen:
         if app_repo is None:
@@ -450,15 +476,6 @@ def apply_resume(
         story.acceptance_test_ref = None
     clear_gate_block(root, story.app, story.id)
 
-    story.state = plan.to_state
-    story.total_attempts = 0
-    story.dependency_defer_count = 0
-    story.last_rejection_reason = None
-    story.error = None
-    if plan.point in {"dev", "sm"}:
-        story.dev_step_checkpoint = None
-    persist_story(story, db)
-
     log_story_event(
         story.id,
         "story_resumed",
@@ -476,6 +493,32 @@ def apply_resume(
         software_factory_root=root,
         slug_hint=story.slug,
     )
+    # Read it back. ``log_story_event`` reports failure by staying silent, and a
+    # lost write here is not a missing audit line — it is a missing gate-block
+    # reset (see the ordering note above). Abort BEFORE the row moves, so a
+    # failure leaves the story parked rather than resumed-but-doomed.
+    # ``story.id`` is not None here: the plan/story identity guard above compared
+    # it against ``plan.story_id``, and ``plan_resume`` derives that from a
+    # persisted row. Narrowed explicitly so the read-back is typed, not assumed.
+    tail = read_story_events(
+        int(story.id or 0), software_factory_root=root, slug_hint=story.slug, limit=5
+    )
+    if not any(e.get("event") == "story_resumed" for e in tail):
+        raise RuntimeError(
+            f"the `story_resumed` event for story {plan.story_id} could not be written to "
+            f"{root}/state/logs — that event IS the merge-gate block reset, so resuming "
+            "without it would re-park the story on the next evaluation. Nothing was "
+            "changed; fix the log path/permissions and retry."
+        )
+
+    story.state = plan.to_state
+    story.total_attempts = 0
+    story.dependency_defer_count = 0
+    story.last_rejection_reason = None
+    story.error = None
+    if plan.point in {"dev", "sm"}:
+        story.dev_step_checkpoint = None
+    persist_story(story, db)
     return plan
 
 

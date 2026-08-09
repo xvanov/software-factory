@@ -2174,7 +2174,12 @@ def budget_cmd() -> None:
 
 @app.command("resume-story")
 def resume_story_cmd(
-    story_id: int = typer.Argument(..., help="StoryRecord.id to resume"),
+    # Optional so ``--list`` (which takes no story) can run at all. A required
+    # positional made the documented listing flag unusable: `factory resume-story
+    # --list` exited 2 with "Missing argument 'STORY_ID'".
+    story_id: int | None = typer.Argument(
+        None, help="StoryRecord.id to resume (omit with --list)"
+    ),
     at: str = typer.Option(
         "auto",
         "--at",
@@ -2250,6 +2255,10 @@ def resume_story_cmd(
             )
         console.print(table)
         return
+
+    if story_id is None:
+        console.print("[red]Missing STORY_ID. Pass a story id, or --list to see what is parked.[/red]")
+        raise typer.Exit(code=2)
 
     story = load_story(db, story_id)
     if story is None:

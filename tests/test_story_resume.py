@@ -618,7 +618,9 @@ def test_tech_writer_re_entry_keeps_the_approved_diff_and_verdict(tmp_path: Path
     assert after.total_spend_usd == pytest.approx(5.96)
 
 
-def test_inbox_parked_section_is_opt_in(tmp_path: Path) -> None:
+def test_inbox_parked_section_is_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``inbox``'s default output answers "what needs a human DECISION", and two
     existing tests pin specific parked rows as invisible there so the inbox and
     the tracker-closer can never disagree about that. A parked row is recoverable
@@ -634,15 +636,80 @@ def test_inbox_parked_section_is_opt_in(tmp_path: Path) -> None:
     _story(db, sid=1, state=StoryState.BLOCKED_DEPENDENCY_UNMET.value, slug="parked-deadlock")
 
     runner = CliRunner()
-    monkeyed = cli_mod._FACTORY_ROOT
-    try:
-        cli_mod._FACTORY_ROOT = tmp_path
-        default = runner.invoke(cli_mod.app, ["inbox", "--app", "sacrifice"])
-        opted_in = runner.invoke(cli_mod.app, ["inbox", "--app", "sacrifice", "--parked"])
-    finally:
-        cli_mod._FACTORY_ROOT = monkeyed
+    monkeypatch.setattr(cli_mod, "_FACTORY_ROOT", tmp_path)
+    default = runner.invoke(cli_mod.app, ["inbox", "--app", "sacrifice"])
+    opted_in = runner.invoke(cli_mod.app, ["inbox", "--app", "sacrifice", "--parked"])
 
     assert default.exit_code == 0, default.stdout
     assert "parked-deadlock" not in default.stdout
     assert opted_in.exit_code == 0, opted_in.stdout
     assert "parked-deadlock" in opted_in.stdout
+
+
+def test_apply_refuses_a_plan_built_for_a_different_story(tmp_path: Path) -> None:
+    """``plan`` and ``story`` arrive as independent arguments and every mutation
+    lands on ``story``. A mismatch would write one story's resume onto another
+    row, and nothing downstream would object — every value in ``RESUME_POINTS``
+    is a valid state string, so the bad write persists silently."""
+    db = _seed(tmp_path)
+    root = _root(tmp_path)
+    planned = _story(db, sid=1, state=StoryState.BLOCKED_UNDERSPECIFIED.value, sm_result_json="{}")
+    other = _story(db, sid=2, state=StoryState.BLOCKED_UNDERSPECIFIED.value, sm_result_json="{}")
+
+    plan = plan_resume(story=planned, db=db, root=root, point="dev")
+    with pytest.raises(RuntimeError, match="plan/story mismatch"):
+        apply_resume(plan=plan, story=other, db=db, root=root)
+
+    after = load_story(db, 2)
+    assert after is not None
+    assert after.state == StoryState.BLOCKED_UNDERSPECIFIED.value
+
+
+def test_a_lost_resume_event_aborts_before_the_row_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The event IS the gate-block reset, not a record of one — and
+    ``log_story_event`` is best-effort, reporting failure by staying silent.
+
+    Row-first-event-lost would resume the story with its window un-reset, so the
+    next evaluation re-parks it at the unchanged head sha: exactly the bug this
+    module exists to fix, behind a green "resumed" panel. So the event is written
+    and READ BACK first, and a missing one leaves the story parked.
+    """
+    import factory.chain.event_log as event_log
+
+    db = _seed(tmp_path)
+    root = _root(tmp_path)
+    s = _story(db, sid=1, state=StoryState.BLOCKED_UNDERSPECIFIED.value, sm_result_json="{}")
+    plan = plan_resume(story=s, db=db, root=root, point="dev")
+
+    monkeypatch.setattr(event_log, "log_story_event", lambda *a, **k: None)
+    with pytest.raises(RuntimeError, match="could not be written"):
+        apply_resume(plan=plan, story=s, db=db, root=root)
+
+    after = load_story(db, 1)
+    assert after is not None
+    assert after.state == StoryState.BLOCKED_UNDERSPECIFIED.value  # NOT resumed
+    assert after.error is None or after.error == s.error
+
+
+def test_resume_story_list_runs_without_a_story_id(tmp_path: Path) -> None:
+    """``--list`` takes no story, but ``story_id`` was a required positional, so
+    the documented flag exited 2 with "Missing argument 'STORY_ID'"."""
+    from typer.testing import CliRunner
+
+    import factory.cli as cli_mod
+
+    db = _seed(tmp_path)
+    _story(db, sid=1, state=StoryState.BLOCKED_DEPENDENCY_UNMET.value, slug="parked-one")
+
+    runner = CliRunner()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cli_mod, "_FACTORY_ROOT", tmp_path)
+        listed = runner.invoke(cli_mod.app, ["resume-story", "--list"])
+        missing = runner.invoke(cli_mod.app, ["resume-story"])
+
+    assert listed.exit_code == 0, listed.stdout
+    assert "parked-one" in listed.stdout
+    # Omitting the id WITHOUT --list is still an error, just a legible one.
+    assert missing.exit_code == 2
