@@ -4473,6 +4473,279 @@ def handle_docs_onboarder(
 # (``_MAX_DEV_RETRIES`` / ``_MAX_REVIEW_CYCLES``).
 _MAX_PR_CREATE_RETRIES = 2
 
+# Pre-PR lint bounce: how many times ONE story may be sent back to dev because
+# ruff is still red on its own changed .py files. Exactly one. The second red
+# opens the PR anyway and lets GitHub CI + the existing ci-fix / identical-
+# signature park be the backstop they already are. A repeating bounce would be
+# a new uncapped loop, which the guardrails forbid — and a dev that cannot
+# clear a concise ruff report it was handed verbatim will not clear it on
+# attempt three either.
+_MAX_LINT_BOUNCES = 1
+
+
+def _lint_bounces_so_far(story: StoryRecord, software_factory_root: Path) -> int:
+    """How many pre-PR lint bounces this story has already taken.
+
+    Derived from the story's OWN event stream (``lint_bounce`` records) rather
+    than a new counter column — the ``_gate_block_history`` precedent in
+    ``auto_merge``. Three reasons this is the cheapest option that actually
+    works:
+
+    * it survives a process restart for free (the events are on disk, hash-
+      chained, and already written for audit anyway);
+    * it needs no schema change and no migration of live rows;
+    * every field that LOOKED reusable is wrong. ``dev_retries`` /
+      ``reviewer_cycles`` are reset by the bounce itself (and by the CI-fix
+      re-dispatch); ``total_attempts`` is reset by the orchestrator's
+      advance-decay on forward progress; ``reviewer_result_json`` and
+      ``tech_writer_result_json`` are BOTH overwritten on the way back round
+      the loop the bounce sends the story on. A flag in any of them would be
+      erased before it was ever read.
+
+    Scoped after the most recent ``story_resumed`` for the same reason
+    ``_gate_block_history`` is: an operator resume is a deliberate "try this
+    again", and must not be silently overruled by history.
+
+    FAIL DIRECTION: an unreadable / unidentifiable log returns
+    ``_MAX_LINT_BOUNCES`` — "cap already reached", so the PR opens. This counter
+    is the ONLY thing bounding the bounce loop, and a read that fails
+    repeatedly (unreadable log, a story with no id, a wiped ``state/logs``)
+    would otherwise report 0 every single time and bounce the story forever.
+    Fail-safe HERE means "do not bounce": the un-bounced branch still meets
+    GitHub CI, which is the authoritative lint gate. An unbounded loop has no
+    such backstop.
+    """
+    from factory.chain.event_log import read_story_events
+
+    if story.id is None:
+        # No id → no log path → nothing can ever be counted. Never bounce.
+        return _MAX_LINT_BOUNCES
+    try:
+        events = read_story_events(
+            story.id, software_factory_root=software_factory_root, slug_hint=story.slug or ""
+        )
+    except Exception:  # noqa: BLE001 - see FAIL DIRECTION above
+        _logger.warning(
+            "story %s: lint-bounce history unreadable; treating the cap as reached "
+            "so the bounce loop stays bounded",
+            story.id,
+        )
+        return _MAX_LINT_BOUNCES
+    resume_idx = -1
+    for i, e in enumerate(events):
+        if e.get("event") == "story_resumed":
+            resume_idx = i
+    return sum(1 for e in events[resume_idx + 1 :] if e.get("event") == "lint_bounce")
+
+
+# Attempt headroom a story must still have before it is allowed to spend a
+# bounce. One bounce costs a dev dispatch + a review + a tech_writer + this
+# handler, so a story with less headroom than that would be sent round a loop it
+# cannot finish and would die at BLOCKED_BUDGET_EXCEEDED — with its branch
+# unpushed and no PR at all, which is strictly worse than the lint-red PR the
+# bounce was trying to avoid.
+_LINT_BOUNCE_ATTEMPT_HEADROOM = 4
+
+
+def _lint_bounce_budget_headroom(
+    story: StoryRecord, software_factory_root: Path
+) -> tuple[bool, int | None]:
+    """``(has enough attempt headroom for a bounce, remaining attempts)``.
+
+    Fails OPEN (``True``) when the caps can't be read or aren't configured:
+    an unreadable settings file must not silently disable the lint bounce, and
+    the bounce is capped at 1 either way.
+    """
+    try:
+        from factory.settings.loader import load_settings as _load_settings
+
+        caps = _load_settings(software_factory_root).caps
+        per_story_attempts = int(getattr(caps, "per_story_attempts", 0) or 0)
+    except Exception:  # noqa: BLE001 - unreadable settings must not disable the bounce
+        return True, None
+    if per_story_attempts <= 0:
+        return True, None
+    remaining = per_story_attempts - int(story.total_attempts or 0)
+    return remaining >= _LINT_BOUNCE_ATTEMPT_HEADROOM, remaining
+
+
+def _residual_lint_for_story(
+    story: StoryRecord, app_config: AppConfig, software_factory_root: Path
+) -> str | None:
+    """Autoformat the story's branch, then report what ruff still flags.
+
+    Autoformat runs FIRST and here (not only inside ``_open_pr_for_story``) so
+    the bounce is never spent on a nit the conservative autoformat fixes for
+    free — an I001 import-sort or a missing trailing newline must not cost a
+    whole dev cycle. It is idempotent, so the second call inside
+    ``_open_pr_for_story`` finds nothing to do and commits nothing.
+
+    Fail-open on any worktree-resolution problem: see
+    ``_residual_changed_py_lint``.
+    """
+    try:
+        target_repo = _writing_worktree(app_config, software_factory_root, story)
+    except Exception as exc:  # noqa: BLE001 - no worktree → CI stays the backstop
+        _logger.warning("pre-PR lint check skipped (no worktree, fail-open): %s", exc)
+        return None
+    base = app_config.default_branch or "main"
+    _autoformat_changed_py_before_pr(target_repo, base, app_config)
+    return _residual_changed_py_lint(target_repo, base, app_config)
+
+
+def _push_fix_to_existing_pr(
+    story: StoryRecord, app_config: AppConfig, software_factory_root: Path
+) -> tuple[bool, str | None]:
+    """Push a post-PR fix cycle's new commits so the PR head actually MOVES.
+
+    Returns ``(pushed, error_reason)``.
+
+    THE BUG THIS CLOSES (sacrifice story 183, 2026-08-09 — live evidence, not
+    inference). The chain had exactly ONE push site for a story's work:
+    ``_open_pr_for_story``, which ``handle_docs_enforcer`` calls only under
+    ``story.github_pr_number is None``. The only other push in the codebase is
+    the dev-exhausted WIP-preservation path. So once a PR existed, NOTHING could
+    ever push again:
+
+      * CI goes red on PR #N;
+      * ``auto_merge._handle_ci_failure`` re-dispatches the story to dev with
+        the CI digest as a reviewer finding;
+      * dev DOES fix it — story 183's ``response_bodies.ndjson`` at 21:45:07
+        shows the F401s and the E712 corrected — and
+        ``_commit_green_dev_work`` commits it LOCALLY;
+      * the story walks back review → tech_writer → docs_enforcer, whose PR
+        block is skipped because ``github_pr_number`` is set;
+      * ``git.ndjson`` records exactly ONE push for the whole story: the
+        original. The remote head never moved, so GitHub never re-ran CI;
+      * the next evaluation re-reads the SAME stale head sha, sees the identical
+        failure signature, and terminally parks the story.
+
+    That silently swallowed EVERY post-PR fix, not just lint ones — the ci-fix
+    loop was writing fixes to a branch nobody shipped. The lint bounce added in
+    the previous commit only ever helped BEFORE a PR exists; this is the other
+    half.
+
+    Only pushes when the local branch is genuinely AHEAD of its remote. A cycle
+    that produced no new commit must NOT be given a fresh head sha it did not
+    earn: the identical-signature park is the correct outcome for a dev that
+    truly changed nothing, and manufacturing a new sha would defeat the one
+    guard that stops that loop.
+
+    Same ``--force-with-lease`` rationale as ``_open_pr_for_story``: story
+    branches are factory-owned and single-writer, origin may hold stale commits
+    from abandoned earlier attempts, and the lease still aborts if origin moved
+    unexpectedly since our fetch.
+
+    NOTE (deliberate asymmetry): the pre-push autoformat that
+    ``_open_pr_for_story`` runs is NOT run here. A post-PR cycle's commits come
+    from dev fixing concrete findings, and silently rewriting them on the way to
+    a PR whose CI is already contested would confuse the very signal being
+    adjudicated. If a fix cycle needs formatting help, that belongs in the dev
+    loop, where the findings already say so.
+    """
+    import subprocess
+
+    branch = story.github_branch
+    if not branch:
+        return False, "no branch recorded on the story"
+    try:
+        target_repo = _writing_worktree(app_config, software_factory_root, story)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"worktree unavailable: {exc}"
+
+    def _git(args: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str] | None:
+        try:
+            return subprocess.run(
+                ["git", *args],
+                cwd=str(target_repo),
+                capture_output=True,
+                text=True,
+                errors="replace",
+                check=False,
+                timeout=timeout,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+
+    # Refresh + PRUNE remote-tracking refs first: the ahead-check below reads
+    # ``origin/<branch>``, and --force-with-lease rejects with "stale info"
+    # against a tracking ref that was never updated (story 56, 2026-07-18).
+    _git(["fetch", "--prune", "origin"])
+
+    # Gate on the SAME ref the push will act on — the local branch, not HEAD.
+    # ``git push origin <branch>`` sends ``refs/heads/<branch>``; deciding
+    # "is there anything new?" from HEAD instead would be a proxy for the real
+    # artifact, and the two can differ (detached HEAD, a worktree left on
+    # another branch). If the local branch ref is missing, rev-list fails and we
+    # report a push error rather than guessing.
+    remote_ref = f"origin/{branch}"
+    exists = _git(["rev-parse", "--verify", "--quiet", f"{remote_ref}^{{commit}}"], timeout=30)
+    if exists is not None and exists.returncode == 0:
+        ahead = _git(["rev-list", "--count", f"{remote_ref}..{branch}"], timeout=60)
+        if ahead is None:
+            return False, "could not compare the branch with its remote"
+        if ahead.returncode != 0:
+            return False, f"git rev-list failed: {(ahead.stderr or '').strip()[:300]}"
+        try:
+            ahead_n = int((ahead.stdout or "0").strip() or "0")
+        except ValueError:
+            return False, "unparseable git rev-list output"
+        if ahead_n == 0:
+            # Genuinely nothing new. Say so out loud and let the
+            # identical-signature guard do its (correct) job.
+            _logger.info(
+                "story %s: no new commits to push to PR #%s; the remote head is current",
+                story.id,
+                story.github_pr_number,
+            )
+            log_story_event(
+                story.id,
+                "fix_push_skipped_no_commits",
+                {
+                    "branch": branch,
+                    "pr_number": story.github_pr_number,
+                    "note": (
+                        "the fix cycle produced no commit; the PR head is unchanged on "
+                        "purpose so the identical-signature guard can park it"
+                    ),
+                },
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
+            return False, None
+    # A missing remote branch means "never pushed / deleted upstream" — push.
+
+    push = _git(["push", "--force-with-lease", "origin", str(branch)], timeout=120)
+    ok = push is not None and push.returncode == 0
+    # ``state/events/git.ndjson`` is the stream whose ONE push line exposed this
+    # bug in the first place; make sure a fix push is visible there too, with
+    # the PR it belongs to.
+    try:
+        from factory.manager.signals import write_git_event as _wge
+
+        _wge(
+            kind="push",
+            story_id=story.id,
+            worktree_path=str(target_repo),
+            pr_number=story.github_pr_number,
+            result="ok" if ok else "error",
+            error=None if ok else ((push.stderr or "").strip()[:300] if push else "push_failed"),
+            software_factory_root=software_factory_root,
+        )
+    except Exception:  # noqa: BLE001 - signal emission is best-effort
+        pass
+    if ok:
+        log_story_event(
+            story.id,
+            "fix_push",
+            {"branch": branch, "pr_number": story.github_pr_number},
+            software_factory_root=software_factory_root,
+            slug_hint=story.slug,
+        )
+        return True, None
+    detail = "git push timed out or could not run" if push is None else (push.stderr or "").strip()
+    return False, f"git push --force-with-lease failed: {detail[:300]}"
+
 
 def handle_docs_enforcer(
     story: StoryRecord,
@@ -4596,6 +4869,153 @@ def handle_docs_enforcer(
     # PRs to stories by number) could never merge them. Observed live
     # 2026-06-11 on story 5, the first Loop-4 story to complete the chain.
     if not dry_run and story.github_pr_number is None and story.github_branch:
+        # Pre-PR lint bounce (sacrifice story 183, 2026-08-09). NOTHING in the
+        # chain runs lint: an app's ``lint_command`` / ``format_check_command``
+        # are config the chain records but never executes, and the pre-PR
+        # autoformat is deliberately conservative — it only deletes imports the
+        # BRANCH ITSELF added. A dev that edits a PRE-EXISTING file and orphans
+        # an import there therefore passes every chain gate and opens a PR whose
+        # required lint check is already doomed.
+        #
+        # WHY THAT USED TO BE FATAL — and what it is NOT. Story 183's evidence
+        # is explicit that the dev was NOT the problem: it received the CI
+        # findings and FIXED them (``response_bodies.ndjson``, 21:45:07 — the
+        # F401s and the E712 corrected), and ``_commit_green_dev_work``
+        # committed the fix locally. The defect was downstream: nothing ever
+        # PUSHED that commit, because the only push site sat behind
+        # ``github_pr_number is None``. The PR head never moved, CI never
+        # re-ran, and the identical-signature guard adjudicated a stale sha and
+        # parked the story. That is fixed below (``_push_fix_to_existing_pr``).
+        #
+        # This bounce is the cheaper half of the same story: catching lint while
+        # the loop is still pre-PR and non-destructive costs one dev cycle
+        # instead of a CI round-trip. Capped at ``_MAX_LINT_BOUNCES``.
+        lint_bounces = _lint_bounces_so_far(story, software_factory_root)
+        # The check runs even when the cap is spent — it costs one ruff pass and
+        # it is the difference between "we know this PR is going to fail CI lint"
+        # and inferring it from a closed PR the next morning.
+        residual_lint = _residual_lint_for_story(story, app_config, software_factory_root)
+        # A bounce is only worth spending if the story can still AFFORD the loop
+        # it is being sent round. Below the headroom threshold it would die at
+        # BLOCKED_BUDGET_EXCEEDED with no PR at all — worse than the lint-red PR
+        # this is trying to prevent.
+        has_headroom, remaining_attempts = _lint_bounce_budget_headroom(
+            story, software_factory_root
+        )
+        if residual_lint and lint_bounces < _MAX_LINT_BOUNCES and not has_headroom:
+            payload["residual_lint"] = residual_lint
+            payload["lint_bounce_skipped_budget"] = True
+            log_story_event(
+                story.id,
+                "lint_bounce_skipped_budget",
+                {
+                    "branch": story.github_branch,
+                    "remaining_attempts": remaining_attempts,
+                    "headroom_required": _LINT_BOUNCE_ATTEMPT_HEADROOM,
+                    "total_attempts": story.total_attempts,
+                    "note": (
+                        "too little attempt budget left to survive a bounce; opening the "
+                        "PR so the work reaches GitHub instead of dying unpushed"
+                    ),
+                    "ruff_output": residual_lint,
+                },
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
+        elif residual_lint and lint_bounces < _MAX_LINT_BOUNCES:
+            # Same destination REVIEWER_REQUESTED_CHANGES as the canonical-paths
+            # violation above, via the only event DOCS_ENFORCER_CHECK has a
+            # transition for. (The tech_writer path reaches the same state with
+            # EVENT_REVIEWER_REQUEST_CHANGES, but that pair is not in the
+            # transition table from here and would raise IllegalTransitionError.)
+            story.state = advance(story, EVENT_DOCS_ENFORCER_FAIL).value
+            # Reuse the reviewer-findings plumbing verbatim — the same channel
+            # ``auto_merge`` uses for CI failures and merge conflicts. A
+            # well-formed finding DICT, never a bare string: every downstream
+            # consumer (runner._build_initial_message, _findings_signature,
+            # _append_reviewer_history) indexes findings with ``f.get(...)``.
+            finding = {
+                "severity": "high",
+                "criterion": "lint",
+                "location": "ruff (changed .py files on this branch)",
+                "what": (
+                    "Lint is RED on this branch's own changed Python files. The "
+                    "app's required GitHub CI lint check runs the same ruff and "
+                    "will block the PR, so fix every violation listed below "
+                    "before this can ship. Note these are NOT all on lines you "
+                    "added — a violation you introduced on a MODIFIED line of a "
+                    "pre-existing file counts, and the pre-PR autoformat "
+                    "deliberately will not touch it for you:\n\n"
+                    f"{residual_lint}"
+                ),
+                "fix_suggestion": (
+                    "Resolve each reported violation in the file it names "
+                    "(delete the unused import, use the variable, or make the "
+                    "line comply). Do not add per-file ruff ignores to silence "
+                    "them. Keep the tests green."
+                ),
+            }
+            story.reviewer_result_json = json.dumps(
+                {
+                    "findings": [finding],
+                    "source": "pre_pr_lint",
+                    "summary": "Ruff is red on this branch's changed .py files; fix the "
+                    "violations listed.",
+                }
+            )
+            # Reset BOTH per-loop counters, mirroring the CI-fix re-dispatch and
+            # for the identical reason: this story is already reviewer-APPROVED,
+            # so ``reviewer_cycles`` may sit at the cap, and the follow-up review
+            # pass would otherwise trip BLOCKED_REVIEW_NONCONVERGENT on its first
+            # non-approving verdict and mislabel a lint nit as non-convergence.
+            # Safe against loops: the bounce cap is counted from the EVENT
+            # stream, which these resets cannot touch.
+            story.dev_retries = 0
+            story.reviewer_cycles = 0
+            story.error = (
+                "pre-PR lint is red on the branch's changed .py files; returned to dev "
+                "with the violations (one bounce only — the next pass opens the PR and "
+                "lets GitHub CI adjudicate)"
+            )
+            payload["residual_lint"] = residual_lint
+            payload["lint_bounce"] = True
+            persist_story(story, db)
+            log_story_event(
+                story.id,
+                "lint_bounce",
+                {
+                    "branch": story.github_branch,
+                    "bounce": lint_bounces + 1,
+                    "cap": _MAX_LINT_BOUNCES,
+                    "ruff_output": residual_lint,
+                },
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
+            return HandlerResult(
+                next_state=StoryState(story.state), payload=payload, error=story.error
+            )
+        elif residual_lint:
+            # Still red after its one bounce. Open the PR regardless and let the
+            # real CI rule — loudly, so a repeat offender is visible in the
+            # trace. The old path (CI red → ci-fix → identical signature → park)
+            # remains exactly the backstop it was; a second bounce would be a
+            # new uncapped loop.
+            payload["residual_lint"] = residual_lint
+            payload["lint_bounce_capped"] = True
+            log_story_event(
+                story.id,
+                "lint_bounce_capped",
+                {
+                    "branch": story.github_branch,
+                    "bounces": lint_bounces,
+                    "cap": _MAX_LINT_BOUNCES,
+                    "ruff_output": residual_lint,
+                    "note": "opening the PR anyway; GitHub CI is the adjudicator",
+                },
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
         opened = _open_pr_for_story(story, app_config, software_factory_root)
         if opened is not None:
             story.github_pr_number = opened
@@ -4645,6 +5065,42 @@ def handle_docs_enforcer(
                 slug_hint=story.slug,
             )
             return HandlerResult(next_state=StoryState(story.state), payload=payload, error=reason)
+
+    elif not dry_run and story.github_pr_number is not None and story.github_branch:
+        # POST-PR FIX CYCLE — the story already has a PR and has just come back
+        # round through dev (CI failure, reviewer changes, or the lint bounce
+        # above). Its fix is committed in the worktree and, until this existed,
+        # was never pushed anywhere: the branch above is the ONLY place the
+        # chain pushed a story's work, and it is gated on
+        # ``github_pr_number is None``. See ``_push_fix_to_existing_pr`` for
+        # story 183's evidence. Push it, so the PR head moves and GitHub
+        # actually re-runs CI on the fix.
+        pushed, push_error = _push_fix_to_existing_pr(story, app_config, software_factory_root)
+        payload["fix_pushed"] = pushed
+        if push_error:
+            # Do NOT block the transition: PR_OPEN is where auto-merge can see
+            # the story, and refusing to advance would strand it. But the park
+            # that follows must NAME this — a failed push swallowed in silence
+            # is the exact failure class being fixed here, one level up.
+            payload["fix_push_error"] = push_error
+            story.error = (
+                f"fix commits were NOT pushed to PR #{story.github_pr_number}: {push_error}. "
+                "The PR head is stale, so its CI verdict does not describe the current "
+                "work — re-push the branch by hand before trusting any red on it."
+            )
+            _logger.error("story %s: %s", story.id, story.error)
+            log_story_event(
+                story.id,
+                "fix_push_failed",
+                {
+                    "branch": story.github_branch,
+                    "pr_number": story.github_pr_number,
+                    "error": push_error,
+                },
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
+            persist_story(story, db)
 
     story.state = advance(story, EVENT_DOCS_ENFORCER_PASS).value
     persist_story(story, db)
@@ -4714,32 +5170,28 @@ def _post_factory_needs_redesign_comment(
     )
 
 
-def _autoformat_changed_py_before_pr(
+def _changed_py_lint_scope(
     target_repo: Path, base: str, app_config: AppConfig | None = None
-) -> None:
-    """Best-effort: make the story's own changed ``.py`` files ruff-clean and
-    commit the result before the PR is opened.
+) -> tuple[list[str], list[str], str] | None:
+    """``(changed .py files, ruff isolation flags, resolved base ref)``, or ``None``.
 
-    Two scoped passes on the branch's OWN changed files (never a whole-repo
-    reformat):
-      1. ``ruff check --fix --select F401`` restricted to imports the BRANCH
-         ITSELF added — an unused import the dev just added is safe to delete;
-         a pre-existing (possibly side-effect) import is never touched (the file
-         is reverted if the fix would remove a line the branch didn't add).
-      2. ``ruff check --fix --select I`` (import-sort) + ``ruff format`` — the
-         non-semantic nits.
+    ``None`` means "there is nothing for ruff to do here": the repo/app does not
+    use ruff, the base ref could not be resolved, git failed, or the branch
+    changed no ``.py`` file.
 
-    Rationale: a factory self-edit (PR #57) shipped with an ``I001`` unsorted
-    import; sacrifice PRs (#301/#293/#286/#275, 2026-07-21) sat lint-blocked on
-    ``F401`` unused imports the dev left in its own new/changed files. The
-    chain's pre-merge gates (tests-green / smoke / staging-clone) do NOT run
-    ``ruff``, so the nit only surfaced at GitHub's required lint check — blocking
-    the merge and, via auto-merge-enabled, stranding the story. Making the
-    pushed branch ruff-clean removes that class of false-block.
+    Shared by :func:`_autoformat_changed_py_before_pr` (which FIXES what it
+    safely can) and :func:`_residual_changed_py_lint` (which REPORTS what is
+    left). They MUST agree on both halves or the residual check would grade the
+    branch under different rules than the autoformat just applied — and, worse,
+    under different rules than the app's own CI lint. Hence one function.
 
-    Safe: scoped to ``origin/<base>...HEAD`` changed files, F401 only ever
-    deletes branch-added imports, no-op when the repo/app doesn't use ruff, and
-    NEVER raises — a formatting hiccup must not block PR creation.
+    ``--isolated`` reproduces the app's CI exactly when the app has no ruff
+    config of its own: the per-story worktree is physically nested under the
+    factory repo, so a bare ``ruff check`` would walk up and pick the FACTORY's
+    ``[tool.ruff]`` (line-length 100) instead of the built-in defaults
+    (line-length 88) the app's ``ruff check .`` actually runs under. Ruff
+    resolves config by nearest ancestor, and the nearest ancestor here is the
+    wrong repo.
     """
     import subprocess
 
@@ -4770,33 +5222,178 @@ def _autoformat_changed_py_before_pr(
         )
         has_ruff = "ruff" in gate_cmds
     if not has_ruff:
-        return
+        return None
 
-    # When the app uses ruff but has NO local config table (sacrifice: default
-    # config via ``ruff check .``), the per-story worktree is physically nested
-    # under the factory repo, so ruff would otherwise walk up and pick the
-    # FACTORY's ``[tool.ruff]`` (line-length 100, double-quote) — reformatting
-    # the app's files to a style its OWN default-config CI (``ruff format
-    # --check`` at line-length 88) then REJECTS. ``--isolated`` pins ruff to its
-    # built-in defaults, matching exactly what the app's CI runs.
     iso = ["--isolated"] if not local_config else []
 
+    # ``origin/<base>`` normally; local ``<base>`` when the worktree has no
+    # ``origin`` remote (bench harness / local-only app repo). Same fallback
+    # ``_changed_files_for_story`` and the reviewer's pre-PR diff use, so all
+    # three agree on "what this branch changed". In production topology this
+    # always resolves to ``origin/<base>`` — the fallback only fires where the
+    # old hard-coded ``origin/<base>`` silently did nothing at all.
+    base_ref = _resolve_diff_base(target_repo, base)
+    if base_ref is None:
+        return None
     try:
         diff = subprocess.run(
-            ["git", "diff", "--name-only", f"origin/{base}...HEAD"],
+            ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
             cwd=str(target_repo),
             capture_output=True,
             text=True,
+            errors="replace",
             check=False,
             timeout=60,
         )
     except (subprocess.TimeoutExpired, OSError):
-        return
+        return None
     if diff.returncode != 0:
-        return
+        return None
     py_files = [f for f in diff.stdout.split() if f.endswith(".py") and (target_repo / f).is_file()]
     if not py_files:
+        return None
+    return py_files, iso, base_ref
+
+
+# Bound on how much ruff output rides along in the synthetic finding fed back to
+# dev. Concise format is one line per violation; 4000 chars is ~50 lines, far
+# more than a story's own changed files ever produce, while keeping the dev
+# prompt from being swamped by a pathological run.
+_RESIDUAL_LINT_MAX_CHARS = 4000
+
+
+def _residual_changed_py_lint(
+    target_repo: Path, base: str, app_config: AppConfig | None = None
+) -> str | None:
+    """Ruff findings still on the branch's changed ``.py`` files, or ``None``.
+
+    Run AFTER :func:`_autoformat_changed_py_before_pr`, so what comes back is
+    exactly what the conservative autoformat could NOT fix for itself — the
+    F401 on a MODIFIED line of a PRE-EXISTING file being the shape that opened
+    sacrifice story 183's PR lint-red (2026-08-09). The autoformat only ever
+    deletes imports the branch itself added; a dev that edits an old file and
+    orphans an import there sails past it and past every chain gate, because no
+    chain gate runs lint at all — an app's ``lint_command`` /
+    ``format_check_command`` are config the chain records but never executes.
+
+    BOTH CI lint commands are reproduced, because an app's CI runs two:
+    ``ruff check`` AND ``ruff format --check`` (see ``gates.lint_command`` /
+    ``gates.format_check_command`` in ``apps/*/config.yaml``; sacrifice and the
+    factory both configure the pair). Checking only the former would still ship
+    a PR doomed by a format-only red — the exact failure shape this function
+    exists to prevent, one command over.
+
+    VERSION SKEW CAVEAT: ``ruff format`` output is version-dependent, so the
+    locally-installed ruff and the app's CI ruff can legitimately disagree about
+    what "formatted" means. The consequences are both benign and bounded: a
+    local-only red costs at most ONE capped bounce (and the dev is handed the
+    concrete file list), and a CI-only red is exactly today's behavior. Do NOT
+    "harden" this into anything that can block the PR permanently.
+
+    Same scope and same ruff config as the autoformat (see
+    :func:`_changed_py_lint_scope`).
+
+    NEVER raises, and FAILS OPEN (returns ``None``) on anything that is not an
+    unambiguous finding report: missing ``uv``/``ruff``, a timeout, a ruff usage
+    error (exit 2), an empty report. GitHub CI is the authoritative lint
+    backstop; this check is an optimization that saves a doomed PR round-trip.
+    Blocking PR creation because the LOCAL ruff is broken would trade a bounded,
+    already-handled failure for a new unbounded one.
+    """
+    import subprocess
+
+    scope = _changed_py_lint_scope(target_repo, base, app_config)
+    if scope is None:
+        return None
+    py_files, iso, _base_ref = scope
+
+    def _probe(args: list[str], label: str) -> str | None:
+        """Report text for one ruff command, or ``None`` (clean OR inconclusive)."""
+        try:
+            proc = subprocess.run(
+                args,
+                cwd=str(target_repo),
+                capture_output=True,
+                text=True,
+                errors="replace",
+                check=False,
+                timeout=180,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            _logger.warning(
+                "residual %s skipped (fail-open; GitHub CI remains the backstop): %s", label, exc
+            )
+            return None
+        if proc.returncode == 0:
+            return None
+        out = (proc.stdout or "").strip()
+        if proc.returncode != 1 or not out:
+            # Exit 2 = ruff itself errored (bad config, unreadable file); exit 1
+            # with no stdout should not happen. Neither is evidence of a real
+            # finding, so do not bounce on it.
+            _logger.warning(
+                "residual %s inconclusive (rc=%s, fail-open): %s",
+                label,
+                proc.returncode,
+                (proc.stderr or "")[-500:],
+            )
+            return None
+        return out
+
+    reports: list[str] = []
+    check_out = _probe(
+        ["uv", "run", "ruff", "check", "--output-format", "concise", *iso, *py_files],
+        "lint check",
+    )
+    if check_out:
+        reports.append(f"$ ruff check\n{check_out}")
+    format_out = _probe(
+        ["uv", "run", "ruff", "format", "--check", *iso, *py_files],
+        "format check",
+    )
+    if format_out:
+        reports.append(f"$ ruff format --check\n{format_out}")
+    if not reports:
+        return None
+    return "\n\n".join(reports)[:_RESIDUAL_LINT_MAX_CHARS]
+
+
+def _autoformat_changed_py_before_pr(
+    target_repo: Path, base: str, app_config: AppConfig | None = None
+) -> None:
+    """Best-effort: make the story's own changed ``.py`` files ruff-clean and
+    commit the result before the PR is opened.
+
+    Two scoped passes on the branch's OWN changed files (never a whole-repo
+    reformat):
+      1. ``ruff check --fix --select F401`` restricted to imports the BRANCH
+         ITSELF added — an unused import the dev just added is safe to delete;
+         a pre-existing (possibly side-effect) import is never touched (the file
+         is reverted if the fix would remove a line the branch didn't add).
+      2. ``ruff check --fix --select I`` (import-sort) + ``ruff format`` — the
+         non-semantic nits.
+
+    Rationale: a factory self-edit (PR #57) shipped with an ``I001`` unsorted
+    import; sacrifice PRs (#301/#293/#286/#275, 2026-07-21) sat lint-blocked on
+    ``F401`` unused imports the dev left in its own new/changed files. The
+    chain's pre-merge gates (tests-green / smoke / staging-clone) do NOT run
+    ``ruff``, so the nit only surfaced at GitHub's required lint check — blocking
+    the merge and, via auto-merge-enabled, stranding the story. Making the
+    pushed branch ruff-clean removes that class of false-block.
+
+    Safe: scoped to ``origin/<base>...HEAD`` changed files, F401 only ever
+    deletes branch-added imports, no-op when the repo/app doesn't use ruff, and
+    NEVER raises — a formatting hiccup must not block PR creation.
+    """
+    import subprocess
+
+    # Which files, and under which ruff config — see ``_changed_py_lint_scope``.
+    # Shared with ``_residual_changed_py_lint`` so "what was fixed" and "what is
+    # left" are computed over the identical scope and rules.
+    scope = _changed_py_lint_scope(target_repo, base, app_config)
+    if scope is None:
         return
+    py_files, iso, base_ref = scope
 
     # Pass 1 — remove the auto-fixable pyflakes nits the dev leaves in its OWN
     # new code, restricted to the branch's OWN added lines. A blanket ``ruff
@@ -4809,7 +5406,7 @@ def _autoformat_changed_py_before_pr(
     # without placeholders), F841 (unused local variable) — exactly the F-class
     # nits a human hand-fixed on #349/#351. A pre-existing violation of any of
     # these is left for the dev loop / CI, never silently mutated here.
-    _strip_own_added_fixable_lint(target_repo, base, py_files, iso)
+    _strip_own_added_fixable_lint(target_repo, base_ref, py_files, iso)
 
     try:
         # Pass 2 — NON-SEMANTIC nits: import-sorting (``--select I``) plus
@@ -4945,14 +5542,20 @@ def _removed_line_numbers(diff_text: str) -> set[int]:
 
 
 def _strip_own_added_fixable_lint(
-    target_repo: Path, base: str, py_files: list[str], iso: list[str]
+    target_repo: Path, base_ref: str, py_files: list[str], iso: list[str]
 ) -> None:
     """Auto-fix the F-class nits in :data:`_OWN_LINE_FIXABLE_CODES`, but ONLY the
     ones whose EVERY violation sits on a line THIS branch added — decided by line
     number, not text.
 
+    ``base_ref`` is an ALREADY-RESOLVED ref (``_changed_py_lint_scope`` resolves
+    it once via ``_resolve_diff_base``) — never a bare branch name to be
+    re-prefixed here. One resolution for the whole pre-PR lint path means the
+    file list, the added-line hunks and the residual check can never disagree
+    about which base they are measuring against.
+
     Per file: compute the branch's added new-file line numbers (diff hunks vs
-    ``origin/<base>...HEAD``); ask ruff for the violations as JSON (their row
+    ``<base_ref>...HEAD``); ask ruff for the violations as JSON (their row
     numbers, WITHOUT fixing) in ONE probe while the working tree still equals
     HEAD (so probe rows and diff rows share a coordinate system); then, for each
     candidate code independently, fix it ONLY IF every violation of that code is
@@ -4990,7 +5593,7 @@ def _strip_own_added_fixable_lint(
 
     select_all = ",".join(_OWN_LINE_FIXABLE_CODES)
     for f in py_files:
-        diff = _run(["git", "diff", f"origin/{base}...HEAD", "--", f])
+        diff = _run(["git", "diff", f"{base_ref}...HEAD", "--", f])
         if diff is None or diff.returncode != 0:
             continue
         added = _added_line_numbers(diff.stdout)
