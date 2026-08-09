@@ -63,7 +63,9 @@ All of these, verified against **real artifacts**, never a recorded flag:
 7. No story in the Workstream D run stalls: nothing sits in an `*_in_progress`
    state beyond the stale threshold without being surfaced (`E1`), and no dev run
    times out without being charged and counted (`E3`).
-8. `factory audit-chain` reports no tampering; `factory inbox` is empty of
+8. **PR-blocking CI finishes in under 60 seconds** on a representative code PR
+   (E6), with the full suite still gating merge or post-merge.
+9. `factory audit-chain` reports no tampering; `factory inbox` is empty of
    needs-human rows; `uv run pytest -q` exits 0; live tree == `origin/main`.
 
 **None of 1–6 may be claimed from a green test run alone.** Name the commit SHA
@@ -534,15 +536,59 @@ The 255-minute gap happened because `_prune_stale_in_progress`
 (`_STALE_THRESHOLD_SECONDS = 10 * 60`) only runs inside a tick, and **no tick was
 running**. That is an availability failure presenting as a performance one.
 
-- **A dead-man's check that does not depend on the thing that died.** Today the
+**The same root cause produces the "issue-lifecycle leak" that keeps getting
+re-diagnosed as an architecture problem. It is not one.** When direction 002 was
+rejected on 2026-08-09 its GitHub tracker (#122) stayed open, which looked like a
+sync bug. It is not: `orchestrator.py` already runs `reconcile_completed_issues`
+inside the tick, rate-gated to ~once/hour/app, with a comment saying it exists so
+"the repo's issues stay clean WITHOUT a manual `factory reconcile-issues`". The
+tracker stayed open because the factory was OFF. **Do not "fix" issue lifecycle by
+adding a sixth reconciler — fix the tick not running.**
+
+- **A stall detector that does not depend on the thing that stalled.** Today the
   only detector of a stalled story is a sweep inside the loop that stalls. At
-  minimum, surface it: `factory inbox` should show any story in an
-  `*_in_progress` state older than the stale threshold, so a human sees it
-  without a tick.
-- **Make "the factory is off while stories are in flight" loud.** `factory power`
-  reporting OFF is not the same as anyone noticing.
-- Verify `_prune_stale_in_progress` actually fires at 10 min in a live run — it
-  has never been observed doing so in the data reviewed here.
+  minimum, surface it: `factory inbox` should list any story in an
+  `*_in_progress` state older than the stale threshold, and any direction whose
+  local status is `closed` while its tracker is still open — both computed as
+  pure reads, so they work with the factory off.
+- **Make "the factory is OFF while stories are in flight" loud.** `factory power`
+  printing OFF is not the same as anyone noticing.
+- Verify `_prune_stale_in_progress` actually fires at 10 min in a live run. It has
+  never been observed doing so in the data reviewed here.
+
+### E1a. Lifecycle writes should attempt the remote side inline
+
+`factory approve-direction --reject` calls `mark_direction_status(..., "closed")`,
+which writes the on-disk `state.yaml` and **touches GitHub not at all**
+(`cli.py:419-427`). Having a backstop is right; making the backstop the PRIMARY
+mechanism for an operator-initiated lifecycle change is not — it guarantees a
+window of visible disagreement, and that window is unbounded when ticks are not
+running.
+
+Add a best-effort tracker close at the point of decision (failure is fine — the
+sweep still catches it). Then the reconciler catches genuine drift instead of
+routine work. Same treatment for any other operator command that terminalises a
+direction or story.
+
+### E1b. Five reconcilers is the real cost of the split — consolidate the predicate
+
+`reconcile_completed_issues`, `reconcile_closed_trackers`, `reconcile_from_github`,
+`reconcile_dual_draft_winners`, plus the `reconcile-issues` CLI command. Each
+encodes its own notion of "this is finished", and drift hides in the gaps between
+them (the tracker-closer's resolved-states allowlist vs the inbox predicate vs the
+dependency gate's dead-end set is exactly this, three times over).
+
+**This is NOT an argument for moving state to GitHub.** `StoryRecord` carries ~40
+fields, many of them counters mutated several times per tick per story
+(`dev_retries`, `total_attempts`, `total_spend_usd`, `max_progress_ordinal`,
+`dependency_defer_count`, plus dev/reviewer history blobs). Against the GitHub API
+that is ~200-500 ms per write, a 5,000 req/hr ceiling, and no transactions — which
+is why the orchestrator already caps `max_reconcile` calls per tick. Worse, it
+would put a hard dependency on someone else's uptime in the merge path: a gate
+that cannot read its own story state because of a 403 is strictly worse than one
+reading slightly stale local state. Authority is already assigned correctly —
+**merge reality is GitHub** ("never trust a local flag"), operational state is the
+DB. Consolidate the PREDICATE, not the store.
 
 ## E2. Cut dev RETRIES, not dev speed
 
@@ -573,66 +619,67 @@ output without touching per-story latency at all.
 whatever concurrency is chosen must be the configuration actually benchmarked —
 and docs stories still serialise per app (memory: `docs_chain_serialization`).
 
-## E6. The test suite sets PR merge latency — fix it BOTH locally and on CI
+## E6. HARD CRITERION — PR-blocking CI must finish in 60 SECONDS
 
-**Measured 2026-08-09:** 3,008 tests across 219 files, **~19 min locally** and
-**19m12s in CI** (PR #280). CI's other jobs are noise beside it — lint 11 s,
-typecheck 61 s, `changes` 11 s — so **pytest alone sets PR merge latency**, and
-the job cap has already been raised 15 -> 25 min once (2026-08-08) after three
-consecutive runs were cancelled at ~15m with zero failures. It is on a trajectory
-to hit 25 too.
+**Operator decision 2026-08-09. This is a hard criterion, not a target.**
 
-At ~380 ms/test for mostly-unit tests, the weight is process-spawning: the
-acceptance-oracle tests boot real servers via `oracle_probe.py`.
+**Today:** 3,008 tests, 219 files, **~19 min locally and 19m12s in CI** (PR #280).
+Everything else in CI is noise beside it — lint 11 s, typecheck 61 s, `changes`
+11 s. The job cap has already been raised **15 -> 25 min** (2026-08-08) after
+three runs were cancelled at ~15m with zero failures; at 19m12s it is heading for
+25 as well.
 
-**CI and local need DIFFERENT fixes — the runner is not your workstation.**
-`runs-on: ubuntu-latest` is a GitHub-hosted standard runner (2–4 vCPU), not the
-16-core dev box. So parallelism buys far less there, and the CI-specific wins are
-elsewhere:
+**The proof that 60 s is reachable — measured, not assumed.** PR #280 is
+documentation plus 35 lines of `apps/sacrifice/config.yaml`. The tests that
+genuinely cover that config —
+`test_sacrifice_acceptance_harness_hint.py` + `test_app_gates_config.py` +
+`test_deploy_app_config.py` — run in **0.586 s**. The other 19 minutes tested
+nothing that could have changed.
 
-### CI (do these first — cheapest, and they are where merges actually wait)
+**How to get there. The criterion applies to the PR-BLOCKING lane, and the full
+suite does not disappear — it moves.**
 
-1. **`COVERAGE_CORE=sysmon`.** CI runs `pytest --cov=factory`; coverage tracing is
-   pure overhead on every test. Python 3.12 + coverage.py ≥7.4 support
-   `sys.monitoring`, which is dramatically cheaper than the classic trace
-   function. One environment variable on the pytest step. **Measure the before
-   and after** — do not assume a number.
-2. **Broaden the `docs_only` skip.** It currently means *"every changed path is a
-   ROOT-LEVEL `*.md`"*. PR #280 was documentation plus one `apps/*/config.yaml`
-   line and therefore paid the **full 19 minutes**. A plan/research/memory PR that
-   cannot affect a code path should not run the suite. Widen carefully — the
-   narrow rule exists because `factory/personas/*.md` are prompts covered by
-   contract tests, and that carve-out must survive.
-3. **Consider a larger runner** for the pytest job only. It is a paid knob, but it
-   is the one lever that needs no test-isolation work at all.
-4. `uv` caching is already enabled — nothing to win there.
+1. **Tier the suite.** A fast lane gates the PR; the full suite gates merge-to-main
+   (or runs post-merge and blocks further merges on red). **The tiering rule must
+   be "what can this diff actually break", not "what is quick"** — a fast lane
+   chosen for speed rather than coverage is how a regression merges. Anything
+   that boots a server, spawns a subprocess, or touches docker belongs in the full
+   lane; that is where the ~380 ms/test average comes from.
+2. **Fix `docs_only` first — it is nearly free.** It currently means "every changed
+   path is a ROOT-LEVEL `*.md`", which is why a docs PR with one `apps/*/config.yaml`
+   line paid the full 19 minutes. Widen it carefully: the narrow rule exists
+   because `factory/personas/*.md` are prompts covered by contract tests, and that
+   carve-out must survive.
+3. **`COVERAGE_CORE=sysmon`.** CI runs `pytest --cov=factory`; tracing is pure
+   overhead on every test. Python 3.12 + coverage.py >= 7.4 support
+   `sys.monitoring`, which is far cheaper than the classic trace function. One env
+   var. Coverage belongs in the full lane anyway, not the fast one.
+4. **Parallelism, sized to the runner.** `runs-on: ubuntu-latest` is a
+   GitHub-hosted standard runner (2-4 vCPU), NOT the 16-core dev box — so xdist
+   buys much less on CI than locally. Locally, `pytest-xdist` is **not installed**
+   and the suite runs single-threaded on 1 of 16 cores; that is the big local win.
+   Use `-n auto --dist loadfile` so same-file tests stay on one worker.
+5. **A larger runner** for the full-lane job: the only lever needing no
+   test-isolation work at all.
 
-### Local (the loop-3 iteration cost)
+**The hazard this must not create.** This repo has been bitten three times by
+exactly what suite-splitting and parallelism trigger:
+`fms_sm_truncation_was_test_pollution` (tests wrote into production telemetry),
+`sacrifice_conftest_ddl_lock_contention` (an autouse `create_all` fabricated **46
+fake failures**), and `red_test_can_mean_nothing_too` (concurrent runs produce
+mirages). Treat every new failure as a GENUINE isolation bug to fix, never as
+flakiness to retry. **A fast suite that is quietly wrong is far worse than a slow
+one that is right.** Bank the wall-clock only after two consecutive green runs.
 
-**`pytest-xdist` is NOT installed and the box has 16 cores** — the suite runs
-single-threaded on one of them. That is the big local win, but treat it as a
-project, not a flag flip: this repo has been bitten three times by exactly what
-parallelism triggers —
-* `fms_sm_truncation_was_test_pollution` — tests wrote synthetic failures into
-  production telemetry (fixed with `FACTORY_STATE_ROOT` isolation);
-* `sacrifice_conftest_ddl_lock_contention` — an autouse `create_all` fabricated
-  **46 fake failures**;
-* `red_test_can_mean_nothing_too` — concurrent runs contend and produce mirages.
+**Acceptance for this item:** the PR-blocking lane completes in **< 60 s** on a
+representative code PR, the full lane still gates something (merge or post-merge
+with a red-blocks-merges rule), and no test moved to the full lane because it was
+slow rather than because the diff could not affect it.
 
-And the oracle tests bind real ports, use docker, and share `sacrifice-db`.
-
-So: `-n auto --dist loadfile` (same-file tests stay on one worker, minimising
-fixture collisions), **measure**, and treat every new failure as a GENUINE
-isolation bug to fix — never as flakiness to retry. **A parallel suite that is
-quietly wrong is far worse than a slow one that is right.** Bank the wall-clock
-only after it is green twice consecutively. If it lands clean, enabling it on CI
-too is then free.
-
-**Scope note, so this is not mis-sold.** E6 buys **loop-3 and loop-2 iteration
-speed** — which is most of what a readiness push spends its time waiting on — and
-**not** Workstream D's story throughput. The factory's suite gates FACTORY PRs
-(operator PRs, loop-2 self-edits). A sacrifice story's merge gate runs the app's
-own, much smaller `test_command`.
+**Scope note.** E6 buys **loop-3 and loop-2 iteration speed** — most of what a
+readiness push waits on — and **not** Workstream D's story throughput. A sacrifice
+story's merge gate runs the app's own, much smaller `test_command`; the factory
+suite gates only factory PRs.
 
 ## E5. Note the trade-off the retry cap makes
 
