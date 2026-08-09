@@ -753,6 +753,71 @@ _SM_SCHEMA: dict[str, Any] = {
 }
 
 
+#: Marker opening the code-appended block below. Also the idempotence guard —
+#: a re-run of SM over an already-stamped file must not stack the block twice.
+_FULL_COVERAGE_MARKER = "<!-- factory:dual-draft-full-coverage -->"
+
+
+def _with_full_coverage_mandate(
+    file_content: str, story: StoryRecord, direction: Any
+) -> str:
+    """Stamp a dual-draft alternate's story file with every direction AC.
+
+    The prompt above tells SM that ``alt-a``/``alt-b`` are COMPETING attempts at
+    the whole direction. This is the same statement enforced in CODE, because a
+    prompt is a request and this invariant is load-bearing:
+
+    * ``explore: true`` directions spawn two alternates; measured over the
+      sacrifice ledger, 23 such pairs resolved 23 ``deployed`` /
+      20 ``superseded_by_sibling``. One ships, one is closed. There is no third
+      story.
+    * The acceptance oracle grades every story against the DIRECTION's criteria
+      (``_author_acceptance_oracle`` → ``list(direction.acceptance)``), never
+      the story's.
+
+    So an alternate that defers a criterion is graded on work nobody was asked
+    to do. Observed live 2026-08-08 on sacrifice story 173 (direction 117): SM
+    wrote "token lifecycle ... is out of scope for this narrow-read story; it
+    belongs to sibling stories that implement token model and consumption" — no
+    such sibling exists, dev faithfully built only the guard, and the story was
+    unmergeable before dev's first line of code.
+
+    Appending rather than validating-and-rejecting is deliberate: a reject loop
+    costs another SM call and can fail three times and terminally block, which
+    trades a late block for an earlier one. This makes the requirement present
+    in the artifact dev actually reads, with no extra LLM spend and no new
+    failure mode. Non-alternates are returned untouched — a genuine multi-story
+    split SHOULD scope each story narrowly.
+    """
+    # Lazy, like every other ``dual_draft`` use in this module — keeps the
+    # import graph minimal for tests that import handlers without the chain.
+    from factory.chain.dual_draft import _draft_alt_suffix
+
+    if _draft_alt_suffix(story.slug or "") is None:
+        return file_content
+    acceptance = list(getattr(direction, "acceptance", None) or [])
+    if not acceptance:
+        return file_content
+    if _FULL_COVERAGE_MARKER in file_content:
+        return file_content
+    criteria = "\n".join(f"- [ ] {ac}" for ac in acceptance)
+    return (
+        f"{file_content.rstrip()}\n\n"
+        f"{_FULL_COVERAGE_MARKER}\n"
+        "## Required coverage — this is a COMPETING alternate\n\n"
+        "This story is one of two rival attempts at the whole direction "
+        "(`narrow read` / `broad read`). Exactly one ships; the other is closed "
+        "as `superseded_by_sibling`. **There is no sibling story that will "
+        "implement anything deferred here**, and the acceptance oracle grades "
+        "this story against every criterion below.\n\n"
+        "Implement ALL of them:\n\n"
+        f"{criteria}\n\n"
+        "Anything above that the body of this story describes as out of scope, "
+        "deferred, or belonging to another story is an ERROR in the story text — "
+        "the criteria here win.\n"
+    )
+
+
 def handle_sm(
     story: StoryRecord,
     app_config: AppConfig,
@@ -842,6 +907,21 @@ def handle_sm(
             "mismatch). If this record is one interpretation of a dual-draft\n"
             "pair (title suffixed 'narrow read'/'broad read'), scope the story\n"
             "content to THAT interpretation.\n\n"
+            "### Dual-draft alternates are COMPETING, not COMPLEMENTARY\n\n"
+            "'narrow read' and 'broad read' are two rival attempts at the WHOLE\n"
+            "direction. Exactly one of them ships; the other is closed as\n"
+            "`superseded_by_sibling`. They are NOT a decomposition, and the\n"
+            "other alternate is NOT a follow-up that will finish your work.\n\n"
+            "Therefore EVERY alternate MUST cover EVERY acceptance criterion\n"
+            "in the direction. The narrow/broad axis is how much you do BEYOND\n"
+            "the criteria (narrow: nothing beyond; broad: adjacent rough edges\n"
+            "too) — it is NEVER which criteria you cover.\n\n"
+            "Do NOT defer, descope, or mark a criterion out-of-scope, and do NOT\n"
+            "say a 'sibling story' will implement it. For a dual-draft pair no\n"
+            "such sibling is ever created, so anything you defer is built by\n"
+            "NOBODY and the story is then graded against it and blocked.\n"
+            "If a criterion is genuinely untestable as written, still IMPLEMENT\n"
+            "it and say why it is hard to observe — do not drop it.\n\n"
             f"- title: {story.title}\n"
             f"- slug: {story.slug}\n"
             f"- scope: {story.scope}\n"
@@ -933,7 +1013,10 @@ def handle_sm(
 
     target_abs = software_factory_root / "apps" / story.app / target_path_rel
     target_abs.parent.mkdir(parents=True, exist_ok=True)
-    target_abs.write_text(matched.get("file_content") or "", encoding="utf-8")
+    target_abs.write_text(
+        _with_full_coverage_mandate(matched.get("file_content") or "", story, direction),
+        encoding="utf-8",
+    )
     story.story_file_path = target_path_rel
     story.sm_result_json = json.dumps(result)
     story.state = advance(story, EVENT_SM_DONE).value
