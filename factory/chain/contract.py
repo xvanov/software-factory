@@ -60,10 +60,20 @@ _SCHEMA: dict[str, Any] = {
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "required": ["code", "when"],
+                            # ``body`` is REQUIRED. A contract that fixes the
+                            # happy path and leaves edge/environment-conditional
+                            # bodies unstated produces review ping-pong: the
+                            # implementer picks a shape, the reviewer calls it a
+                            # contract violation, the implementer picks the
+                            # opposite, and the reviewer objects again. Measured
+                            # on sacrifice direction 117 — story 177 reached
+                            # ``blocked_review_nonconvergent`` with the score
+                            # unmoved across two cycles for exactly this reason.
+                            "required": ["code", "when", "body"],
                             "properties": {
                                 "code": {"type": "string"},
                                 "when": {"type": "string"},
+                                "body": {"type": "string"},
                             },
                         },
                     },
@@ -145,7 +155,11 @@ def render_markdown(direction_title: str, payload: dict[str, Any]) -> str:
         if codes:
             out.append("- **Status codes:**")
             for c in codes:
-                out.append(f"  - `{c.get('code', '?')}` — {c.get('when', '')}")
+                line = f"  - `{c.get('code', '?')}` — {c.get('when', '')}"
+                body = (c.get("body") or "").strip()
+                if body:
+                    line += f" → body: `{body}`"
+                out.append(line)
         out.append("")
 
     out += ["## Acceptance criteria — how each is observed", ""]

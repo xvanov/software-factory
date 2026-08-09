@@ -51,6 +51,24 @@ ungradeable criterion. Commit to a path. Do NOT invent a test-only fixture
 endpoint either — production code must not grow a route that exists only to be
 graded.
 
+**2c. Specify a response body for EVERY status code, and for every
+environment-conditional variant.** A contract that fixes the happy path and
+leaves the edges to the implementer produces review ping-pong: the implementer
+picks a shape, the reviewer says it is not the contract, the implementer picks
+the opposite, and the reviewer objects again. Neither is wrong — the contract
+never said. Measured on sacrifice direction 117: the contract gave
+`verify-request` a `200 {"verification_token": "string"}` and required the token
+be hidden outside non-production, but never said what the body IS when hidden.
+The implementer tried `{"verification_token": null}`, then `{}`; both were filed
+as contract violations, the story hit `blocked_review_nonconvergent`, and the
+score did not improve across two cycles.
+
+So, for each endpoint: give the exact body for the success code, for every error
+code you list, and — when a behaviour is gated by environment or configuration —
+for BOTH sides of the gate, naming which is which. If an error condition can
+arise on an endpoint, define its code and body THERE; do not rely on having
+defined the same-sounding error on a different endpoint.
+
 **3. Out-of-band delivery needs an observable substitute.** This is the case
 that most often makes a direction ungradeable. If a flow delivers something
 outside HTTP — an email link, an SMS code, a webhook — a black-box grader can
@@ -86,7 +104,10 @@ Strict JSON only. No prose outside the JSON.
 * `endpoints`: every route the criteria need. For each: `method`, `path`
   (exact), `new` (bool), `purpose`, `request` (body/query/header shape, or
   `"none"`), `response` (the shape a caller can observe on success), and
-  `status_codes` (each code with the condition that produces it).
+  `status_codes` — each entry `{code, when, body}`, where `body` is the EXACT
+  response body for that code. When a code's body differs by environment or
+  configuration, give both in `body` and say which applies when (e.g.
+  `"non-production: {...}; production: {...}"`). Never leave a body unstated.
 * `criteria`: one entry per acceptance criterion, **in the order given**. For
   each: `criterion` (verbatim), `verified_by` (`oracle` | `test-suite` |
   `none`), `how` (the exact request sequence and the response facts that prove
