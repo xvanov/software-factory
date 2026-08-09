@@ -305,8 +305,19 @@ def _covered(criterion: str, reported: list[dict[str, Any]]) -> bool:
     return False
 
 
+#: Markdown emphasis/code characters stripped before comparing a criterion the
+#: author quoted against the criterion the direction wrote. A direction is
+#: markdown, so its criteria routinely carry backticks around a route or
+#: asterisks around a word; the author quotes the PROSE. Without this, a fully
+#: addressed criterion reads as "not addressed" and the direction is blocked as
+#: ungradeable — a FALSE block, measured 2026-08-09 on direction 120, whose AC1
+#: wrapped the route in backticks while the author (correctly) quoted the prose
+#: without them.
+_MD_CHARS = str.maketrans("", "", "`*_~")
+
+
 def _norm(s: str) -> str:
-    return " ".join(s.lower().split()).strip(" .")
+    return " ".join(s.lower().translate(_MD_CHARS).split()).strip(" .")
 
 
 def write_contract(direction_dir: Path, markdown: str) -> Path:
