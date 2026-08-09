@@ -198,56 +198,73 @@ jobs:
           COUNT=$(grep -c "error:" mypy.out || true)
           echo "::warning::mypy: ${COUNT} package-wide findings (advisory — tracked debt)"
 
-  # The REQUIRED `pytest` context. PRs get the fast lane; a merge queue (if
-  # ever enabled) gets the full suite. Push-to-main coverage lives in
-  # `pytest-full` below — keeping the coverage action out of this job saves
-  # ~9 s of docker-action build on every PR's critical path.
+  # The REQUIRED pytest contexts are the two shard legs, "pytest (1)" and
+  # "pytest (2)" — branch protection names them directly (no fan-in gate job:
+  # every jobs-graph hop costs ~10 s of runner pickup latency on the critical
+  # path). PRs get the fast lane split in two; a merge queue (if ever
+  # enabled) gets the FULL suite split the same way. Push-to-main coverage
+  # lives in `pytest-full` below. Deliberately NO `needs: changes` and no
+  # docs_only skip here: a docs-only PR just pays the ~40 s lane, which is
+  # cheaper than the hop it would take to skip it.
   pytest:
     if: github.event_name != 'push'
-    needs: changes
+    name: pytest (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     runs-on: ubuntu-latest
-    # Sized for the merge_group full suite; the fast-lane STEP carries its
+    # Sized for a merge_group full-suite half; the fast-lane STEP carries its
     # own 5-minute budget backstop.
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
-      - name: Skip notice
-        if: needs.changes.outputs.docs_only == 'true'
-        run: echo "Root-level markdown only — no code path can have changed."
-
       - uses: actions/checkout@v4
-        if: needs.changes.outputs.docs_only != 'true'
 
       - uses: astral-sh/setup-uv@v4
-        if: needs.changes.outputs.docs_only != 'true'
         with:
           enable-cache: true
           python-version: "3.12"
 
       - name: uv sync --all-extras
-        if: needs.changes.outputs.docs_only != 'true'
         run: uv sync --all-extras
 
-      # -------- FAST LANE: pull_request only ---------------------------------
-      # The suite minus tests/fast_lane_excludes.txt (capability rule: server
-      # boots / sandboxes / docker / bulk subprocess spawners run post-merge),
-      # no coverage, xdist with loadfile so file-scoped fixtures never split
-      # across workers. -n 6 on a 4-vCPU runner is deliberate mild
-      # oversubscription: the lane is a mix of CPU work and short waits.
-      # The manifest guard (tests/test_fast_lane_manifest.py) runs IN this
-      # lane, so a rotten manifest fails the PR that rotted it.
-      - name: pytest (fast lane — PR-blocking)
-        if: needs.changes.outputs.docs_only != 'true' && github.event_name == 'pull_request'
-        # The 5-minute step timeout is the budget backstop: an unclassified
-        # heavy file makes the lane loudly slow, never silently unguarded.
-        timeout-minutes: 5
+      # Deterministic halves: sorted test files, alternating by line number.
+      # The per-file wall distribution is flat (max ~8 s of ~137 s serial),
+      # so alternation splits evenly without a timing database.
+      - name: compute shard file list
+        env:
+          SHARD: ${{ matrix.shard }}
+          EVENT: ${{ github.event_name }}
         run: |
-          IGNORES=$(grep -vE '^\s*(#|$)' tests/fast_lane_excludes.txt | sed 's/^/--ignore=/' | tr '\n' ' ')
-          uv run pytest -q --tb=short -n 6 --dist loadfile $IGNORES
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            # Fast lane: everything minus the hand-curated capability excludes.
+            grep -vE '^\s*(#|$)' tests/fast_lane_excludes.txt | sort > /tmp/excluded.txt
+            find tests -name "test_*.py" | sort | comm -23 - /tmp/excluded.txt > /tmp/pool.txt
+          else
+            # Merge queue: the FULL suite, split the same way.
+            find tests -name "test_*.py" | sort > /tmp/pool.txt
+          fi
+          awk -v s="$SHARD" 'NR % 2 == s % 2' /tmp/pool.txt > /tmp/shard.txt
+          echo "$(wc -l < /tmp/shard.txt) files in shard $SHARD"
+
+      # -------- FAST LANE: pull_request only ---------------------------------
+      # Capability rule (tests/fast_lane_excludes.txt): server boots /
+      # sandboxes / docker / bulk subprocess spawners run post-merge. No
+      # coverage. xdist loadfile keeps file-scoped fixtures on one worker.
+      # The manifest guard (tests/test_fast_lane_manifest.py) runs IN this
+      # lane, so a rotten manifest fails the PR that rotted it. The 5-minute
+      # step timeout is the budget backstop: an unclassified heavy file makes
+      # the lane loudly slow, never silently unguarded.
+      - name: pytest (fast lane — PR-blocking)
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 5
+        run: uv run pytest -q --tb=short -n 4 --dist loadfile $(tr '\n' ' ' < /tmp/shard.txt)
 
       # -------- MERGE QUEUE: full suite, no coverage --------------------------
       - name: pytest (full suite — merge queue)
-        if: needs.changes.outputs.docs_only != 'true' && github.event_name == 'merge_group'
-        run: uv run pytest -q --tb=short
+        if: github.event_name == 'merge_group'
+        run: uv run pytest -q --tb=short $(tr '\n' ' ' < /tmp/shard.txt)
 
   # -------- FULL LANE: push to main (post-merge) ------------------------------
   # Everything, exactly as before E6, plus COVERAGE_CORE=sysmon (Python 3.12 +
