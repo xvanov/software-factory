@@ -54,6 +54,7 @@ from factory.chain.state_machine import (
     StoryRecord,
     StoryState,
     advance,
+    is_terminal,
 )
 from factory.chain.step_events import emit_chain_step
 from factory.chain.worktree import ensure_worktree_for_story
@@ -341,6 +342,22 @@ def stories_in_flight(app: str, db_path: Path) -> list[StoryRecord]:
 # --------------------------------------------------------------------------- #
 
 
+# A4 whole-DIRECTION budget for the single-story collapse (operator decision
+# 2026-08-09). Deliberately NOT pm_sync's per-slice ceilings: those exist to
+# keep each slice inside ONE dev pass's comfort zone, and applying a per-slice
+# cap (modified_files <= 2) to a SUM refuses any 3-slice split where each
+# slice touches one file — i.e. the exact direction-120 shape the collapse
+# was built for. These are sized to what one dev sandbox run can do: the
+# sandbox allows 600 iterations per story (runner.sandbox_run), so 400 leaves
+# retry headroom; the file counts allow ~1.5-3x the per-slice caps because a
+# split duplicates per-slice overhead (tests, plumbing) that a single story
+# pays once. A direction over THESE budgets keeps its split and is flagged
+# for the operator to cut into sibling directions.
+A4_MAX_NEW_FILES_PER_DIRECTION = 8
+A4_MAX_MODIFIED_FILES_PER_DIRECTION = 6
+A4_MAX_ITERATIONS_PER_DIRECTION = 400
+
+
 _SLUG_RE = re.compile(r"[^A-Za-z0-9]+")
 
 
@@ -539,6 +556,168 @@ def handle_stories_spawned(
     from factory.observability.estimator import estimate_story_seconds
 
     child_stories = pm_result.get("child_stories") or []
+
+    # A4 (operator decision 2026-08-09, per-app flag
+    # ``gates.single_story_per_ac_direction``): an AC-carrying direction
+    # spawns exactly ONE story. The acceptance oracle grades EVERY story
+    # against the DIRECTION's criteria (``_author_acceptance_oracle`` →
+    # ``list(direction.acceptance)``) — deliberately: scoping the oracle to
+    # what PM/SM says a story covers would let the chain grade its own
+    # descoping, a false-green channel. Under that rule a multi-story split is
+    # structurally broken, not merely wasteful: the first sibling to merge
+    # satisfies the direction, and every LATER sibling grades green-at-base →
+    # ``oracle_not_discriminating`` → operator waiver. Observed live
+    # 2026-08-09: direction 120 spawned 3 slices; story 179 implemented every
+    # criterion in 22.7 min and siblings 180/181 had to be superseded by hand.
+    #
+    # The collapse REFUSES to fire when the children's summed size estimates
+    # exceed the per-story ceilings PM's re-prompt loop enforces per slice
+    # (``pm_sync.MAX_*_PER_STORY``) — silently merging N validated slices
+    # into one over-budget story would trade a visible waiver for an
+    # invisible budget burn (a timed-out dev run records $0). An oversized
+    # AC-carrying direction keeps its split and emits
+    # ``direction_not_single_story_sized``: it needs splitting into sibling
+    # DIRECTIONS by the operator, which no spawn-time choice can do safely.
+    # Directions WITHOUT acceptance criteria keep multi-story splits; the
+    # dual-draft branch above already spawns exactly two competing alternates
+    # (each stamped with the full-coverage mandate) and is untouched.
+    from factory.chain.acceptance import acceptance_expected_for
+
+    if (
+        len(child_stories) > 1
+        and app_config.gates.single_story_per_ac_direction
+        and acceptance_expected_for(app_config, direction)
+    ):
+        estimate_keys = (
+            "estimated_new_files",
+            "estimated_modified_files",
+            "estimated_sandbox_iterations",
+        )
+
+        def _summed(key: str) -> int | None:
+            """Sum ``key`` over all children; ``None`` when ANY child omits it.
+
+            Polarity matters: in pm_sync a missing estimate is a soft warning
+            that KEEPS the split (safe); here summing missing-as-zero would
+            COLLAPSE the one direction whose size is unknown (adversarial
+            replay over the 48 held-out directions: the only collapse
+            candidate was the pm.md anti-example D007, precisely because its
+            children carry no estimates). Unknown size ⇒ refuse.
+            """
+            total = 0
+            for c in child_stories:
+                try:
+                    total += max(0, int(c.get(key)))
+                except (TypeError, ValueError):
+                    return None
+            return total
+
+        maybe_sums = {k: _summed(k) for k in estimate_keys}
+        sums: dict[str, int] = {k: v for k, v in maybe_sums.items() if v is not None}
+        estimates_complete = len(sums) == len(estimate_keys)
+        fits = (
+            estimates_complete
+            and sums["estimated_new_files"] <= A4_MAX_NEW_FILES_PER_DIRECTION
+            and sums["estimated_modified_files"] <= A4_MAX_MODIFIED_FILES_PER_DIRECTION
+            and sums["estimated_sandbox_iterations"] <= A4_MAX_ITERATIONS_PER_DIRECTION
+        )
+
+        if not dry_run:  # dry-run is a pure preview — write no telemetry
+            try:
+                from factory.manager.signals import write_event
+
+                write_event(
+                    "chain_steps",
+                    {
+                        "event": (
+                            "story_split_collapsed"
+                            if fits
+                            else "direction_not_single_story_sized"
+                        ),
+                        "app": direction.app,
+                        "direction_id": direction.id or direction.slug,
+                        "pm_child_count": len(child_stories),
+                        "summed_estimates": sums,
+                        "dropped_titles": (
+                            [str(c.get("title") or "") for c in child_stories[1:]]
+                            if fits
+                            else []
+                        ),
+                        "estimates_complete": estimates_complete,
+                        "reason": (
+                            "acceptance oracle grades direction criteria; "
+                            "one story per AC-carrying direction"
+                            if fits
+                            else (
+                                "summed slice estimates exceed the whole-"
+                                "direction budget — this direction cannot be "
+                                "one story and, under direction-scoped "
+                                "acceptance grading, cannot safely be many; "
+                                "split it into sibling directions"
+                                if estimates_complete
+                                else "one or more slices carry no size "
+                                "estimates — size unknown, refusing to "
+                                "collapse into a single unbounded story"
+                            )
+                        ),
+                    },
+                    software_factory_root=software_factory_root,
+                )
+            except Exception:  # noqa: BLE001 - telemetry only, never fail spawn
+                pass
+
+        if fits:
+            merged_rationale = "\n\n".join(
+                str(c.get("rationale") or "").strip()
+                for c in child_stories
+                if str(c.get("rationale") or "").strip()
+            )
+            # Scope: the modal implementation scope. ``docs``/``test`` never
+            # win — an AC-carrying direction is by definition graded on app
+            # behaviour, and three personas consume scope (module-doc pointer,
+            # task_scope, the commit title), so inheriting whatever slice the
+            # PM happened to list first is a coin flip on a load-bearing value.
+            impl_scopes = [
+                str(c.get("scope") or "").strip()
+                for c in child_stories
+                if str(c.get("scope") or "").strip() not in ("", "docs", "test")
+            ]
+            # Deterministic tie-break: by count, then alphabetically —
+            # ``max(set(...), key=count)`` varies with PYTHONHASHSEED on ties,
+            # and one-backend-one-frontend ties are the common shape.
+            scope = (
+                sorted(set(impl_scopes), key=lambda s: (-impl_scopes.count(s), s))[0]
+                if impl_scopes
+                else "backend"
+            )
+            # Points: the SUM (the one story does all the slices' work),
+            # snapped up to the next Fibonacci value so EBS baselines keyed on
+            # (persona, points) aren't poisoned by a 2-point label on 3 slices
+            # of work.
+            raw_points = 0
+            for c in child_stories:
+                try:
+                    raw_points += int(c.get("points"))
+                except (TypeError, ValueError):
+                    pass
+            points = next((f for f in (1, 2, 3, 5, 8, 13) if f >= raw_points), 13)
+            collapsed: dict[str, Any] = {
+                # The direction's own title, not the first slice's — a story
+                # named "happy-path smoke test" under-describes work the
+                # oracle grades against every criterion.
+                "title": direction.title or child_stories[0].get("title") or "story",
+                "scope": scope,
+                # NEVER inherited: an AC-carrying direction cannot be a docs
+                # story (the docs chain has no dev and skips the very gates
+                # the oracle rides on — it would wedge unmergeably).
+                "chain_kind": "tdd",
+                "points": points,
+                "rationale": merged_rationale
+                or "Single story covering every acceptance criterion of the direction.",
+                **{k: v for k, v in sums.items()},
+            }
+            child_stories = [collapsed]
+
     for child in child_stories:
         slug = _slug_of(child.get("title") or "story")
         title = str(child.get("title") or "Untitled story")[:200]
@@ -759,9 +938,15 @@ _FULL_COVERAGE_MARKER = "<!-- factory:dual-draft-full-coverage -->"
 
 
 def _with_full_coverage_mandate(
-    file_content: str, story: StoryRecord, direction: Any
+    file_content: str, story: StoryRecord, direction: Any, *, ac_single_story: bool = False
 ) -> str:
-    """Stamp a dual-draft alternate's story file with every direction AC.
+    """Stamp a story file with every direction AC when the oracle grades them all.
+
+    Fires for a dual-draft alternate (always — PR #268), and, when
+    ``ac_single_story`` is True, for the only story of an AC-carrying
+    direction (A4, 2026-08-09): in both shapes the acceptance oracle grades
+    the story against the whole direction and no sibling exists to pick up a
+    deferred criterion.
 
     The prompt above tells SM that ``alt-a``/``alt-b`` are COMPETING attempts at
     the whole direction. This is the same statement enforced in CODE, because a
@@ -786,14 +971,17 @@ def _with_full_coverage_mandate(
     costs another SM call and can fail three times and terminally block, which
     trades a late block for an earlier one. This makes the requirement present
     in the artifact dev actually reads, with no extra LLM spend and no new
-    failure mode. Non-alternates are returned untouched — a genuine multi-story
-    split SHOULD scope each story narrowly.
+    failure mode. Non-alternate stories of a MULTI-story split are returned
+    untouched — a genuine split (only possible when no oracle grades it, or
+    the A4 collapse refused an oversized direction) SHOULD scope each story
+    narrowly.
     """
     # Lazy, like every other ``dual_draft`` use in this module — keeps the
     # import graph minimal for tests that import handlers without the chain.
     from factory.chain.dual_draft import _draft_alt_suffix
 
-    if _draft_alt_suffix(story.slug or "") is None:
+    is_alternate = _draft_alt_suffix(story.slug or "") is not None
+    if not is_alternate and not ac_single_story:
         return file_content
     acceptance = list(getattr(direction, "acceptance", None) or [])
     if not acceptance:
@@ -801,15 +989,29 @@ def _with_full_coverage_mandate(
     if _FULL_COVERAGE_MARKER in file_content:
         return file_content
     criteria = "\n".join(f"- [ ] {ac}" for ac in acceptance)
+    if is_alternate:
+        heading = "## Required coverage — this is a COMPETING alternate"
+        framing = (
+            "This story is one of two rival attempts at the whole direction "
+            "(`narrow read` / `broad read`). Exactly one ships; the other is closed "
+            "as `superseded_by_sibling`. **There is no sibling story that will "
+            "implement anything deferred here**, and the acceptance oracle grades "
+            "this story against every criterion below."
+        )
+    else:
+        heading = "## Required coverage — the acceptance oracle grades the whole direction"
+        framing = (
+            "This story is the direction's ONLY story. An independent acceptance "
+            "oracle grades it at merge time against every criterion below — never "
+            "against a subset the story text declares in scope. **No sibling story "
+            "exists or will be created**, so anything deferred here is built by "
+            "nobody and the story is then graded against it and blocked."
+        )
     return (
         f"{file_content.rstrip()}\n\n"
         f"{_FULL_COVERAGE_MARKER}\n"
-        "## Required coverage — this is a COMPETING alternate\n\n"
-        "This story is one of two rival attempts at the whole direction "
-        "(`narrow read` / `broad read`). Exactly one ships; the other is closed "
-        "as `superseded_by_sibling`. **There is no sibling story that will "
-        "implement anything deferred here**, and the acceptance oracle grades "
-        "this story against every criterion below.\n\n"
+        f"{heading}\n\n"
+        f"{framing}\n\n"
         "Implement ALL of them:\n\n"
         f"{criteria}\n\n"
         "Anything above that the body of this story describes as out of scope, "
@@ -901,7 +1103,10 @@ def handle_sm(
             "This invocation prepares the story file for exactly ONE StoryRecord\n"
             "(the chain runs you once per record). The PM result's child_stories\n"
             "above are decomposition CONTEXT — scope boundaries and sequencing —\n"
-            "NOT a list of files to emit. Your `stories` array MUST contain\n"
+            "NOT a list of files to emit. If this record is the direction's ONLY\n"
+            "story, any sibling or sequencing references in that context are\n"
+            "VOID: no sibling exists or will exist, so nothing may be deferred\n"
+            "to one. Your `stories` array MUST contain\n"
             "EXACTLY ONE entry, with `slug` set EXACTLY to the value below\n"
             "(verbatim — the chain matches on it and refuses to write on\n"
             "mismatch). If this record is one interpretation of a dual-draft\n"
@@ -1011,10 +1216,54 @@ def handle_sm(
         slug=story.slug,
     )
 
+    # A4: the mandate also fires for the ONLY story of an AC-carrying
+    # direction (gated on the same per-app flag as the spawn-time collapse).
+    # Fail direction on any lookup error is NO stamp — SM may then descope and
+    # the story blocks at the gate: a recoverable false-block, never a
+    # false-green.
+    ac_single_story = False
+    try:
+        if (
+            app_config is not None
+            and app_config.gates.single_story_per_ac_direction
+            and direction is not None
+        ):
+            from factory.chain.acceptance import acceptance_expected_for
+
+            if acceptance_expected_for(app_config, direction):
+                from sqlmodel import Session, create_engine, select
+
+                eng = create_engine(f"sqlite:///{db}", echo=False)
+                with Session(eng) as session:
+                    sibs = session.exec(
+                        select(StoryRecord).where(
+                            StoryRecord.direction_id == story.direction_id,
+                            StoryRecord.app == story.app,
+                        )
+                    ).all()
+                # "Only story" means only LIVE story: terminal rows
+                # (superseded losers, closed_by_operator, prior blocked
+                # attempts) do no further work, so their existence must not
+                # stop the stamp — else any direction with history never
+                # earns it again. The story must also actually be in the
+                # query result (an empty result proves nothing).
+                others_live = [
+                    s
+                    for s in sibs
+                    if s.id != story.id and not is_terminal(StoryState(s.state))
+                ]
+                ac_single_story = (
+                    any(s.id == story.id for s in sibs) and not others_live
+                )
+    except Exception:  # noqa: BLE001 - no stamp is the recoverable direction
+        ac_single_story = False
+
     target_abs = software_factory_root / "apps" / story.app / target_path_rel
     target_abs.parent.mkdir(parents=True, exist_ok=True)
     target_abs.write_text(
-        _with_full_coverage_mandate(matched.get("file_content") or "", story, direction),
+        _with_full_coverage_mandate(
+            matched.get("file_content") or "", story, direction, ac_single_story=ac_single_story
+        ),
         encoding="utf-8",
     )
     story.story_file_path = target_path_rel

@@ -134,6 +134,19 @@ class AppGatesConfig(BaseModel):
     test_command: str | None = None
     coverage_command: str | None = None
     e2e_command: str | None = None
+    # A4 (operator decision 2026-08-09): when the acceptance oracle is on and
+    # the direction carries acceptance criteria, collapse a multi-story PM
+    # split into ONE story at spawn — the oracle grades every story against
+    # the DIRECTION's criteria, so the first sibling to merge satisfies the
+    # direction and every later sibling grades green-at-base →
+    # ``oracle_not_discriminating`` → operator waiver (observed live
+    # 2026-08-09, direction 120: story 179 shipped everything, siblings
+    # 180/181 were superseded by hand). Per-app and default OFF, per the
+    # ``detector_watch`` precedent: flip it per app after observing it on a
+    # real spawn, never globally on merge. The collapse refuses to fire (and
+    # keeps the split, loudly) when the summed size estimates exceed the
+    # per-story ceilings — see ``handle_stories_spawned``.
+    single_story_per_ac_direction: bool = False
     # INERT since the ablation branch was removed from the ``tests-meaningful``
     # merge gate. Retained so existing app configs keep parsing; nothing reads
     # it. Mutation scoring is now a measurement you invoke deliberately
