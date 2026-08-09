@@ -33,17 +33,25 @@ permissions:
 #   push / queue  -> FULL suite with coverage (COVERAGE_CORE=sysmon), exactly
 #                    what gated every merge before E6. Runs post-merge.
 #
-# RED-BLOCKS-MERGES IS NOT WIRED YET — deferred deliberately (stage 2), not
-# forgotten. Adversarial review (2026-08-09) showed the naive version (a
-# required `main-green` check failing while main's full lane is red) would
-# make auto_merge's CI-failure handler burn a dev run per open PR and then
-# CLOSE every chain PR and terminally park its story two ticks after main
-# goes red. Stage 2 = the guard PLUS an auto_merge change that treats a red
-# main-guard as a HOLD (wait, don't dispatch, don't park) PLUS a
-# head-SHA-pinned query (newest-completed-run masks an older red one).
-# UNTIL THEN: a red full lane on main must be fixed before anything else
-# merges — operator-enforced. Do not turn the factory's unattended merging
-# on while this interim holds.
+# RED-BLOCKS-MERGES: STAGE 2 SHIPPED (2026-08-09). The `main-green` job below
+# reports whether main's own post-merge full lane is green. Adversarial review
+# showed the NAIVE version of this would make auto_merge's CI-failure handler
+# burn a dev run per open PR and then CLOSE every chain PR and terminally park
+# its story two ticks after main goes red. So the guard ships together with:
+#   * `auto_merge._CI_STATE_HOLD` — a red `main-green` (and ONLY `main-green`)
+#     classifies as an ENVIRONMENT HOLD: no dev dispatch, no redispatch event,
+#     no park, no PR close, no gate evaluation. The story waits.
+#   * a head-SHA-pinned query, because "newest completed run on main" lets a
+#     NEWER green run permanently mask an OLDER red one.
+#   * resume-scoped CI-fix counting, so `factory resume-story` can actually
+#     undo a park that a red environment caused.
+# STILL AN OPERATOR STEP: `main-green` is NOT a required check on main yet.
+# Making it required is a manual branch-protection change to be done AFTER this
+# merges AND the chain is redeployed (`scripts/deploy-factory-from-main.sh`) —
+# a live factory running pre-hold auto_merge code against a required
+# `main-green` is exactly the queue-destroying combination above. Until then a
+# red full lane on main must be fixed before anything else merges —
+# operator-enforced.
 #
 # Manifest guards (tests/test_fast_lane_manifest.py, runs in the fast lane):
 # stale entries fail; unlisted heavy files run slow-but-safe until the step
@@ -265,6 +273,139 @@ jobs:
       - name: pytest (full suite — merge queue)
         if: github.event_name == 'merge_group'
         run: uv run pytest -q --tb=short $(tr '\n' ' ' < /tmp/shard.txt)
+
+  # ---------------------------------------------------------------------------
+  # E6 STAGE 2 — RED MAIN BLOCKS MERGES.
+  #
+  # The full suite runs POST-merge (`pytest-full`), so the PR-blocking lane can
+  # be fast. That trade is only safe if a red full lane on main STOPS the line;
+  # otherwise breakage compounds behind a green fast lane. This job is that
+  # stop: it reports main's own full-lane verdict as a check on every PR.
+  #
+  # SOUNDNESS — pin to main's CURRENT head SHA. The obvious query ("the most
+  # recent completed push run on main") is UNSOUND: any newer green run
+  # permanently masks an older red one, so a broken main goes green the moment
+  # a docs commit lands on top of it. We resolve main's head SHA first and ask
+  # for THAT SHA's run.
+  #
+  # DOCUMENTED COMPROMISE — a just-merged SHA has an IN-PROGRESS run, not a
+  # completed one. Failing there would block every PR for the ~20 minutes after
+  # each merge. So with no completed run for main's head we fall back to the
+  # most recent COMPLETED push run of this workflow, whatever its SHA. That is
+  # exactly the staleness the pre-E6 world already had (main's last known
+  # verdict), and it is bounded: the next tick / re-run picks up the real one.
+  # It is a compromise, not a hole — the fallback still FAILS on a red verdict.
+  #
+  # RENAME-PROOF — the workflow is resolved by NAME (`github.workflow`) through
+  # the workflows list, then queried by the numeric id. Resolving by filename
+  # would silently stop matching the day someone renames test.yml, and a query
+  # that matches nothing must never read as "green".
+  #
+  # FAIL-SAFE — 3 attempts on any API error, then FAIL. Every uncertain path
+  # here resolves to a red check, never a green one.
+  #
+  # PR-ONLY on purpose: on `push` this would ask about the commit that is
+  # currently being tested, and on `merge_group` a PR-only job never reports at
+  # all. NOTE for whoever enables the merge queue: making `main-green` required
+  # while it cannot run on `merge_group` would wedge the queue on a vacuous
+  # required check — give it a merge_group leg first.
+  #
+  # NOT REQUIRED YET. Making `main-green` a required status check on `main` is a
+  # MANUAL operator step in branch protection, to be done ONLY AFTER this merges
+  # AND the factory is redeployed from main — the live chain needs
+  # `auto_merge._CI_STATE_HOLD` before a red `main-green` can appear on its PRs,
+  # or the pre-hold code closes every open chain PR and terminally parks its
+  # story two ticks later. Deploy first, protect second.
+  # ---------------------------------------------------------------------------
+  main-green:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: main's full lane must be green
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WF_NAME: ${{ github.workflow }}
+        run: |
+          set -euo pipefail
+
+          # 3 attempts, then a non-zero return the caller turns into a FAILED
+          # check. Never a silent empty answer — an empty answer downstream
+          # would look like "no red run found", i.e. green.
+          api() {
+            local path="$1" out
+            for attempt in 1 2 3; do
+              if out="$(gh api "$path" 2>/tmp/gh_api.err)"; then
+                printf '%s' "$out"
+                return 0
+              fi
+              echo "::warning::gh api failed (attempt ${attempt}/3): $path" >&2
+              sed 's/^/    /' /tmp/gh_api.err >&2 || true
+              sleep $(( attempt * 5 ))
+            done
+            return 1
+          }
+
+          fail() { echo "::error::$1"; exit 1; }
+
+          # --- 1. this workflow's numeric id, resolved by NAME ---------------
+          if ! WORKFLOWS="$(api "repos/${REPO}/actions/workflows?per_page=100")"; then
+            fail "could not list workflows for ${REPO} after 3 attempts (fail-safe)."
+          fi
+          WF_ID="$(echo "$WORKFLOWS" | jq -r --arg n "$WF_NAME" \
+            '[.workflows[] | select(.name == $n) | .id] | first // empty')"
+          if [ -z "$WF_ID" ]; then
+            fail "no workflow named '${WF_NAME}' in ${REPO} (fail-safe)."
+          fi
+          echo "workflow '${WF_NAME}' -> id ${WF_ID}"
+
+          # --- 2. main's CURRENT head sha -----------------------------------
+          if ! MAIN_COMMIT="$(api "repos/${REPO}/commits/main")"; then
+            fail "could not resolve main's head sha after 3 attempts (fail-safe)."
+          fi
+          MAIN_SHA="$(echo "$MAIN_COMMIT" | jq -r '.sha // empty')"
+          if [ -z "$MAIN_SHA" ]; then
+            fail "main's head sha came back empty (fail-safe)."
+          fi
+          echo "main head sha: ${MAIN_SHA}"
+
+          # --- 3. that SHA's completed push run ------------------------------
+          if ! PINNED="$(api "repos/${REPO}/actions/workflows/${WF_ID}/runs?head_sha=${MAIN_SHA}&event=push&status=completed&per_page=100")"; then
+            fail "could not query runs for ${MAIN_SHA} after 3 attempts (fail-safe)."
+          fi
+          RUN="$(echo "$PINNED" | jq -c '.workflow_runs | sort_by(.run_started_at) | last // empty')"
+          SOURCE="main head ${MAIN_SHA}"
+
+          # --- 4. fallback: most recent COMPLETED push run, any sha ----------
+          if [ -z "$RUN" ]; then
+            echo "no COMPLETED push run for ${MAIN_SHA} yet (its run is probably still in progress)."
+            echo "falling back to main's most recent completed verdict — the same staleness"
+            echo "the pre-E6 world had. A red fallback still fails this check."
+            if ! LATEST="$(api "repos/${REPO}/actions/workflows/${WF_ID}/runs?branch=main&event=push&status=completed&per_page=1")"; then
+              fail "could not query main's most recent completed run after 3 attempts (fail-safe)."
+            fi
+            RUN="$(echo "$LATEST" | jq -c '.workflow_runs[0] // empty')"
+            SOURCE="most recent completed push run (fallback)"
+          fi
+
+          if [ -z "$RUN" ]; then
+            fail "no completed push run for '${WF_NAME}' on main at all — cannot establish that main is green (fail-safe)."
+          fi
+
+          CONCLUSION="$(echo "$RUN" | jq -r '.conclusion // "unknown"')"
+          RUN_URL="$(echo "$RUN" | jq -r '.html_url // "(no url)"')"
+          RUN_SHA="$(echo "$RUN" | jq -r '.head_sha // "(no sha)"')"
+          echo "verdict source: ${SOURCE}"
+          echo "run ${RUN_URL} (sha ${RUN_SHA}) -> ${CONCLUSION}"
+
+          if [ "$CONCLUSION" != "success" ]; then
+            fail "main's full lane is ${CONCLUSION} at ${RUN_SHA} — ${RUN_URL}. This PR is HELD, not rejected: nothing is wrong with it. Fix main first."
+          fi
+          echo "main is green."
 
   # -------- FULL LANE: push to main (post-merge) ------------------------------
   # Everything, exactly as before E6, plus COVERAGE_CORE=sysmon (Python 3.12 +

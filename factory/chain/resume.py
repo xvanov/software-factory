@@ -379,6 +379,11 @@ def plan_resume(
         "merge-gate block window -> reset (a `story_resumed` event makes "
         "_gate_block_history stop counting the historical blocks at this head sha)"
     )
+    plan.resets.append(
+        "CI-fix redispatch window -> reset (the same `story_resumed` event makes "
+        "_handle_ci_failure stop counting historical ci_fix_redispatch events, so a "
+        "story parked on cap_reached/identical_failure_signature gets a real retry)"
+    )
     if reauthor_oracle:
         plan.resets.append(
             "acceptance oracle -> DELETED (test_acceptance.py, attempts.json, "

@@ -630,6 +630,303 @@ def test_auto_merge_tick_placeholder_pr_unaffected_by_ci_failure(tmp_path: Path)
 
 
 # --------------------------------------------------------------------------- #
+# E6 STAGE 2 — a red `main-green` HOLDS the queue instead of destroying it.
+#
+# The naive version of "red main blocks merges" would have made a red main look
+# like a per-PR CI failure: tick 1 burns a dev-sandbox run per open PR on a
+# finding dev cannot act on, tick 2 the signature is identical so the PR is
+# CLOSED and the story terminally parked. These pin that a hold writes NOTHING
+# except one deduped event.
+# --------------------------------------------------------------------------- #
+
+
+def _hold_app(tmp_path: Path) -> None:
+    apps_dir = tmp_path / "apps" / "sacrifice"
+    apps_dir.mkdir(parents=True)
+    (apps_dir / "config.yaml").write_text("name: sacrifice\nrepo: o/sacrifice\n", encoding="utf-8")
+
+
+def _hold_fixture(story: StoryRecord) -> am.FixturePR:
+    return am.FixturePR(
+        pr_number=77,
+        head_sha="deadbeef",
+        base_branch="main",
+        labels=[],
+        files_changed=["src/x.py"],
+        ci_state=am._CI_STATE_HOLD,
+        story=story,
+    )
+
+
+def test_hold_check_name_matches_the_workflow_job() -> None:
+    """The hold is keyed on a check NAME. That name is produced by the
+    `main-green` job in .github/workflows/test.yml (a job with no `name:` reports
+    under its job id). If the two ever drift, a red main stops classifying as a
+    hold and starts closing PRs — so pin them together.
+    """
+    import yaml
+
+    wf = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / ".github/workflows/test.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    job = wf["jobs"][am._MAIN_GREEN_CHECK_NAME]
+    # A `name:` would override the reported context and break the match.
+    assert "name" not in job
+    # PR-only: on push it would ask about the very commit under test, and the
+    # merge queue needs its own leg before this can be a required check there.
+    assert job["if"] == "github.event_name == 'pull_request'"
+
+
+def test_main_green_hold_touches_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(i) only main-green red -> HOLD: no dev dispatch, no redispatch event,
+    no park, no PR close, story state unchanged."""
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+
+    # Neither destroyer may be reached: the CI-failure loop (dispatch/park/close)
+    # nor the gate evaluation (whose missing-labels path has its OWN park sink,
+    # _park_gate_block_exhausted, three ticks later).
+    def _boom_ci(**kw):  # noqa: ANN003
+        raise AssertionError("a hold must never reach _handle_ci_failure")
+
+    def _boom_eval(**kw):  # noqa: ANN003
+        raise AssertionError("a hold must never reach _evaluate_one_pr")
+
+    monkeypatch.setattr(am, "_handle_ci_failure", _boom_ci)
+    monkeypatch.setattr(am, "_evaluate_one_pr", _boom_eval)
+
+    actions = am.auto_merge_tick(
+        tmp_path,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[_hold_fixture(story)],
+        db_path=db,
+    )
+    assert len(actions) == 1
+    assert actions[0].merged is False
+    assert "held" in actions[0].reason
+    assert "main-green" in actions[0].reason
+
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        r = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
+    assert r.state == StoryState.PR_OPEN.value  # exactly where it was
+    assert r.reviewer_result_json is None  # no CI finding was fabricated
+
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    assert not [e for e in events if e.get("event") == "ci_fix_redispatch"]
+    assert not [e for e in events if e.get("event") == "ci_fix_exhausted"]
+    assert not [e for e in events if e.get("event") == "ci_unresolved_parked"]
+    assert not [e for e in events if e.get("event") == "merge_gates_failed"]
+    holds = [e for e in events if e.get("event") == "ci_hold_main_red"]
+    assert len(holds) == 1
+    assert holds[0]["pr_number"] == 77
+    assert holds[0]["required_check"] == "main-green"
+
+
+def test_main_green_hold_event_is_deduped_across_ticks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ticks run every minute and a red main can last hours — the hold event is
+    emitted once per EPISODE (on transition), not once per tick."""
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+    monkeypatch.setattr(am, "_evaluate_one_pr", lambda **kw: pytest.fail("no eval under hold"))
+
+    for _ in range(4):
+        am.auto_merge_tick(
+            tmp_path,
+            "sacrifice",
+            dry_run=False,
+            fixture_prs=[_hold_fixture(story)],
+            db_path=db,
+        )
+
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    assert len([e for e in events if e.get("event") == "ci_hold_main_red"]) == 1
+
+    # A NEW episode (something else happened in between) is legible as a second
+    # event — the dedupe suppresses spam, not history.
+    log_story_event(
+        story.id,
+        "ci_fix_redispatch",
+        {"pr_number": 77, "attempt": 1, "failure_signature": "sig"},
+        software_factory_root=tmp_path,
+        slug_hint=story.slug,
+    )
+    story.state = StoryState.PR_OPEN.value
+    persist_story(story, db)
+    am.auto_merge_tick(
+        tmp_path, "sacrifice", dry_run=False, fixture_prs=[_hold_fixture(story)], db_path=db
+    )
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    assert len([e for e in events if e.get("event") == "ci_hold_main_red"]) == 2
+
+
+def test_real_ci_failure_alongside_main_green_still_takes_the_failure_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(ii) main-green red + pytest (1) red -> the PR genuinely failed CI, so
+    the historical path runs unchanged. Classification is `_query_ci_state`'s
+    job (pinned in tests/test_ci_state_query.py); this pins that the "failure"
+    it produces still reaches the dev re-dispatch."""
+    import subprocess
+
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+    monkeypatch.setattr(am, "_fetch_ci_failure_logs", lambda **kw: "FAIL: boom")
+
+    rows = "main-green\tfail\t1s\thttps://x\npytest (1)\tfail\t1s\thttps://y"
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, rows, ""),
+    )
+    assert am._query_ci_state(app_config=_cfg(), pr_number=77) == "failure"
+
+    fixture = _hold_fixture(story)
+    fixture.ci_state = "failure"
+    actions = am.auto_merge_tick(
+        tmp_path, "sacrifice", dry_run=False, fixture_prs=[fixture], db_path=db
+    )
+    assert len(actions) == 1
+    assert "re-dispatched" in actions[0].reason
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        r = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
+    assert r.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    assert len([e for e in events if e.get("event") == "ci_fix_redispatch"]) == 1
+    assert not [e for e in events if e.get("event") == "ci_hold_main_red"]
+
+
+def test_dry_run_and_placeholder_prs_are_not_held(tmp_path: Path) -> None:
+    """The hold is a real-run, real-PR concern — dry-run previews and
+    placeholder (negative) PR numbers behave exactly as before."""
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+
+    actions = am.auto_merge_tick(
+        tmp_path, "sacrifice", dry_run=True, fixture_prs=[_hold_fixture(story)], db_path=db
+    )
+    assert "held" not in actions[0].reason
+
+    ph = _hold_fixture(story)
+    ph.pr_number = -(story.id or 0)
+    actions = am.auto_merge_tick(
+        tmp_path, "sacrifice", dry_run=False, fixture_prs=[ph], db_path=db
+    )
+    assert "held" not in actions[0].reason
+
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    assert not [e for e in events if e.get("event") == "ci_hold_main_red"]
+
+
+# --------------------------------------------------------------------------- #
+# OPERATOR RESUME scopes the CI-fix window (the _gate_block_history precedent).
+# --------------------------------------------------------------------------- #
+
+
+def test_story_resumed_resets_the_ci_fix_redispatch_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(iii) ci_fix_redispatch events logged BEFORE a story_resumed are not
+    counted after it. Without this, `factory resume-story` was a no-op wearing
+    a success message: the resumed story hit the cap on its FIRST evaluation
+    and re-parked before the fixed environment ever got a turn."""
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+    monkeypatch.setattr(am, "_fetch_ci_failure_logs", lambda **kw: "FAIL: boom")
+
+    for i in range(am._MAX_CI_FIX_CYCLES):
+        log_story_event(
+            story.id,
+            "ci_fix_redispatch",
+            {"pr_number": 77, "attempt": i + 1, "failure_signature": f"sig-{i}"},
+            software_factory_root=tmp_path,
+            slug_hint=story.slug,
+        )
+    # Pre-resume, the cap is reached: this would park (and close the PR).
+    log_story_event(
+        story.id,
+        "story_resumed",
+        {"to_state": "pr_open"},
+        software_factory_root=tmp_path,
+        slug_hint=story.slug,
+    )
+
+    def _boom_close(pr, repo, **kw):  # noqa: ANN001, ANN003
+        raise AssertionError("a resumed story must not be parked on pre-resume history")
+
+    outcome = am._handle_ci_failure(
+        story=story,
+        app_config=_cfg(),
+        pr_number=77,
+        db=db,
+        root=tmp_path,
+        close_pr_fn=_boom_close,
+    )
+    assert outcome == "redispatched"
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        r = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
+    assert r.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
+
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    post = events[[e.get("event") for e in events].index("story_resumed") + 1 :]
+    new = [e for e in post if e.get("event") == "ci_fix_redispatch"]
+    assert len(new) == 1
+    # Attempt numbering restarts from the resume, not from all-time history.
+    assert new[0]["attempt"] == 1
+    assert not [e for e in events if e.get("event") == "ci_fix_exhausted"]
+
+
+def test_signature_guard_is_also_resume_scoped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The identical-signature guard reads the LAST prior redispatch; scoped to
+    the resume, a pre-resume redispatch with the same signature no longer parks
+    the story. This is the shape a red main produced: the redispatches were
+    never the story's fault and the resume is the operator saying so."""
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+    monkeypatch.setattr(am, "_fetch_ci_failure_logs", lambda **kw: "FAIL test_x.py: boom")
+
+    first = am._handle_ci_failure(
+        story=story, app_config=_cfg(), pr_number=77, db=db, root=tmp_path
+    )
+    assert first == "redispatched"
+    story.state = StoryState.PR_OPEN.value
+    persist_story(story, db)
+
+    log_story_event(
+        story.id,
+        "story_resumed",
+        {"to_state": "pr_open"},
+        software_factory_root=tmp_path,
+        slug_hint=story.slug,
+    )
+
+    def _boom_close(pr, repo, **kw):  # noqa: ANN001, ANN003
+        raise AssertionError("resume must clear the identical-signature guard too")
+
+    second = am._handle_ci_failure(
+        story=story,
+        app_config=_cfg(),
+        pr_number=77,
+        db=db,
+        root=tmp_path,
+        close_pr_fn=_boom_close,
+    )
+    assert second == "redispatched"
+
+
+# --------------------------------------------------------------------------- #
 # _ci_failure_is_genuine — real conclusion vocabulary (gh statusCheckRollup),
 # NOT the gh-pr-checks buckets that collapse TIMED_OUT/ERROR into "fail".
 # --------------------------------------------------------------------------- #
