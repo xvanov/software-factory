@@ -408,11 +408,21 @@ def _install_fake_sdk(
     *,
     run_sleep_s: float = 0.0,
     close_raises: bool = False,
+    report_usage: bool = True,
 ) -> None:
     """Install a fake OpenHands SDK whose ``run()`` reports 1000/100 tokens and
     $0.50. ``run_sleep_s`` sleeps INSIDE run() (before any usage is captured, to
     model a stalled LLM); ``close_raises`` raises during teardown AFTER usage is
-    captured (to model a post-model crash)."""
+    captured (to model a post-model crash).
+
+    ``report_usage=False`` makes ``conversation_stats`` report ZERO accumulated
+    usage. Needed since the runner learned to read usage off a conversation that
+    has not returned: this fake's stats are static, so a ``run_sleep_s`` stall
+    used to *say* 1000/100/$0.50 while modelling "the LLM hung and did nothing".
+    A genuinely stalled request has made no completed call, so its accumulated
+    cost really is 0 — ``report_usage=False`` is what that looks like, and
+    keeping the old static usage here would assert the very confusion the
+    runner fix removes."""
 
     class _FakeConversation:
         def __init__(self, **kwargs: Any) -> None:
@@ -438,12 +448,12 @@ def _install_fake_sdk(
                             "U",
                             (),
                             {
-                                "prompt_tokens": 1000,
-                                "completion_tokens": 100,
+                                "prompt_tokens": 1000 if report_usage else 0,
+                                "completion_tokens": 100 if report_usage else 0,
                                 "cache_read_tokens": 0,
                             },
                         )()
-                        accumulated_cost = 0.5
+                        accumulated_cost = 0.5 if report_usage else 0.0
 
                     return _M()
 
@@ -537,8 +547,14 @@ def test_r1_stalled_llm_timeout_stays_infra(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A genuinely stalled LLM (run() itself never returns before the wall
-    clock, so NO usage was captured) stays retryable infra."""
-    _install_fake_sdk(monkeypatch, run_sleep_s=2.0)
+    clock, and NO usage accumulated) stays retryable infra.
+
+    ``report_usage=False`` is what "the request hung and nothing completed"
+    actually looks like to the SDK. This used to rely on the runner being unable
+    to read the live conversation at all, which conflated it with the case
+    below.
+    """
+    _install_fake_sdk(monkeypatch, run_sleep_s=2.0, report_usage=False)
     monkeypatch.setenv("AZURE_API_KEY", "test-key")
 
     res = _run_sandbox(tmp_path, wall_clock_timeout_s=0.2)
@@ -548,3 +564,24 @@ def test_r1_stalled_llm_timeout_stays_infra(
     assert res.tokens_out == 0
     assert res.cost_usd == 0.0
     assert _is_premodel_infra_failure(res)
+
+
+def test_r1_timeout_midrun_with_accumulated_spend_is_a_real_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sibling case the test above used to swallow.
+
+    ``run()`` has not returned, but the conversation HAS completed calls and
+    accumulated spend — the live shape of sacrifice story 173 (1800 s, $1.92,
+    4.73M tokens). It must book that spend and burn a dev retry, or the money is
+    invisible to ``per_story_spend_usd`` and the story re-dispatches for free.
+    """
+    _install_fake_sdk(monkeypatch, run_sleep_s=2.0, report_usage=True)
+    monkeypatch.setenv("AZURE_API_KEY", "test-key")
+
+    res = _run_sandbox(tmp_path, wall_clock_timeout_s=0.2)
+
+    assert res.premodel_infra is False
+    assert res.tokens_out == 100
+    assert res.cost_usd == 0.5
+    assert not _is_premodel_infra_failure(res)
