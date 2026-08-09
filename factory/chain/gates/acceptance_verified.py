@@ -521,6 +521,44 @@ def _stub_run(
     return out
 
 
+def _base_failures_matching_stub(
+    credited: set[str],
+    base_criteria: dict[str, str],
+    stub_criteria_by_variant: dict[str, dict[str, str]],
+) -> list[str]:
+    """ADVISORY DIAGNOSTIC ONLY (BENCHMARK-READINESS-PLAN.md A2) — flags a
+    credited criterion whose BASE outcome (``FAIL``/``ERROR``) is the exact
+    same junit outcome it also produced against EVERY gutted-implementation
+    stub variant (``stub_server.STUB_VARIANTS``, both the ``200 {}`` empty
+    body and the ``plausible`` shaped one). This is suspicious WITHOUT
+    asserting what any status code means.
+
+    A2's FIRST DRAFT proposed a status-code taxonomy (404/501 = valid red,
+    400/422 = malformed oracle -> block) and it was proven to INVERT on this
+    app: story 179's own ``base_runs.json`` recorded a 401 for a route that
+    did not exist at base, because a parameterised route's
+    ``Depends(get_current_user)`` fires before a 404 can be produced — "feature
+    absent" presents as 401/403 on most of this app's routes, and a 404 is the
+    exception (module docstring, KNOWN OPEN #3). Any blocking taxonomy built
+    on status codes is therefore a false-block GENERATOR on this app, which is
+    why this function does not look at a status code anywhere and never
+    changes ``credited``, ``verdict``, or the gate's PASS/BLOCK decision — it
+    only feeds ``details`` for a human (or Workstream B's later analysis) to
+    look at.
+    """
+    matches: list[str] = []
+    for c in sorted(credited):
+        base_outcome = base_criteria.get(c)
+        if base_outcome not in ("FAIL", "ERROR"):
+            continue
+        if all(
+            stub_criteria_by_variant.get(v, {}).get(c) == base_outcome
+            for v in stub_server.STUB_VARIANTS
+        ):
+            matches.append(c)
+    return matches
+
+
 def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0911,PLR0912,PLR0915
     gates = app_config.gates
     deadline = time.monotonic() + _GATE_BUDGET_S
@@ -979,6 +1017,13 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
         probe_requests=probe_requests, run_nonce=run_nonce,
     )
     details["base_run"] = base_details
+    base_criteria = base_details.get("criteria")
+    if isinstance(base_criteria, dict):
+        # Advisory only — see ``_base_failures_matching_stub``'s docstring for
+        # why this records an outcome-identity signal and classifies nothing.
+        details["base_failures_matching_stub"] = _base_failures_matching_stub(
+            credited, base_criteria, stub_criteria_by_variant
+        )
     if verdict == "green":
         return _unverifiable(
             pr, details, kind="oracle_not_discriminating",
