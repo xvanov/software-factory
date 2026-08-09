@@ -100,9 +100,12 @@ def test_gh_timeout_returns_none(monkeypatch):
 # --------------------------------------------------------------------------- #
 # E6 STAGE 2 — `main-green` is an ENVIRONMENT HOLD, not a PR defect.
 #
-# Once `main-green` is a REQUIRED check, a red main turns every open PR's
-# required aggregate red. Reading that as "this PR failed CI" would burn a dev
-# run per PR on tick 1 and CLOSE the PR + terminally park the story on tick 2.
+# Once `main-green` is a REQUIRED check, a PR whose `main-green` ran while main
+# was red carries a red required aggregate. (Not EVERY open PR: GitHub does not
+# re-run pull_request checks when the base moves, so already-open PRs keep the
+# green they were computed with — see auto_merge._CI_STATE_HOLD.) Reading that
+# red as "this PR failed CI" would burn a dev run on tick 1 and CLOSE the PR +
+# terminally park the story on tick 2.
 # So a red set whose ONLY red member is `main-green` must classify as "hold".
 # Everything else — including main-green red ALONGSIDE a real red — keeps the
 # historical "failure" verdict. The hold only ever SUPPRESSES action; it can

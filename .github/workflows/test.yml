@@ -282,6 +282,14 @@ jobs:
   # otherwise breakage compounds behind a green fast lane. This job is that
   # stop: it reports main's own full-lane verdict as a check on every PR.
   #
+  # WHAT IT ACTUALLY BOUNDS. This runs on `pull_request`, and GitHub does NOT
+  # re-run pull_request checks when the BASE branch moves — the verdict is
+  # computed at open/synchronize and then FROZEN on that head SHA. So a red main
+  # holds PRs opened or pushed-to AFTER main went red; PRs already open keep the
+  # green they were computed with. It bounds NEW work entering the queue, not
+  # work already in it. The same freeze is why a hold does not self-clear when
+  # main goes green — see ACTIVATION CHECKLIST (b).
+  #
   # SOUNDNESS — pin to main's CURRENT head SHA. The obvious query ("the most
   # recent completed push run on main") is UNSOUND: any newer green run
   # permanently masks an older red one, so a broken main goes green the moment
@@ -289,12 +297,15 @@ jobs:
   # for THAT SHA's run.
   #
   # DOCUMENTED COMPROMISE — a just-merged SHA has an IN-PROGRESS run, not a
-  # completed one. Failing there would block every PR for the ~20 minutes after
-  # each merge. So with no completed run for main's head we fall back to the
-  # most recent COMPLETED push run of this workflow, whatever its SHA. That is
+  # completed one, so with no completed run for main's head we fall back to the
+  # most recent COMPLETED push run of this workflow, whatever its SHA. Do not
+  # read that as "a brief window after each merge": `pytest-full` is SERIALIZED
+  # (`concurrency: pytest-full-main`, cancel-in-progress false), so under
+  # back-to-back merges the fallback is the STEADY STATE, and the verdict it
+  # returns reaches back as far as the full-lane queue is backed up. That is
   # exactly the staleness the pre-E6 world already had (main's last known
-  # verdict), and it is bounded: the next tick / re-run picks up the real one.
-  # It is a compromise, not a hole — the fallback still FAILS on a red verdict.
+  # verdict). It is a compromise, not a hole — the fallback still FAILS on a red
+  # verdict, so a red main is never reported green, only reported late.
   #
   # RENAME-PROOF — the workflow is resolved by NAME (`github.workflow`) through
   # the workflows list, then queried by the numeric id. Resolving by filename
@@ -310,12 +321,32 @@ jobs:
   # while it cannot run on `merge_group` would wedge the queue on a vacuous
   # required check — give it a merge_group leg first.
   #
-  # NOT REQUIRED YET. Making `main-green` a required status check on `main` is a
-  # MANUAL operator step in branch protection, to be done ONLY AFTER this merges
-  # AND the factory is redeployed from main — the live chain needs
-  # `auto_merge._CI_STATE_HOLD` before a red `main-green` can appear on its PRs,
-  # or the pre-hold code closes every open chain PR and terminally parks its
-  # story two ticks later. Deploy first, protect second.
+  # NOT REQUIRED YET — ACTIVATION CHECKLIST. Making `main-green` a required
+  # status check on `main` is a MANUAL operator step in branch protection, and
+  # it must not be done until ALL of these hold:
+  #
+  #   0. This merges AND the factory is redeployed from main
+  #      (`scripts/deploy-factory-from-main.sh`). The live chain needs
+  #      `auto_merge._CI_STATE_HOLD` before a red `main-green` can appear on its
+  #      PRs, or the pre-hold code closes those PRs and terminally parks their
+  #      stories two ticks later. Deploy first, protect second.
+  #   a. THE HOLD IS BOUNDED. After N consecutive held evaluations the chain
+  #      must set `last_rejection_reason` so the story reaches `factory inbox`.
+  #      It must NOT park the story or close the PR — the PR is innocent. An
+  #      unbounded hold is a silent stall (`detect-without-remediate`).
+  #   b. A RECOVERY TRIGGER EXISTS. Because the verdict is frozen (above),
+  #      making main green does not clear a hold by itself. Either the chain
+  #      re-runs the held PR's checks once per hold episode when main's head SHA
+  #      has moved since the hold began, or the operator runbook documents that
+  #      clearing a hold means re-running checks on EVERY open PR.
+  #   c. THE `.github/**` SELF-EDIT GAP IS ACCEPTED IN WRITING. A chain PR that
+  #      touches ONLY `.github/**` does not trip the factory self-edit staging
+  #      twin, so no clone is run before it lands. Such a PR could rename a job
+  #      to `main-green` and thereby convert its OWN genuine CI failure into an
+  #      eternal hold — the one shape in which the hold suppresses a real red.
+  #      ACCEPTED FOR NOW, recorded rather than mitigated. Closing it means
+  #      staging-gating `.github/**` or deriving the hold's check name from
+  #      something a PR cannot rewrite.
   # ---------------------------------------------------------------------------
   main-green:
     if: github.event_name == 'pull_request'

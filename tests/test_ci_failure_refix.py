@@ -633,11 +633,18 @@ def test_auto_merge_tick_placeholder_pr_unaffected_by_ci_failure(tmp_path: Path)
 # E6 STAGE 2 — a red `main-green` HOLDS the queue instead of destroying it.
 #
 # The naive version of "red main blocks merges" would have made a red main look
-# like a per-PR CI failure: tick 1 burns a dev-sandbox run per open PR on a
-# finding dev cannot act on, tick 2 the signature is identical so the PR is
-# CLOSED and the story terminally parked. These pin that a hold writes NOTHING
-# except one deduped event.
+# like a per-PR CI failure: tick 1 burns a dev-sandbox run on a finding dev
+# cannot act on, tick 2 the signature is identical so the PR is CLOSED and the
+# story terminally parked. These pin that a hold writes NOTHING except one
+# deduped event and one merge_actions row per hold EPISODE.
 # --------------------------------------------------------------------------- #
+
+
+def _merge_action_rows(db: Path) -> list[am.MergeActionRecord]:
+    from sqlmodel import select as _select
+
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        return list(ses.exec(_select(am.MergeActionRecord)).all())
 
 
 def _hold_app(tmp_path: Path) -> None:
@@ -679,18 +686,56 @@ def test_hold_check_name_matches_the_workflow_job() -> None:
     assert job["if"] == "github.event_name == 'pull_request'"
 
 
+def _drive_tick_with_gh_checks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    db: Path,
+    rows: str,
+) -> list[am.MergeAction]:
+    """Run a REAL-RUN tick that synthesizes its own fixture from the DB, so the
+    tick calls ``_query_ci_state`` itself and the gh check ROWS decide the
+    verdict.
+
+    This is what makes the "never reaches ``_handle_ci_failure``" assertion
+    non-vacuous. Passing ``fixture_prs=[FixturePR(ci_state="hold")]`` cannot
+    test the short-circuit at all: the CI-failure branch is guarded on
+    ``ci_state == "failure"``, so a hand-set ``"hold"`` skips it whether or not
+    the hold branch exists. Feeding the raw gh rows instead means a narrowed
+    short-circuit — or a classification that stopped returning ``"hold"`` —
+    lands in ``_handle_ci_failure`` and fails the test.
+    """
+    import subprocess
+
+    monkeypatch.setattr(am, "_query_pr_head_sha", lambda **kw: "a" * 40)
+    monkeypatch.setattr(am, "_query_pr_files_changed", lambda **kw: ["src/x.py"])
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, rows, ""),
+    )
+    return am.auto_merge_tick(tmp_path, "sacrifice", dry_run=False, db_path=db)
+
+
+_ONLY_MAIN_GREEN_RED = "main-green\tfail\t1s\thttps://x\npytest (1)\tpass\t1s\thttps://y"
+_MAIN_GREEN_AND_PYTEST_RED = "main-green\tfail\t1s\thttps://x\npytest (1)\tfail\t1s\thttps://y"
+
+
 def test_main_green_hold_touches_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """(i) only main-green red -> HOLD: no dev dispatch, no redispatch event,
-    no park, no PR close, story state unchanged."""
+    no park, no PR close, story state unchanged.
+
+    Driven from the raw gh check rows through the real ``_query_ci_state``, so
+    both destroyers are genuinely unreachable rather than merely unreached:
+    the CI-failure loop (dispatch/park/close) AND the gate evaluation, whose
+    missing-labels path has its own park sink (``_park_gate_block_exhausted``)
+    three ticks later.
+    """
     _hold_app(tmp_path)
     db = _seed(tmp_path)
     story = _pr_open_story(db)
 
-    # Neither destroyer may be reached: the CI-failure loop (dispatch/park/close)
-    # nor the gate evaluation (whose missing-labels path has its OWN park sink,
-    # _park_gate_block_exhausted, three ticks later).
     def _boom_ci(**kw):  # noqa: ANN003
         raise AssertionError("a hold must never reach _handle_ci_failure")
 
@@ -700,13 +745,7 @@ def test_main_green_hold_touches_nothing(
     monkeypatch.setattr(am, "_handle_ci_failure", _boom_ci)
     monkeypatch.setattr(am, "_evaluate_one_pr", _boom_eval)
 
-    actions = am.auto_merge_tick(
-        tmp_path,
-        "sacrifice",
-        dry_run=False,
-        fixture_prs=[_hold_fixture(story)],
-        db_path=db,
-    )
+    actions = _drive_tick_with_gh_checks(tmp_path, monkeypatch, db, _ONLY_MAIN_GREEN_RED)
     assert len(actions) == 1
     assert actions[0].merged is False
     assert "held" in actions[0].reason
@@ -726,6 +765,104 @@ def test_main_green_hold_touches_nothing(
     assert len(holds) == 1
     assert holds[0]["pr_number"] == 77
     assert holds[0]["required_check"] == "main-green"
+
+
+def test_narrowing_the_short_circuit_would_be_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard on the guard: the SAME harness, with a genuinely red
+    ``pytest (1)`` alongside ``main-green``, MUST reach ``_handle_ci_failure``.
+
+    If it did not, ``test_main_green_hold_touches_nothing``'s "never reaches
+    _handle_ci_failure" would be satisfiable by a broken harness (a tick that
+    dispatches nothing ever) rather than by the short-circuit. Together the two
+    pin the boundary from both sides.
+    """
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    _pr_open_story(db)
+
+    reached: list[int] = []
+    monkeypatch.setattr(
+        am,
+        "_handle_ci_failure",
+        lambda **kw: (reached.append(kw["pr_number"]), "redispatched")[1],
+    )
+    monkeypatch.setattr(
+        am, "_evaluate_one_pr", lambda **kw: pytest.fail("failure path must not evaluate")
+    )
+
+    actions = _drive_tick_with_gh_checks(tmp_path, monkeypatch, db, _MAIN_GREEN_AND_PYTEST_RED)
+    assert reached == [77]
+    assert "re-dispatched" in actions[0].reason
+
+
+def test_hold_clears_when_main_goes_green_and_the_merge_proceeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RECOVERY. Tick 1: main-green red -> held, nothing evaluated. Tick 2: the
+    same PR's checks now report main-green PASSING -> the tick proceeds to the
+    normal gate evaluation and the merge can land.
+
+    Nothing in auto_merge makes a hold sticky. (The STARVATION risk is on
+    GitHub's side — it does not re-run pull_request checks when the base moves,
+    so something must re-run the held PR's checks for tick 2's rows to change.
+    That is ACTIVATION CHECKLIST item (b) in ``_CI_STATE_HOLD``, deferred by
+    design; this test pins that the chain side is ready for it.)
+    """
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+
+    evaluated: list[int] = []
+
+    def _fake_eval(**kw):  # noqa: ANN003
+        evaluated.append(kw["fixture"].pr_number)
+        return am.MergeAction(app="sacrifice", pr_number=77, merged=True, reason="merged")
+
+    monkeypatch.setattr(am, "_evaluate_one_pr", _fake_eval)
+    monkeypatch.setattr(
+        am, "_handle_ci_failure", lambda **kw: pytest.fail("neither tick is a CI failure")
+    )
+
+    held = _drive_tick_with_gh_checks(tmp_path, monkeypatch, db, _ONLY_MAIN_GREEN_RED)
+    assert "held" in held[0].reason
+    assert evaluated == []
+
+    green_rows = "main-green\tpass\t1s\thttps://x\npytest (1)\tpass\t1s\thttps://y"
+    merged = _drive_tick_with_gh_checks(tmp_path, monkeypatch, db, green_rows)
+    assert evaluated == [77]
+    assert merged[0].merged is True
+
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    assert len([e for e in events if e.get("event") == "ci_hold_main_red"]) == 1
+
+
+def test_hold_merge_action_row_is_written_once_per_episode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A held PR is re-evaluated every tick; a per-tick ``merge_actions`` row is
+    1,440 rows/PR/day on a 60 s timer — the PR-88 unbounded-row pathology. The
+    row is persisted on hold TRANSITION only, on the same test as the event."""
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+    monkeypatch.setattr(
+        am, "_evaluate_one_pr", lambda **kw: pytest.fail("no eval under hold")
+    )
+
+    for _ in range(5):
+        actions = _drive_tick_with_gh_checks(tmp_path, monkeypatch, db, _ONLY_MAIN_GREEN_RED)
+        # The in-memory action is returned EVERY tick — the tick's own report
+        # must not go silent about a PR it decided to hold.
+        assert len(actions) == 1
+        assert "held" in actions[0].reason
+
+    rows = [r for r in _merge_action_rows(db) if "held" in (r.reason or "")]
+    assert len(rows) == 1, "one merge_actions row per hold EPISODE, not per tick"
+
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    assert len([e for e in events if e.get("event") == "ci_hold_main_red"]) == 1
 
 
 def test_main_green_hold_event_is_deduped_across_ticks(
