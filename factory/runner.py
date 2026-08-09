@@ -1991,6 +1991,55 @@ async def sandbox_run(
     # reported 0.0" stays distinguishable from "we could not read a cost at
     # all". Populated inside ``_do_run``; read by every exit path below.
     _usage_meta: dict[str, bool] = {}
+    # The live ``Conversation``, published the moment it exists so the WALL-CLOCK
+    # TIMEOUT path can read usage off a run that never returned. ``_partial_usage``
+    # above is only written on the line AFTER ``conversation.run()`` returns, so a
+    # timeout that fires WHILE the model is still working — the common timeout,
+    # not the rare one — left it empty and the run was recorded as
+    # ``tokens=0, cost=$0.00, premodel_infra=True``: a free infra bounce.
+    # Measured 2026-08-08 on sacrifice story 173: a 1800 s dev run whose own SDK
+    # telemetry had reached **$1.92** (4.73M in / 38.4k out) was written to
+    # ``runs`` as $0.00 and did not consume a dev retry. That is the story-88
+    # class documented in ``handlers._is_premodel_infra_failure`` — the explicit
+    # ``premodel_infra`` flag fixed it for the post-model-crash path and this
+    # path was never covered.
+    _live_conversation: dict[str, Any] = {}
+
+    def _snapshot_live_usage() -> None:
+        """Best-effort usage read from a conversation that has NOT returned.
+
+        Only fills ``_partial_usage`` when it is still empty — a completed run's
+        own numbers are authoritative and must never be overwritten by a racy
+        re-read. The SDK accumulates these counters as the run proceeds (it is
+        the same source the sandbox's own live ``$`` line prints from), so a
+        snapshot taken at timeout is a real lower bound on real spend.
+
+        Every failure is swallowed: this runs on the timeout path, and a
+        telemetry read must never be able to convert a timeout into a crash.
+        Falling back to the empty holder restores exactly the previous
+        behaviour, so the failure mode is the old bug, never a new one.
+        """
+        if _partial_usage:
+            return
+        conv = _live_conversation.get("conv")
+        if conv is None:
+            return
+        try:
+            stats = conv.conversation_stats.get_combined_metrics()
+            tok = stats.accumulated_token_usage
+            _cost_raw = getattr(stats, "accumulated_cost", None)
+            _partial_usage.update(
+                tokens_in=int(getattr(tok, "prompt_tokens", 0) or 0),
+                tokens_out=int(getattr(tok, "completion_tokens", 0) or 0),
+                cached=int(getattr(tok, "cache_read_tokens", 0) or 0),
+                cost=float(_cost_raw or 0.0),
+            )
+            # Same None-sentinel discipline as the completed-run path: an SDK
+            # shape change that drops ``accumulated_cost`` must not read as a
+            # genuinely free run.
+            _usage_meta["reliable"] = _cost_raw is not None
+        except Exception:  # noqa: BLE001 - telemetry must never break teardown
+            _partial_usage.clear()
 
     def _do_run() -> tuple[int, int, int, float, str, list[dict[str, Any]], str]:
         # ``Conversation`` is a factory that returns LocalConversation/RemoteConversation
@@ -2010,6 +2059,10 @@ async def sandbox_run(
             delete_on_close=False,
             **conv_kwargs,
         )
+        # Publish BEFORE the first send: everything from here on can be
+        # interrupted by the wall clock, and the timeout handler needs a handle
+        # on this object to recover what was spent.
+        _live_conversation["conv"] = conversation
         try:
             conversation.send_message(initial_user_text)
             conversation.run()
@@ -2093,6 +2146,15 @@ async def sandbox_run(
         # populated — that is a genuine attempt whose spend must be recorded and
         # which must consume a dev retry, NOT a free infra bounce. A truly
         # stalled LLM (no partial usage) stays retryable infra.
+        #
+        # But ``_partial_usage`` is only written AFTER ``conversation.run()``
+        # returns, so the far more common timeout — the one that fires while the
+        # model is still working — reached here empty and was misfiled as
+        # "no model work at all". Read the live conversation first: it turns a
+        # 30-minute, $1.92 dev run from a free infra bounce into what it is.
+        # A stalled-before-any-call sandbox still reports zero here, so genuine
+        # infra keeps its free retry.
+        _snapshot_live_usage()
         _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
         _cost = float(_partial_usage.get("cost", 0.0) or 0.0)
         model_did_work = _t_out > 0 or _cost > 0.0
@@ -2146,6 +2208,12 @@ async def sandbox_run(
         # infra; the former is a genuine failed dev attempt that MUST consume a
         # dev retry (bypassing the increment was the story-88 bug: dev_retries
         # stuck at 1 while the story was re-dispatched for free 12 times).
+        #
+        # Same gap as the timeout path above: a raise from INSIDE
+        # ``conversation.run()`` (a provider 5xx on call 40 of 60) also arrives
+        # with ``_partial_usage`` empty, because that holder is only written
+        # once ``run()`` returns. Recover from the live conversation first.
+        _snapshot_live_usage()
         _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
         _cost = float(_partial_usage.get("cost", 0.0) or 0.0)
         model_did_work = _t_out > 0 or _cost > 0.0
