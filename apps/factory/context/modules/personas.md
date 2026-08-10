@@ -67,7 +67,21 @@ treats the directory's `*.md` glob as the registry.
   write; app config cannot). Authoring is bounded (3 passes, then it stays
   blocked and names the exhaustion), idempotent (a stored oracle is never
   re-authored — the pre-dev freeze is the anti-reward-hack property), and its
-  output is validated as runnable python before it is stored.
+  output is validated before it is stored: parses as python, declares a
+  `test_*`, passes the runner's static import allowlist, and — since
+  2026-08-10 (PR #297, the story-186 class) — survives a real
+  `pytest --collect-only` smoke in the runner's own isolation, because a
+  `@pytestFixture`-style NameError is valid syntax that only import catches.
+  The freeze has exactly TWO exceptions, both in `reauthor_missing_oracles`:
+  a stored legacy import-form oracle once the app gains a boot recipe, and —
+  since 2026-08-10 (the story-185 class) — ONE bounded auto-re-author when
+  the gate recorded an ALL-SETUP block (`oracle_setup_failed`) whose
+  `oracle_sha` matches the stored oracle: the recorded SETUP failure lines
+  are fed back sanitized and fenced as untrusted data, an
+  `auto_reauthor.json` marker (written before the LLM call, reset only by
+  `resume-story --reauthor-oracle`) caps it at one attempt per story per
+  operator-resume episode, and the swap is logged on the story's event
+  stream (`oracle_auto_reauthored`).
 - **The oracle needs the app's harness, and the app must declare it.** The
   author is blind to the implementation but must still be able to IMPORT the
   app: `gates.acceptance_harness_hint` gives it the repo-layout facts, and

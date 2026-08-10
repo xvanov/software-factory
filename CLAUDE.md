@@ -109,10 +109,13 @@ uv run ruff check . && uv run mypy factory
 CI runs two lanes (E6, 2026-08-09): PRs are gated by a <60 s fast lane (the
 suite minus `tests/fast_lane_excludes.txt` — files that boot servers, run
 sandboxes/docker, or spawn subprocesses in bulk); the full suite runs
-post-merge on every push to main. **Interim rule until the stage-2
-`main-green` guard lands (it needs an auto_merge hold-not-park change
-first): a red full lane on main outranks everything — fix it before merging
-anything else, and do not run unattended factory merging.**
+post-merge on every push to main. **The stage-2 `main-green` guard is ACTIVE
+(2026-08-10, PR #298 + branch protection):** `main-green` is a required PR
+check that reports whether main's post-merge full lane is green. A red main
+therefore HOLDS every PR in place (no dev dispatch, no park, no close),
+surfaces in `factory inbox` after 30 min, and auto-re-runs the held check
+once per new main commit. A red full lane on main still outranks everything —
+the hold buys you time, it does not fix main.
 
 `ModuleNotFoundError` for `frontmatter` / `sqlmodel` / `pytest` means the env,
 not the code — re-sync before debugging. `mypy` has a standing non-zero error

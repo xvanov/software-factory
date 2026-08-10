@@ -136,6 +136,21 @@ zero human-visible outcomes; see "Idle detection was deleted" below.
   (2), short-circuiting when a recovery reproduces the identical failure
   signature.
 
+- **E6 stage-2 environment hold (ACTIVE 2026-08-10, #294 + #298 + branch
+  protection).** Before the CI-failure loop and before `_evaluate_one_pr`,
+  the tick short-circuits any real PR whose ONLY failing required check is
+  `main-green` (main's post-merge full lane is red): no dev dispatch, no
+  park, no PR close — one deduped `ci_hold_main_red` event and one
+  `merge_actions` row per hold EPISODE. A hold older than 30 min sets
+  `last_rejection_reason` (`ci_hold_main_red:` prefix, column-scoped write
+  that deliberately does not stamp `updated_at`) so the story reaches
+  `factory inbox`; when main's HEAD moves, the held PR's failed `main-green`
+  run is re-run (`gh run rerun --failed`) once per new main commit, at most
+  `_MAX_HOLD_RERUNS=3` per episode; the rerun's `pending` window stays inside
+  the hold (evaluating it would run the gates against red main and burn
+  `_MAX_GATE_BLOCK_CYCLES`). The stale hold reason is cleared (prefix-guarded)
+  as soon as checks resolve. Do not `resume-story` a held story — fix main.
+
 - **Auto-merge gate order** (`_evaluate_one_pr`): dual-draft loser self-check
   → real-run short-circuit if already merged → TDD 7-gate check
   (`evaluate_all_gates`) or, for docs, just `canonical-paths-only` →
