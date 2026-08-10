@@ -947,9 +947,32 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
                 # on the waiver path, and gate reasons are never fed back to
                 # dev) — an operator would only ever see it via
                 # `factory trace`. Recording puts it in `factory inbox`.
+                #
+                # ``feedback`` carries the oracle's own "SETUP:" lines (what
+                # the app actually answered — status codes, bodies) so the
+                # bounded auto-re-author can hand the next author something
+                # actionable instead of re-inventing the same un-arrangeable
+                # setup. App output = untrusted data; the authoring prompt
+                # frames it that way.
+                setup_lines: list[str] = []
+                for line in head_run.output.splitlines():
+                    stripped = line.strip()[:250]
+                    if (
+                        oracle_run.SETUP_FAILURE_PREFIX in line
+                        and stripped not in setup_lines
+                    ):
+                        setup_lines.append(stripped)
+                    if len(setup_lines) >= 5:
+                        break
                 record_gate_block(
                     pr.software_factory_root, story.app, story.id,
                     kind="oracle_setup_failed", reason=reason,
+                    feedback="\n".join(setup_lines) or None,
+                    # Stamp WHICH oracle this block indicts — the bounded
+                    # auto-re-author refuses to act on a sha mismatch, so a
+                    # stale sidecar can never license replacing a different
+                    # frozen oracle (adversarial review 2026-08-10, finding 5).
+                    oracle_sha=oracle_sha,
                 )
             return GateResult(
                 label=_LABEL, passed=False,

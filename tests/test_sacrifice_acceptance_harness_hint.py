@@ -99,6 +99,21 @@ def test_hint_does_not_name_routes_that_do_not_exist() -> None:
     )
 
 
+def test_hint_gives_a_known_good_password_pattern() -> None:
+    """Story 185 (2026-08-10): the author invented ``password123``; sacrifice's
+    strength policy rejects common passwords with 400, so every SETUP register
+    call failed at HEAD and the story parked. "A weak password is 400" states
+    the failure without the escape — the hint must carry a concrete pattern
+    that always passes (unique, non-common, not all digits, >= 8 chars)."""
+    hint = _hint()
+    assert 'f"Ok-{uuid.uuid4().hex}"' in hint, (
+        "acceptance_harness_hint no longer carries the known-good runtime "
+        "password pattern. The author is dev-blind and cannot discover the "
+        "strength policy any other way; without this line it will invent "
+        "human-style passwords that the app rejects with 400 at SETUP."
+    )
+
+
 # ── A1: mechanical cross-check against the derived route surface ────────────
 #
 # Everything below parses ``acceptance_harness_hint`` itself (regex over its

@@ -279,6 +279,88 @@ def _parse_junit(path: Path) -> tuple[dict[str, str], list[str]] | None:
     return out, sorted(setup_keys)
 
 
+#: Ceiling for the authoring-time collection smoke. Measured cost is
+#: 0.2-0.5 s; anything near this bound means module-level code is doing real
+#: work (a loop, a network wait), which an oracle must never do before its
+#: fixtures run — so the bound is deliberately tight (2 attempts × 10 stories
+#: at a loose bound is a dead tick, and a slow collect IS a defect signal).
+COLLECT_CHECK_TIMEOUT_S = 15
+
+
+def oracle_collect_check(src: str, *, timeout_s: int = COLLECT_CHECK_TIMEOUT_S) -> str | None:
+    """``None`` when pytest can COLLECT ``src`` cleanly; else the reason.
+
+    ``ast.parse`` cannot see a collection-time NameError: ``@pytestFixture``
+    (story 186, 2026-08-10) is valid *syntax* whose name only resolves at
+    import, so the stored oracle sailed through authoring validation and was
+    discovered at MERGE time as ``vacuous_oracle`` — after full dev spend.
+    Running the runner's own collection here (same interpreter, same scrubbed
+    env, same isolation flags as :func:`run_oracle`) turns that class into a
+    retried AUTHOR attempt at authoring cost instead.
+
+    The env carries dummy ``ACCEPTANCE_BASE_URL`` / ``ACCEPTANCE_RUN_ID``
+    values so a module-level ``os.environ[...]`` read — a legitimate oracle
+    shape — does not KeyError; no app is booted and nothing is exercised.
+
+    Fail-SAFE: an inability to RUN the check (pytest missing from this
+    interpreter, timeout, OSError — including a failed mkdtemp) is reported as
+    a failure, never waved through — a broken validator must block. STATED
+    TRADE-OFF (adversarial review 2026-08-10): an environment fault therefore
+    burns author passes exactly like a bad oracle does, and a fault lasting
+    ≥3 tick self-heals wedges the story at ``author_exhausted`` until
+    ``factory resume-story --reauthor-oracle``. That is chosen over the
+    alternative — not charging the pass — because an uncharged environment
+    failure retries the FULL LLM authoring call every tick, unbounded, which
+    violates both the loop cap and the spend rules. The wedge is visible
+    (``author_exhausted`` reaches ``factory inbox``) and has a one-command
+    path back; unbounded spend has neither.
+    """
+    try:
+        tmpdir = Path(tempfile.mkdtemp(prefix="factory-oracle-collect-"))
+    except OSError as exc:
+        return f"could not create the collect-check directory ({exc!r}) — environment fault, failing SAFE"
+    try:
+        oracle_path = tmpdir / "test_acceptance.py"
+        oracle_path.write_text(src, encoding="utf-8")
+        ini_path = tmpdir / "factory_oracle.ini"
+        ini_path.write_text("[pytest]\n", encoding="utf-8")
+        argv = [
+            sys.executable, "-B", "-m", "pytest", str(oracle_path),
+            "--collect-only", "-q", "-p", "no:cacheprovider", "--noconftest",
+            "-c", str(ini_path),
+            "--rootdir", str(tmpdir), "--confcutdir", str(tmpdir),
+        ]
+        env = _oracle_env(base_url="http://127.0.0.1:9", run_id="authoring-collect-check")
+        try:
+            proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+                argv, cwd=str(tmpdir), env=env,
+                capture_output=True, text=True, timeout=timeout_s,
+            )
+        except subprocess.TimeoutExpired:
+            return (
+                f"pytest collection did not finish within {timeout_s}s — module-level "
+                "code must not do real work before fixtures run (or the machine is "
+                "badly overloaded — environment fault, failing SAFE)"
+            )
+        except OSError as exc:
+            return (
+                f"could not run pytest collection at all ({exc!r}) — "
+                "environment fault, failing SAFE"
+            )
+        if proc.returncode != 0:
+            tail = (proc.stdout + proc.stderr)[-2000:]
+            return (
+                f"pytest --collect-only exited {proc.returncode} — the oracle cannot be "
+                "collected (a NameError/ImportError at import time, or module-level "
+                f"code that needs the live app, which does not exist yet here):\n{tail}"
+            )
+        return None
+    finally:
+        import shutil
+
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def run_oracle(
     oracle_src: str,
     *,
@@ -381,10 +463,12 @@ def run_oracle(
 
 
 __all__ = [
+    "COLLECT_CHECK_TIMEOUT_S",
     "RUNNER_VERSION",
     "SETUP_FAILURE_PREFIX",
     "OracleRun",
     "OracleStatus",
+    "oracle_collect_check",
     "oracle_import_check",
     "run_oracle",
 ]
