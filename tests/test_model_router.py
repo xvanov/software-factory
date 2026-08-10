@@ -166,7 +166,7 @@ class TestKeyAwareDegradation:
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         assert route("test_implementer") == "azure/DeepSeek-V4-Flash"
         assert route("factory_self_context") == "azure/DeepSeek-V4-Flash"
-        assert route("reviewer") == "azure/DeepSeek-V4-Flash"
+        assert route("reviewer") == "azure/Kimi-K2.7-Code"
         assert route("security") == "azure/Kimi-K2.7-Code"
         assert route("dev", "hard") == "azure/deepseek-v4-pro"
         assert route("dev", "standard") == "azure/deepseek-v4-pro"

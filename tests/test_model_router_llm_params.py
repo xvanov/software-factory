@@ -34,9 +34,10 @@ def test_difficulty_mapped_persona_entry() -> None:
 
 
 def test_flat_persona_entry() -> None:
-    # Flat (non-difficulty-mapped) persona entry still resolves. The reviewer
-    # runs DeepSeek-V4-Flash, which has no reasoning surface.
-    params = llm_params_for("reviewer", "azure/DeepSeek-V4-Flash")
+    # Flat (non-difficulty-mapped) persona entry still resolves.
+    # test_implementer pins the shape (reviewer moved to Kimi 2026-08-10 and
+    # its Flash-specific reasoning_effort override was removed with it).
+    params = llm_params_for("test_implementer", "azure/DeepSeek-V4-Flash")
     assert params["reasoning_effort"] == "none"
     assert params["max_output_tokens"] == 16384
 

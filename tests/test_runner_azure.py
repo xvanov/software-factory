@@ -374,7 +374,7 @@ def test_route_returns_azure_model_under_default_provider(
         model_id = model_router.route(persona)
         assert model_id.startswith("azure/"), f"{persona} routed to {model_id!r}"
     assert model_router.route("security") == "azure/Kimi-K2.7-Code"
-    assert model_router.route("reviewer") == "azure/DeepSeek-V4-Flash"
+    assert model_router.route("reviewer") == "azure/Kimi-K2.7-Code"
     # The reviewer must differ from BOTH dev tiers — enforced fatally by
     # model_router.check_review_independence at load.
     assert model_router.route("reviewer") != model_router.route("dev", "hard")
