@@ -11,100 +11,86 @@
 
 The thesis under test: **harness quality beats model size.** A well-instrumented pipeline of small, verifiable steps — each gated by real tests and a live runtime smoke check — ships production code unattended on models ~10× cheaper than frontier subscriptions. It does ship: 117 stories merged — 24 of them edits to the factory itself. (Two honesty caveats, audited 2026-08-07: the `deployed` story state records a *merge* — real deploys are `deploy_disabled_in_config` on every app and have never executed; and of this repo's own 173 merged PRs, ~25 came through the chain — the operator authored the rest.)
 
-**The thesis is not proven, and the latest measurement runs against it.** Externally graded on SWE-rebench with a hidden oracle (2026-08-04, five arms, n=19, k=1 — [full result](bench/swebench/results.md)):
+**The thesis is not proven; the gap is closing but the cost gap is not.**
+Externally graded on SWE-rebench with a hidden oracle, one pinned set of 19
+instances, two sweeps (2026-08-04 five arms; 2026-08-10 re-measuring the
+changed factory — [current result](bench/swebench/results.md), sweep-1 archive
+re-derivable). Latest number per arm; the **measured** column says how many
+times that exact (harness, model) configuration has run this suite:
 
-Every arm ran **the same 19 instances** and every arm got an oracle verdict on
-all 19, so every rate below is out of 19 — no arm gets a smaller denominator
-than another.
-
-| harness | model(s) | solved | rate | total $ | **$ per solved** |
-|---|---|---:|---:|---:|---:|
-| Claude Code CLI | `claude-opus-5` | 15/19 | **79%** | 34.36 | **2.29** |
-| Claude Code CLI | `claude-opus-4-8` | 14/19 | **74%** | 23.56 | **1.68** |
-| one OpenHands agent, **no chain** | `azure/deepseek-v4-pro` | 10/19 | **53%** | 18.20 † | **1.82** † |
-| **this factory's chain** | deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | **37%** | 35.94 † | **5.13** |
-| hand-rolled loop, **no tool calls** | `azure/deepseek-v4-pro` | 1/19 | **5%** | 7.94 | 7.94 |
+| harness | model(s) | solved | rate | total $ | **$ per solved** | measured |
+|---|---|---:|---:|---:|---:|---|
+| **this factory's chain — current config** (acceptance oracle authored pre-dev, open-weight only) | deepseek-v4-pro dev + Kimi-K2.7-Code reviewer/oracle-author | 10/19 | **53%** | 50.18 † | **5.02** | 1× (2026-08-10) |
+| the same chain, **no reviewer** (`solo-noreview`) | same | 9/19 | **47%** | 49.89 † | **5.54** | 1× (2026-08-10) ‡ |
+| this factory's chain — **previous config** (no oracle, gpt-5.x tiers) | deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | 37% | 35.94 † | 5.13 | 1× (2026-08-04, superseded) |
+| one OpenHands agent, **no chain** | `azure/deepseek-v4-pro` | 10/19 | **53%** | 18.20 † | **1.82** | 1× (2026-08-04; not re-run — harness and model unchanged, operator decision) |
+| Claude Code CLI | `claude-opus-5` | 15/19 · 11/14 | **79% both sweeps** | 34.36 / 30.18 | 2.29 / 2.74 | **2×** (CLI 2.1.220 → 2.1.226; run 2 lost 5 cells to the subscription's 5-hour rate window, disclosed) |
+| Claude Code CLI | `claude-opus-4-8` | 14/19 | **74%** | 23.56 | **1.68** | 1× (2026-08-04, contamination probe — came back clean, not re-run) |
+| hand-rolled loop, **no tool calls** | `azure/deepseek-v4-pro` | 1/18 | **6%** | 7.94 | 7.94 | 1× (2026-08-04; its pre-committed one repaired run is spent) |
 
 Reading it:
 
-- **The chain does not beat a single agent on the same model** — 37% vs 53%.
-  Across all 19 paired instances the single agent won 4 the chain lost; the chain
-  won 1 the agent lost. The gap is **3 instances**, and at this sample size that
-  still does not clear significance (McNemar exact **p=0.375**). A 16-point gap
-  that cannot reach p<0.05 is exactly what n=19 buys.
-- **The chain is also the most expensive way to solve one** — $5.13, versus $1.82
-  for the same model with no chain and **$2.29 for Claude Code**, a frontier
-  model. ~2.0× the single agent in total, **2.8× per solved instance**, for fewer
-  solves.
-- **What produces lift is tooling, not orchestration**: 53% with a real editor and
-  tool-calling versus 5% with neither — n=18, 0/9 discordant, **p=0.004**. That
-  gap is real and significant; the orchestration gap is neither.
-- Claude Code roughly doubles the factory (**p=0.008**), but that comparison
-  changes the harness *and* the model at once, so it is a reference point, not a
-  measurement of the chain.
-- The contamination probe came back **clean**: `claude-opus-4-8` (published cutoff
-  Jan 2026) 74% vs `claude-opus-5` (May 2026) 79% on an identical harness,
-  p=1.000, even though every instance predates opus-5's cutoff. Memorisation is
-  not carrying the frontier number.
+- **The current chain matches the single agent's headline rate — 53% vs 53% —
+  where the previous config trailed it by 16 points.** Honest caveat: the
+  single-agent number is from sweep 1 (the operator chose not to re-run an
+  unchanged harness), so that comparison crosses sweeps and is descriptive;
+  within sweep 2 the chain was never paired against it.
+- **The chain is still the most expensive way to solve one instance** — $5.02
+  per solved vs $1.82 for the same model with no chain and $2.74 for Claude
+  Code, a frontier model. The rate gap closed; the ~2.8× cost gap did not.
+- **What the chain's verdict is worth changed the most**: chain-said-green
+  precision moved **40% → 71%**, recall 86% → 100%, and sweep 1's zero-byte
+  green did not recur. The reviewer's three nonconvergence parks were all
+  genuine oracle failures (3/3 correct).
+- **The reviewer still buys no resolves** (10/19 vs 9/19 without it, McNemar
+  p=1.000) — and the earlier "−29% cost without the reviewer" finding **did
+  not replicate** ($50.18 vs $49.89). What it does buy is verdict precision
+  (71% vs 53%).
+- **What produces lift is tooling, not orchestration** (sweep 1): 53% with a
+  real editor and tool-calling vs 6% with neither, p=0.004 — still the only
+  significant pairwise result on the DeepSeek ladder.
+- The contamination probe came back **clean** (sweep 1): `claude-opus-4-8`
+  74% vs `claude-opus-5` 79%, same harness, p=1.000. Memorisation is not
+  carrying the frontier number.
+- **None of the sweep-2 movements are proven deltas.** n=19 resolves ±38
+  points at best; these cells are now at k=2 and k ≥ 3 is the pre-registered
+  bar. The candidate causes of the 37→53 move (oracle layer, Kimi reviewer,
+  reviewer rubric, retry cap 4) shipped together and are not separable in
+  this design.
 
-**† Both Azure figures are floors.** Three OpenHands rows and two factory rows
-carry an unmetered session — a crashed sandbox that recorded `cost_usd: 0` and
-zero tokens while doing real work. 18 of 19 OpenHands rows are metered at $18.20,
-so **$18.20 and $1.82 are floors, not estimates**; the true figures are slightly
-higher. Even as floors the ratios above hold. The leak is filed as a harness debt.
+**† Cost units are not identical.** The Azure rows are a price-table estimate
+over provider-reported tokens — real money, with an *estimated* cache-read
+rate. The Claude rows are what the CLI reports at API list prices, billed in
+practice against a flat subscription. Same order of magnitude, not the same
+meter; never sum them. (Sweep 1's Azure figures are additionally floors: a few
+rows carried unmetered crashed sessions, disclosed in that sweep's notes.)
 
-**Cost units are not identical either.** The Azure rows are a price-table estimate
-over provider-reported tokens — real money, and the cache-read rate in that table
-is itself *estimated*. The Claude rows are what the CLI reports at API list prices,
-billed in practice against a flat subscription. Same order of magnitude, not the
-same meter.
+**‡ `solo-noreview` explained.** It is the factory's own chain with exactly one
+thing removed: the reviewer round-trip (dev-only, green = dev's tests pass; the
+acceptance oracle, sandbox, budgets and gates are identical). It exists to
+price the reviewer. An earlier, confounded version of this ablation
+(2026-08-05, [B.1 Phase 1a](bench/swebench/RESULTS-B1-PHASE1A.md)) measured
+9/18 = 50% at $2.83/solved on the *old* chain config; the clean same-sweep
+re-run above (9/19 = 47%, $5.54/solved) **replicates the rate finding and
+retracts the cost finding** — without the reviewer, the dev burned the
+savings in extra retries.
 
-**Three rows were re-run, and it is disclosed.** Three OpenHands rows died on Azure
-`429` rate limits recording no cost and no tokens. A provider rate limit is an
-infrastructure failure rather than a result, so those three — and only those
-three — were repaired once under
-[pre-registration Rule 5](bench/swebench/PRE-REGISTRATION-1.6.md). Outcomes:
-`jsonpickle-588` resolved twice, `rapid-mlx-289` resolved twice, and
-**`keras-22316` flipped from wrong-fix to resolved on the second draw.** So the
-conservative reading is 9/19 = 47% and the re-run reading is 10/19 = 53%; the
-table shows the latter because it is the metered, graded, audit-valid run, and
-both are published. One row in three flipping on a reseed is also the clearest
-evidence here that single-seed results at n=19 are unstable.
+**Every re-run is disclosed, none silently.** Sweep 1's three OpenHands rows
+lost to Azure 429s were repaired once each under
+[pre-registration Rule 5](bench/swebench/PRE-REGISTRATION-1.6.md) (one flipped
+wrong-fix → resolved on the reseed — the clearest evidence that single-seed
+n=19 results are unstable; conservative reading 9/19 = 47%). Sweep 2's Claude
+losses to the subscription rate window, the operator's mid-sweep cancellation
+of the `openhands` re-run, and one destroyed cell are all recorded in
+[the sweep-2 pre-registration's outcome section](bench/swebench/PRE-REGISTRATION-2026-08-10.md).
 
-**What the ± ranges in [`results.md`](bench/swebench/results.md) mean.** 7 solved
-of 19 is 37%, but 19 samples cannot pin down true skill: the 95% confidence
-interval [16%, 62%] is the band of true rates that would not be surprised by this
-result. The factory's band and the single agent's [29%, 76%] overlap almost
-entirely — **at n=19 these two arms cannot be told apart.** The smallest
-difference this sample could reliably detect is roughly ±38 points, so the finding
-is "**no measurable lift**", not "the chain hurts". Running each instance 3+ times
-is what would sharpen it.
-
-**A sixth arm, measured a day later: take the reviewer out and nothing measurable
-breaks.** `solo-noreview` is the same chain with the reviewer round-trip removed, run
-on the same 19 instances, pre-registered before any paid call
-([full report](bench/swebench/RESULTS-B1-PHASE1A.md)). It is published separately
-from the table above, which still re-derives byte-for-byte from its own archive.
-
-| harness | solved | rate | total $ | **$ per solved** |
-|---|---:|---:|---:|---:|
-| this factory's chain | 7/19 | 37% | 35.94 | 5.13 |
-| the same chain, **no reviewer** | 9/18 | **50%** | 25.49 | **2.83** |
-
-- **The cost win is real — 29% less in total, 45% less per solved instance — and the
-  mechanism is not the one we predicted.** The reviewer's own tokens are 1.8% of
-  spend. The saving is **9 fewer dev calls and a median story of one tick instead of
-  four**: the reviewer was not expensive, it was causing rework.
-- **The quality claim is not established.** +13 points sits well inside the ±38-point
-  resolution of a 19-instance run (McNemar exact **p=0.688**), so the finding is "no
-  measurable change", never "better without a reviewer".
-- **It is not a clean single-variable ablation**, and that was written down before the
-  data existed: three things differ between those two rows, not one. The next step is
-  running both arms in one sweep on one commit.
-- **Still 1.6× a single agent** — $2.83 per solved against $1.82. The ablation narrows
-  the chain's deficit without closing it.
-- It does **not** license removing the reviewer in production, which runs merge gates
-  this benchmark never touches.
+**What the ± ranges in [`results.md`](bench/swebench/results.md) mean.**
+10 solved of 19 is 53%, but 19 samples cannot pin down true skill: the 95%
+confidence band is [29%, 76%] — identical to the single agent's. **At n=19
+these arms cannot be told apart**; the smallest difference this sample could
+reliably detect is roughly ±38 points. Running each instance 3+ times is what
+would sharpen it, and k ≥ 3 is the pre-registered bar before any delta is
+quoted as a result.
 
 The July 2026 campaign read the other way, but it graded the factory against
 sacrifice's *own* merge gates — tests the factory itself wrote — so it could not
