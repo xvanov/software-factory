@@ -141,7 +141,21 @@ azure_routes:
 
   # Must differ from EVERY dev tier — enforced fatally at router load by
   # ``model_router.check_review_independence``.
-  reviewer: azure/DeepSeek-V4-Flash
+  #
+  # 2026-08-10: moved OFF DeepSeek-V4-Flash on direct counter-evidence to the
+  # "reviewer capability is not load-bearing" allocation note above: Flash
+  # deadlocked story 187 FOUR review cycles with a sticky content
+  # hallucination — it QUOTED the dev's fixed token string
+  # ('this-is-not-a-valid-jwt', zero dots) while claiming it "is structurally
+  # a valid 3-part JWT (three dot-separated segments)", re-raised at medium
+  # every cycle until the churn guard parked the story, twice, through two
+  # rubric fixes (#302). A reviewer that hallucinates the diff's content is
+  # not cheap, it is a story-killer. Kimi shares no dev tier (independence
+  # holds: dev is deepseek-v4-pro) and reviewer traffic is tiny (5-17 s
+  # calls, ~2% of work time), so Kimi's maxed 100 TPM quota — already serving
+  # tech_writer/acceptance_author/security — absorbs it; the runner retries
+  # 429s. Revert if review-side 429s become visible in `factory audit`.
+  reviewer: azure/Kimi-K2.7-Code
   security: azure/Kimi-K2.7-Code
 
   # Dormant since 2026-05-30 (Loop-4 made dev own its tests). Deliberately kept
@@ -181,7 +195,9 @@ llm_params:
       standard: { reasoning_effort: "none" } # deepseek-v4-pro: no reasoning surface
       hard: { reasoning_effort: "none" } # now deepseek-v4-pro: no reasoning surface
     test_implementer: { reasoning_effort: "none" }
-    reviewer: { reasoning_effort: "none" } # DeepSeek-V4-Flash: no reasoning surface
+    # reviewer override removed 2026-08-10 with the move to Kimi — the
+    # "none" pin was DeepSeek-V4-Flash-specific (no reasoning surface);
+    # Kimi runs with its defaults, same as tech_writer/acceptance_author.
 
 # Agent-preset overrides for sandbox personas, resolved by
 # ``model_router.preset_for``. Known values: ``planning`` (OpenHands
