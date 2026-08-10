@@ -1,0 +1,22 @@
+{
+  "instance_id": "tox-dev__tox-3931",
+  "arm": "claude-5",
+  "audited_at": "2026-08-10T18:25:41.086337+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.2214,
+  "ledger_tokens_in": 999350,
+  "ledger_tokens_out": 10443,
+  "result_cost_usd": 1.2214,
+  "prediction_sha256": "0b3b833af12bc84ba49c045a4cabc48e5614c096bf56307984d14d035f0452f2",
+  "base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+  "stripped_test_paths": [
+    "tests/session/cmd/test_schema.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

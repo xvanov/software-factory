@@ -51,11 +51,21 @@ operator-gated, left for the operator to triage.
 
 All systemd units are deliberately **stopped**. Run `factory on` to start.
 
-**Read this first.** The clean five-arm benchmark is in. **The chain shows no
-measurable lift over a single OpenHands agent on the same model** — 37% vs 53%,
-McNemar exact p=0.375 — at 2.8× the cost per resolved instance. What produces
-the lift is *tooling*, not orchestration. Nothing in this file supports "the
-chain is proven".
+**Read this first.** Two sweeps exist on the pinned SWE-rebench manifest.
+Sweep 1 (2026-08-04, five arms): **the chain showed no measurable lift over a
+single OpenHands agent on the same model** — 37% vs 53%, p=0.375 — at 2.8× the
+cost per resolved instance. Sweep 2 (2026-08-10, re-measuring the CHANGED
+factory only: acceptance oracle authored pre-dev, open-weight routing, Kimi
+reviewer + #302 rubric, retry cap 4): **factory 53% (10/19), solo-noreview
+47%, claude-5 79%** — the chain now matches sweep-1 openhands' 53% headline
+rate on identical instances, **but the matched openhands control was cancelled
+mid-sweep by operator decision** (harness unchanged since sweep 1), so
+chain-vs-single-agent is cross-sweep and DESCRIPTIVE, and the cost gap stands
+($5.02 vs $1.82 per resolved). Chain-verdict precision moved 40% → 71%, recall
+86% → 100%, reviewer parks were 3/3 correct. See
+`bench/swebench/PRE-REGISTRATION-2026-08-10.md` (outcome section) and
+`bench/swebench/results.md`. Nothing here supports "the chain is proven";
+k ≥ 3 remains the bar for quoting deltas.
 
 **The 2026-08-07 audit.** A four-agent independent audit re-derived the sensor
 report's claims (report: the "Sensor Problem" artifact; summary in memory
@@ -319,8 +329,8 @@ Note (audit): **"deployed" is a state name, not a deploy.** All 102
 
 | Problem | Evidence | Where the fix lives |
 |---|---|---|
-| **No measurable chain lift, at 2.8× cost** | The table above | Still open. 019 built the sensors; it did not re-run the benchmark or attempt a B-phase collapse. No direction filed yet |
-| Chain green ≈ coin flip | Verdict precision 6/15 = 40%; zero-byte green | Still open. The oracle is live on sacrifice, not re-measured against the SWE-bench chain-verdict rows above. No direction filed yet |
+| **No measurable chain lift, at 2.8× cost** | Sweep 1 table above; sweep 2 (2026-08-10) moved the chain 37%→53% on identical instances but the matched control was operator-cancelled, so the comparison is cross-sweep/descriptive and the ~2.8× $/resolved gap stands | Partially re-measured (sweep 2). A within-sweep factory-vs-openhands pair at k≥3 is still the open bar |
+| Chain green ≈ coin flip | Sweep 1: precision 6/15 = 40%, one zero-byte green. **Sweep 2: 10/14 = 71%, recall 10/10, no zero-byte greens; solo-noreview (no reviewer) precision 53%** — the reviewer's parks were 3/3 genuine oracle failures | Re-measured 2026-08-10 with the oracle layer + Kimi reviewer active. Candidate causes shipped together; not separable at this n |
 | **The acceptance oracle's green was forgeable in-process** — **CLOSED, but not merely by moving out of process** | Moving the verdict out of process (PR #251) **relocated the attack**: the booted app shared uid + received `TMPDIR`, so production code could plant a `conftest.py` in the oracle's own run dir or overwrite the oracle file — adversarial review reproduced forgery end-to-end twice against the first cut. Closed by run-directory tamper-evidence (oracle sha256 + exact expected file set, checked before junit parsing) + `--noconftest` + dropping `TMPDIR` from `env_passthrough`; new never-waivable reason `oracle_run_tampered`. Three KNOWN OPEN risks remain (#2-#4; #1 closed by PR #256) — see the Exteroception section above | **Done** — PR #251 (+ #253, #254). `gates.acceptance_oracle: true` on sacrifice |
 | Manager LLM tiers: cost without yield | All three LLM personas = **$1,028.58 = 52.0%** of all-time spend (watcher alone $972.23 = 49.2%, 44,127 runs); 262 concerns → 165 proposals (48 titles / ~37 root causes, 107 escalate-to-human) → **0 applied fixes**, 1 GitHub issue (via staging, not apply). L4: 163 attempts, 0 PRs | **Done** — deleted, −17,182 lines, PR #247 |
 | `factory_improver` | 196 proposals → **1 landed commit ever** (PR #5); 179 apply failures, 158 `dirty_working_tree` | **Done** — retired with the manager tiers, PR #247 |
@@ -328,7 +338,7 @@ Note (audit): **"deployed" is a state name, not a deploy.** All 102
 | Scanner personas manufacture noise | `bug_hunter` 705 runs, 0 findings; `ralph` 7,024 runs, 95.8% rate-limited; 70% of the sacrifice backlog was machine-filed, one direction re-filed 33× | **Done** — `bug_hunter`, `ralph`, `architect`, `release_manager`, `ux_designer` and their schedules/rate-limits/routes deleted, PR #249 |
 | Merge-gate precision is unknown | Every published precision number is chain-verdict precision; `gate_enforced: false` in all six bench arms | Still open. No direction filed yet |
 | A sweep silently loses runs to provider 429s; sweep aggregates contradict their rows | See archive notes | Still open — paired with 019's out-of-scope operator queue, not yet actioned |
-| Clean reviewer-ablation re-run (~$62) not yet run | See reviewer-ablation note above | Still open — same paired queue, not yet actioned |
+| Clean reviewer-ablation re-run (~$62) not yet run | **DONE 2026-08-10** — sweep 2 ran factory + solo-noreview in one sweep, one commit: 10/19 vs 9/19, p=1.000; the B.1 cost saving did NOT replicate ($50.18 vs $49.89); reviewer bought verdict precision (71% vs 53%), not resolves | Closed. Evidence: `bench/swebench/PRE-REGISTRATION-2026-08-10.md` outcome |
 | C1 recovery bluntness: `blocked_review_nonconvergent` auto-recovery re-enters at `SM_DONE`, re-running SM+dev+review to retry a later step | Story 177 burned $5.96 over two recoveries | **DEFERRED with reason (2026-08-10):** the signal-changed guard already escalates an identical failure instead of burning a second cycle, and C2's tech_writer parser fix (`cd750e7e`) removed the known cause. Re-entry-at-predecessor is state-machine surgery on shared control flow that the benchmark does not need |
 | C5 `detector_watch` disabled | Ships `detector_watch.enabled: false`; liveness scoping added but never run in production | **DEFERRED with reason (2026-08-10):** stays disabled through the benchmark window — an untested detector filing directions mid-run would contaminate the measurement. Soak read-only after the re-proof |
 | State has no backup | The twin guards source only | Still open (E.1 carried over; not scoped into 019) |

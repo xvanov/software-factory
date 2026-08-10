@@ -1,0 +1,170 @@
+{
+  "arm": "factory",
+  "instance_id": "vyperlang__vyper-4801",
+  "repo": "vyperlang/vyper",
+  "base_commit": "7d53bab7f8cce2a5fb037052663d85596d7eb2d1",
+  "problem_statement_sha256": "84f2becd4c3b96c244bb5420904e22abeb95c92c7b0836d3c4761a016e7130f7",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.052
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 4.0152
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "hard",
+      "calls": 2,
+      "cost_usd": 1.4483
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0171
+    }
+  ],
+  "model_escalated_calls": 2,
+  "ts": "2026-08-10T20:09:52.722096+00:00",
+  "wall_clock_s": 3327.4,
+  "final_state": "blocked_review_nonconvergent",
+  "dev_retries": 1,
+  "reviewer_cycles": 1,
+  "steps_used": 5,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 7749934,
+  "tokens_out": 98678,
+  "cached_input_tokens": 5543040,
+  "cost_usd": 5.5326,
+  "persona_calls": 5,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 2.2,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/unit/compiler/venom"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> dev_retry",
+    "dev: dev_retry -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> blocked_review_nonconvergent"
+  ],
+  "error": null,
+  "factory_says_green": false,
+  "green_state": "reviewer_done",
+  "chain_personas": [
+    "dev",
+    "review"
+  ],
+  "files_changed": [],
+  "test_files_stripped": [],
+  "refused_paths": [],
+  "diff_bytes": 0,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 426,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [],
+    "bypassed_count": 0,
+    "unlocked_mode": [],
+    "missing": [
+      "test_contract.vy",
+      "test_simple.vy"
+    ],
+    "lock_lapsed_count": 2,
+    "refused": 0,
+    "refused_samples": [],
+    "scan_truncated": false,
+    "locks_applied": 9
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-vyperlang__vyper-4801-vpc8hfbv/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-vyperlang__vyper-4801-vpc8hfbv/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-vyperlang__vyper-4801-vpc8hfbv",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/vyperlang__vyper-4801__factory/root/state/acceptance",
+    "sha256": "7a8dc6c37063570f4add3aabf33f9749731c4ee05e71a8eae41ac258add19ced",
+    "bytes": 669,
+    "authored_at": "2026-08-10T19:14:33.432682+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "398a8732d2933ea4de0ad331d7dc622eae673065a84258868808853288d2497f",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 2630,
+    "spec_prompt_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/vyperlang__vyper-4801/factory/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/vyperlang__vyper-4801/factory/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 3,
+      "acceptance_author_ended_at": "2026-08-10T19:16:23.647983+00:00",
+      "dev_first_started_at": "2026-08-10T19:16:24.183184+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-10T19:16:23.647983+00:00, dev's first call started 2026-08-10T19:16:24.183184+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-vyperlang__vyper-4801-vpc8hfbv",
+        "state/acceptance"
+      ],
+      "files_scanned": 4,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-vyperlang__vyper-4801-vpc8hfbv": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "vyperlang__vyper-4801",
+    "image": "swerebench/sweb.eval.x86_64.vyperlang_1776_vyper-4801@sha256:dc4b97c064a4bb67707e45875ccc0556aba2facc7d024a0172b9e53e3a3361ff",
+    "graded_at": "2026-08-10T20:09:56.358851+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 1,
+    "pass_to_pass_declared_count": 1,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": true,
+    "oracle_resolved": false,
+    "outcome": "empty_patch",
+    "log_tail": ""
+  }
+}

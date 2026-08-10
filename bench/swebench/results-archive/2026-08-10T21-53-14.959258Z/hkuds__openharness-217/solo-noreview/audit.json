@@ -1,0 +1,49 @@
+{
+  "instance_id": "hkuds__openharness-217",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-10T20:21:31.016683+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T20:12:45.988950+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 2060,
+      "tokens_out": 2202,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.011851800000000001,
+      "duration_s": 29.061,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:21:23.373243+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1374532,
+      "tokens_out": 16554,
+      "cached_input_tokens": 815616,
+      "cost_usd": 1.2734238760000003,
+      "duration_s": 516.851,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.2853,
+  "ledger_tokens_in": 1376592,
+  "ledger_tokens_out": 18756,
+  "result_cost_usd": 1.2853,
+  "prediction_sha256": "e88ef44f61b51d45afdfa17a1fb86b21e6210e87965d27dc398b9913e23f0294",
+  "base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+  "stripped_test_paths": [
+    "tests/test_auth/test_flows.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

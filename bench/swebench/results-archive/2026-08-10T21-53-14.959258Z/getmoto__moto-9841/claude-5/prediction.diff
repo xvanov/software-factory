@@ -1,0 +1,40 @@
+diff --git a/moto/kms/models.py b/moto/kms/models.py
+index d773be1..4b92196 100644
+--- a/moto/kms/models.py
++++ b/moto/kms/models.py
+@@ -511,14 +511,28 @@ class KmsBackend(BaseBackend):
+         return key.aliases[alias_name]
+ 
+     def update_alias(self, target_key_id: str, alias_name: str) -> Alias:
++        # TargetKeyId can be a raw key ID or a full key ARN
++        raw_key_id = self.get_key_id(target_key_id)
++        alias_name = self.get_alias_name(alias_name)
++        target_key = self.keys[raw_key_id]
++
++        alias = None
+         for key in self.keys.values():
+-            if alias_name in key.aliases and target_key_id != key.id:
+-                # Updating the Key that this is an alias of
+-                alias = key.aliases.pop(alias_name)
+-                self.keys[target_key_id].aliases[alias_name] = alias
+-                return alias
+-        # TargetKeyId hasn't changed - nothing to update
+-        return self.keys[target_key_id].aliases[alias_name]
++            if alias_name in key.aliases:
++                if key.id == raw_key_id:
++                    # TargetKeyId hasn't changed - nothing to update
++                    alias = key.aliases[alias_name]
++                else:
++                    # Updating the Key that this is an alias of
++                    alias = key.aliases.pop(alias_name)
++
++        if alias is None:
++            # The alias does not exist (yet) - just create it
++            return self.create_alias(target_key_id=raw_key_id, alias_name=alias_name)
++
++        alias.target_key_id = raw_key_id
++        target_key.aliases[alias_name] = alias
++        return alias
+ 
+     def delete_alias(self, alias_name: str) -> None:
+         """Delete the alias."""

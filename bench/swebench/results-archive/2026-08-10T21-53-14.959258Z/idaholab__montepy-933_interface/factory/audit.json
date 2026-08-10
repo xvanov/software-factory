@@ -1,0 +1,88 @@
+{
+  "instance_id": "idaholab__montepy-933_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-10T19:21:58.581313+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T19:08:12.178757+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 6108,
+      "tokens_out": 19504,
+      "cached_input_tokens": 3968,
+      "cost_usd": 0.08889788000000001,
+      "duration_s": 178.512,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:15:41.398113+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1538420,
+      "tokens_out": 9905,
+      "cached_input_tokens": 832512,
+      "cost_usd": 1.5343730220000007,
+      "duration_s": 448.692,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:18:35.591379+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 11256,
+      "tokens_out": 28126,
+      "cached_input_tokens": 8448,
+      "cost_usd": 0.12847688000000002,
+      "duration_s": 173.353,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:20:38.170499+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 182920,
+      "tokens_out": 2651,
+      "cached_input_tokens": 129024,
+      "cost_usd": 0.134945474,
+      "duration_s": 120.952,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:21:50.654563+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5848,
+      "tokens_out": 14087,
+      "cached_input_tokens": 2944,
+      "cost_usd": 0.06565024,
+      "duration_s": 71.667,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.9523,
+  "ledger_tokens_in": 1744552,
+  "ledger_tokens_out": 74273,
+  "result_cost_usd": 1.9523,
+  "prediction_sha256": "751f18f6185e361a76d9021ed2b415d8bf8dde99b3cf51ff92c646afc0af1680",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "stripped_test_paths": [
+    "tests/test_universe_integration.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

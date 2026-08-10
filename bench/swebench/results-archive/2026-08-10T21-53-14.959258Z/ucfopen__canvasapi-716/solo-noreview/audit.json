@@ -1,0 +1,50 @@
+{
+  "instance_id": "ucfopen__canvasapi-716",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-10T20:32:11.804000+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T20:25:41.470668+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 3210,
+      "tokens_out": 5323,
+      "cached_input_tokens": 2432,
+      "cost_usd": 0.02474882,
+      "duration_s": 48.432,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:32:06.260518+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1101985,
+      "tokens_out": 8021,
+      "cached_input_tokens": 678400,
+      "cost_usd": 0.9574618800000001,
+      "duration_s": 383.713,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.9822,
+  "ledger_tokens_in": 1105195,
+  "ledger_tokens_out": 13344,
+  "result_cost_usd": 0.9822,
+  "prediction_sha256": "36c8d79c524c797b697a82aa67f7d4b3cebb5cba9ac05f1471abb5cdc9694cb6",
+  "base_commit": "77ff5b248603db987e57f11a104767d4b790265a",
+  "stripped_test_paths": [
+    "tests/fixtures/announcements.json",
+    "tests/test_util.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

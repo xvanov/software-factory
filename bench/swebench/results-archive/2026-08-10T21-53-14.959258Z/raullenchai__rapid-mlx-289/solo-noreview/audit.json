@@ -1,0 +1,66 @@
+{
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-10T21:44:02.556595+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 2 call(s) but only 0 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T20:33:44.336138+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 16863,
+      "tokens_out": 24092,
+      "cached_input_tokens": 8000,
+      "cost_usd": 0.11699095000000001,
+      "duration_s": 247.835,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T21:03:46.173721+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 5450904,
+      "tokens_out": 77834,
+      "cached_input_tokens": 3038464,
+      "cost_usd": 5.443306124,
+      "duration_s": 1801.028,
+      "success": 0,
+      "error": "sandbox run timed out after 1800s (likely a stalled LLM call); treating as retryable infrastructure failure"
+    },
+    {
+      "ts": "2026-08-10T21:38:47.022305+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2691359,
+      "tokens_out": 16148,
+      "cached_input_tokens": 1244928,
+      "cost_usd": 3.053892078,
+      "duration_s": 1800.331,
+      "success": 0,
+      "error": "sandbox run timed out after 1800s (likely a stalled LLM call); treating as retryable infrastructure failure"
+    }
+  ],
+  "ledger_cost_usd": 8.6142,
+  "ledger_tokens_in": 8159126,
+  "ledger_tokens_out": 118074,
+  "result_cost_usd": 8.6142,
+  "prediction_sha256": "2a1aaf328344378729780232efaeb37145d6783633c6736886984a7714a1e651",
+  "base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+  "stripped_test_paths": [
+    "tests/integrations/test_aider.sh",
+    "tests/test_reasoning_parsers.py",
+    "tests/test_smoke_matrix.sh"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

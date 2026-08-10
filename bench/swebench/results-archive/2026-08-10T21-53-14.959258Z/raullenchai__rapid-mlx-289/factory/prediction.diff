@@ -1,0 +1,99 @@
+diff --git a/vllm_mlx/reasoning/gemma4_parser.py b/vllm_mlx/reasoning/gemma4_parser.py
+index 311acc0..8d2d124 100644
+--- a/vllm_mlx/reasoning/gemma4_parser.py
++++ b/vllm_mlx/reasoning/gemma4_parser.py
+@@ -75,6 +75,9 @@ class Gemma4ReasoningParser(ReasoningParser):
+         if not delta_text:
+             return None
+ 
++        # Remember state before processing for transition detection
++        was_in_thought = self._in_thought
++
+         # Track channel state based on accumulated text
+         # Check if we just entered thought channel
+         if "<|channel>thought" in current_text and not self._in_content:
+@@ -99,18 +102,24 @@ class Gemma4ReasoningParser(ReasoningParser):
+                 ):
+                     self._in_content = True
+ 
++        # Detect and handle transitions that occur *within* this delta.
++        # When a delta contains a channel marker that flips state, split the
++        # delta at the marker so each part goes to the correct channel.
++        if was_in_thought and not self._in_thought and self._in_content:
++            # Transition from thought to content happened in this delta.
++            # Find the boundary marker within delta_text.
++            transition_pos = self._find_thought_to_content_boundary(delta_text)
++            if transition_pos is not None:
++                pre, post = delta_text[:transition_pos], delta_text[transition_pos:]
++                pre_clean = self._strip_markers(pre)
++                post_clean = self._strip_markers(post)
++                return DeltaMessage(
++                    reasoning=pre_clean if pre_clean else None,
++                    content=post_clean if post_clean else None,
++                )
++
+         # Filter out channel markers from delta
+-        clean = delta_text
+-        for marker in [
+-            "<|channel>",
+-            "<channel|>",
+-            "<|turn>",
+-            "<turn|>",
+-            "thought\n",
+-            "content\n",
+-            "final\n",
+-        ]:
+-            clean = clean.replace(marker, "")
++        clean = self._strip_markers(delta_text)
+ 
+         if not clean:
+             return None  # pure marker token, skip
+@@ -126,6 +135,48 @@ class Gemma4ReasoningParser(ReasoningParser):
+             # Between channels — treat as reasoning
+             return DeltaMessage(reasoning=clean)
+ 
++    @staticmethod
++    def _strip_markers(text: str) -> str:
++        """Remove channel marker tokens from text."""
++        # Order by length descending so longer markers match before
++        # their substrings (e.g. "<|channel|>" before "<|channel>").
++        for marker in [
++            "<|channel|>",
++            "<|channel>",
++            "<channel|>",
++            "<|turn|>",
++            "<|turn>",
++            "<turn|>",
++            "thought\n",
++            "content\n",
++            "final\n",
++        ]:
++            text = text.replace(marker, "")
++        return text
++
++    @staticmethod
++    def _find_thought_to_content_boundary(delta_text: str) -> int | None:
++        """Find the earliest position in delta_text where the
++        thought-to-content transition occurs.
++
++        Returns the start index of the first transition marker, or None if
++        no transition marker is found within delta_text.
++        """
++        markers = [
++            # <channel|> closes thought; may be followed by a content channel
++            "<channel|>",
++            # Explicit content channel openers (implicitly close thought)
++            "<|channel>content",
++            "<|channel>final",
++        ]
++        earliest = None
++        for marker in markers:
++            idx = delta_text.find(marker)
++            if idx != -1:
++                if earliest is None or idx < earliest:
++                    earliest = idx
++        return earliest
++
+     def finalize_streaming(self, accumulated_text: str) -> DeltaMessage | None:
+         """Handle end of stream — emit any remaining content."""
+         return None

@@ -1,0 +1,21 @@
+diff --git a/conan/internal/api/profile/profile_loader.py b/conan/internal/api/profile/profile_loader.py
+index 61342c2..66bbbdb 100644
+--- a/conan/internal/api/profile/profile_loader.py
++++ b/conan/internal/api/profile/profile_loader.py
+@@ -248,6 +248,16 @@ class _ProfileValueParser:
+         platform_tool_requires = [RecipeReference.loads(r) for r in doc_platform_tool_requires.splitlines()]
+         platform_requires = [RecipeReference.loads(r) for r in doc_platform_requires.splitlines()]
+ 
++        # Validate that platform_requires and platform_tool_requires do not use version ranges
++        for section_name, section_refs in [("[platform_requires]", platform_requires),
++                                           ("[platform_tool_requires]", platform_tool_requires)]:
++            for ref in section_refs:
++                version_str = str(ref.version)
++                if version_str.startswith("[") and version_str.endswith("]"):
++                    raise ConanException(
++                        f"Error in profile {section_name}: '{ref}' is a version range. "
++                        f"Platform requires must use exact package references, not version ranges.")
++
+         def load_replace(doc_replace_requires):
+             result = {}
+             for r in doc_replace_requires.splitlines():

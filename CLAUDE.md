@@ -9,19 +9,23 @@ An autonomous software factory: LLM personas turn markdown work orders
 ("directions") into reviewed, tested, merged pull requests, unattended, on
 cheap non-Anthropic models (Azure gpt-5.x + DeepSeek).
 
-**It ships, and the chain is not proven.** Externally graded 2026-08-04 (n=19,
-k=1): the chain resolves 37% where a *single* OpenHands agent on the same model
-resolves 53% — no measurable lift (p=0.375), at 2.8× the cost per resolved
-instance. Claude Code resolves 79%. Those figures are the later of two `report`
-runs over this one sweep (`results-archive/2026-08-04T23-19-24.998844Z/`, the
-archive the committed `results.md` re-derives from byte-for-byte); the earlier
-`…T04-18-05.349995Z/` reports `openhands` 44% / p=0.625 / 2.3×, because three
-rows lost to Azure 429s were excluded there; the later archive re-ran them as
-`attempt: 2`. **The conclusion is
-the same under either report** — the chain sits below one agent on the same
-model, at p > 0.3 — and at MDE ≈ ±38 pp that is "no measurable lift", **not**
-"the chain hurts". Do not write docs or directions that assume the chain's value
-is established; see `STATUS.md`. **The Exteroception v1 direction is closed**
+**It ships, and the chain is not proven.** Two sweeps exist on one pinned
+SWE-rebench manifest (n=19). Sweep 1 (2026-08-04, five arms): the chain
+resolved 37% where a *single* OpenHands agent on the same model resolved 53%
+— no measurable lift (p=0.375) at 2.8× the cost per resolved instance;
+Claude Code 79%. Sweep 2 (2026-08-10, re-measuring only the CHANGED factory —
+acceptance oracle authored pre-dev, open-weight-only routing, Kimi reviewer):
+factory **53%** (10/19), solo-noreview 47%, claude-5 79%; chain-verdict
+precision 40% → 71%. The matched `openhands` control was operator-cancelled
+mid-sweep, so chain-vs-single-agent remains **cross-sweep and descriptive**,
+the $/resolved gap stands ($5.02 vs $1.82), and at MDE ≈ ±38 pp none of this
+is a proven delta (k ≥ 3 is the bar). The committed `results.md` is sweep 2
+(`results-archive/2026-08-10T21-53-14.959258Z/`); sweep 1 stays re-derivable
+from `results-archive/2026-08-04T23-19-24.998844Z/` (and its earlier
+`…T04-18-05.349995Z/` variant — openhands 44%/p=0.625 — differs only in three
+429-lost rows re-run as `attempt: 2`; same conclusion either way). Do not
+write docs or directions that assume the chain's value is established; see
+`STATUS.md`. **The Exteroception v1 direction is closed**
 (`apps/factory/directions/019-exteroception-v1-close-the-sensing-gap/`) — its
 seven acceptance criteria shipped as **operator PRs #247–#254, not the
 chain**. No successor direction is filed yet; what it left open (three KNOWN

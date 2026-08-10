@@ -1,0 +1,174 @@
+{
+  "arm": "solo-noreview",
+  "instance_id": "harumiweb__exstruct-113",
+  "repo": "harumiWeb/exstruct",
+  "base_commit": "c0c8c52d0a3b507ac13feb4b700e5d858f2a81dc",
+  "problem_statement_sha256": "0e985bc7f916867bd0c6857c934c51dbe021e3bcefcb27669bd11de1badc3718",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0143
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 2.3938
+    }
+  ],
+  "model_escalated_calls": 1,
+  "ts": "2026-08-10T20:34:54.125412+00:00",
+  "wall_clock_s": 1045.8,
+  "final_state": "tests_green",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "steps_used": 1,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 2255442,
+  "tokens_out": 26422,
+  "cached_input_tokens": 1157312,
+  "cost_usd": 2.4081,
+  "persona_calls": 2,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.5,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/cli/test_cli_lazy_imports.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "tests_green",
+  "chain_personas": [
+    "dev"
+  ],
+  "files_changed": [
+    "src/exstruct/__init__.py"
+  ],
+  "test_files_stripped": [
+    "tests/cli/test_cli_lazy_imports.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 392,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 144,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/cli/test_cli_lazy_imports.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 1,
+    "refused_samples": [
+      "{\"id\":\"b7294301-0c07-4478-8d40-00475fd9faf9\",\"timestamp\":\"2026-08-10T16:32:56.622498\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_c3d697c12bcd466e991fd976\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 2
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-harumiweb__exstruct-113-_qw7b_jt/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-harumiweb__exstruct-113-_qw7b_jt/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-harumiweb__exstruct-113-_qw7b_jt",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/harumiweb__exstruct-113__solo-noreview/root/state/acceptance",
+    "sha256": "daf41ad7f0a16405ddf35cf5da942d0947dac82024b19edf9b0c49af4523bee8",
+    "bytes": 1720,
+    "authored_at": "2026-08-10T20:17:31.583601+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "9290efc7c6a5dc78b71ef423360a4bd470afaa8383e745220b66fe5c32b431dd",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 2779,
+    "spec_prompt_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/harumiweb__exstruct-113/solo-noreview/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/harumiweb__exstruct-113/solo-noreview/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 1,
+      "acceptance_author_ended_at": "2026-08-10T20:17:58.809386+00:00",
+      "dev_first_started_at": "2026-08-10T20:17:59.396388+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-10T20:17:58.809386+00:00, dev's first call started 2026-08-10T20:17:59.396388+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-harumiweb__exstruct-113-_qw7b_jt",
+        "state/acceptance"
+      ],
+      "files_scanned": 2,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-harumiweb__exstruct-113-_qw7b_jt": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "solo-noreview",
+    "instance_id": "harumiweb__exstruct-113",
+    "image": "swerebench/sweb.eval.x86_64.harumiweb_1776_exstruct-113@sha256:a3234ba6d5ca57a07137b6e70c870111a00d4ca638329745ef65bde1a75c865e",
+    "graded_at": "2026-08-10T20:34:54.723664+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 6,
+    "pass_to_pass_declared_count": 6,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/cli/test_cli_lazy_imports.py::test_import_engine_module_stays_lightweight: node(s) FAILED/ERROR: ['tests/cli/test_cli_lazy_imports.py::test_import_engine_module_stays_lightweight']",
+      "tests/cli/test_cli_lazy_imports.py::test_import_public_engine_export_stays_lightweight: node(s) FAILED/ERROR: ['tests/cli/test_cli_lazy_imports.py::test_import_public_engine_export_stays_lightweight']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "dev-docs/architecture/overview.md",
+      "src/exstruct/engine.py"
+    ],
+    "touched_files": [
+      "src/exstruct/__init__.py"
+    ],
+    "gold_files_overlap": [],
+    "oracle_resolved": false,
+    "outcome": "wrong_place",
+    "exit_code": 0,
+    "grade_wall_s": 6.2,
+    "log_tail": "Checking patch tests/cli/test_cli_lazy_imports.py...\nApplied patch tests/cli/test_cli_lazy_imports.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_4787a3bd42a1ff0e: OK (red as expected)\nChecking patch src/exstruct/__init__.py...\nApplied patch src/exstruct/__init__.py cleanly.\nSWEBENCH_APPLY_4787a3bd42a1ff0e: OK\n        \"core_integrate\": \"exstruct.core.integrate\" in sys.modules,\n        \"io\": \"exstruct.io\" in sys.modules,\n        \"render\": \"exstruct.render\" in sys.modules,\n        \"numpy\": \"numpy\" in sys.modules,\n        \"pandas\": \"pandas\" in sys.modules,\n        \"openpyxl\": \"openpyxl\" in sys.modules,\n        \"xlwings\": \"xlwings\" in sys.modules,\n        \"PIL\": \"PIL\" in sys.modules,\n    }))\n    \"\"\"\n        )\n    \n>       assert payload == {\n            \"engine\": True,\n            \"core_cells\": False,\n            \"core_integrate\": False,\n            \"io\": False,\n            \"render\": False,\n            \"numpy\": False,\n            \"pandas\": False,\n            \"openpyxl\": False,\n            \"xlwings\": False,\n            \"PIL\": False,\n        }\nE       AssertionError: assert {'PIL': False...e': True, ...} == {'PIL': False...e': True, ...}\nE         \nE         Omitting 2 identical items, use -vv to show\nE         Differing items:\nE         {'xlwings': True} != {'xlwings': False}\nE         {'render': True} != {'render': False}\nE         {'numpy': True} != {'numpy': False}\nE         {'pandas': True} != {'pandas': False}...\nE         \nE         ...Full output truncated (5 lines hidden), use '-vv' to show\n\ntests/cli/test_cli_lazy_imports.py:105: AssertionError\n=========================== short test summary info ============================\nFAILED tests/cli/test_cli_lazy_imports.py::test_import_engine_module_stays_lightweight\nFAILED tests/cli/test_cli_lazy_imports.py::test_import_public_engine_export_stays_lightweight\n2 failed in 0.76s\nSWEBENCH_TALLY_4787a3bd42a1ff0e: fail_to_pass 2 failed in 0.76s\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\n......                                                                   [100%]\n=========================== short test summary info ============================\nPASSED tests/cli/test_cli_lazy_imports.py::test_import_exstruct_stays_lightweight\nPASSED tests/cli/test_cli_lazy_imports.py::test_import_cli_main_does_not_load_edit_or_extraction_modules\nPASSED tests/cli/test_cli_lazy_imports.py::test_import_cli_edit_does_not_load_mcp_or_edit_execution_modules\nPASSED tests/cli/test_cli_lazy_imports.py::test_public_type_hints_resolve_lazy_exports_at_runtime\nPASSED tests/cli/test_cli_lazy_imports.py::test_help_path_keeps_lightweight_import_boundaries\nPASSED tests/cli/test_cli_lazy_imports.py::test_ops_list_keeps_mcp_and_extraction_lightweight\n6 passed in 0.29s\nSWEBENCH_TALLY_4787a3bd42a1ff0e: pass_to_pass 6 passed in 0.29s\n[8 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_4787a3bd42a1ff0e: UNRESOLVED\n"
+  }
+}

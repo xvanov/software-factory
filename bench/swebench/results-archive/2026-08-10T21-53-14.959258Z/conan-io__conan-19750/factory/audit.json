@@ -1,0 +1,47 @@
+{
+  "instance_id": "conan-io__conan-19750",
+  "arm": "factory",
+  "audited_at": "2026-08-10T19:14:25.220712+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T19:10:48.707998+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5362,
+      "tokens_out": 11801,
+      "cached_input_tokens": 3840,
+      "cost_usd": 0.054328900000000006,
+      "duration_s": 180.928,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:14:23.892281+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 544479,
+      "tokens_out": 3447,
+      "cached_input_tokens": 230144,
+      "cost_usd": 0.656921744,
+      "duration_s": 214.602,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.7113,
+  "ledger_tokens_in": 549841,
+  "ledger_tokens_out": 15248,
+  "result_cost_usd": 0.7113,
+  "prediction_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "base_commit": "6c9356b3e5bd75f7d7061a708785e80aaacb3b43",
+  "stripped_test_paths": [],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

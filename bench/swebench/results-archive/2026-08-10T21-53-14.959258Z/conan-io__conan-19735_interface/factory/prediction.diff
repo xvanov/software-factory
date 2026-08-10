@@ -1,0 +1,30 @@
+diff --git a/conan/internal/api/detect/detect_api.py b/conan/internal/api/detect/detect_api.py
+index 6148d9c..1e9fb7d 100644
+--- a/conan/internal/api/detect/detect_api.py
++++ b/conan/internal/api/detect/detect_api.py
+@@ -620,15 +620,18 @@ def detect_emcc_compiler(compiler_exe="emcc"):
+         ret, out = detect_runner(f'"{compiler_exe}" --version')
+         if ret != 0:
+             return None, None, None
+-        first_line = out.splitlines()[0]
+-        if "Emscripten" not in first_line:
++        if "Emscripten" not in out:
+             return None, None, None
+         compiler = "emcc"
+-        version_match = re.search(r"[0-9]+\.[0-9]+\.[0-9]+", first_line)
+-        if version_match:
+-            version = version_match.group()
+-            ConanOutput(scope="detect_api").info("Found %s %s" % (compiler, version))
+-            return compiler, Version(version), compiler_exe
++        # Find the line containing both Emscripten and a version number
++        # (there may be diagnostic lines like "shared:INFO: (Emscripten: ...)" before it)
++        for line in out.splitlines():
++            if "Emscripten" in line:
++                version_match = re.search(r"[0-9]+\.[0-9]+\.[0-9]+", line)
++                if version_match:
++                    version = version_match.group()
++                    ConanOutput(scope="detect_api").info("Found %s %s" % (compiler, version))
++                    return compiler, Version(version), compiler_exe
+     except (Exception,):  # to disable broad-except
+         return None, None, None
+ 

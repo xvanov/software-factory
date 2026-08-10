@@ -1,0 +1,76 @@
+diff --git a/pandas/core/col.py b/pandas/core/col.py
+index 7d21ce0..ae9cb3d 100644
+--- a/pandas/core/col.py
++++ b/pandas/core/col.py
+@@ -44,6 +44,9 @@ _OP_SYMBOLS = {
+     "__ror__": "|",
+     "__xor__": "^",
+     "__rxor__": "^",
++    "__neg__": "-",
++    "__pos__": "+",
++    "__invert__": "~",
+ }
+ 
+ 
+@@ -114,11 +117,21 @@ class Expression:
+                 needs_parenthese=needs_parentheses,
+             )
+ 
+-    def _maybe_wrap_parentheses(self, other: Any) -> tuple[str, str]:
++    def _with_unary_op(self, op: str, repr_str: str) -> Expression:
++        return Expression(
++            lambda df: getattr(self._eval_expression(df), op)(),
++            repr_str,
++            needs_parenthese=True,
++        )
++
++    def _self_repr(self) -> str:
++        # Repr of ``self``, parenthesised if it would otherwise be ambiguous.
+         if self._needs_parentheses:
+-            self_repr = f"({self!r})"
+-        else:
+-            self_repr = f"{self!r}"
++            return f"({self!r})"
++        return f"{self!r}"
++
++    def _maybe_wrap_parentheses(self, other: Any) -> tuple[str, str]:
++        self_repr = self._self_repr()
+         if isinstance(other, Expression) and other._needs_parentheses:
+             other_repr = f"({other!r})"
+         else:
+@@ -223,11 +236,20 @@ class Expression:
+         self_repr, other_repr = self._maybe_wrap_parentheses(other)
+         return self._with_op("__rxor__", other, f"{other_repr} ^ {self_repr}")
+ 
++    # Unary ops
+     def __invert__(self) -> Expression:
++        return self._with_unary_op("__invert__", f"~{self._self_repr()}")
++
++    def __neg__(self) -> Expression:
++        return self._with_unary_op("__neg__", f"-{self._self_repr()}")
++
++    def __pos__(self) -> Expression:
++        return self._with_unary_op("__pos__", f"+{self._self_repr()}")
++
++    def __abs__(self) -> Expression:
+         return Expression(
+-            lambda df: ~self._eval_expression(df),
+-            f"~{self._repr_str}",
+-            needs_parenthese=True,
++            lambda df: abs(self._eval_expression(df)),
++            f"abs({self!r})",
+         )
+ 
+     def __array_ufunc__(
+@@ -269,10 +291,7 @@ class Expression:
+         return Expression(lambda df: func(df, *args, **kwargs), repr_str)
+ 
+     def __getattr__(self, name: str, /) -> Any:
+-        repr_str = f"{self!r}"
+-        if self._needs_parentheses:
+-            repr_str = f"({repr_str})"
+-        repr_str += f".{name}"
++        repr_str = f"{self._self_repr()}.{name}"
+         return Expression(lambda df: getattr(self._eval_expression(df), name), repr_str)
+ 
+     def __repr__(self) -> str:

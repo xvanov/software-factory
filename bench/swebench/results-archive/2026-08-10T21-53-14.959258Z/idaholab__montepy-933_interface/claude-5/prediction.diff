@@ -1,0 +1,110 @@
+diff --git a/doc/source/changelog.rst b/doc/source/changelog.rst
+index e120f8d..ba1143d 100644
+--- a/doc/source/changelog.rst
++++ b/doc/source/changelog.rst
+@@ -14,6 +14,7 @@ MontePy Changelog
+ 
+ * Fixed a bug where ``append_renumber`` raised a ``TypeError`` when called with an object whose ``number`` is ``None`` (e.g. an object created with no arguments) (:issue:`880`).
+ * Fixed a bug where the importance of cells made from scratch are usually not printed to the output file (:pull:`921`).
++* Fixed a bug where :func:`~montepy.cell.Cell.universe` could not be set to ``None``, nor deleted, to reset a cell's universe (:issue:`933`).
+ 
+ **Performance Improvement**
+ 
+diff --git a/montepy/cell.py b/montepy/cell.py
+index 18b4f9f..e33709b 100644
+--- a/montepy/cell.py
++++ b/montepy/cell.py
+@@ -246,19 +246,58 @@ class Cell(Numbered_MCNP_Object):
+     def universe(self):
+         """The Universe that this cell is in.
+ 
++        Setting this to ``None``, or deleting it, resets the universe of this
++        cell to the default. If this cell is in a problem the default is
++        universe 0, which is added to the problem if it isn't there already.
++        Otherwise the universe is cleared entirely, and this will return ``None``.
++
++        .. versionchanged:: 1.4.0
++
++            The universe can now be set to ``None``, or deleted, to reset it.
++
+         Returns
+         -------
+-        Universe
+-            the Universe the cell is in.
++        Universe, None
++            the Universe the cell is in, or None if it isn't set.
+         """
+         return self._universe.universe
+ 
+     @universe.setter
+     def universe(self, value):
+-        if not isinstance(value, Universe):
+-            raise TypeError("universe must be set to a Universe")
++        if not isinstance(value, (Universe, type(None))):
++            raise TypeError(
++                f"universe must be set to a Universe or None. {value} given."
++            )
++        if value is None:
++            self._reset_universe()
++            return
+         self._universe.universe = value
+ 
++    @universe.deleter
++    def universe(self):
++        self._reset_universe()
++
++    def _reset_universe(self):
++        """Resets this cell's universe to the default value.
++
++        For a cell in a problem this is universe 0, otherwise the universe is
++        set to ``None``.
++        """
++        # not_truncated is meaningless without a (non-zero) universe
++        self._universe._not_truncated = False
++        problem = self._problem
++        if problem is None:
++            self._universe.universe = None
++            return
++        universes = problem.universes
++        if 0 in universes.numbers:
++            default = universes[0]
++        else:
++            default = Universe(0)
++            default.link_to_problem(problem)
++            universes.append(default)
++        self._universe.universe = default
++
+     @property
+     def fill(self):
+         """the Fill object representing how this cell is filled.
+@@ -304,7 +343,7 @@ class Cell(Numbered_MCNP_Object):
+             True if this cell has been marked as not being truncated by
+             the parent filled cell.
+         """
+-        if self.universe.number == 0:
++        if self.universe is None or self.universe.number == 0:
+             return False
+         return self._universe.not_truncated
+ 
+@@ -312,7 +351,7 @@ class Cell(Numbered_MCNP_Object):
+     def not_truncated(self, value):
+         if not isinstance(value, bool):
+             raise TypeError("not_truncated_by_parent must be a bool")
+-        if self.universe.number == 0 and value:
++        if self.universe is not None and self.universe.number == 0 and value:
+             raise ValueError("can't specify if cell is truncated for universe 0")
+         self._universe._not_truncated = value
+ 
+diff --git a/montepy/data_inputs/universe_input.py b/montepy/data_inputs/universe_input.py
+index 4146039..8aa690a 100644
+--- a/montepy/data_inputs/universe_input.py
++++ b/montepy/data_inputs/universe_input.py
+@@ -103,7 +103,7 @@ class UniverseInput(CellModifierInput):
+         if self.in_cell_block:
+             return self.universe is not None and self.universe.number != 0
+ 
+-    @make_prop_pointer("_universe", Universe)
++    @make_prop_pointer("_universe", (Universe, type(None)), deletable=True)
+     def universe(self):
+         if self.in_cell_block:
+             return self._universe

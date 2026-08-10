@@ -1,0 +1,184 @@
+{
+  "arm": "factory",
+  "instance_id": "ucfopen__canvasapi-716",
+  "repo": "ucfopen/canvasapi",
+  "base_commit": "77ff5b248603db987e57f11a104767d4b790265a",
+  "problem_statement_sha256": "b4463fa157fea02b9b7b3ddeb6cc64b1a2dc404096fc483125ee05fa961f89fb",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0667
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.6606
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0172
+    }
+  ],
+  "model_escalated_calls": 2,
+  "ts": "2026-08-10T18:48:39.710796+00:00",
+  "wall_clock_s": 375.8,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "steps_used": 2,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 849972,
+  "tokens_out": 25549,
+  "cached_input_tokens": 566400,
+  "cost_usd": 0.7446,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.5,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_util.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "reviewer_done",
+  "chain_personas": [
+    "dev",
+    "review"
+  ],
+  "files_changed": [
+    "canvasapi/util.py"
+  ],
+  "test_files_stripped": [
+    "tests/fixtures/announcements.json",
+    "tests/test_util.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1056,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 133,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/test_util.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 1,
+    "refused_samples": [
+      "{\"id\":\"8826e997-90f8-445c-9eef-9d9e6e35facf\",\"timestamp\":\"2026-08-10T14:46:06.703902\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_d0f75f46657441cd88c62bfa\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 5
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-ucfopen__canvasapi-716-i17n2eqx/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-ucfopen__canvasapi-716-i17n2eqx/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-ucfopen__canvasapi-716-i17n2eqx",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/ucfopen__canvasapi-716__factory/root/state/acceptance",
+    "sha256": "accfb2f3a49c5be5e94bda26ae54584b3684c53852c2437a56b1701642b82973",
+    "bytes": 1007,
+    "authored_at": "2026-08-10T18:42:27.405722+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "cc3b51d372c5410c959091fd9937e3a9f83b6abad378e89c42557be539bb47a3",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 1203,
+    "spec_prompt_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/ucfopen__canvasapi-716/factory/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/ucfopen__canvasapi-716/factory/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 1,
+      "acceptance_author_ended_at": "2026-08-10T18:44:47.274520+00:00",
+      "dev_first_started_at": "2026-08-10T18:44:47.834599+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-10T18:44:47.274520+00:00, dev's first call started 2026-08-10T18:44:47.834599+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-ucfopen__canvasapi-716-i17n2eqx",
+        "state/acceptance"
+      ],
+      "files_scanned": 2,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-ucfopen__canvasapi-716-i17n2eqx": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "ucfopen__canvasapi-716",
+    "image": "swerebench/sweb.eval.x86_64.ucfopen_1776_canvasapi-716@sha256:6eb2cb4155cf4e7a75b451a3c3f7edcc0966d34a945ed99e7d66ef588c9c7e85",
+    "graded_at": "2026-08-10T18:48:40.228854+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 60,
+    "pass_to_pass_declared_count": 60,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/test_util.py::TestUtil::test_obj_or_str_invalid_obj_type: node(s) FAILED/ERROR: ['tests/test_util.py::TestUtil::test_obj_or_str_invalid_obj_type']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "canvasapi/util.py"
+    ],
+    "touched_files": [
+      "canvasapi/util.py"
+    ],
+    "gold_files_overlap": [
+      "canvasapi/util.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 3.7,
+    "log_tail": "ED tests/test_util.py::TestUtil::test_obj_or_str_str\nFAILED tests/test_util.py::TestUtil::test_obj_or_str_invalid_obj_type - Asser...\n1 failed, 1 passed in 0.04s\nSWEBENCH_TALLY_4a7b4799d7c33c4b: fail_to_pass 1 failed, 1 passed in 0.04s\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\nPASSED tests/test_util.py::TestUtil::test_file_or_path_invalid_path\nPASSED tests/test_util.py::TestUtil::test_file_or_path_valid_path\nPASSED tests/test_util.py::TestUtil::test_get_institution_url\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_bool\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_bytes\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_chain\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_dict\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_items\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_iter\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_keys\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_values\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_generator_call\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_generator_expr\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_integer\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_list\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_list_iter\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_set\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_set_iter\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_str\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_tuple\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_tuple_iter\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_unicode\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_zip\nPASSED tests/test_util.py::TestUtil::test_normalize_bool_boolean\nPASSED tests/test_util.py::TestUtil::test_normalize_bool_str_invalid\nPASSED tests/test_util.py::TestUtil::test_normalize_bool_str_lower\nPASSED tests/test_util.py::TestUtil::test_normalize_bool_str_upper\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_int\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_multiple_objs\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_nonuser_self\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_obj\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_obj_no_id\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_str_invalid\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_str_valid\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_user_self\nPASSED tests/test_util.py::TestUtil::test_obj_or_str_invalid_attr_parameter\nPASSED tests/test_util.py::TestUtil::test_obj_or_str_mult_obj\nPASSED tests/test_util.py::TestUtil::test_obj_or_str_obj_attr\nPASSED tests/test_util.py::TestUtil::test_obj_or_str_obj_no_attr\n60 passed in 0.05s\nSWEBENCH_TALLY_4a7b4799d7c33c4b: pass_to_pass 60 passed in 0.05s\n[62 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_4a7b4799d7c33c4b: UNRESOLVED\n"
+  }
+}

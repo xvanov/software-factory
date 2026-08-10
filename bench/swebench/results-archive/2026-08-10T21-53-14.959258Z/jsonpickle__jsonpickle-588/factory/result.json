@@ -1,0 +1,210 @@
+{
+  "arm": "factory",
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "repo": "jsonpickle/jsonpickle",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "problem_statement_sha256": "e7d6a3edc32ba6f4ef4ebc10a28b9b9118eda5058b8cc3450bb5e4940970d124",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.045
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 1.7442
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "hard",
+      "calls": 1,
+      "cost_usd": 0.1584
+    }
+  ],
+  "model_escalated_calls": 1,
+  "ts": "2026-08-10T19:18:12.567929+00:00",
+  "wall_clock_s": 743.1,
+  "final_state": "blocked_tests_need_clarification",
+  "dev_retries": 2,
+  "reviewer_cycles": 0,
+  "steps_used": 1,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 1947859,
+  "tokens_out": 33784,
+  "cached_input_tokens": 1098176,
+  "cost_usd": 1.9476,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.0,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/object_test.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> blocked_tests_need_clarification"
+  ],
+  "error": null,
+  "factory_says_green": false,
+  "green_state": "reviewer_done",
+  "chain_personas": [
+    "dev",
+    "review"
+  ],
+  "files_changed": [
+    "jsonpickle/pickler.py",
+    "jsonpickle/unpickler.py"
+  ],
+  "test_files_stripped": [
+    "tests/benchmark.py",
+    "tests/object_test.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1393,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 21,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/object_test.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 2,
+    "refused_samples": [
+      "{\"id\":\"650b3762-c4b7-4960-9b15-256dbb0b3569\",\"timestamp\":\"2026-08-10T15:10:42.223433\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_840dada8abea46539696db3a\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/",
+      "{\"id\":\"874fc23d-3247-4633-9ddc-f9ea97321f9f\",\"timestamp\":\"2026-08-10T15:16:13.101144\",\"source\":\"environment\",\"forgotten_event_ids\":[\"4fb993bb-b9cf-4971-b882-52887ada9a25\",\"3a0ca521-c7ff-4870-95f6-a27a3958f91d\",\"8f304960-ca80-4389-a888-f897d0c54cd3\",\"0d19fb8f-47cc-48ef-96aa-c864ba90aa63\",\"c13203ce-ec"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 3
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-bef3bekj/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-bef3bekj/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-bef3bekj",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/jsonpickle__jsonpickle-588__factory/root/state/acceptance",
+    "sha256": "ecedfed714a344fdc1903c2b35f1fde9f3f4d841b0f27ca65f048cc4e69be578",
+    "bytes": 2762,
+    "authored_at": "2026-08-10T19:05:55.669054+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "9598824e4a7d78fc83f12a86f6a18837cdac3b5041281c67c99308abca804f7c",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 6133,
+    "spec_prompt_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/jsonpickle__jsonpickle-588/factory/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/jsonpickle__jsonpickle-588/factory/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 2,
+      "acceptance_author_ended_at": "2026-08-10T19:07:24.601544+00:00",
+      "dev_first_started_at": "2026-08-10T19:07:25.129711+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-10T19:07:24.601544+00:00, dev's first call started 2026-08-10T19:07:25.129711+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-bef3bekj",
+        "state/acceptance"
+      ],
+      "files_scanned": 3,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-bef3bekj": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "jsonpickle__jsonpickle-588",
+    "image": "swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588@sha256:0eae843824198c5cfb0b6bb25b5c9b50c1b415ea7295867a314a3a8ce65c7fb4",
+    "graded_at": "2026-08-10T19:18:13.090332+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 82,
+    "pass_to_pass_declared_count": 82,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/object_test.py::test_defaultdict_preserves_default_factory_key: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/handler_test.py::ruff: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/handler_test.py::HandlerTestCase::test_base_handler: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/handler_test.py::HandlerTestCase::test_custom_handler: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/handler_test.py::HandlerTestCase::test_custom_handler_can_rewrite_everything: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/handler_test.py::HandlerTestCase::test_decorated_register: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/handler_test.py::HandlerTestCase::test_invalid_class: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/handler_test.py::HandlerTestCase::test_references: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::ruff: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::FailSafeTestCase::test_custom_err_msg: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::FailSafeTestCase::test_error_recorded: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::FailSafeTestCase::test_no_error: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::test_list_subclass: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::test_list_subclass_with_init: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::test_list_subclass_with_data: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::test_set_subclass: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::test_set_subclass_with_data: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::test_decimal: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::test_oldstyleclass: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::test_dictsubclass: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/object_test.py::test_dictsubclass_notunpickable: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "CHANGES.rst",
+      "jsonpickle/pickler.py",
+      "jsonpickle/tags.py",
+      "jsonpickle/unpickler.py"
+    ],
+    "touched_files": [
+      "jsonpickle/pickler.py",
+      "jsonpickle/unpickler.py"
+    ],
+    "gold_files_overlap": [
+      "jsonpickle/pickler.py",
+      "jsonpickle/unpickler.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 7.9,
+    "log_tail": ".py:197: in exec_module\n    exec(co, module.__dict__)\ntests/object_test.py:13: in <module>\n    import jsonpickle\njsonpickle/__init__.py:75: in <module>\n    from .unpickler import Unpickler  # noqa: F401\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE     File \"/testbed/jsonpickle/unpickler.py\", line 622\nE       del obj[\"py/factory\"] if \"py/factory\" in obj else obj.pop(\"default_factory\", None)\nE           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   SyntaxError: cannot delete conditional expression\n=========================== short test summary info ============================\nERROR tests/object_test.py\nERROR tests/object_test.py\n2 errors in 0.09s\nSWEBENCH_TALLY_cb21bb3422f810c8: fail_to_pass 2 errors in 0.09s\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\njsonpickle/__init__.py:75: in <module>\n    from .unpickler import Unpickler  # noqa: F401\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE     File \"/testbed/jsonpickle/unpickler.py\", line 622\nE       del obj[\"py/factory\"] if \"py/factory\" in obj else obj.pop(\"default_factory\", None)\nE           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   SyntaxError: cannot delete conditional expression\n____________________ ERROR collecting tests/object_test.py _____________________\n/opt/conda/envs/testbed/lib/python3.12/site-packages/_pytest/python.py:507: in importtestmodule\n    mod = import_path(\n/opt/conda/envs/testbed/lib/python3.12/site-packages/_pytest/pathlib.py:587: in import_path\n    importlib.import_module(module_name)\n/opt/conda/envs/testbed/lib/python3.12/importlib/__init__.py:90: in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n<frozen importlib._bootstrap>:1387: in _gcd_import\n    ???\n<frozen importlib._bootstrap>:1360: in _find_and_load\n    ???\n<frozen importlib._bootstrap>:1331: in _find_and_load_unlocked\n    ???\n<frozen importlib._bootstrap>:935: in _load_unlocked\n    ???\n/opt/conda/envs/testbed/lib/python3.12/site-packages/_pytest/assertion/rewrite.py:197: in exec_module\n    exec(co, module.__dict__)\ntests/object_test.py:13: in <module>\n    import jsonpickle\njsonpickle/__init__.py:75: in <module>\n    from .unpickler import Unpickler  # noqa: F401\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE     File \"/testbed/jsonpickle/unpickler.py\", line 622\nE       del obj[\"py/factory\"] if \"py/factory\" in obj else obj.pop(\"default_factory\", None)\nE           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE   SyntaxError: cannot delete conditional expression\n=========================== short test summary info ============================\nERROR tests/handler_test.py\nERROR tests/handler_test.py\nERROR tests/object_test.py\nERROR tests/object_test.py\n4 errors in 0.14s\nSWEBENCH_TALLY_cb21bb3422f810c8: pass_to_pass 4 errors in 0.14s\n[6 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_cb21bb3422f810c8: UNRESOLVED\n"
+  }
+}

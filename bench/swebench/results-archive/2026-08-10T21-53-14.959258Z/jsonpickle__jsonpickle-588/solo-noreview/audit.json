@@ -1,0 +1,78 @@
+{
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-10T21:13:09.410768+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 3 call(s) but only 2 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T20:46:19.746208+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 11048,
+      "tokens_out": 34544,
+      "cached_input_tokens": 7936,
+      "cost_usd": 0.15692776,
+      "duration_s": 375.553,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:59:40.686097+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1456504,
+      "tokens_out": 16220,
+      "cached_input_tokens": 675072,
+      "cost_usd": 1.6789729519999999,
+      "duration_s": 800.361,
+      "success": 0,
+      "error": "sandbox run raised: ConversationRunError('Conversation run failed for id=98fb3313-2e13-433b-b614-38d1e7426f0d: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\\n\\nConversation logs are stored at: /tmp/factory-oh-traj-[REDACTED]\\n\\nTo help debug this issue, please file a bug report at:\\n  https://github.com/OpenHands/software-agent-sdk/issues/new\\nand attach the conversation logs from the directory above.')"
+    },
+    {
+      "ts": "2026-08-10T21:03:07.965914+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 311003,
+      "tokens_out": 3923,
+      "cached_input_tokens": 88320,
+      "cost_usd": 0.45902280000000006,
+      "duration_s": 206.883,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-10T21:12:59.580792+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1682999,
+      "tokens_out": 16334,
+      "cached_input_tokens": 883968,
+      "cost_usd": 1.7470078980000003,
+      "duration_s": 591.248,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 4.0419,
+  "ledger_tokens_in": 3461554,
+  "ledger_tokens_out": 71021,
+  "result_cost_usd": 4.0419,
+  "prediction_sha256": "8e57a92058a32da21ab26e05347c9c3d5db2511e50205a47d53e426b49b57ca3",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "stripped_test_paths": [
+    "tests/benchmark.py",
+    "tests/object_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 3,
+  "trails_scanned": 3,
+  "oracle_probe_failures": []
+}

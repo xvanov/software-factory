@@ -1,0 +1,39 @@
+diff --git a/conan/internal/api/profile/profile_loader.py b/conan/internal/api/profile/profile_loader.py
+index 61342c2..df5b237 100644
+--- a/conan/internal/api/profile/profile_loader.py
++++ b/conan/internal/api/profile/profile_loader.py
+@@ -245,8 +245,10 @@ class _ProfileValueParser:
+         if doc.system_tools:
+             ConanOutput().warning("Profile [system_tools] is deprecated,"
+                                   " please use [platform_tool_requires]")
+-        platform_tool_requires = [RecipeReference.loads(r) for r in doc_platform_tool_requires.splitlines()]
+-        platform_requires = [RecipeReference.loads(r) for r in doc_platform_requires.splitlines()]
++        platform_tool_requires = _ProfileValueParser._parse_platform_requires(
++            doc_platform_tool_requires, "platform_tool_requires")
++        platform_requires = _ProfileValueParser._parse_platform_requires(
++            doc_platform_requires, "platform_requires")
+ 
+         def load_replace(doc_replace_requires):
+             result = {}
+@@ -322,6 +324,21 @@ class _ProfileValueParser:
+             result[pattern.strip()] = req_list.strip()
+         return result
+ 
++    @staticmethod
++    def _parse_platform_requires(doc_platform_requires, section):
++        result = []
++        for line in doc_platform_requires.splitlines():
++            line = line.strip()
++            if not line or line.startswith("#"):
++                continue
++            ref = RecipeReference.loads(line)
++            version = repr(ref.version)
++            if version.startswith("[") and version.endswith("]"):
++                raise ConanException(f"[{section}] '{line}' cannot contain version ranges, "
++                                     f"only exact versions are allowed")
++            result.append(ref)
++        return result
++
+     @staticmethod
+     def _parse_tool_requires(doc):
+         result = OrderedDict()

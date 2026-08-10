@@ -1,0 +1,171 @@
+{
+  "arm": "factory",
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "repo": "pyinfra-dev/pyinfra",
+  "base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+  "problem_statement_sha256": "6db63b001b70674a6cd551c902d802495967cec273296be8357a6e5cf1499493",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0332
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.7959
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0467
+    }
+  ],
+  "model_escalated_calls": 2,
+  "ts": "2026-08-10T18:28:35.709888+00:00",
+  "wall_clock_s": 370.7,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "steps_used": 2,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 883710,
+  "tokens_out": 23433,
+  "cached_input_tokens": 519872,
+  "cost_usd": 0.8759,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.0,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_connectors/test_util.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "reviewer_done",
+  "chain_personas": [
+    "dev",
+    "review"
+  ],
+  "files_changed": [
+    "src/pyinfra/connectors/util.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_connectors/test_util.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1362,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 1289,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/test_connectors/test_util.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 1,
+    "refused_samples": [
+      "{\"id\":\"20d50180-3c22-437b-bb76-379191111382\",\"timestamp\":\"2026-08-10T14:25:49.765696\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_44f8924cbd0e4f0c8bbdcb40\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 5
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-pyinfra-dev__pyinfra-1665-bjn8zcxq/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-pyinfra-dev__pyinfra-1665-bjn8zcxq/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-pyinfra-dev__pyinfra-1665-bjn8zcxq",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/pyinfra-dev__pyinfra-1665__factory/root/state/acceptance",
+    "sha256": "1f74e2501130a49b97abff50aa3f8b7a73582ca947c38c7a237aa4ea9194a5fa",
+    "bytes": 648,
+    "authored_at": "2026-08-10T18:22:35.687463+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "c0564167462f912e82c09db90dfaf01b44f8e9f78c9563174da91d8213e772ce",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 5302,
+    "spec_prompt_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/pyinfra-dev__pyinfra-1665/factory/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/pyinfra-dev__pyinfra-1665/factory/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 1,
+      "acceptance_author_ended_at": "2026-08-10T18:24:25.837171+00:00",
+      "dev_first_started_at": "2026-08-10T18:24:26.493531+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-10T18:24:25.837171+00:00, dev's first call started 2026-08-10T18:24:26.493531+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-pyinfra-dev__pyinfra-1665-bjn8zcxq",
+        "state/acceptance"
+      ],
+      "files_scanned": 2,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-pyinfra-dev__pyinfra-1665-bjn8zcxq": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "pyinfra-dev__pyinfra-1665",
+    "image": "swerebench/sweb.eval.x86_64.pyinfra-dev_1776_pyinfra-1665@sha256:138a496547f392c77a1d472fd259e3c3fff6dd20bf5cba084335888857f395a3",
+    "graded_at": "2026-08-10T18:28:36.221961+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 33,
+    "pass_to_pass_declared_count": 33,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 5.1,
+    "log_tail": "ommandConnectorUtil::test_custom_shell_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_doas_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_doas_user_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_doas_user_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_dzdo_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_dzdo_user_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_dzdo_user_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_mixed_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_mixed_command_with_injection_attempts\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_preserve_su_env_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_remove_any_sudo_askpass_file_quotes_path\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_multi_arg_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_password_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_shell_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_shell_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_multi_arg_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_password_askpass_path_quoted\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_preserve_env_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_user_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_user_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_use_su_login_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_use_sudo_login_command\nPASSED tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_clears_state_and_runs_rm\nPASSED tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_noop_when_no_state\n33 passed in 0.15s\nSWEBENCH_TALLY_6c51038d20ed5654: pass_to_pass 33 passed in 0.15s\n[35 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_6c51038d20ed5654: RESOLVED\n"
+  }
+}

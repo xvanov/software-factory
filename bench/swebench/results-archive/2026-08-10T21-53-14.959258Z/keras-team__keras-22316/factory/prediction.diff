@@ -1,0 +1,48 @@
+diff --git a/keras/src/ops/function.py b/keras/src/ops/function.py
+index 8d3c524..4cc6f5c 100644
+--- a/keras/src/ops/function.py
++++ b/keras/src/ops/function.py
+@@ -310,15 +310,25 @@ def map_graph(inputs, outputs):
+     for input_t in inputs:
+         input_operation = input_t._keras_history[0]
+         if input_operation and input_operation not in operations_depths:
+-            operations_depths[input_operation] = 0
+-            operation_indices[input_operation] = -1
+-            nodes_depths[input_operation._inbound_nodes[0]] = 0
+-            network_nodes.add(make_node_key(input_operation, 0))
+-
++            node = input_operation._inbound_nodes[0]
++            # Only add InputLayer operations, not arbitrary ancestors
++            # that produced the input tensor outside this graph.
++            if node.is_input:
++                operations_depths[input_operation] = 0
++                operation_indices[input_operation] = -1
++                nodes_depths[node] = 0
++                network_nodes.add(make_node_key(input_operation, 0))
++
++    graph_nodes = {
++        node for node in nodes_depths
++        if make_node_key(node.operation, node.operation._inbound_nodes.index(node))
++        in network_nodes
++    }
+     # Build a dict {depth: list of nodes with this depth}
+     nodes_by_depth = collections.defaultdict(list)
+     for node, depth in nodes_depths.items():
+-        nodes_by_depth[depth].append(node)
++        if node in graph_nodes:
++            nodes_by_depth[depth].append(node)
+ 
+     # Build a dict {depth: list of operations with this depth}
+     operations_by_depth = collections.defaultdict(list)
+@@ -425,6 +435,11 @@ def _build_map_helper(
+     operation_indices,
+ ):
+     """Recursive helper for `_build_map`."""
++    # Stop tracing at Function inputs — their ancestors are not part
++    # of this Function's computation graph.
++    if tensor in tree.flatten(inputs):
++        return
++
+     (
+         operation,
+         node_index,

@@ -1,0 +1,88 @@
+{
+  "instance_id": "harumiweb__exstruct-113",
+  "arm": "factory",
+  "audited_at": "2026-08-10T18:42:47.656889+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T18:29:22.275461+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 1908,
+      "tokens_out": 3908,
+      "cached_input_tokens": 1216,
+      "cost_usd": 0.01817716,
+      "duration_s": 36.217,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T18:37:26.740121+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1629948,
+      "tokens_out": 16090,
+      "cached_input_tokens": 852224,
+      "cost_usd": 1.6998400840000005,
+      "duration_s": 483.881,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T18:38:21.424604+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5633,
+      "tokens_out": 9408,
+      "cached_input_tokens": 2880,
+      "cost_usd": 0.04489065,
+      "duration_s": 52.749,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T18:42:23.479600+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 435031,
+      "tokens_out": 7253,
+      "cached_input_tokens": 193792,
+      "cost_usd": 0.524570772,
+      "duration_s": 241.44,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T18:42:41.207354+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5867,
+      "tokens_out": 3354,
+      "cached_input_tokens": 2944,
+      "cost_usd": 0.01844499,
+      "duration_s": 16.87,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.3059,
+  "ledger_tokens_in": 2078387,
+  "ledger_tokens_out": 40013,
+  "result_cost_usd": 2.3059,
+  "prediction_sha256": "729d5e316cca4255e98fbf677f38ce226aa1a99a1d4ffec4c8b3dc90c034dca0",
+  "base_commit": "c0c8c52d0a3b507ac13feb4b700e5d858f2a81dc",
+  "stripped_test_paths": [
+    "tests/cli/test_cli_lazy_imports.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}
