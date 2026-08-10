@@ -1,0 +1,22 @@
+{
+  "instance_id": "keras-team__keras-22642",
+  "arm": "claude-5",
+  "audited_at": "2026-08-10T18:43:34.488733+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.5169,
+  "ledger_tokens_in": 395734,
+  "ledger_tokens_out": 5111,
+  "result_cost_usd": 0.5169,
+  "prediction_sha256": "b40ea4288606fda96f3c784adbabfa65071bcf93445e4397bd7d7c166b71044b",
+  "base_commit": "2b176bc33233762863fa5f3d60e060de3be934e5",
+  "stripped_test_paths": [
+    "keras/src/layers/attention/grouped_query_attention_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

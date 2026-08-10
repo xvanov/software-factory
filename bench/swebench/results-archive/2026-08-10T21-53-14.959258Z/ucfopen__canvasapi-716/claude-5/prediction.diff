@@ -1,0 +1,158 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 2bedc43..ca7b4f2 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,11 @@
+ 
+ ## [Unreleased]
+ 
++### Bugfixes
++
++- `obj_or_str` now accepts a `str` and returns it, in line with how `obj_or_id` accepts an `int`. This means the name of a feature can be passed directly to `Account.get_feature_flag()`, `Course.get_feature_flag()`, `User.get_feature_flag()`, `FeatureFlag.delete()`, and `FeatureFlag.set_feature_flag()`.
++- `obj_or_str` now verifies that the object passed in is one of the expected types before returning its attribute.
++
+ ## [3.5.0] - 2026-03-12
+ 
+ ### General
+diff --git a/canvasapi/feature.py b/canvasapi/feature.py
+index ebd48d7..84a5fe6 100644
+--- a/canvasapi/feature.py
++++ b/canvasapi/feature.py
+@@ -50,6 +50,28 @@ class FeatureFlag(CanvasObject):
+             self.context_type, self.context_id, self.feature, self.state
+         )
+ 
++    def _parent_of(self, feature):
++        """
++        Return the type and id of the account, course or user the given
++        feature belongs to. Falls back on the context of this feature flag
++        when only the name of a feature is given.
++
++        :param feature: The feature object or name of the feature.
++        :type feature: :class:`canvasapi.feature.Feature` or str
++
++        :rtype: (str, int)
++        """
++        if isinstance(feature, Feature):
++            return feature._parent_type, feature._parent_id
++
++        if hasattr(self, "context_type") and hasattr(self, "context_id"):
++            return self.context_type.lower(), self.context_id
++
++        raise ValueError(
++            "Feature Flag does not have a context_type and context_id. "
++            "Pass a Feature object instead of a feature name."
++        )
++
+     def delete(self, feature, **kwargs):
+         """
+         Remove a feature flag for a given account, course or user.
+@@ -66,15 +88,17 @@ class FeatureFlag(CanvasObject):
+             <https://canvas.instructure.com/doc/api/
+             feature_flags.html#method.feature_flags.delete>`_
+ 
++        :param feature: The feature object or name of the feature to remove.
++        :type feature: :class:`canvasapi.feature.Feature` or str
++
+         :rtype: :class:`canvasapi.feature.FeatureFlag`
+         """
+         feature_name = obj_or_str(feature, "name", (Feature,))
++        parent_type, parent_id = self._parent_of(feature)
+ 
+         response = self._requester.request(
+             "DELETE",
+-            "{}s/{}/features/flags/{}".format(
+-                feature._parent_type, feature._parent_id, feature_name
+-            ),
++            "{}s/{}/features/flags/{}".format(parent_type, parent_id, feature_name),
+             _kwargs=combine_kwargs(**kwargs),
+         )
+         return FeatureFlag(self._requester, response.json())
+@@ -95,18 +119,17 @@ class FeatureFlag(CanvasObject):
+             <https://canvas.instructure.com/doc/api/
+             feature_flags.html#method.feature_flags.update>`_
+ 
+-        :param feature: The feature object to set
+-        :type feature: :class:`canvasapi.feature.Feature`
++        :param feature: The feature object or name of the feature to set
++        :type feature: :class:`canvasapi.feature.Feature` or str
+ 
+         :rtype: :class:`canvasapi.feature.FeatureFlag`
+         """
+         feature_name = obj_or_str(feature, "name", (Feature,))
++        parent_type, parent_id = self._parent_of(feature)
+ 
+         response = self._requester.request(
+             "PUT",
+-            "{}s/{}/features/flags/{}".format(
+-                feature._parent_type, feature._parent_id, feature_name
+-            ),
++            "{}s/{}/features/flags/{}".format(parent_type, parent_id, feature_name),
+             _kwargs=combine_kwargs(**kwargs),
+         )
+         return FeatureFlag(self._requester, response.json())
+diff --git a/canvasapi/util.py b/canvasapi/util.py
+index 21c2a02..9da3f93 100644
+--- a/canvasapi/util.py
++++ b/canvasapi/util.py
+@@ -135,35 +135,38 @@ def obj_or_id(parameter, param_name, object_types):
+ 
+ def obj_or_str(obj, attr, object_types):
+     """
+-    Accepts an object. If the object has the attribute, return the
+-    corresponding string. Otherwise, throw an exception.
++    Accepts either a str or an object. If it is a str, return it. If it
++    is an object and the object is of correct type, return the string
++    representation of the given attribute of the object. Otherwise,
++    throw an exception.
+ 
+-    :param obj: object from which to retrieve attribute
+-    :type obj: object
++    :param obj: str or object from which to retrieve the attribute
++    :type obj: str or object
+     :param attr: name of the attribute to retrieve
+     :type attr: str
+     :param object_types: tuple containing the types of the object being passed in
+     :type object_types: tuple
+     :rtype: str
+     """
+-    try:
+-        return str(getattr(obj, attr))
+-    except (AttributeError, TypeError):
+-        if not isinstance(attr, str):
+-            raise TypeError(
+-                "Atttibute parameter {} must be of type string".format(attr)
+-            )
+-        for obj_type in object_types:
+-            if isinstance(obj, obj_type):
+-                try:
+-                    return str(getattr(obj, attr))
+-                except AttributeError:
+-                    raise AttributeError("{} object does not have {} attribute").format(
+-                        obj, attr
+-                    )
+-
+-        obj_type_list = ",".join([obj_type.__name__ for obj_type in object_types])
+-        raise TypeError("Parameter {} must be of type {}.".format(obj, obj_type_list))
++    if isinstance(obj, str):
++        return obj
++
++    if not isinstance(attr, str):
++        raise TypeError("Attribute parameter {} must be of type str.".format(attr))
++
++    for obj_type in object_types:
++        if isinstance(obj, obj_type):
++            try:
++                return str(getattr(obj, attr))
++            except AttributeError:
++                raise AttributeError(
++                    "{} object does not have {} attribute.".format(obj, attr)
++                )
++
++    obj_type_list = ",".join([obj_type.__name__ for obj_type in object_types])
++    raise TypeError(
++        "Parameter {} must be of type {} or str.".format(obj, obj_type_list)
++    )
+ 
+ 
+ def get_institution_url(base_url):

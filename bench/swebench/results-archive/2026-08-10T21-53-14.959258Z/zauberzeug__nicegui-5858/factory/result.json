@@ -1,0 +1,173 @@
+{
+  "arm": "factory",
+  "instance_id": "zauberzeug__nicegui-5858",
+  "repo": "zauberzeug/nicegui",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "problem_statement_sha256": "7037ab70402ac64e588642695f9bf3a52c1ed002b4de2bb884d4b96cc69263d7",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0854
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.6978
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0739
+    }
+  ],
+  "model_escalated_calls": 2,
+  "ts": "2026-08-10T19:29:39.267055+00:00",
+  "wall_clock_s": 678.1,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "steps_used": 2,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 1094190,
+  "tokens_out": 44354,
+  "cached_input_tokens": 814464,
+  "cost_usd": 0.8571,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.3,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_xterm.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "reviewer_done",
+  "chain_personas": [
+    "dev",
+    "review"
+  ],
+  "files_changed": [
+    "nicegui/elements/xterm/xterm.py",
+    "nicegui/events.py"
+  ],
+  "test_files_stripped": [
+    "test_startup.sh",
+    "tests/test_xterm.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1886,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 145,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/test_xterm.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 1,
+    "refused_samples": [
+      "{\"id\":\"c8eeeba7-72cb-4aef-9bb1-e149cb47eba1\",\"timestamp\":\"2026-08-10T15:25:19.893819\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_6651797db2fc44af96aef6be\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 5
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-zauberzeug__nicegui-5858-yckdir9i/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-zauberzeug__nicegui-5858-yckdir9i/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-zauberzeug__nicegui-5858-yckdir9i",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/zauberzeug__nicegui-5858__factory/root/state/acceptance",
+    "sha256": "c1d991b998b164c03f26260044bd7062cf9cb7d424af4a321789aa0dd3a11e19",
+    "bytes": 1969,
+    "authored_at": "2026-08-10T19:18:44.946461+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "bc5693e6878a282534f10e66b244d977c723036758af9ea52fd8a1f4d0a2d9d5",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 2765,
+    "spec_prompt_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/zauberzeug__nicegui-5858/factory/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/zauberzeug__nicegui-5858/factory/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 1,
+      "acceptance_author_ended_at": "2026-08-10T19:22:30.207934+00:00",
+      "dev_first_started_at": "2026-08-10T19:22:31.414742+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-10T19:22:30.207934+00:00, dev's first call started 2026-08-10T19:22:31.414742+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-zauberzeug__nicegui-5858-yckdir9i",
+        "state/acceptance"
+      ],
+      "files_scanned": 2,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-zauberzeug__nicegui-5858-yckdir9i": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "zauberzeug__nicegui-5858",
+    "image": "swerebench/sweb.eval.x86_64.zauberzeug_1776_nicegui-5858@sha256:0774c1c1d9caf26fc590c840482c262c82a76ccc5150c9dd58501114371bc2d2",
+    "graded_at": "2026-08-10T19:29:39.885469+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 3,
+    "pass_to_pass_declared_count": 3,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 54.8,
+    "log_tail": "Checking patch tests/test_xterm.py...\nApplied patch tests/test_xterm.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_e809e3afefc4a7d1: OK (red as expected)\nChecking patch nicegui/elements/xterm/xterm.py...\nChecking patch nicegui/events.py...\nApplied patch nicegui/elements/xterm/xterm.py cleanly.\nApplied patch nicegui/events.py cleanly.\nSWEBENCH_APPLY_e809e3afefc4a7d1: OK\n..                                                                       [100%]\n=========================== short test summary info ============================\nPASSED tests/test_xterm.py::test_bell_and_data_events\nPASSED tests/test_xterm.py::test_fit_and_resize_event\n2 passed in 7.54s\nSWEBENCH_TALLY_e809e3afefc4a7d1: fail_to_pass 2 passed in 7.54s\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\n...                                                                      [100%]\n=========================== short test summary info ============================\nPASSED tests/test_xterm.py::test_init\nPASSED tests/test_xterm.py::test_write\nPASSED tests/test_xterm.py::test_run_terminal_method\n3 passed in 7.59s\nSWEBENCH_TALLY_e809e3afefc4a7d1: pass_to_pass 3 passed in 7.59s\n[5 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_e809e3afefc4a7d1: RESOLVED\n"
+  }
+}

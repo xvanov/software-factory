@@ -1,0 +1,63 @@
+{
+  "instance_id": "zauberzeug__nicegui-5858",
+  "arm": "factory",
+  "audited_at": "2026-08-10T19:30:34.813598+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T19:22:30.207934+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 6051,
+      "tokens_out": 18800,
+      "cached_input_tokens": 4416,
+      "cost_usd": 0.08536411,
+      "duration_s": 224.055,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:28:03.955523+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1082355,
+      "tokens_out": 9584,
+      "cached_input_tokens": 807168,
+      "cost_usd": 0.6977716780000001,
+      "duration_s": 332.541,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:29:38.921049+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5784,
+      "tokens_out": 15970,
+      "cached_input_tokens": 2880,
+      "cost_usd": 0.073922,
+      "duration_s": 94.076,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.8571,
+  "ledger_tokens_in": 1094190,
+  "ledger_tokens_out": 44354,
+  "result_cost_usd": 0.8571,
+  "prediction_sha256": "c819caf7fb588286c4bb9c29481c9fe6c5adac975fc0679f32239e6e41095fad",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "stripped_test_paths": [
+    "test_startup.sh",
+    "tests/test_xterm.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

@@ -1,0 +1,175 @@
+{
+  "arm": "solo-noreview",
+  "instance_id": "conan-io__conan-19735_interface",
+  "repo": "conan-io/conan",
+  "base_commit": "4a65d65f53d2ab37f4ce0e52dc3f25cd832b2934",
+  "problem_statement_sha256": "3b22c724a5147bee3a2d7f396b0f8c3de0b7218ecd032b5db34301b6189494d4",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0044
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.6363
+    }
+  ],
+  "model_escalated_calls": 1,
+  "ts": "2026-08-10T21:31:50.283865+00:00",
+  "wall_clock_s": 254.6,
+  "final_state": "tests_green",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "steps_used": 1,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 480547,
+  "tokens_out": 6108,
+  "cached_input_tokens": 175552,
+  "cost_usd": 0.6407,
+  "persona_calls": 2,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.1,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "test/unittests/util/detect_test.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "tests_green",
+  "chain_personas": [
+    "dev"
+  ],
+  "files_changed": [
+    "conan/internal/api/detect/detect_api.py"
+  ],
+  "test_files_stripped": [
+    "test/unittests/util/detect_test.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1061,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 743,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "test/unittests/util/detect_test.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 1,
+    "refused_samples": [
+      "{\"id\":\"bcd603d2-c303-4800-917d-e6b3deb3a047\",\"timestamp\":\"2026-08-10T17:29:42.078163\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_eddc0f6acd44479aa5e7b1cc\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 2
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-conan-io__conan-19735_interface-2_x3ll_5/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-conan-io__conan-19735_interface-2_x3ll_5/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-conan-io__conan-19735_interface-2_x3ll_5",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/conan-io__conan-19735_interface__solo-noreview/root/state/acceptance",
+    "sha256": "34f419004e9adc93efe5e9d86b836d9dd5e6be2687dda930c123c3b496c37b42",
+    "bytes": 518,
+    "authored_at": "2026-08-10T21:27:41.410464+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "0c61df6ee0048b8be3daf433830657b050ec8aa527cf7edd1b702c1928469c59",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 544,
+    "spec_prompt_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/conan-io__conan-19735_interface/solo-noreview/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/conan-io__conan-19735_interface/solo-noreview/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 1,
+      "acceptance_author_ended_at": "2026-08-10T21:27:54.424182+00:00",
+      "dev_first_started_at": "2026-08-10T21:27:55.160265+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-10T21:27:54.424182+00:00, dev's first call started 2026-08-10T21:27:55.160265+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-conan-io__conan-19735_interface-2_x3ll_5",
+        "state/acceptance"
+      ],
+      "files_scanned": 2,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-conan-io__conan-19735_interface-2_x3ll_5": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "solo-noreview",
+    "instance_id": "conan-io__conan-19735_interface",
+    "image": "swerebench/sweb.eval.x86_64.conan-io_1776_conan-19735_interface@sha256:564734fbebe544567e2e47bac7362ae68a749ffdaa7401dd273903d3552277fa",
+    "graded_at": "2026-08-10T21:31:51.337533+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 14,
+    "pass_to_pass_declared_count": 14,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "test/unittests/util/detect_test.py::test_detect_compiler: node(s) FAILED/ERROR: ['test/unittests/util/detect_test.py::test_detect_compiler[detect_emcc_compiler-shared:INFO: (Emscripten: Running sanity checks)\\\\nemcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)-expected_version3]']",
+      "test/unittests/util/detect_test.py::test_detect_compiler: node(s) FAILED/ERROR: ['test/unittests/util/detect_test.py::test_detect_compiler[detect_emcc_compiler-shared:INFO: (Emscripten: Running sanity checks)\\\\nemcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)-expected_version3]']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "conan/internal/api/detect/detect_api.py"
+    ],
+    "touched_files": [
+      "conan/internal/api/detect/detect_api.py"
+    ],
+    "gold_files_overlap": [
+      "conan/internal/api/detect/detect_api.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 12.8,
+    "log_tail": "unittests/util/detect_test.py::TestDetect::test_detect_arch[i686-x86]\nPASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[i86pc-x86]\nPASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[amd64-x86_64]\nPASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[aarch64-armv8]\nPASSED test/unittests/util/detect_test.py::TestDetect::test_detect_arch[sun4v-sparc]\nPASSED test/unittests/util/detect_test.py::TestDetect::test_detect_clang_gcc_toolchain\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe (Rev3, Built by MSYS2 project) 14.1.0-14.1.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[g++ (Conan-Build-gcc--binutils-2.42) 14.1.0-14.1.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc.exe (x86_64-posix-seh-rev0, Built by MinGW-Builds project) 15.1.0-15.1.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc.exe (x86_64-posix-seh-rev0, Built by MinGW-Builds project) 15.15.0-15.15.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc (crosstool-NG 1.27.0) 13.3.0-13.3.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc (crosstool-NG 1.27.0) 13.3-13.3]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[gcc (GCC) 4.8.1-4.8.1]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[clang version 18.1.0rc (https://github.com/llvm/llvm-project.git 4612...a09e)-18.1.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe (Rev3, Built by MSYS2 project) 14.0-14.0]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[clang version 18 (https://github.com/llvm/llvm-project.git 4612...8a09e)-18]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe (Rev3, Built by MSYS2 project) 14-14]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc.exe 14.2-14.2]\nPASSED test/unittests/util/detect_test.py::test_detect_cc_versioning[cc1 14.2-14.2]\nPASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_suncc_compiler-Sun C 5.13-expected_version0]\nPASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_intel_compiler-Intel C++ Compiler 2025.0-expected_version1]\nPASSED test/unittests/util/detect_test.py::test_detect_compiler[detect_emcc_compiler-emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)-expected_version2]\nFAILED test/unittests/util/detect_test.py::test_detect_compiler[detect_emcc_compiler-shared:INFO: (Emscripten: Running sanity checks)\\nemcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 4.0.22 (0f3d2e62bccf8e14497ff19e05a1202c51eb0c65)-expected_version3]\n1 failed, 28 passed in 2.49s\nSWEBENCH_TALLY_171e92c2b0a9c13c: pass_to_pass 1 failed, 28 passed in 2.49s\n[31 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_171e92c2b0a9c13c: UNRESOLVED\n"
+  }
+}

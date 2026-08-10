@@ -1,0 +1,22 @@
+{
+  "instance_id": "conan-io__conan-19735_interface",
+  "arm": "claude-5",
+  "audited_at": "2026-08-10T21:47:57.989497+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.4937,
+  "ledger_tokens_in": 236948,
+  "ledger_tokens_out": 3796,
+  "result_cost_usd": 0.4937,
+  "prediction_sha256": "986f4a6244e05592188360497a8727f1ce6e173d3f00c20bd739c235eeba21d7",
+  "base_commit": "4a65d65f53d2ab37f4ce0e52dc3f25cd832b2934",
+  "stripped_test_paths": [
+    "test/unittests/util/detect_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

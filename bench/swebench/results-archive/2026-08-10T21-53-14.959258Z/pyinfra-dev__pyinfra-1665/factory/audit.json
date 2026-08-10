@@ -1,0 +1,62 @@
+{
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "arm": "factory",
+  "audited_at": "2026-08-10T18:28:41.430472+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T18:24:25.837171+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5470,
+      "tokens_out": 6474,
+      "cached_input_tokens": 1216,
+      "cost_usd": 0.03320766,
+      "duration_s": 108.68,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T18:27:37.475405+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 872479,
+      "tokens_out": 7716,
+      "cached_input_tokens": 518656,
+      "cost_usd": 0.7959342860000002,
+      "duration_s": 190.982,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T18:28:35.305275+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5761,
+      "tokens_out": 9243,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.04671825,
+      "duration_s": 54.921,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.8759,
+  "ledger_tokens_in": 883710,
+  "ledger_tokens_out": 23433,
+  "result_cost_usd": 0.8759,
+  "prediction_sha256": "e283728c394466e6766699cd570d5ccf02399da96e791da4a138b1058b529b0d",
+  "base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+  "stripped_test_paths": [
+    "tests/test_connectors/test_util.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

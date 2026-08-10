@@ -1,0 +1,49 @@
+{
+  "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-10T21:48:47.504782+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T21:36:21.094886+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5883,
+      "tokens_out": 26304,
+      "cached_input_tokens": 5056,
+      "cost_usd": 0.11766771000000001,
+      "duration_s": 232.961,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T21:48:19.933725+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 3113497,
+      "tokens_out": 37023,
+      "cached_input_tokens": 1696256,
+      "cost_usd": 3.150170436000001,
+      "duration_s": 718.123,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 3.2678,
+  "ledger_tokens_in": 3119380,
+  "ledger_tokens_out": 63327,
+  "result_cost_usd": 3.2678,
+  "prediction_sha256": "1c8f4b79396f0216e8b36585e82cfbd4408d31e8135a9594e87a469c3458648e",
+  "base_commit": "93eed7c340fb65356c3a06ac78f74402c3a169af",
+  "stripped_test_paths": [
+    "tests/unit/account_info_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

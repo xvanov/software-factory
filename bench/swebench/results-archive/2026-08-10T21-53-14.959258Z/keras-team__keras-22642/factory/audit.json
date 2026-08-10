@@ -1,0 +1,103 @@
+{
+  "instance_id": "keras-team__keras-22642",
+  "arm": "factory",
+  "audited_at": "2026-08-10T19:30:05.065303+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 3 call(s) but only 2 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T19:09:52.055599+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 3428,
+      "tokens_out": 5638,
+      "cached_input_tokens": 2432,
+      "cost_usd": 0.02636372,
+      "duration_s": 62.486,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:14:07.963435+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 504438,
+      "tokens_out": 7657,
+      "cached_input_tokens": 235008,
+      "cost_usd": 0.5871624980000002,
+      "duration_s": 255.34,
+      "success": 0,
+      "error": "sandbox run raised: ConversationRunError('Conversation run failed for id=38d24a91-6eb7-4356-aa37-19091be21f07: litellm.BadRequestError: AzureException - Error code: 400 - {\\'id\\': \\'chatcmpl-2049fd87da474e12a5298e969da0a\\', \\'model\\': \\'\\', \\'choices\\': [{\\'index\\': 0, \\'message\\': {\\'role\\': \\'assistant\\', \\'content\\': \\'\\'}, \\'finish_reason\\': \\'content_filter\\', \\'content_filter_results\\': {\\'error\\': {\\'code\\': \\'content_filter\\', \\'message\\': \"Response content blocked by label \\'Jailbreak\\'.\"}}}], \\'usage\\': {\\'prompt_tokens\\': 38322, \\'total_tokens\\': 38322}, \\'created\\': 1786389238, \\'object\\': \\'chat.completion\\', \\'prompt_filter_results\\': None}\\n\\nConversation logs are stored at: /tmp/factory-oh-traj-476m827_[REDACTED]\\n\\nTo help debug this issue, please file a bug report at:\\n  https://github.com/OpenHands/software-agent-sdk/issues/new\\nand attach the conversation logs from the directory above.')"
+    },
+    {
+      "ts": "2026-08-10T19:20:21.940001+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1141631,
+      "tokens_out": 14623,
+      "cached_input_tokens": 842240,
+      "cost_usd": 0.7694313600000002,
+      "duration_s": 373.552,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:20:34.007764+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 4741,
+      "tokens_out": 1936,
+      "cached_input_tokens": 2880,
+      "cost_usd": 0.01107725,
+      "duration_s": 11.23,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:28:44.272265+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1477927,
+      "tokens_out": 9879,
+      "cached_input_tokens": 930048,
+      "cost_usd": 1.2449807679999998,
+      "duration_s": 489.688,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:29:37.926877+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5649,
+      "tokens_out": 4141,
+      "cached_input_tokens": 0,
+      "cost_usd": 0.024151850000000002,
+      "duration_s": 52.707,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.6632,
+  "ledger_tokens_in": 3137814,
+  "ledger_tokens_out": 43874,
+  "result_cost_usd": 2.6632,
+  "prediction_sha256": "dd325eb3cdb523de633865223fa105b104d9354434c772ab3f346a05bcecc288",
+  "base_commit": "2b176bc33233762863fa5f3d60e060de3be934e5",
+  "stripped_test_paths": [
+    "keras/src/layers/attention/grouped_query_attention_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 3,
+  "trails_scanned": 3,
+  "oracle_probe_failures": []
+}

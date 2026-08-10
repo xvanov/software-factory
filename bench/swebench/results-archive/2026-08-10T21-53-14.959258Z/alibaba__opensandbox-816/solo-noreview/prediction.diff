@@ -1,0 +1,131 @@
+diff --git a/server/opensandbox_server/services/docker.py b/server/opensandbox_server/services/docker.py
+index 66d4422..2c1c8ad 100644
+--- a/server/opensandbox_server/services/docker.py
++++ b/server/opensandbox_server/services/docker.py
+@@ -1480,12 +1480,14 @@ class DockerSandboxService(DockerDiagnosticsMixin, OSSFSMixin, SandboxService, E
+         if volume.sub_path:
+             resolved_path = os.path.normpath(os.path.join(resolved_path, volume.sub_path))
+ 
+-        # Defense in depth: re-validate the resolved path against the
+-        # allowlist.  Even though sub_path traversal (../) is blocked by
+-        # ensure_valid_sub_path(), normalizing and re-checking prevents
+-        # any edge-case bypass.
+-        if allowed_prefixes and resolved_path != volume.host.path:
+-            ensure_valid_host_path(resolved_path, allowed_prefixes)
++        # Re-validate the resolved path with symlink-aware checks.
++        # ensure_valid_host_path now performs os.path.realpath resolution
++        # on every path component (same standard as _validate_pvc_volume),
++        # catching symlink escapes inside allowed prefixes.  Always call
++        # this so symlink detection runs even when allowed_prefixes is
++        # empty — the lexical checks in ensure_valid_host_path still
++        # apply.
++        ensure_valid_host_path(resolved_path, allowed_prefixes)
+ 
+         # Allow existing host files (for example ISO binds to /boot.iso)
+         # without attempting directory creation.
+diff --git a/server/opensandbox_server/services/validators.py b/server/opensandbox_server/services/validators.py
+index 4b37b57..bb2d04d 100644
+--- a/server/opensandbox_server/services/validators.py
++++ b/server/opensandbox_server/services/validators.py
+@@ -21,6 +21,7 @@ enforce the same preconditions before performing runtime-specific work.
+ 
+ from __future__ import annotations
+ 
++import os
+ from datetime import datetime, timedelta, timezone
+ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+ 
+@@ -388,6 +389,75 @@ def ensure_valid_sub_path(sub_path: Optional[str]) -> None:
+             )
+ 
+ 
++def _check_no_symlink_components(path: str) -> None:
++    """
++    Verify that no component of *path* is a symbolic link.
++
++    Uses ``os.path.realpath`` with ``strict=True`` to resolve each
++    intermediate prefix so that symlink escapes are detected before
++    Docker performs bind mounts.
++
++    When the leaf component does not exist, only the existing ancestors
++    are checked — a non-existent leaf is not itself a symlink risk.
++
++    Args:
++        path: An already-lexically-validated absolute host path.
++
++    Raises:
++        HTTPException: When any path component is a symbolic link.
++    """
++    if not os.path.exists(path):
++        # Walk upward to find the deepest existing ancestor, then check it
++        # plus every component below it (which must not exist, so they
++        # cannot be symlinks).  The existing ancestors are the only
++        # components that could contain symlinks.
++        check_path = os.path.dirname(path)
++        while check_path and not os.path.exists(check_path):
++            check_path = os.path.dirname(check_path)
++        if not check_path:
++            # No existing ancestor found (should not happen for an
++            # absolute path where at least "/" exists on Unix).
++            return
++    else:
++        check_path = path
++
++    # Walk from the root up through each component of check_path,
++    # verifying that realpath matches the lexical expectation.
++    # Use os.sep to split for cross-platform correctness.
++    components = [c for c in check_path.split(os.sep) if c]
++    # Reconstruct the absolute path prefix-by-prefix.
++    # On Unix the root is "/", on Windows handle drive letters.
++    if os.name == "nt":
++        # Windows: path is like "D:/sandbox-mnt/ReMe"
++        drive = path[:3] if re.match(r"^[A-Za-z]:[/\\]", path) else ""
++        accumulated = drive.rstrip("/").rstrip("\\") if drive else ""
++    else:
++        accumulated = ""
++
++    for component in components:
++        accumulated = os.path.join(accumulated, component) if accumulated else os.sep + component
++        try:
++            real = os.path.realpath(accumulated, strict=True)
++        except OSError:
++            # Component does not exist or is inaccessible — cannot be
++            # a symlink since it doesn't exist.  Remaining components
++            # also don't exist, so skip further checking.
++            return
++        # On Unix, os.path.join("/", "foo") = "/foo", realpath same.
++        # Compare with os.path.normpath to handle trailing-slash differences.
++        if os.path.normpath(real) != os.path.normpath(accumulated):
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST,
++                detail={
++                    "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                    "message": (
++                        f"Host path '{path}' contains a symbolic link "
++                        f"component at '{accumulated}'."
++                    ),
++                },
++            )
++
++
+ def ensure_valid_host_path(
+     path: str,
+     allowed_prefixes: Optional[List[str]] = None,
+@@ -450,6 +520,17 @@ def ensure_valid_host_path(
+             },
+         )
+ 
++    # Symlink-aware validation: walk each path component and verify none
++    # is a symbolic link.  A symlink inside an allowed prefix can point
++    # to an arbitrary location (e.g. /), and Docker resolves the symlink
++    # when performing the bind mount, bypassing the allowlist.
++    #
++    # realpath(strict=True) raises OSError when any component does not
++    # exist or cannot be traversed.  For a non-existent path, only the
++    # prefix up to the missing component is checked (every existing
++    # ancestor must be symlink-free).
++    _check_no_symlink_components(path)
++
+     # Check against allowed prefixes if provided
+     if allowed_prefixes is not None:
+         # Normalize separators for cross-platform prefix checks so Windows-style

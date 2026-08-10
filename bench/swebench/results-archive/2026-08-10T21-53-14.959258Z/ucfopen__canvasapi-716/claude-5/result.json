@@ -1,0 +1,116 @@
+{
+  "arm": "claude-5",
+  "arm_base": "claude",
+  "instance_id": "ucfopen__canvasapi-716",
+  "repo": "ucfopen/canvasapi",
+  "base_commit": "77ff5b248603db987e57f11a104767d4b790265a",
+  "problem_statement_sha256": "b4463fa157fea02b9b7b3ddeb6cc64b1a2dc404096fc483125ee05fa961f89fb",
+  "manifest_sha256": "923aef05add32124",
+  "model": "claude-opus-5",
+  "claude_cli_version": "2.1.226 (Claude Code)",
+  "probe_plumbing": false,
+  "model_reported": "claude-opus-5",
+  "models_observed": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "mcp_servers": [],
+  "permission_mode": "bypassPermissions",
+  "session_id": "6e65b9cd-36b9-4da9-9c7f-bc870aae535a",
+  "ts": "2026-08-10T18:30:25.002400+00:00",
+  "wall_clock_s": 283.8,
+  "agent_wall_s": 279.6,
+  "num_turns": 30,
+  "turn_cap": 60,
+  "termination": "cli-finished",
+  "trajectory": "claude-transcript.ndjson",
+  "tokens_in": 1290311,
+  "tokens_out": 20140,
+  "cached_input_tokens": 1245167,
+  "cost_usd": 1.5628,
+  "cost_source": "claude-cli-reported",
+  "models_used": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5"
+  ],
+  "model_calls": [
+    {
+      "persona": "claude-cli",
+      "model": "claude-haiku-4-5-20251001",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 0.0017
+    },
+    {
+      "persona": "claude-cli",
+      "model": "claude-opus-5",
+      "model_tier": null,
+      "calls": null,
+      "cost_usd": 1.5611
+    }
+  ],
+  "model_escalated_calls": 0,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.5,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_util.py"
+    ],
+    "exit_code": 0
+  },
+  "error": null,
+  "factory_says_green": null,
+  "files_changed": [
+    "CHANGELOG.md",
+    "canvasapi/feature.py",
+    "canvasapi/util.py"
+  ],
+  "test_files_stripped": [
+    "tests/fixtures/announcements.json",
+    "tests/test_util.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 6329,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 133,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/test_util.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 1,
+    "refused_samples": [
+      "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"content\":\"Exit code 1\\nTraceback (most recent call last):\\n  File \\\"<stdin>\\\", line 30, in <module>\\nPermissionError: [Errno 13] Permission denied: 'tests/test_account.py'\",\"is_error\":true,\"tool_use_id\":\"toolu_016bqDHesxa5oBe2"
+    ],
+    "scan_truncated": false
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "claude-5",
+    "instance_id": "ucfopen__canvasapi-716",
+    "image": "swerebench/sweb.eval.x86_64.ucfopen_1776_canvasapi-716@sha256:6eb2cb4155cf4e7a75b451a3c3f7edcc0966d34a945ed99e7d66ef588c9c7e85",
+    "graded_at": "2026-08-10T18:30:25.116952+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 60,
+    "pass_to_pass_declared_count": 60,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 4.6,
+    "log_tail": "============================\nPASSED tests/test_util.py::TestUtil::test_obj_or_str_invalid_obj_type\nPASSED tests/test_util.py::TestUtil::test_obj_or_str_str\n2 passed in 0.03s\nSWEBENCH_TALLY_f1a1f6558d18f971: fail_to_pass 2 passed in 0.03s\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\nPASSED tests/test_util.py::TestUtil::test_file_or_path_invalid_path\nPASSED tests/test_util.py::TestUtil::test_file_or_path_valid_path\nPASSED tests/test_util.py::TestUtil::test_get_institution_url\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_bool\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_bytes\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_chain\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_dict\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_items\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_iter\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_keys\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_values\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_generator_call\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_generator_expr\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_integer\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_list\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_list_iter\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_set\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_set_iter\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_str\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_tuple\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_tuple_iter\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_unicode\nPASSED tests/test_util.py::TestUtil::test_is_multivalued_zip\nPASSED tests/test_util.py::TestUtil::test_normalize_bool_boolean\nPASSED tests/test_util.py::TestUtil::test_normalize_bool_str_invalid\nPASSED tests/test_util.py::TestUtil::test_normalize_bool_str_lower\nPASSED tests/test_util.py::TestUtil::test_normalize_bool_str_upper\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_int\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_multiple_objs\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_nonuser_self\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_obj\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_obj_no_id\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_str_invalid\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_str_valid\nPASSED tests/test_util.py::TestUtil::test_obj_or_id_user_self\nPASSED tests/test_util.py::TestUtil::test_obj_or_str_invalid_attr_parameter\nPASSED tests/test_util.py::TestUtil::test_obj_or_str_mult_obj\nPASSED tests/test_util.py::TestUtil::test_obj_or_str_obj_attr\nPASSED tests/test_util.py::TestUtil::test_obj_or_str_obj_no_attr\n60 passed in 0.06s\nSWEBENCH_TALLY_f1a1f6558d18f971: pass_to_pass 60 passed in 0.06s\n[62 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_f1a1f6558d18f971: RESOLVED\n"
+  }
+}

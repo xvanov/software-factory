@@ -1,0 +1,83 @@
+diff --git a/server/opensandbox_server/services/constants.py b/server/opensandbox_server/services/constants.py
+index 12e1224..1dcd466 100644
+--- a/server/opensandbox_server/services/constants.py
++++ b/server/opensandbox_server/services/constants.py
+@@ -91,6 +91,7 @@ class SandboxErrorCodes:
+     INVALID_SUB_PATH = "VOLUME::INVALID_SUB_PATH"
+     INVALID_HOST_PATH = "VOLUME::INVALID_HOST_PATH"
+     HOST_PATH_NOT_ALLOWED = "VOLUME::HOST_PATH_NOT_ALLOWED"
++    HOST_PATH_SYMLINK = "VOLUME::HOST_PATH_SYMLINK"
+     INVALID_PVC_NAME = "VOLUME::INVALID_PVC_NAME"
+     UNSUPPORTED_VOLUME_BACKEND = "VOLUME::UNSUPPORTED_BACKEND"
+     HOST_PATH_NOT_FOUND = "VOLUME::HOST_PATH_NOT_FOUND"
+diff --git a/server/opensandbox_server/services/validators.py b/server/opensandbox_server/services/validators.py
+index 4b37b57..8d37df3 100644
+--- a/server/opensandbox_server/services/validators.py
++++ b/server/opensandbox_server/services/validators.py
+@@ -21,11 +21,12 @@ enforce the same preconditions before performing runtime-specific work.
+ 
+ from __future__ import annotations
+ 
++import os
++import re
+ from datetime import datetime, timedelta, timezone
+ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+ 
+ from fastapi import HTTPException, status
+-import re
+ 
+ from opensandbox_server.services.constants import RESERVED_LABEL_PREFIX, SandboxErrorCodes
+ 
+@@ -450,6 +451,52 @@ def ensure_valid_host_path(
+             },
+         )
+ 
++    # Reject paths that contain symbolic links in any intermediate component.
++    # Walk from the full path up to the root, checking each existing prefix
++    # with os.path.islink(). Also resolve with os.path.realpath() to catch
++    # symlinks in non-final components that os.path.islink() on the final path
++    # would miss, aligning with _validate_pvc_volume's symlink resolution.
++    _check = os.path.normpath(path)
++    while True:
++        # os.path.islink returns True only for the final path component,
++        # so walking up catches symlinks at every level.
++        if os.path.islink(_check):
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST,
++                detail={
++                    "code": SandboxErrorCodes.HOST_PATH_SYMLINK,
++                    "message": (
++                        f"Host path '{path}' contains a symbolic link component "
++                        f"'{os.path.basename(_check)}'. Symbolic links are not "
++                        "allowed in host volume paths."
++                    ),
++                },
++            )
++        _parent = os.path.dirname(_check)
++        if _parent == _check:  # reached root (e.g. '/' on Unix or 'C:\\' on Windows)
++            break
++        _check = _parent
++
++    # Additionally resolve the full path with realpath to catch any
++    # symlink-based escapes that os.path.islink walking might miss (e.g.
++    # when a parent directory is replaced by a symlink after the server
++    # process started). This aligns host-volume validation with the
++    # symlink-resolution standard already enforced in _validate_pvc_volume.
++    _real = os.path.realpath(path)
++    _norm = os.path.normpath(path)
++    if _real != _norm:
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail={
++                "code": SandboxErrorCodes.HOST_PATH_SYMLINK,
++                "message": (
++                    f"Host path '{path}' resolves to '{_real}' after symlink "
++                    "resolution, which differs from the requested path. "
++                    "Symbolic links are not allowed in host volume paths."
++                ),
++            },
++        )
++
+     # Check against allowed prefixes if provided
+     if allowed_prefixes is not None:
+         # Normalize separators for cross-platform prefix checks so Windows-style

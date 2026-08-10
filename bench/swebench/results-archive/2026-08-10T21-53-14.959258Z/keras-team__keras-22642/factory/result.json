@@ -1,0 +1,180 @@
+{
+  "arm": "factory",
+  "instance_id": "keras-team__keras-22642",
+  "repo": "keras-team/keras",
+  "base_commit": "2b176bc33233762863fa5f3d60e060de3be934e5",
+  "problem_statement_sha256": "e780ff834139a00d5a3d6026010d78819f3b7308869e57168d5222748829c759",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0264
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.5872
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "hard",
+      "calls": 2,
+      "cost_usd": 2.0144
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 2,
+      "cost_usd": 0.0353
+    }
+  ],
+  "model_escalated_calls": 3,
+  "ts": "2026-08-10T19:29:39.279044+00:00",
+  "wall_clock_s": 1264.4,
+  "final_state": "reviewer_done",
+  "dev_retries": 1,
+  "reviewer_cycles": 1,
+  "steps_used": 4,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 3137814,
+  "tokens_out": 43874,
+  "cached_input_tokens": 2012608,
+  "cost_usd": 2.6632,
+  "persona_calls": 6,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 3.8,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "keras/src/layers/attention/grouped_query_attention_test.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "reviewer_done",
+  "chain_personas": [
+    "dev",
+    "review"
+  ],
+  "files_changed": [
+    "keras/src/layers/attention/grouped_query_attention.py"
+  ],
+  "test_files_stripped": [
+    "keras/src/layers/attention/grouped_query_attention_test.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1843,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 290,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "keras/src/layers/attention/grouped_query_attention_test.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 1,
+    "refused_samples": [
+      "{\"id\":\"1d64369f-6243-4fe7-9d44-4f96610f90e4\",\"timestamp\":\"2026-08-10T15:23:46.819398\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_1ce36484b3cf4ff796e9de39\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 11
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-keras-team__keras-22642-dj3s9tio/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-keras-team__keras-22642-dj3s9tio/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-keras-team__keras-22642-dj3s9tio",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/keras-team__keras-22642__factory/root/state/acceptance",
+    "sha256": "5dccb5b96acbc98c31f18ae06ad54bb5428a16a2898b6dc35bfca1bd990fde76",
+    "bytes": 1003,
+    "authored_at": "2026-08-10T19:08:48.385028+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "e45242734641ab5ac0354fa442fafd25ffeec237d0b1dcfdf7bb901f775ddf3b",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 1471,
+    "spec_prompt_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/keras-team__keras-22642/factory/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/keras-team__keras-22642/factory/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 3,
+      "acceptance_author_ended_at": "2026-08-10T19:09:52.055599+00:00",
+      "dev_first_started_at": "2026-08-10T19:09:52.623346+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-10T19:09:52.055599+00:00, dev's first call started 2026-08-10T19:09:52.623346+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-keras-team__keras-22642-dj3s9tio",
+        "state/acceptance"
+      ],
+      "files_scanned": 4,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-keras-team__keras-22642-dj3s9tio": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "keras-team__keras-22642",
+    "image": "swerebench/sweb.eval.x86_64.keras-team_1776_keras-22642@sha256:6441ecaa2a206b685e32f0e0ef592147d70494b9a8f2d30a08eb1ba97cac2604",
+    "graded_at": "2026-08-10T19:29:39.883465+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 16,
+    "pass_to_pass_declared_count": 16,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 25.1,
+    "log_tail": "ry_mask_propagation PASSED [ 81%]\nkeras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_key_value_dim_mismatch PASSED [ 87%]\nkeras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_query_value_dim_mismatch PASSED [ 93%]\nkeras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_symbolic_shape_without_return_attention_scores PASSED [100%]\n\n=========================== short test summary info ============================\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_basics\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_proj_gqa\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_proj_mha\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_with_key_value_proj_mqa\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_proj_gqa\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_proj_mha\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_compute_output_shape_without_key_value_proj_mqa\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_correctness_disable_flash_attention\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_correctness_enable_flash_attention\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_initializer\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_masking_causal\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_masking_not_causal\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_query_mask_propagation\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_key_value_dim_mismatch\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_shape_mismatch_error_query_value_dim_mismatch\nPASSED keras/src/layers/attention/grouped_query_attention_test.py::GroupedQueryAttentionTest::test_symbolic_shape_without_return_attention_scores\n============================== 16 passed in 0.80s ==============================\nSWEBENCH_TALLY_6de4227cb740805d: pass_to_pass ============================== 16 passed in 0.80s ==============================\n[18 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_6de4227cb740805d: RESOLVED\n"
+  }
+}

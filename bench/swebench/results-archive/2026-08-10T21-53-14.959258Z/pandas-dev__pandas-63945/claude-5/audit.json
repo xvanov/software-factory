@@ -1,0 +1,30 @@
+{
+  "instance_id": "pandas-dev__pandas-63945",
+  "arm": "claude-5",
+  "audited_at": "2026-08-10T18:37:28.803283+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.9269,
+  "ledger_tokens_in": 813899,
+  "ledger_tokens_out": 8900,
+  "result_cost_usd": 0.9269,
+  "prediction_sha256": "9602fd2ddd20716ba2cbfc61eae01679f02517fa61fa705d4fa7080edab7fe47",
+  "base_commit": "a4523484f6267501ae0bc240c5baf2108c622373",
+  "stripped_test_paths": [
+    "pandas/tests/io/data/excel/df_mangle_dup_col_dtypes.xlsb",
+    "pandas/tests/io/data/excel/gh-35802.ods",
+    "pandas/tests/io/data/excel/gh-36122.ods",
+    "pandas/tests/io/data/excel/multiindex_no_index_names.xlsx",
+    "pandas/tests/io/data/spss/labelled-num-na.sav",
+    "pandas/tests/io/data/spss/labelled-num.sav",
+    "pandas/tests/io/data/spss/labelled-str.sav",
+    "pandas/tests/io/data/spss/umlauts.sav",
+    "pandas/tests/test_col.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

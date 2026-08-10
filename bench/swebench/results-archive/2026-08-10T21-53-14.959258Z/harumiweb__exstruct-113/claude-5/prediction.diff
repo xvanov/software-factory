@@ -1,0 +1,466 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b43e08c..a9a7aa0 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file. This changelog
+ 
+ ## [Unreleased]
+ 
++### Changed
++
++- Changed `exstruct.engine`, `exstruct.render`, and `exstruct.io` so extraction, rendering, and range helpers no longer import `xlwings`, `pandas`, `numpy`, or `openpyxl` at module import time. Importing `exstruct.engine` is roughly 4x faster, which lowers the cost of the `process_excel` code path used by the CLI and the Python API.
++- Changed the `exstruct` package surface so public submodules (`exstruct.models`, `exstruct.engine`, `exstruct.io`, `exstruct.render`, `exstruct.errors`, ...) are importable as attributes again after the lazy-export refactor, without loading them during `import exstruct`.
++
++### Fixed
++
++- Fixed a duplicated `export_auto_page_breaks` entry in `exstruct.__all__`.
++
+ ## [0.7.0] - 2026-03-19
+ 
+ ### Added
+diff --git a/dev-docs/architecture/overview.md b/dev-docs/architecture/overview.md
+index 5d20b00..835af81 100644
+--- a/dev-docs/architecture/overview.md
++++ b/dev-docs/architecture/overview.md
+@@ -102,6 +102,12 @@ CLI entry point
+   paths must remain side-effect-free: `--help` and `ops` routing should defer
+   heavy extraction/edit implementation imports until command execution needs
+   them
++- The same rule applies below the package surface: `exstruct.engine`,
++  `exstruct.render`, and `exstruct.io` must not pull `xlwings`, `pandas`,
++  `numpy`, or `openpyxl` at module import time. Extraction, IO, and render
++  implementations are resolved on first use through module-level `__getattr__`
++  loaders, which keeps `exstruct.engine.<name>` patchable while importing the
++  option models stays cheap
+ 
+ ### edit/
+ 
+diff --git a/src/exstruct/__init__.py b/src/exstruct/__init__.py
+index 8672fc9..a69cbcc 100644
+--- a/src/exstruct/__init__.py
++++ b/src/exstruct/__init__.py
+@@ -3,6 +3,7 @@
+ from __future__ import annotations
+ 
+ from collections.abc import Callable
++from importlib import import_module
+ import logging
+ from pathlib import Path
+ from typing import TYPE_CHECKING, Literal, TextIO
+@@ -81,7 +82,6 @@ __all__ = [
+     "DestinationOptions",
+     "ColorsOptions",
+     "serialize_workbook",
+-    "export_auto_page_breaks",
+     "col_index_to_alpha",
+     "convert_row_keys_to_alpha",
+     "convert_sheet_keys_to_alpha",
+@@ -176,6 +176,22 @@ _LAZY_EXPORTS: dict[str, LazyExportLoader] = {
+ }
+ 
+ 
++# Submodule loaders use ``import_module`` with literal targets on purpose: a
++# ``from . import <name>`` inside the package would re-enter ``__getattr__``
++# below and recurse instead of importing the submodule.
++_LAZY_SUBMODULES: dict[str, LazyExportLoader] = {
++    "cli": lambda: import_module("exstruct.cli"),
++    "constraints": lambda: import_module("exstruct.constraints"),
++    "core": lambda: import_module("exstruct.core"),
++    "edit": lambda: import_module("exstruct.edit"),
++    "engine": lambda: import_module("exstruct.engine"),
++    "errors": lambda: import_module("exstruct.errors"),
++    "io": lambda: import_module("exstruct.io"),
++    "models": lambda: import_module("exstruct.models"),
++    "render": lambda: import_module("exstruct.render"),
++}
++
++
+ def _resolve_lazy_export(name: str) -> object:
+     value = _LAZY_EXPORTS[name]()
+     globals()[name] = value
+@@ -186,14 +202,24 @@ def _lazy_type(name: str) -> object:
+     return _resolve_lazy_export(name)
+ 
+ 
++def _resolve_lazy_submodule(name: str) -> object:
++    """Import a public package submodule on first attribute access."""
++
++    module = _LAZY_SUBMODULES[name]()
++    globals()[name] = module
++    return module
++
++
+ def __getattr__(name: str) -> object:
+-    if name not in _LAZY_EXPORTS:
+-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+-    return _resolve_lazy_export(name)
++    if name in _LAZY_EXPORTS:
++        return _resolve_lazy_export(name)
++    if name in _LAZY_SUBMODULES:
++        return _resolve_lazy_submodule(name)
++    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+ 
+ 
+ def __dir__() -> list[str]:
+-    return sorted(set(globals()) | set(__all__))
++    return sorted(set(globals()) | set(__all__) | set(_LAZY_SUBMODULES))
+ 
+ 
+ def extract(
+diff --git a/src/exstruct/core/ranges.py b/src/exstruct/core/ranges.py
+index 6b1db0c..e131231 100644
+--- a/src/exstruct/core/ranges.py
++++ b/src/exstruct/core/ranges.py
+@@ -2,8 +2,6 @@ from __future__ import annotations
+ 
+ from dataclasses import dataclass
+ 
+-from openpyxl.utils import range_boundaries
+-
+ 
+ @dataclass(frozen=True)
+ class RangeBounds:
+@@ -31,6 +29,8 @@ def parse_range_zero_based(range_str: str) -> RangeBounds | None:
+     Returns:
+         RangeBounds in zero-based coordinates, or None on failure.
+     """
++    from openpyxl.utils import range_boundaries
++
+     cleaned = range_str.strip()
+     if not cleaned:
+         return None
+diff --git a/src/exstruct/engine.py b/src/exstruct/engine.py
+index 84fd0da..b7db699 100644
+--- a/src/exstruct/engine.py
++++ b/src/exstruct/engine.py
+@@ -2,10 +2,11 @@
+ 
+ from __future__ import annotations
+ 
+-from collections.abc import Iterator
++from collections.abc import Callable, Iterator
+ from contextlib import contextmanager
+ from dataclasses import dataclass, field
+ from pathlib import Path
++from types import ModuleType
+ from typing import Literal, TextIO, TypedDict, cast
+ 
+ from pydantic import BaseModel, ConfigDict, Field
+@@ -15,20 +16,115 @@ from .constraints import (
+     validate_libreoffice_extraction_request,
+     validate_libreoffice_process_request,
+ )
+-from .core import cells as _cells
+-from .core.cells import set_table_detection_params
+-from .core.integrate import extract_workbook
+-from .io import (
+-    save_auto_page_break_views,
+-    save_print_area_views,
+-    save_sheets,
+-    serialize_workbook,
+-)
+ from .models import SheetData, WorkbookData, convert_workbook_keys_to_alpha
+-from .render import export_pdf, export_sheet_images
+ 
+ ExtractionMode = Literal["light", "libreoffice", "standard", "verbose"]
+ 
++LazyAttrLoader = Callable[[], object]
++
++# Extraction, IO, and rendering implementations pull in heavy third-party
++# dependencies (xlwings, pandas, numpy, openpyxl). They stay reachable as
++# module attributes -- so callers and tests can still patch
++# ``exstruct.engine.<name>`` -- but are imported on first use instead of at
++# module import time.
++
++
++def _load_core_cells_module() -> ModuleType:
++    from .core import cells as cells_module
++
++    return cells_module
++
++
++def _load_core_cells_attr(name: str) -> object:
++    from .core import cells as cells_module
++
++    return getattr(cells_module, name)
++
++
++def _load_core_integrate_attr(name: str) -> object:
++    from .core import integrate as integrate_module
++
++    return getattr(integrate_module, name)
++
++
++def _load_io_attr(name: str) -> object:
++    from . import io as io_module
++
++    return getattr(io_module, name)
++
++
++def _load_render_attr(name: str) -> object:
++    from . import render as render_module
++
++    return getattr(render_module, name)
++
++
++_LAZY_ATTRS: dict[str, LazyAttrLoader] = {
++    "_cells": _load_core_cells_module,
++    "set_table_detection_params": lambda: _load_core_cells_attr(
++        "set_table_detection_params"
++    ),
++    "extract_workbook": lambda: _load_core_integrate_attr("extract_workbook"),
++    "save_auto_page_break_views": lambda: _load_io_attr("save_auto_page_break_views"),
++    "save_print_area_views": lambda: _load_io_attr("save_print_area_views"),
++    "save_sheets": lambda: _load_io_attr("save_sheets"),
++    "serialize_workbook": lambda: _load_io_attr("serialize_workbook"),
++    "export_pdf": lambda: _load_render_attr("export_pdf"),
++    "export_sheet_images": lambda: _load_render_attr("export_sheet_images"),
++}
++
++
++_LAZY_ATTR_UNRESOLVED = object()
++
++
++def _lazy_attr(name: str) -> object:
++    """Resolve a deferred module attribute, honoring runtime overrides.
++
++    Once resolved (or patched by a caller), the value lives in module globals,
++    so later lookups skip the import and monkeypatched replacements win.
++    """
++
++    cached = globals().get(name, _LAZY_ATTR_UNRESOLVED)
++    if cached is not _LAZY_ATTR_UNRESOLVED:
++        return cached
++    value = _LAZY_ATTRS[name]()
++    globals()[name] = value
++    return value
++
++
++def __getattr__(name: str) -> object:
++    if name not in _LAZY_ATTRS:
++        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
++    return _lazy_attr(name)
++
++
++def __dir__() -> list[str]:
++    return sorted(set(globals()) | set(_LAZY_ATTRS))
++
++
++def _resolve_cells_module() -> ModuleType:
++    return cast(ModuleType, _lazy_attr("_cells"))
++
++
++def _resolve_set_table_detection_params() -> Callable[..., None]:
++    return cast(Callable[..., None], _lazy_attr("set_table_detection_params"))
++
++
++def _resolve_extract_workbook() -> Callable[..., WorkbookData]:
++    return cast(Callable[..., WorkbookData], _lazy_attr("extract_workbook"))
++
++
++def _resolve_serialize_workbook() -> Callable[..., str]:
++    return cast(Callable[..., str], _lazy_attr("serialize_workbook"))
++
++
++def _resolve_io_writer(name: str) -> Callable[..., dict[str, Path]]:
++    return cast(Callable[..., dict[str, Path]], _lazy_attr(name))
++
++
++def _resolve_render_export(name: str) -> Callable[..., object]:
++    return cast(Callable[..., object], _lazy_attr(name))
++
+ 
+ class TableParams(TypedDict, total=False):
+     """Table detection parameter overrides."""
+@@ -230,7 +326,7 @@ class ExStructEngine:
+     def _apply_table_params(self) -> None:
+         """Apply table parameter overrides if configured."""
+         if self.options.table_params:
+-            set_table_detection_params(**self.options.table_params)
++            _resolve_set_table_detection_params()(**self.options.table_params)
+ 
+     @contextmanager
+     def _table_params_scope(self) -> Iterator[None]:
+@@ -240,12 +336,12 @@ class ExStructEngine:
+         if not self.options.table_params:
+             yield
+             return
+-        prev = cast(TableParams, dict(_cells._DETECTION_CONFIG))
+-        set_table_detection_params(**self.options.table_params)
++        prev = cast(TableParams, dict(_resolve_cells_module()._DETECTION_CONFIG))
++        _resolve_set_table_detection_params()(**self.options.table_params)
+         try:
+             yield
+         finally:
+-            set_table_detection_params(**prev)
++            _resolve_set_table_detection_params()(**prev)
+ 
+     _AUTO_PAGE_BREAKS_DIR_UNSET = object()
+ 
+@@ -458,7 +554,7 @@ class ExStructEngine:
+             include_auto_page_breaks=include_auto_page_breaks,
+         )
+         with self._table_params_scope():
+-            workbook = extract_workbook(
++            workbook = _resolve_extract_workbook()(
+                 normalized_file_path,
+                 mode=mode,
+                 include_cell_links=self.options.include_cell_links,
+@@ -496,7 +592,7 @@ class ExStructEngine:
+         use_fmt = fmt or self.output.format.fmt
+         use_pretty = self.output.format.pretty if pretty is None else pretty
+         use_indent = self.output.format.indent if indent is None else indent
+-        return serialize_workbook(
++        return _resolve_serialize_workbook()(
+             filtered,
+             fmt=use_fmt,
+             pretty=use_pretty,
+@@ -578,7 +674,7 @@ class ExStructEngine:
+ 
+         if normalized_sheets_dir is not None:
+             filtered = self._filter_workbook(data)
+-            save_sheets(
++            _resolve_io_writer("save_sheets")(
+                 filtered,
+                 normalized_sheets_dir,
+                 fmt=chosen_fmt,
+@@ -591,7 +687,7 @@ class ExStructEngine:
+             include_shape_size, include_chart_size = self._resolve_size_flags()
+             if self._include_print_areas():
+                 filtered = self._filter_workbook(data)
+-                save_print_area_views(
++                _resolve_io_writer("save_print_area_views")(
+                     filtered,
+                     normalized_print_areas_dir,
+                     fmt=chosen_fmt,
+@@ -607,7 +703,7 @@ class ExStructEngine:
+         if normalized_auto_page_breaks_dir is not None:
+             include_shape_size, include_chart_size = self._resolve_size_flags()
+             filtered = self._filter_workbook(data, include_auto_override=True)
+-            save_auto_page_break_views(
++            _resolve_io_writer("save_auto_page_break_views")(
+                 filtered,
+                 normalized_auto_page_breaks_dir,
+                 fmt=chosen_fmt,
+@@ -719,7 +815,9 @@ class ExStructEngine:
+                 else ".json"
+             )
+             pdf_path = base_target.with_suffix(".pdf")
+-            export_pdf(normalized_file_path, pdf_path)
++            _resolve_render_export("export_pdf")(normalized_file_path, pdf_path)
+             if image:
+                 images_dir = pdf_path.parent / f"{pdf_path.stem}_images"
+-                export_sheet_images(normalized_file_path, images_dir, dpi=dpi)
++                _resolve_render_export("export_sheet_images")(
++                    normalized_file_path, images_dir, dpi=dpi
++                )
+diff --git a/src/exstruct/render/__init__.py b/src/exstruct/render/__init__.py
+index dc99665..067c726 100644
+--- a/src/exstruct/render/__init__.py
++++ b/src/exstruct/render/__init__.py
+@@ -12,13 +12,15 @@ import sys
+ import tempfile
+ import time
+ from types import ModuleType
+-from typing import Protocol, cast
++from typing import TYPE_CHECKING, Protocol, cast
+ 
+ from pydantic import BaseModel, Field
+-import xlwings as xw
+ 
+ from ..errors import MissingDependencyError, RenderError
+ 
++if TYPE_CHECKING:
++    import xlwings as xw
++
+ logger = logging.getLogger(__name__)
+ _A1_RANGE_PATTERN = re.compile(r"^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$")
+ _DEFAULT_RENDER_SUBPROCESS_STARTUP_TIMEOUT_SECONDS = 5.0
+@@ -28,6 +30,8 @@ _DEFAULT_RENDER_SUBPROCESS_RESULT_TIMEOUT_SECONDS = 5.0
+ 
+ def _require_excel_app() -> xw.App:
+     """Ensure Excel COM is available and return an App; otherwise raise."""
++    import xlwings as xw
++
+     try:
+         app = xw.App(add_book=False, visible=False)
+         return app
+diff --git a/tasks/feature_spec.md b/tasks/feature_spec.md
+index 306b375..0f666e4 100644
+--- a/tasks/feature_spec.md
++++ b/tasks/feature_spec.md
+@@ -302,3 +302,44 @@
+ 
+ - `not-needed`
+ - rationale: this is a narrow behavior-restoration follow-up inside the existing edit CLI contract, not a new design decision.
++
++## 2026-03-22 issue #113 package import optimization and lazy exports
++
++### Goal
++
++- Reduce the import cost that `import exstruct` and the `process_excel` code path pay for transitive heavy dependencies.
++- Keep the public package surface (`exstruct.__all__`, submodule attribute access) compatible while import timing changes.
++
++### Public contract
++
++- Every name in `exstruct.__all__` stays resolvable through `getattr(exstruct, name)` and appears in `dir(exstruct)`.
++- Public submodules (`exstruct.models`, `exstruct.engine`, `exstruct.io`, `exstruct.render`, `exstruct.errors`, `exstruct.core`, `exstruct.constraints`, `exstruct.edit`, `exstruct.cli`) remain reachable as attributes of the package, imported on first access.
++- `exstruct.engine.<name>` patch points (`extract_workbook`, `serialize_workbook`, `save_sheets`, `save_print_area_views`, `save_auto_page_break_views`, `export_pdf`, `export_sheet_images`, `set_table_detection_params`) stay module-level and monkeypatchable.
++
++### Internal implementation guarantees
++
++- `import exstruct` loads no `exstruct.*` submodule and no third-party dependency.
++- `import exstruct.engine` does not import `exstruct.render`, `exstruct.io`, `exstruct.core.integrate`, `exstruct.core.cells`, `xlwings`, `pandas`, `numpy`, or `openpyxl`; only `pydantic` (needed by the option models) is loaded.
++- `import exstruct.render` does not import `xlwings`; the Excel COM import happens inside `_require_excel_app()`.
++- `exstruct.core.ranges` imports `openpyxl.utils` inside `parse_range_zero_based`, so `exstruct.io` no longer pays for `openpyxl` at import time.
++
++### Scope and non-goals
++
++- In scope: `src/exstruct/__init__.py`, `src/exstruct/engine.py`, `src/exstruct/render/__init__.py`, `src/exstruct/core/ranges.py`, `tests/cli/test_cli_lazy_imports.py`, architecture note, changelog.
++- Out of scope: changing extraction/render behavior, backend selection policy, CLI syntax, or serialization contracts.
++
++### Verification plan
++
++- `tests/cli/test_cli_lazy_imports.py`
++  - `import exstruct` loads no heavy third-party module and no submodule
++  - `from exstruct import process_excel` stays lightweight
++  - `import exstruct.engine` / `import exstruct.render` keep `xlwings`/`pandas`/`numpy`/`openpyxl` unloaded
++  - engine lazy attributes stay resolvable and patchable
++  - `__all__` has no duplicates and every export resolves
++  - public submodule attribute access still works
++- `uv run pytest tests -q`
++
++### ADR verdict
++
++- `not-needed`
++- rationale: import timing only; the durable rule already lives in `dev-docs/architecture/overview.md`.
+diff --git a/tasks/todo.md b/tasks/todo.md
+index a073707..2ae6f11 100644
+--- a/tasks/todo.md
++++ b/tasks/todo.md
+@@ -215,3 +215,25 @@
+   - `uv run python` probe for `isinstance(OSError(), OSError | RuntimeError | ValueError)`
+   - `uv run pytest tests/cli/test_edit_cli.py -q`
+   - `uv run task precommit-run`
++
++## 2026-03-22 issue #113 package import optimization and lazy exports
++
++### Planning
++
++- [x] Measure current import cost for `exstruct`, `exstruct.engine`, `exstruct.render`, and `exstruct.io`.
++- [x] Defer extraction/IO/render imports in `src/exstruct/engine.py` behind module-level `__getattr__` loaders.
++- [x] Move the `xlwings` import in `src/exstruct/render/__init__.py` into `_require_excel_app()`.
++- [x] Move the `openpyxl.utils` import in `src/exstruct/core/ranges.py` into `parse_range_zero_based()`.
++- [x] Restore lazy public submodule attribute access in `src/exstruct/__init__.py` and drop the duplicated `__all__` entry.
++- [x] Extend `tests/cli/test_cli_lazy_imports.py` with import-boundary regression tests.
++- [x] Update `dev-docs/architecture/overview.md` and `CHANGELOG.md`.
++- [x] Run the full pytest suite.
++
++### Review
++
++- Import timing (5 runs, min) before -> after: `exstruct.engine` 333ms -> 74ms, `exstruct.render` 213ms -> 64ms, `exstruct.io` 159ms -> 75ms. `import exstruct` stays at ~12ms and now also keeps public submodule access working.
++- `exstruct.engine` keeps its patch points as real module attributes: `_lazy_attr()` reads `globals()` first, so a monkeypatched replacement wins and the deferred import is skipped once resolved.
++- `exstruct/__init__.py` submodule loaders call `import_module` with literal targets on purpose; a `from . import <name>` inside the package would re-enter `__getattr__` and recurse.
++- Verification:
++  - `python -m pytest tests -q` (909 passed, 14 skipped)
++  - repeated subprocess import-time probes for `exstruct`, `exstruct.engine`, `exstruct.render`, `exstruct.io`

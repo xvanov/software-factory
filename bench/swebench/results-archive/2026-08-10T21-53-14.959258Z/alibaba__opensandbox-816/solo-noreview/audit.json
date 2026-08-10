@@ -1,0 +1,61 @@
+{
+  "instance_id": "alibaba__opensandbox-816",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-10T20:29:30.053683+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T20:14:50.802963+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 3266,
+      "tokens_out": 11938,
+      "cached_input_tokens": 2432,
+      "cost_usd": 0.05391362,
+      "duration_s": 148.702,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:29:13.192453+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1892457,
+      "tokens_out": 13435,
+      "cached_input_tokens": 998912,
+      "cost_usd": 1.9368227319999998,
+      "duration_s": 861.65,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 1.9907,
+  "ledger_tokens_in": 1895723,
+  "ledger_tokens_out": 25373,
+  "result_cost_usd": 1.9907,
+  "prediction_sha256": "ae9e14807c0091806d64a31ceb20f96aa3e33c91af7a9aa0078f308d8910ca12",
+  "base_commit": "fb78091f947f62ae2c71a372af42425a764aacee",
+  "stripped_test_paths": [
+    "components/egress/tests/bench-dns-nft.sh",
+    "components/egress/tests/bench-mitm-overhead.sh",
+    "components/egress/tests/egress-in-webhook.sh",
+    "components/egress/tests/smoke-dns-upstream-probe.sh",
+    "components/egress/tests/smoke-dns.sh",
+    "components/egress/tests/smoke-dynamic-ip.sh",
+    "components/egress/tests/smoke-nft.sh",
+    "components/execd/tests/jupyter.sh",
+    "components/execd/tests/sigterm_forward.sh",
+    "components/execd/tests/smoke.sh",
+    "server/tests/smoke.sh",
+    "server/tests/test_validators.py",
+    "tests/java/gradlew"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

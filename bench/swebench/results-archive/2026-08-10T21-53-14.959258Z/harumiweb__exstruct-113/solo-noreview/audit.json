@@ -1,0 +1,49 @@
+{
+  "instance_id": "harumiweb__exstruct-113",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-10T20:35:01.069250+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T20:17:58.809386+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 1908,
+      "tokens_out": 3032,
+      "cached_input_tokens": 1216,
+      "cost_usd": 0.01432276,
+      "duration_s": 26.014,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:34:53.742044+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2253534,
+      "tokens_out": 23390,
+      "cached_input_tokens": 1156096,
+      "cost_usd": 2.393770496,
+      "duration_s": 1014.346,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.4081,
+  "ledger_tokens_in": 2255442,
+  "ledger_tokens_out": 26422,
+  "result_cost_usd": 2.4081,
+  "prediction_sha256": "729d5e316cca4255e98fbf677f38ce226aa1a99a1d4ffec4c8b3dc90c034dca0",
+  "base_commit": "c0c8c52d0a3b507ac13feb4b700e5d858f2a81dc",
+  "stripped_test_paths": [
+    "tests/cli/test_cli_lazy_imports.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

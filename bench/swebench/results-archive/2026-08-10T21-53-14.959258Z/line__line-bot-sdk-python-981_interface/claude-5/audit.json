@@ -1,0 +1,22 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "claude-5",
+  "audited_at": "2026-08-10T18:45:28.015384+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "transcript is truncated (no result event) \u2014 cost is unknown; token counts recovered from assistant events"
+  ],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.0,
+  "ledger_tokens_in": 0,
+  "ledger_tokens_out": 0,
+  "result_cost_usd": 0.0,
+  "prediction_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "base_commit": "f0d222be1a25553005bff35c2ace82424a683fd9",
+  "stripped_test_paths": [],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

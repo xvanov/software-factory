@@ -1,0 +1,179 @@
+{
+  "arm": "solo-noreview",
+  "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+  "repo": "hiero-ledger/hiero-sdk-python",
+  "base_commit": "93eed7c340fb65356c3a06ac78f74402c3a169af",
+  "problem_statement_sha256": "ffd670c2ee16b9cc31ebe5492b19d2624c027ca7b128591bcf2e75128f038cea",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.1177
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 3.1502
+    }
+  ],
+  "model_escalated_calls": 1,
+  "ts": "2026-08-10T21:48:20.510021+00:00",
+  "wall_clock_s": 976.0,
+  "final_state": "tests_green",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "steps_used": 1,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 3119380,
+  "tokens_out": 63327,
+  "cached_input_tokens": 1701312,
+  "cost_usd": 3.2678,
+  "persona_calls": 2,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 3.2,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/unit/account_info_test.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "tests_green",
+  "chain_personas": [
+    "dev"
+  ],
+  "files_changed": [
+    "src/hiero_sdk_python/account/account_info.py",
+    "stories/1914-staking-info-refactor.md"
+  ],
+  "test_files_stripped": [
+    "tests/unit/account_info_test.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 12953,
+  "test_readonly": {
+    "mode": "0444",
+    "files": 212,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/unit/account_info_test.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 1,
+    "refused_samples": [
+      "{\"id\":\"d4021718-a4b6-424d-8b2f-fdefc1354af9\",\"timestamp\":\"2026-08-10T17:42:31.332396\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_dec12e7498504d6a8462ca67\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 2
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-hiero-ledger__hiero-sdk-python-1914_inte-_8rj1yya/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-hiero-ledger__hiero-sdk-python-1914_inte-_8rj1yya/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-hiero-ledger__hiero-sdk-python-1914_inte-_8rj1yya",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/hiero-ledger__hiero-sdk-python-1914_interface__solo-noreview/root/state/acceptance",
+    "sha256": "c7c650e3a5a5a07e29c57143edd25e590c26c53766f6ac55ed1237aef1530c37",
+    "bytes": 1784,
+    "authored_at": "2026-08-10T21:32:24.744319+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "ec029663ab9b72b39991d861f053409085978b491cd91128dc49f9422514d904",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 2979,
+    "spec_prompt_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/hiero-ledger__hiero-sdk-python-1914_interface/solo-noreview/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-sweep2/bench/swebench/runs/hiero-ledger__hiero-sdk-python-1914_interface/solo-noreview/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 1,
+      "acceptance_author_ended_at": "2026-08-10T21:36:21.094886+00:00",
+      "dev_first_started_at": "2026-08-10T21:36:21.811044+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-10T21:36:21.094886+00:00, dev's first call started 2026-08-10T21:36:21.811044+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-hiero-ledger__hiero-sdk-python-1914_inte-_8rj1yya",
+        "state/acceptance"
+      ],
+      "files_scanned": 2,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-hiero-ledger__hiero-sdk-python-1914_inte-_8rj1yya": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "solo-noreview",
+    "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+    "image": "swerebench/sweb.eval.x86_64.hiero-ledger_1776_hiero-sdk-python-1914_interface@sha256:7379c707cc7e9f690d07a08c3abfc1f97b9f70fd283bc2084040a052b79af57f",
+    "graded_at": "2026-08-10T21:48:21.600133+00:00",
+    "fail_to_pass_count": 12,
+    "pass_to_pass_count": 9,
+    "pass_to_pass_declared_count": 9,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_deprecated: node(s) FAILED/ERROR: ['tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_deprecated']",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_deprecated: node(s) FAILED/ERROR: ['tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_deprecated']",
+      "tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_deprecated: node(s) FAILED/ERROR: ['tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_deprecated']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "CHANGELOG.md",
+      "src/hiero_sdk_python/account/account_info.py"
+    ],
+    "touched_files": [
+      "src/hiero_sdk_python/account/account_info.py",
+      "stories/1914-staking-info-refactor.md"
+    ],
+    "gold_files_overlap": [
+      "src/hiero_sdk_python/account/account_info.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 25.6,
+    "log_tail": "ts.unit.account_info_test.TestDeprecatedProperties object at 0x7430dc819940>\n\n    def test_decline_staking_reward_deprecated(self):\n        import warnings\n        info = self._make_info()\n        with warnings.catch_warnings(record=True) as w:\n            warnings.simplefilter(\"always\")\n            val = info.decline_staking_reward\n        assert val is True\n>       assert issubclass(w[0].category, DeprecationWarning)\n                          ^^^^\nE       IndexError: list index out of range\n\ntests/unit/account_info_test.py:312: IndexError\n=========================== short test summary info ============================\nPASSED tests/unit/account_info_test.py::test_from_proto\nPASSED tests/unit/account_info_test.py::test_to_proto\nPASSED tests/unit/account_info_test.py::test_proto_conversion\nPASSED tests/unit/account_info_test.py::test_proto_conversion_with_staking_info\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_setter\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_setter\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_setter\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_setters_preserve_other_staking_fields\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_constructor_legacy_kwargs_deprecated\nFAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_account_id_deprecated\nFAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_staked_node_id_deprecated\nFAILED tests/unit/account_info_test.py::TestDeprecatedProperties::test_decline_staking_reward_deprecated\n3 failed, 9 passed in 0.95s\nSWEBENCH_TALLY_35b5452f6bf9fdb9: fail_to_pass 3 failed, 9 passed in 0.95s\n[14 node outcomes for fail_to_pass -> grade-nodes.log]\n.........                                                                [100%]\n=========================== short test summary info ============================\nPASSED tests/integration/account_create_transaction_e2e_test.py::test_create_account_with_alias_derived_from_non_ecdsa_key\nPASSED tests/integration/account_create_transaction_e2e_test.py::test_create_account_with_alias_from_seperate_non_ecdsa_key\nPASSED tests/unit/account_info_test.py::test_account_info_initialization\nPASSED tests/unit/account_info_test.py::test_account_info_default_initialization\nPASSED tests/unit/account_info_test.py::test_from_proto_with_token_relationships\nPASSED tests/unit/account_info_test.py::test_from_proto_none_raises_error\nPASSED tests/unit/account_info_test.py::test_to_proto_with_none_values\nPASSED tests/unit/account_info_test.py::test_str_and_repr\nPASSED tests/unit/account_info_test.py::TestDeprecatedProperties::test_deprecated_properties_return_none_without_staking_info\n9 passed in 0.93s\nSWEBENCH_TALLY_35b5452f6bf9fdb9: pass_to_pass 9 passed in 0.93s\n[11 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_35b5452f6bf9fdb9: UNRESOLVED\n"
+  }
+}

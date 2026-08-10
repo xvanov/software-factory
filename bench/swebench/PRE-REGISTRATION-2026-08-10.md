@@ -169,3 +169,88 @@ measurement of the chain *with its independence layer on*, on the current
 open-weight configuration, (b) the clean reviewer ablation, and (c) the
 per-row oracle/dev/reviewer observability trail. Defensible deltas still
 require k ≥ 3; this sweep brings the pinned cells to k=2.
+
+---
+
+# Outcome — recorded 2026-08-10, after the run
+
+**Nothing above this line was edited after the data existed.** Result:
+`bench/swebench/results.md`, backed by
+`results-archive/2026-08-10T21-53-14.959258Z/`, `report --check` byte-stable.
+
+| arm | resolved / audited-valid | rate | 95% CI | $ |
+|---|---:|---:|---|---:|
+| claude-5 | 11/14 | 79% | [49%, 95%] | 30.18 † |
+| factory | 10/19 | **53%** | [29%, 76%] | 50.18 |
+| solo-noreview | 9/19 | 47% | [24%, 71%] | 49.89 |
+
+† CLI-reported, subscription; 4 rows invalid (rate-limited, below), 1 lost.
+
+## Operator interventions during the run — the arm set changed mid-sweep
+
+1. **The `openhands` arm was CANCELLED by the operator before it started**
+   (zero rows, zero spend; `sweep-openhands.json` records the abort). The
+   operator's reasoning: the openhands and claude harnesses are unchanged
+   since sweep 1, so their 2026-08-04 numbers stand as the baselines; only
+   the factory changed and only the factory needed re-measuring. Decision
+   rule 1 therefore **cannot be evaluated within-sweep**; the comparison
+   against sweep-1 `openhands` (10/19 = 53%) is cross-sweep and descriptive
+   under rule 3, subject to six days of provider drift on the shared
+   deployment.
+2. **The claude-5 rate-limit re-run was HALTED by the operator after 1 of 7
+   rows** (same reasoning). The Anthropic subscription's 5-hour window was
+   exhausted mid-arm (`rate_limit_event: rejected, five_hour`), killing 7
+   rows with `claude CLI exited 1`. Under rule 5 those were infrastructure
+   losses eligible for one re-run each; the operator judged the arm
+   redundant and stopped the repair. Final claude-5 accounting: 12 clean
+   first-pass rows + `conan-io__conan-19735_interface` re-run (attempt 2,
+   resolved, matching attempt 1's in-flight patch) +
+   `getmoto__moto-9841` re-run (attempt 2; its `run` completed before the
+   halt and only grading was interrupted — graded and audited afterwards at
+   zero model cost, resolved) + 4 rows kept as attempt-1
+   `run_failed` (named in the report's exclusion line; 2 of them —
+   jsonpickle, nicegui — had oracle-PASSING patches and are visible as
+   excluded passes, never headline) + **1 row LOST**:
+   `hiero-ledger__hiero-sdk-python-1914_interface`'s re-run was killed
+   mid-flight after its attempt-1 artifacts were already reset, so the cell
+   has no `result.json` and appears as `·` (no row) in Table 2. Its
+   attempt-1 outcome (oracle PASS, run_failed on the rate limit) survives
+   only in the sweep log; it is disclosed here and counted nowhere.
+3. Cross-checking rule 5's spirit: no OUTCOME was re-rolled; the two
+   completed re-runs repaired infrastructure losses and both matched their
+   attempt-1 oracle verdicts.
+
+## Spend
+
+Azure price-table estimate: factory $50.18 + solo-noreview $49.89 =
+**$100.07** (openhands $0). The $50/$75/$100 operator notices are
+per-`run-all`-process, so only the factory arm's $50 notice fired
+automatically; the $75 and $100 combined-spend thresholds were crossed
+silently and are hereby recorded — the per-process scope of the notice
+mechanism is a known gap (this file, "Spend projection"). Subscription:
+$30.18 CLI-reported. Acceptance authoring cost is in-ledger per row
+(~$0.09/row on Kimi, e.g. nicegui: $0.0854 of $0.86).
+
+## Headline readings (within the pre-committed rules)
+
+- **Rule 2 (reviewer):** factory 10/19 vs solo-noreview 9/19, paired
+  n=19, discordant 3/2, **McNemar p=1.000** — the reviewer round-trip is
+  again not measurably load-bearing for resolve rate. **The B.1 cost
+  finding did NOT replicate**: $50.18 vs $49.89 (sweep totals) — removing
+  the reviewer saved nothing this time (solo's dev burned the savings in
+  retries/iterations). Chain-verdict precision differed in the reviewer's
+  favour: 10/14 = 71% (factory) vs 9/17 = 53% (solo) — the reviewer parked
+  3 rows (`opensandbox-816`, `conan-19750`, `vyper-4801`) and **all 3
+  genuinely failed the hidden oracle**: every reviewer block was correct.
+- **Rule 4 (oracle accounting):** 38/38 chain rows authored the acceptance
+  oracle before the dev's first call, 0 trail hits, 0 leaks into graded
+  diffs, authoring billed in-run. Zero rows refused. `gate_enforced: false`
+  on every row, as pre-stated.
+- **Chain-verdict recall 10/10 = 100%** (sweep 1: 86%, with one zero-byte
+  green); precision 71% vs sweep 1's 40%. Cross-sweep, descriptive.
+- **Cross-sweep, descriptive (rule 3):** factory 37% → **53%** on identical
+  instances; the chain now matches sweep-1 `openhands`' 53% headline rate
+  where it trailed it by 16 pp in sweep 1 — but at ~2.8× the cost
+  ($5.02/resolved vs $1.82) and the within-sweep control that would make
+  the comparison attributable was cancelled (above). $/resolved:
+  $5.13 → $5.02. claude-5 79% → 79% (its harness moved 2.1.220 → 2.1.226).

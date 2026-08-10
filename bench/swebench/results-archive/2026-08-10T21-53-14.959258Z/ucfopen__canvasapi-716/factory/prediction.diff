@@ -1,0 +1,29 @@
+diff --git a/canvasapi/util.py b/canvasapi/util.py
+index 21c2a02..dc1580a 100644
+--- a/canvasapi/util.py
++++ b/canvasapi/util.py
+@@ -135,17 +135,20 @@ def obj_or_id(parameter, param_name, object_types):
+ 
+ def obj_or_str(obj, attr, object_types):
+     """
+-    Accepts an object. If the object has the attribute, return the
+-    corresponding string. Otherwise, throw an exception.
++    Accepts either a str or an object. If it is a str, return it. If it
++    is an object and the object is of correct type, return the object's
++    attribute as a string. Otherwise, throw an exception.
+ 
+-    :param obj: object from which to retrieve attribute
+-    :type obj: object
++    :param obj: str or object
+     :param attr: name of the attribute to retrieve
+     :type attr: str
+     :param object_types: tuple containing the types of the object being passed in
+     :type object_types: tuple
+     :rtype: str
+     """
++    if isinstance(obj, str):
++        return obj
++
+     try:
+         return str(getattr(obj, attr))
+     except (AttributeError, TypeError):

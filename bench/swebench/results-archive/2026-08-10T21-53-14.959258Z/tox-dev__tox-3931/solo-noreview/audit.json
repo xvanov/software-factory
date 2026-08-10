@@ -1,0 +1,49 @@
+{
+  "instance_id": "tox-dev__tox-3931",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-10T20:24:47.380332+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T20:14:14.657890+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 3344,
+      "tokens_out": 11587,
+      "cached_input_tokens": 2880,
+      "cost_usd": 0.052074800000000004,
+      "duration_s": 118.516,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:24:41.234775+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1741725,
+      "tokens_out": 13787,
+      "cached_input_tokens": 764160,
+      "cost_usd": 2.06253442,
+      "duration_s": 625.988,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.1146,
+  "ledger_tokens_in": 1745069,
+  "ledger_tokens_out": 25374,
+  "result_cost_usd": 2.1146,
+  "prediction_sha256": "3732d1c6232a0a0703cadd350319219be814c4ccdc69375a838a572e01156635",
+  "base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+  "stripped_test_paths": [
+    "tests/session/cmd/test_schema.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

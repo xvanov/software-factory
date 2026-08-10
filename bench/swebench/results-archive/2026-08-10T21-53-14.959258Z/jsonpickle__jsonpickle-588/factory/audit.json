@@ -1,0 +1,63 @@
+{
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "arm": "factory",
+  "audited_at": "2026-08-10T19:18:21.114236+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T19:07:24.601544+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5524,
+      "tokens_out": 9141,
+      "cached_input_tokens": 1216,
+      "cost_usd": 0.04499916,
+      "duration_s": 87.694,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T19:16:49.427767+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1708629,
+      "tokens_out": 21475,
+      "cached_input_tokens": 924672,
+      "cost_usd": 1.7441584520000004,
+      "duration_s": 564.298,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-10T19:18:12.085667+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 233706,
+      "tokens_out": 3168,
+      "cached_input_tokens": 172288,
+      "cost_usd": 0.158408548,
+      "duration_s": 82.254,
+      "success": 0,
+      "error": "tests not green after run"
+    }
+  ],
+  "ledger_cost_usd": 1.9476,
+  "ledger_tokens_in": 1947859,
+  "ledger_tokens_out": 33784,
+  "result_cost_usd": 1.9476,
+  "prediction_sha256": "1560d8a3b8a9fb31e4f30582adde3eb49a7c7cbf6ffed7ff8e33cd1ad0b7e479",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "stripped_test_paths": [
+    "tests/benchmark.py",
+    "tests/object_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

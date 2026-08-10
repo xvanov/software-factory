@@ -1,0 +1,49 @@
+{
+  "instance_id": "keras-team__keras-22316",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-10T20:39:56.837607+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T20:22:36.030712+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 3220,
+      "tokens_out": 5840,
+      "cached_input_tokens": 2432,
+      "cost_usd": 0.027034120000000002,
+      "duration_s": 50.039,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:39:32.410156+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2091526,
+      "tokens_out": 30561,
+      "cached_input_tokens": 1085952,
+      "cost_usd": 2.2326447220000003,
+      "duration_s": 1015.822,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.2597,
+  "ledger_tokens_in": 2094746,
+  "ledger_tokens_out": 36401,
+  "result_cost_usd": 2.2597,
+  "prediction_sha256": "88a322603572acaee4a0850cbde6993543989867d95cb9df9cd068fca378c798",
+  "base_commit": "34e55d4561ba2a61bbc72562e88b3704e0a43081",
+  "stripped_test_paths": [
+    "keras/src/ops/function_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

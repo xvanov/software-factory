@@ -1,0 +1,20 @@
+{
+  "instance_id": "vyperlang__vyper-4801",
+  "arm": "claude-5",
+  "audited_at": "2026-08-10T18:45:16.250319+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.1176,
+  "ledger_tokens_in": 799168,
+  "ledger_tokens_out": 11979,
+  "result_cost_usd": 1.1176,
+  "prediction_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "base_commit": "7d53bab7f8cce2a5fb037052663d85596d7eb2d1",
+  "stripped_test_paths": [],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

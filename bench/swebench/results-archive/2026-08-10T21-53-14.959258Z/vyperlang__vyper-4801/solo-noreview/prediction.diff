@@ -1,0 +1,37 @@
+diff --git a/vyper/venom/passes/sccp/eval.py b/vyper/venom/passes/sccp/eval.py
+index 808ca41..2f2d8a3 100644
+--- a/vyper/venom/passes/sccp/eval.py
++++ b/vyper/venom/passes/sccp/eval.py
+@@ -146,6 +146,7 @@ ARITHMETIC_OPS: dict[str, Callable[[list[IRLiteral]], int]] = {
+     "add": _wrap_binop(operator.add),
+     "sub": _wrap_binop(operator.sub),
+     "mul": _wrap_binop(operator.mul),
++    "smul": _wrap_binop(operator.mul),
+     "div": _wrap_binop(evm_div),
+     "sdiv": _wrap_signed_binop(evm_div),
+     "mod": _wrap_binop(evm_mod),
+diff --git a/vyper/venom/venom_to_assembly.py b/vyper/venom/venom_to_assembly.py
+index dde3d40..54c3364 100644
+--- a/vyper/venom/venom_to_assembly.py
++++ b/vyper/venom/venom_to_assembly.py
+@@ -78,7 +78,6 @@ _ONE_TO_ONE_INSTRUCTIONS = frozenset(
+         "sub",
+         "mul",
+         "div",
+-        "smul",
+         "sdiv",
+         "mod",
+         "smod",
+@@ -575,7 +574,11 @@ class VenomCompiler:
+             stack.push(out)
+ 
+         # Step 5: Emit the EVM instruction(s)
+-        if opcode in _ONE_TO_ONE_INSTRUCTIONS:
++        if opcode == "smul":
++            # "smul" is signed mul; EVM has no separate SMUL opcode since
++            # signed and unsigned multiplication produce the same bitwise result
++            assembly.append("MUL")
++        elif opcode in _ONE_TO_ONE_INSTRUCTIONS:
+             assembly.append(opcode.upper())
+         elif opcode in ("alloca", "palloca", "calloca"):
+             pass

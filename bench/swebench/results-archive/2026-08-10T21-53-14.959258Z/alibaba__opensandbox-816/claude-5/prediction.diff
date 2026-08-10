@@ -1,0 +1,187 @@
+diff --git a/server/opensandbox_server/services/docker.py b/server/opensandbox_server/services/docker.py
+index 66d4422..1f28d24 100644
+--- a/server/opensandbox_server/services/docker.py
++++ b/server/opensandbox_server/services/docker.py
+@@ -1469,6 +1469,10 @@ class DockerSandboxService(DockerDiagnosticsMixin, OSSFSMixin, SandboxService, E
+         remains within allowed prefixes, then ensures the directory exists on
+         the filesystem — creating it automatically if it does not.
+ 
++        The resolved path is also checked for symbolic links: Docker resolves
++        symlinks when it performs the bind mount, so a symlink inside an
++        allowed prefix could otherwise expose an arbitrary host path.
++
+         Args:
+             volume: Volume with host backend.
+             allowed_prefixes: Optional allowlist of host path prefixes.
+@@ -1481,15 +1485,16 @@ class DockerSandboxService(DockerDiagnosticsMixin, OSSFSMixin, SandboxService, E
+             resolved_path = os.path.normpath(os.path.join(resolved_path, volume.sub_path))
+ 
+         # Defense in depth: re-validate the resolved path against the
+-        # allowlist.  Even though sub_path traversal (../) is blocked by
+-        # ensure_valid_sub_path(), normalizing and re-checking prevents
+-        # any edge-case bypass.
+-        if allowed_prefixes and resolved_path != volume.host.path:
++        # allowlist and the symlink rules.  Even though sub_path traversal
++        # (../) is blocked by ensure_valid_sub_path(), normalizing and
++        # re-checking prevents any edge-case bypass.
++        if resolved_path != volume.host.path:
+             ensure_valid_host_path(resolved_path, allowed_prefixes)
+ 
+         # Allow existing host files (for example ISO binds to /boot.iso)
+         # without attempting directory creation.
+         if os.path.isfile(resolved_path):
++            DockerSandboxService._ensure_no_symlink_escape(volume, resolved_path)
+             return
+ 
+         try:
+@@ -1506,6 +1511,48 @@ class DockerSandboxService(DockerDiagnosticsMixin, OSSFSMixin, SandboxService, E
+                 },
+             )
+ 
++        DockerSandboxService._ensure_no_symlink_escape(volume, resolved_path)
++
++    @staticmethod
++    def _ensure_no_symlink_escape(volume, resolved_path: str) -> None:
++        """
++        Ensure the path Docker will bind is the path that passed validation.
++
++        Applies the same standard as ``_validate_pvc_volume``: canonicalize the
++        path with ``os.path.realpath(strict=True)`` and reject it when symlink
++        resolution yields a different path.  ``strict=True`` makes an
++        inaccessible path raise instead of silently returning the unresolved
++        lexical path, in which case the lexical and per-component symlink
++        checks in ``ensure_valid_host_path`` remain the enforced guarantee.
++
++        Args:
++            volume: Volume with host backend (used for error messages).
++            resolved_path: Host path that will be bind-mounted.
++
++        Raises:
++            HTTPException: When the path resolves elsewhere through a symlink.
++        """
++        try:
++            canonical_path = os.path.realpath(resolved_path, strict=True)
++        except OSError:
++            return
++
++        if canonical_path == os.path.normpath(resolved_path):
++            return
++
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail={
++                "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                "message": (
++                    f"Volume '{volume.name}': host path '{resolved_path}' resolves to "
++                    f"'{canonical_path}' through a symlink. Symlinked host paths are "
++                    "not allowed because the symlink target is followed by the "
++                    "container runtime and can escape the allowed host paths."
++                ),
++            },
++        )
++
+     def _validate_pvc_volume(self, volume) -> tuple[dict, bool]:
+         """
+         Docker-specific validation for PVC (named volume) backend.
+diff --git a/server/opensandbox_server/services/validators.py b/server/opensandbox_server/services/validators.py
+index 4b37b57..b7e0b2f 100644
+--- a/server/opensandbox_server/services/validators.py
++++ b/server/opensandbox_server/services/validators.py
+@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
+ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+ 
+ from fastapi import HTTPException, status
++import os
+ import re
+ 
+ from opensandbox_server.services.constants import RESERVED_LABEL_PREFIX, SandboxErrorCodes
+@@ -68,6 +69,49 @@ def _normalize_prefix_path(path: str) -> str:
+     return normalized
+ 
+ 
++def _find_symlink_component(path: str) -> Optional[str]:
++    """
++    Return the first component of ``path`` that is a symbolic link, if any.
++
++    The path is walked component by component from its root so that a symlink
++    anywhere along the chain (not only the final element) is detected.  Missing
++    components are simply not symlinks, so paths that do not exist yet — such
++    as sandbox directories that are created on demand — walk cleanly.
++
++    Args:
++        path: Absolute host path (POSIX or Windows style).
++
++    Returns:
++        The first path prefix that is a symbolic link, or None when the path
++        contains no symlink component (or cannot be inspected on this host).
++    """
++    normalized = path.replace("\\", "/")
++    drive_match = re.match(r"^([A-Za-z]:)/", normalized)
++    if drive_match:
++        root = drive_match.group(1) + "/"
++        tail = normalized[len(root):]
++    elif normalized.startswith("/"):
++        root = "/"
++        tail = normalized[1:]
++    else:
++        return None
++
++    current = root
++    for component in tail.split("/"):
++        if not component:
++            continue
++        current = current + component if current.endswith("/") else f"{current}/{component}"
++        try:
++            if os.path.islink(current):
++                return current
++        except OSError:
++            # Cannot stat this component (permissions, etc.); treat the
++            # remaining chain as un-inspectable rather than silently
++            # reporting "no symlinks".
++            return None
++    return None
++
++
+ def _is_valid_label_key(key: str) -> bool:
+     if "/" in key:
+         prefix, name = key.split("/", 1)
+@@ -395,6 +439,11 @@ def ensure_valid_host_path(
+     """
+     Validate that a host path is absolute and optionally within allowed prefixes.
+ 
++    Paths that contain a symbolic link in any component are rejected: prefix
++    matching is lexical, while the container runtime follows symlinks when it
++    binds the path, so a symlink inside an allowed prefix could otherwise mount
++    an arbitrary host directory.
++
+     Args:
+         path: Host path to validate.
+         allowed_prefixes: Optional list of allowed path prefixes.
+@@ -469,6 +518,27 @@ def ensure_valid_host_path(
+                 },
+             )
+ 
++    # Reject symlinked paths.  The checks above are purely lexical, but the
++    # container runtime resolves symbolic links when it performs the bind
++    # mount.  A symlink placed inside an allowed prefix (e.g. /data/sandbox/evil
++    # -> /) would therefore pass the prefix check while mounting an arbitrary
++    # host path, defeating the allowlist entirely.  Any symlink component makes
++    # the path un-trustworthy, so reject the request instead of following it.
++    symlink_component = _find_symlink_component(path)
++    if symlink_component is not None:
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail={
++                "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                "message": (
++                    f"Host path '{path}' contains a symbolic link component "
++                    f"'{symlink_component}'. Symlinks are not allowed in host "
++                    "paths because the symlink target is resolved by the "
++                    "container runtime and can escape the allowed prefixes."
++                ),
++            },
++        )
++
+ 
+ def ensure_valid_pvc_name(claim_name: str) -> None:
+     """

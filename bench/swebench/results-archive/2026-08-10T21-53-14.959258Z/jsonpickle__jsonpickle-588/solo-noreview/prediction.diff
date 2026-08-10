@@ -1,0 +1,53 @@
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..a12b1eb 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -856,7 +856,7 @@ class Pickler:
+                     # Break the cycle by emitting a reference.
+                     # in this case it's Dict[str, int]
+                     value: Dict[str, int] = self._getref(factory)  # type: ignore[no-redef]
+-            data["default_factory"] = value
++            data[tags.DEFAULT_FACTORY] = value
+ 
+         # Sub-classes of dict
+         if hasattr(obj, "__dict__") and self.unpicklable and obj != obj.__dict__:
+diff --git a/jsonpickle/tags.py b/jsonpickle/tags.py
+index 537aae4..00af7da 100644
+--- a/jsonpickle/tags.py
++++ b/jsonpickle/tags.py
+@@ -29,10 +29,12 @@ SET: str = "py/set"
+ STATE: str = "py/state"
+ TUPLE: str = "py/tuple"
+ TYPE: str = "py/type"
++DEFAULT_FACTORY: str = "py/default_factory"
+ 
+ # All reserved tag names
+ RESERVED: set[str] = {
+     BYTES,
++    DEFAULT_FACTORY,
+     FUNCTION,
+     ID,
+     INITARGS,
+diff --git a/jsonpickle/unpickler.py b/jsonpickle/unpickler.py
+index 7a6f2ba..0776d50 100644
+--- a/jsonpickle/unpickler.py
++++ b/jsonpickle/unpickler.py
+@@ -613,10 +613,15 @@ class Unpickler:
+ 
+     def _loadfactory(self, obj: Dict[str, Any]) -> Optional[Any]:
+         try:
+-            default_factory = obj["default_factory"]
++            default_factory = obj[tags.DEFAULT_FACTORY]
+         except KeyError:
+-            return None
+-        del obj["default_factory"]
++            try:
++                default_factory = obj["default_factory"]
++            except KeyError:
++                return None
++            del obj["default_factory"]
++            return self._restore(default_factory)
++        del obj[tags.DEFAULT_FACTORY]
+         return self._restore(default_factory)
+ 
+     def _process_missing(self, class_name: str) -> None:

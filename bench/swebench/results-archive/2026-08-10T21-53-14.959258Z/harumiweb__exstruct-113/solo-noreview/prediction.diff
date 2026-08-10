@@ -1,0 +1,12 @@
+diff --git a/src/exstruct/__init__.py b/src/exstruct/__init__.py
+index 8672fc9..8695fd7 100644
+--- a/src/exstruct/__init__.py
++++ b/src/exstruct/__init__.py
+@@ -81,7 +81,6 @@ __all__ = [
+     "DestinationOptions",
+     "ColorsOptions",
+     "serialize_workbook",
+-    "export_auto_page_breaks",
+     "col_index_to_alpha",
+     "convert_row_keys_to_alpha",
+     "convert_sheet_keys_to_alpha",

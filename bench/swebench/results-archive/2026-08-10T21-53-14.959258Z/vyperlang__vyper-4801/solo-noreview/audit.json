@@ -1,0 +1,62 @@
+{
+  "instance_id": "vyperlang__vyper-4801",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-10T21:49:39.822028+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T21:08:55.953963+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 4542,
+      "tokens_out": 11828,
+      "cached_input_tokens": 3456,
+      "cost_usd": 0.05390926000000001,
+      "duration_s": 125.788,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T21:18:05.610667+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2347351,
+      "tokens_out": 12430,
+      "cached_input_tokens": 1287168,
+      "cost_usd": 2.3009941379999996,
+      "duration_s": 548.426,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-10T21:48:00.959900+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 3198347,
+      "tokens_out": 27056,
+      "cached_input_tokens": 1585664,
+      "cost_usd": 3.4713945740000014,
+      "duration_s": 1794.861,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 5.8263,
+  "ledger_tokens_in": 5550240,
+  "ledger_tokens_out": 51314,
+  "result_cost_usd": 5.8263,
+  "prediction_sha256": "7c149d7895d3329085dd3e05b691ad758aa5da5ef813b5352329a4dce86d8e04",
+  "base_commit": "7d53bab7f8cce2a5fb037052663d85596d7eb2d1",
+  "stripped_test_paths": [
+    "tests/unit/compiler/venom/test_venom_to_assembly.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

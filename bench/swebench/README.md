@@ -11,14 +11,64 @@ the five tables and the decision rules *before* the data exists, so a run cannot
 be reported in whatever framing happens to flatter the result. `report` emits
 exactly those tables.
 
-## The measured result — 2026-08-04, five arms, n=19, k=1
+## Sweep 2 — 2026-08-10, the re-measured chain (current `results.md`)
 
-Full table: [`results.md`](results.md). Evidence:
-`results-archive/2026-08-04T23-19-24.998844Z/`, re-derivable byte-for-byte:
+Pre-registered in [`PRE-REGISTRATION-2026-08-10.md`](PRE-REGISTRATION-2026-08-10.md)
+(read its Outcome section — the arm set changed mid-sweep by operator
+decision). Evidence: `results-archive/2026-08-10T21-53-14.959258Z/` — the
+directory named at the top of `results.md`, which `report --check`
+re-derives byte-for-byte. Same pinned manifest and instances as sweep 1;
+run from a worktree so every row is attempt 1.
+
+What changed between sweeps: the factory arm now authors its **independent
+acceptance oracle before dev dispatch** (all 38 chain rows verified: authored
+before the dev's first call, 0 trail hits, 0 diff leaks), runs **open-weight
+only** (dev `deepseek-v4-pro`, hard tier a no-op, reviewer + acceptance
+author `Kimi-K2.7-Code`), carries the #302 reviewer rubric, and a dev-retry
+cap of 4 (was 3).
+
+| arm | harness × model(s) from the ledger | resolved / valid | rate | 95% CI | $ | $/resolved |
+|---|---|---:|---:|---|---:|---:|
+| claude-5 | Claude Code CLI 2.1.226 × `claude-opus-5` | 11/14 | **79%** | [49%, 95%] | 30.18 † | 2.74 † |
+| factory | the chain × deepseek-v4-pro dev + Kimi-K2.7-Code reviewer/author | 10/19 | **53%** | [29%, 76%] | 50.18 | 5.02 |
+| solo-noreview | the chain minus the reviewer round-trip | 9/19 | **47%** | [24%, 71%] | 49.89 | 5.54 |
+
+† CLI-reported, subscription; 4 rows invalid (Anthropic 5-hour rate window
+exhausted mid-arm, named in the report), 1 row lost to an operator-aborted
+re-run — disclosed in the pre-registration outcome.
+
+The five readings, within the pre-committed rules:
+
+1. **The chain moved 37% → 53% on identical instances** — but the matched
+   `openhands` control was **cancelled mid-sweep by the operator** (harness
+   unchanged since sweep 1, so its 53% stands as the baseline), which makes
+   the chain-vs-single-agent comparison **cross-sweep and descriptive**: the
+   chain now matches the single agent's headline rate where it trailed by
+   16 pp, at ~2.8× the $/resolved ($5.02 vs $1.82).
+2. **The reviewer is still not measurably load-bearing for resolve rate**
+   (factory vs solo-noreview, paired n=19, 3/2 discordant, p=1.000) — and
+   **B.1's −29% cost finding did not replicate** ($50.18 vs $49.89; solo's
+   dev burned the savings in retries). What the reviewer DID buy:
+   chain-verdict precision 71% vs 53%, and its 3 nonconvergence parks were
+   all genuine oracle failures.
+3. **Chain-verdict quality jumped**: precision 40% → 71%, recall 86% → 100%,
+   no zero-byte greens (sweep 1 had one). Cross-sweep, descriptive; the
+   candidate causes (oracle layer, Kimi reviewer, rubric fix, retry cap)
+   shipped together and are not separable in this design.
+4. **claude-5 is flat at 79%** across both sweeps (CLI 2.1.220 → 2.1.226).
+5. **k=2 now exists on these cells.** Still short of the k ≥ 3 the suite
+   demands before any delta is quoted as a result.
+
+## The measured result — 2026-08-04, five arms, n=19, k=1 (sweep 1)
+
+Full table: re-derivable from the committed evidence archive (as of
+2026-08-10, `results.md` holds sweep 2 above; sweep 1's table prints with):
 
 ```bash
 uv run python bench/swebench_adapter.py report \
-  --from-archive bench/swebench/results-archive/2026-08-04T23-19-24.998844Z --check
+  --from-archive bench/swebench/results-archive/2026-08-04T23-19-24.998844Z
+# (--check now verifies the SWEEP-2 results.md; the sweep-1 table prints to
+#  stdout with the command above and is no longer the committed results.md)
 ```
 
 > **Provenance, read before quoting a number.** Two `report` runs exist for this

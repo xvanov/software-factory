@@ -1,0 +1,50 @@
+{
+  "instance_id": "idaholab__montepy-933_interface",
+  "arm": "solo-noreview",
+  "audited_at": "2026-08-10T20:56:35.914210+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T20:42:30.808905+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 8144,
+      "tokens_out": 42667,
+      "cached_input_tokens": 7168,
+      "cost_usd": 0.19026488000000003,
+      "duration_s": 443.838,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:56:28.553553+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2856583,
+      "tokens_out": 25947,
+      "cached_input_tokens": 1527808,
+      "cost_usd": 2.909889848,
+      "duration_s": 837.211,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 3.1002,
+  "ledger_tokens_in": 2864727,
+  "ledger_tokens_out": 68614,
+  "result_cost_usd": 3.1002,
+  "prediction_sha256": "f55c514571a0db02de1a657f3cc4f403cdcb87eb2c955a20758202f72d98db32",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "stripped_test_paths": [
+    "tests/test_universe.py",
+    "tests/test_universe_integration.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

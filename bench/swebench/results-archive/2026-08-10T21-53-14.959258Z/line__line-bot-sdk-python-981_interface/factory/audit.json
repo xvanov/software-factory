@@ -1,0 +1,102 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-10T20:12:06.577507+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-10T19:43:49.451622+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 7228,
+      "tokens_out": 61440,
+      "cached_input_tokens": 6016,
+      "cost_usd": 0.27287196,
+      "duration_s": 799.716,
+      "success": 0,
+      "error": "json parse failed at max_tokens=32768 finish_reason=length: Expecting value: line 1 column 1 (char 0)"
+    },
+    {
+      "ts": "2026-08-10T19:51:27.181066+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 7228,
+      "tokens_out": 56736,
+      "cached_input_tokens": 7168,
+      "cost_usd": 0.25120668,
+      "duration_s": 457.719,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:03:57.149807+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2228668,
+      "tokens_out": 23734,
+      "cached_input_tokens": 1395712,
+      "cost_usd": 1.9232159320000002,
+      "duration_s": 749.331,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:08:30.893482+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 25768,
+      "tokens_out": 47725,
+      "cached_input_tokens": 5760,
+      "cost_usd": 0.23220800000000003,
+      "duration_s": 272.892,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:11:20.116306+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1053872,
+      "tokens_out": 8963,
+      "cached_input_tokens": 873728,
+      "cost_usd": 0.522676418,
+      "duration_s": 168.637,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-10T20:11:53.688888+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 13830,
+      "tokens_out": 5317,
+      "cached_input_tokens": 2944,
+      "cost_usd": 0.035443340000000004,
+      "duration_s": 32.7,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 3.2376,
+  "ledger_tokens_in": 3336594,
+  "ledger_tokens_out": 203915,
+  "result_cost_usd": 3.2376,
+  "prediction_sha256": "5fe919873ac0947e04652065a762aa105d68aa5706299e3360c85eeb95903440",
+  "base_commit": "f0d222be1a25553005bff35c2ace82424a683fd9",
+  "stripped_test_paths": [
+    "tests/api/test_async_issue_stateless_channel_token_wrappers.py",
+    "tests/api/test_issue_stateless_channel_token_wrappers.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}
