@@ -15,18 +15,37 @@ The thesis under test: **harness quality beats model size.** A well-instrumented
 Externally graded on SWE-rebench with a hidden oracle, one pinned set of 19
 instances, two sweeps (2026-08-04 five arms; 2026-08-10 re-measuring the
 changed factory — [current result](bench/swebench/results.md), sweep-1 archive
-re-derivable). Latest number per arm; the **measured** column says how many
-times that exact (harness, model) configuration has run this suite:
+re-derivable). One row per (harness, model set); latest measurement shown.
+**Harness + models are the two leftmost columns because every other number is
+a property of that pair** — the table scrolls horizontally, those stay first.
+Token and wall-clock columns are **exact measurements**; the dollar columns
+are **derived** (see the cost-methodology note below the table).
 
-| harness | model(s) | solved | rate | total $ | **$ per solved** | measured |
-|---|---|---:|---:|---:|---:|---|
-| **this factory's chain — current config** (acceptance oracle authored pre-dev, open-weight only) | deepseek-v4-pro dev + Kimi-K2.7-Code reviewer/oracle-author | 10/19 | **53%** | 50.18 † | **5.02** | 1× (2026-08-10) |
-| the same chain, **no reviewer** (`solo-noreview`) | same | 9/19 | **47%** | 49.89 † | **5.54** | 1× (2026-08-10) ‡ |
-| this factory's chain — **previous config** (no oracle, gpt-5.x tiers) | deepseek-v4-pro + gpt-5.3-codex + gpt-5.4 | 7/19 | 37% | 35.94 † | 5.13 | 1× (2026-08-04, superseded) |
-| one OpenHands agent, **no chain** | `azure/deepseek-v4-pro` | 10/19 | **53%** | 18.20 † | **1.82** | 1× (2026-08-04; not re-run — harness and model unchanged, operator decision) |
-| Claude Code CLI | `claude-opus-5` | 15/19 · 11/14 | **79% both sweeps** | 34.36 / 30.18 | 2.29 / 2.74 | **2×** (CLI 2.1.220 → 2.1.226; run 2 lost 5 cells to the subscription's 5-hour rate window, disclosed) |
-| Claude Code CLI | `claude-opus-4-8` | 14/19 | **74%** | 23.56 | **1.68** | 1× (2026-08-04, contamination probe — came back clean, not re-run) |
-| hand-rolled loop, **no tool calls** | `azure/deepseek-v4-pro` | 1/18 | **6%** | 7.94 | 7.94 | 1× (2026-08-04; its pre-committed one repaired run is spent) |
+| harness | models — role | solved | rate | fresh tokens in | cache read | tokens out | median wall / instance | total $ | $ / solved | runs | last measured |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|:-:|---|
+| **this factory's chain — current** (acceptance oracle authored pre-dev; open-weight only) | `azure/deepseek-v4-pro` — dev (both tiers) · `azure/Kimi-K2.7-Code` — reviewer + oracle author | 10/19 | **53%** | 21,104,155 | 26,849,792 | 1,262,586 | 17.3 min | 50.18 | **5.02** | 1× | 2026-08-10 |
+| the same chain, **no reviewer** (`solo-noreview`) | `azure/deepseek-v4-pro` — dev · `azure/Kimi-K2.7-Code` — oracle author | 9/19 | **47%** | 22,392,133 | 22,805,760 | 744,760 | 16.3 min | 49.89 | **5.54** | 1× | 2026-08-10 |
+| this factory's chain — **previous config** (no oracle; closed-model tiers; superseded) | `azure/deepseek-v4-pro` — dev · `azure/gpt-5.3-codex` — dev hard-tier · `azure/gpt-5.4` — reviewer | 7/19 | 37% | 14,349,408 | 33,195,520 | 486,506 | 16.6 min | 35.94 | 5.13 | 1× | 2026-08-04 |
+| **one OpenHands agent, no chain** (the matched baseline) | `azure/deepseek-v4-pro` — the whole agent | 10/19 | **53%** | 7,819,890 | 13,629,696 | 239,357 | 6.4 min | 18.20 | **1.82** | 1× ᵃ | 2026-08-04 |
+| **Claude Code CLI** (frontier reference) | `claude-opus-5` — agent · `claude-haiku-4-5` — the CLI's own side-classifier | 15/19 · 11/14 | **79% both runs** | 944,351 | 25,938,972 | 325,108 | 4.4 min | 30.18 | 2.74 | **2×** ᵇ | 2026-08-10 |
+| Claude Code CLI (contamination probe — clean) | `claude-opus-4-8` — agent · `claude-haiku-4-5` — side-classifier | 14/19 | **74%** | 795,380 | 19,525,695 | 308,128 | 2.1 min | 23.56 | **1.68** | 1× | 2026-08-04 |
+| hand-rolled text loop, **no tool calls** (floor/canary) | `azure/deepseek-v4-pro` — the whole loop | 1/18 | **6%** | 5,115,484 | 0 | 195,740 | 2.8 min | 7.94 | 7.94 | 1× ᶜ | 2026-08-04 |
+
+ᵃ not re-run in sweep 2 — harness and model unchanged, operator decision.
+ᵇ CLI 2.1.220 → 2.1.226 between runs; run 2's tokens/wall/$ shown (run 1:
+1,032,242 fresh / 28,972,582 cache / 397,852 out / 4.6 min / $34.36 /
+$2.29-per-solved); run 2 lost 5 cells to the subscription's 5-hour rate
+window, disclosed. ᶜ its pre-committed single repaired run is spent.
+
+**How exact is each column?** Token counts and wall clock are measured per
+row from the run's own ledger/CLI report — exact. The **dollar columns are
+derived, on two different meters**: Azure rows = exact measured tokens × the
+Azure retail price table (eastus2, verified 2026-08-08) — the one estimated
+factor is the cache-read rate, which Azure does not itemize; Claude rows =
+the CLI's own `total_cost_usd` at API list prices, which in practice bills
+against a flat subscription (marginal cost ≈ the subscription, not the
+number). Neither is an invoice; the token columns are the numbers that
+cannot argue. Never sum Azure and Claude dollars.
 
 Reading it:
 
@@ -58,14 +77,7 @@ Reading it:
   reviewer rubric, retry cap 4) shipped together and are not separable in
   this design.
 
-**† Cost units are not identical.** The Azure rows are a price-table estimate
-over provider-reported tokens — real money, with an *estimated* cache-read
-rate. The Claude rows are what the CLI reports at API list prices, billed in
-practice against a flat subscription. Same order of magnitude, not the same
-meter; never sum them. (Sweep 1's Azure figures are additionally floors: a few
-rows carried unmetered crashed sessions, disclosed in that sweep's notes.)
-
-**‡ `solo-noreview` explained.** It is the factory's own chain with exactly one
+**`solo-noreview` explained.** It is the factory's own chain with exactly one
 thing removed: the reviewer round-trip (dev-only, green = dev's tests pass; the
 acceptance oracle, sandbox, budgets and gates are identical). It exists to
 price the reviewer. An earlier, confounded version of this ablation
