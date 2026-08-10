@@ -214,5 +214,85 @@ def test_all_setup_red_blocks_with_the_setup_reason(tmp_path: Path) -> None:
     assert "SETUP:" in str(gb.get("feedback") or ""), gb
 
 
+#: The SAME arrange failure, but raised from a FIXTURE — pytest renders it as
+#: junit ERROR, not FAIL. Story 185's re-authored oracle (2026-08-10) had this
+#: exact shape (a fixture-borne 422 on a reserved email TLD).
+_GATE_FIXTURE_SETUP_ORACLE = """\
+import os
+
+import httpx
+import pytest
+
+
+@pytest.fixture
+def token():
+    base = os.environ["ACCEPTANCE_BASE_URL"]
+    with httpx.Client(base_url=base) as c:
+        r = c.post("/normalize", json={"email": "User@Example.COM"})
+        body = {}
+        try:
+            body = r.json()
+        except Exception:
+            pass
+        if "prerequisite_token" not in body:
+            pytest.fail(f"SETUP: prerequisite entity could not be created "
+                        f"(got {r.status_code}, body keys {sorted(body)})")
+        return body["prerequisite_token"]
+
+
+def test_ac1_email_is_lowercased(token):
+    base = os.environ["ACCEPTANCE_BASE_URL"]
+    with httpx.Client(base_url=base) as c:
+        r = c.post("/normalize", json={"email": "User@Example.COM", "token": token})
+        assert r.json()["email"] == "user@example.com"
+"""
+
+
+def test_fixture_borne_setup_failure_is_still_classified(tmp_path: Path) -> None:
+    """`pytest.fail("SETUP: ...")` inside a FIXTURE is a junit ERROR, so the
+    run is errors-only — which used to take the plain errors-only branch:
+    right block, wrong diagnosis, no `oracle_setup_failed` record, and the
+    bounded auto-re-author could never fire on exactly the class it was
+    built for (story 185's re-authored oracle, 2026-08-10)."""
+    repo = tmp_path / "repo"
+    init_repo(repo)
+    write_bootable_app(repo, impl=BAD_IMPL)
+    commit_all(repo, "base")
+    git(repo, "checkout", "-q", "-b", "feat/story")
+    write_bootable_app(repo, impl=GOOD_IMPL)
+    (repo / "backend" / "app" / "story_marker.py").write_text("MARKER = 1\n", encoding="utf-8")
+    head = commit_all(repo, "story work")
+
+    root = tmp_path / "factory"
+    ref = _store(root, _GATE_FIXTURE_SETUP_ORACLE)
+    story = StoryRecord(
+        id=7, direction_id="002", app="sacrifice", title="t", slug="s",
+        scope="backend", state=StoryState.PR_OPEN.value,
+        acceptance_test_ref=ref, acceptance_expected=True,
+    )
+    pr = PRContext(
+        pr_number=1, head_sha=head, base_branch="main", story=story,
+        repo_root=repo, software_factory_root=root, dry_run=False,
+    )
+    cfg = AppConfig(
+        name="sacrifice", repo="o/r",
+        gates=AppGatesConfig(acceptance_oracle=True, acceptance_boot=boot_cfg()),
+    )
+
+    r = acceptance_verified.evaluate(pr, cfg)
+
+    assert not r.passed
+    assert r.details["authoritative"] is True
+    assert "SETUP failed at HEAD" in r.reason, r.reason
+    assert r.details["head_setup_failures"], r.details.get("head_setup_failures")
+
+    from factory.chain.acceptance import read_gate_block
+
+    gb = read_gate_block(root, "sacrifice", 7)
+    assert gb is not None and gb["kind"] == "oracle_setup_failed", gb
+    assert "SETUP:" in str(gb.get("feedback") or ""), gb
+    assert gb.get("oracle_sha"), "sha stamp is what lets the auto-re-author act"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
