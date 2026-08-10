@@ -110,7 +110,12 @@ gates:
   # stay explicit rather than inherited (see the env block, PR #253).
   #
   # To turn it off, set this false — do not delete the recipe below.
-  acceptance_oracle: true
+  # ABORT TRIGGER fired 2026-08-10 (benchmark-readiness plan, Workstream D):
+  # two consecutive fresh stories (185, 186) blocked for acceptance reasons —
+  # 185 SETUP-failed at HEAD (arrange step, not the feature), 186 vacuous
+  # (zero stub requests). Diagnosis in the readiness report; re-enable only
+  # with the fix for the diagnosed class.
+  acceptance_oracle: false
   # A4 (operator decision 2026-08-09): with the oracle grading every story
   # against the DIRECTION's criteria, a multi-story PM split is structurally
   # broken — the first sibling to merge satisfies the direction and every
