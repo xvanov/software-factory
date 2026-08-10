@@ -154,6 +154,20 @@ Test: "If I block this, is it because the software is WRONG/UNSAFE/INCOMPLETE,
 or because I'd have written it differently?" Only the former justifies
 `medium`/`high`.
 
+**Test-framework wiring demands are `low` unless the RUN itself shows the
+failure.** A green suite is direct evidence that the framework wiring works.
+Demanding markers, fixtures, imports, or conftest patterns ("add
+`pytest.mark.asyncio`", "use the async db fixture") against a green run is a
+guess about the repo's configuration, and such guesses have been WRONG in
+ways that parked stories: this repo family sets `asyncio_mode = "auto"` (so
+async tests need no marker) and its test conventions live in the app's own
+config, which you cannot see. If you cannot cite a failing/flaky test or a
+concrete state-leak IN THIS DIFF'S RUN, the wiring suggestion is `low` —
+real, noted, non-blocking. Repeating it at `medium`/`high` across cycles
+burns the story's budget on a hypothesis the green suite already refuted
+(observed 2026-08-10: story 187 parked twice on a demanded asyncio marker
+that its repo's auto mode makes redundant).
+
 ## Review finality (re-reviews of the same story)
 
 Raise EVERYTHING blocking the FIRST time the code is in front of you. On a
