@@ -387,8 +387,9 @@ def plan_resume(
     if reauthor_oracle:
         plan.resets.append(
             "acceptance oracle -> DELETED (test_acceptance.py, attempts.json, "
-            "stub_runs.json, base_runs.json) so the next tick re-authors it from the "
-            "current spec"
+            "stub_runs.json, base_runs.json, auto_reauthor.json) so the next tick "
+            "re-authors it from the current spec — and the bounded auto-re-author "
+            "gets one fresh attempt this episode"
         )
 
     plan.preserved = {
@@ -473,7 +474,13 @@ def apply_resume(
 
     if plan.reauthor_oracle:
         acc = _acceptance_dir(root, story.app, int(story.id or 0))
-        for name in ("test_acceptance.py", "attempts.json", "stub_runs.json", "base_runs.json"):
+        for name in (
+            "test_acceptance.py",
+            "attempts.json",
+            "stub_runs.json",
+            "base_runs.json",
+            "auto_reauthor.json",
+        ):
             try:
                 (acc / name).unlink()
             except OSError:

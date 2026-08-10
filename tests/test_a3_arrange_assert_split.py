@@ -203,6 +203,16 @@ def test_all_setup_red_blocks_with_the_setup_reason(tmp_path: Path) -> None:
     assert "NOT a verdict on the feature" in r.reason
     assert r.details["head_setup_failures"], r.details.get("head_setup_failures")
 
+    # The recorded block must carry the oracle's own SETUP text as feedback —
+    # that is what the bounded auto-re-author hands the next author (185
+    # class). Without it the re-author is blind and re-invents the same
+    # un-arrangeable setup.
+    from factory.chain.acceptance import read_gate_block
+
+    gb = read_gate_block(root, "sacrifice", 7)
+    assert gb is not None and gb["kind"] == "oracle_setup_failed", gb
+    assert "SETUP:" in str(gb.get("feedback") or ""), gb
+
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
