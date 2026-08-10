@@ -227,6 +227,12 @@ gates:
         ALWAYS derive a unique one at runtime, e.g.
         `password = f"Ok-{uuid.uuid4().hex}"`. That pattern always passes and,
         like emails, never collides across runs.
+      * REGISTER emails are validated by pydantic's email validator, which
+        rejects reserved/special-use domains with `422` — `@example.test`
+        blocked a real story (2026-08-10). ALWAYS use the domain
+        `@example.com` (verified accepted, used by every shipped oracle);
+        namespace only the LOCAL part, e.g.
+        `email = f"{run_id}-{uuid.uuid4().hex}@example.com"`.
       * `GET /api/auth/me` with `Authorization: Bearer <access_token>` -> the
         same `user` dict. This is the ONLY "current user" route — there is no
         equivalent anywhere under `/api/users`.

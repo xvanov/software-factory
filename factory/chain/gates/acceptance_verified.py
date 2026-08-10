@@ -923,64 +923,82 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
 
     if head_run.status == "fail":
         summary = head_run.summary
-        if summary is not None and summary.failed >= 1:
-            # A3: when EVERY failing criterion is a SETUP: failure, the block
-            # stands (an unarranged scenario proves nothing either way — the
-            # fail-safe direction) but the REASON must name the true cause so
-            # dev/operator fix the arrange step instead of reading it as a
-            # verdict on the feature.
-            failing = [c for c, o in head_run.criteria.items() if o in ("FAIL", "ERROR")]
-            all_setup = bool(failing) and set(failing) <= set(head_run.setup_failures)
+        # A3: when EVERY failing criterion is a SETUP: failure, the block
+        # stands (an unarranged scenario proves nothing either way — the
+        # fail-safe direction) but the REASON must name the true cause so
+        # dev/operator fix the arrange step instead of reading it as a
+        # verdict on the feature. Computed for BOTH junit shapes:
+        # ``pytest.fail("SETUP: ...")`` in a test body renders as FAIL, but
+        # the SAME call inside a FIXTURE renders as ERROR — story 185's
+        # re-authored oracle (2026-08-10, a fixture-borne 422 on a reserved
+        # email TLD) took the errors-only branch below, which never recorded
+        # ``oracle_setup_failed``, so the bounded auto-re-author could not
+        # fire on exactly the class it was built for.
+        failing = [c for c, o in head_run.criteria.items() if o in ("FAIL", "ERROR")]
+        all_setup = bool(failing) and set(failing) <= set(head_run.setup_failures)
+        errors_only = summary is not None and summary.failed == 0 and summary.errors >= 1
+        healthy_after = bool(head_alive and head_healthy)
+        if all_setup and (
+            (summary is not None and summary.failed >= 1)
+            or (errors_only and healthy_after)
+        ):
+            # The unhealthy-app case deliberately does NOT land here: a dead
+            # or unhealthy app makes "the harness could not arrange" the
+            # wrong diagnosis, and the ``app_crashed_during_run`` fallthrough
+            # below stays its (waivable, unverifiable) handler.
             reason = (
                 f"ran independent acceptance oracle exit_code={head_run.exit_code} "
-                + (
-                    "(SETUP failed at HEAD — the harness could not arrange the "
-                    "scenario; NOT a verdict on the feature. Fix the arrange "
-                    "step or the facts it relies on)"
-                    if all_setup
-                    else "(assertion failed at HEAD)"
-                )
+                "(SETUP failed at HEAD — the harness could not arrange the "
+                "scenario; NOT a verdict on the feature. Fix the arrange "
+                "step or the facts it relies on)"
             )
-            if all_setup:
-                # Same channel the tampered branch uses: without this the
-                # improved reason reaches no surface anyone reads (it is not
-                # on the waiver path, and gate reasons are never fed back to
-                # dev) — an operator would only ever see it via
-                # `factory trace`. Recording puts it in `factory inbox`.
-                #
-                # ``feedback`` carries the oracle's own "SETUP:" lines (what
-                # the app actually answered — status codes, bodies) so the
-                # bounded auto-re-author can hand the next author something
-                # actionable instead of re-inventing the same un-arrangeable
-                # setup. App output = untrusted data; the authoring prompt
-                # frames it that way.
-                setup_lines: list[str] = []
-                for line in head_run.output.splitlines():
-                    stripped = line.strip()[:250]
-                    if (
-                        oracle_run.SETUP_FAILURE_PREFIX in line
-                        and stripped not in setup_lines
-                    ):
-                        setup_lines.append(stripped)
-                    if len(setup_lines) >= 5:
-                        break
-                record_gate_block(
-                    pr.software_factory_root, story.app, story.id,
-                    kind="oracle_setup_failed", reason=reason,
-                    feedback="\n".join(setup_lines) or None,
-                    # Stamp WHICH oracle this block indicts — the bounded
-                    # auto-re-author refuses to act on a sha mismatch, so a
-                    # stale sidecar can never license replacing a different
-                    # frozen oracle (adversarial review 2026-08-10, finding 5).
-                    oracle_sha=oracle_sha,
-                )
+            # Same channel the tampered branch uses: without this the
+            # improved reason reaches no surface anyone reads (it is not
+            # on the waiver path, and gate reasons are never fed back to
+            # dev) — an operator would only ever see it via
+            # `factory trace`. Recording puts it in `factory inbox`.
+            #
+            # ``feedback`` carries the oracle's own "SETUP:" lines (what
+            # the app actually answered — status codes, bodies) so the
+            # bounded auto-re-author can hand the next author something
+            # actionable instead of re-inventing the same un-arrangeable
+            # setup. App output = untrusted data; the authoring prompt
+            # frames it that way.
+            setup_lines: list[str] = []
+            for line in head_run.output.splitlines():
+                stripped = line.strip()[:250]
+                if (
+                    oracle_run.SETUP_FAILURE_PREFIX in line
+                    and stripped not in setup_lines
+                ):
+                    setup_lines.append(stripped)
+                if len(setup_lines) >= 5:
+                    break
+            record_gate_block(
+                pr.software_factory_root, story.app, story.id,
+                kind="oracle_setup_failed", reason=reason,
+                feedback="\n".join(setup_lines) or None,
+                # Stamp WHICH oracle this block indicts — the bounded
+                # auto-re-author refuses to act on a sha mismatch, so a
+                # stale sidecar can never license replacing a different
+                # frozen oracle (adversarial review 2026-08-10, finding 5).
+                oracle_sha=oracle_sha,
+            )
             return GateResult(
                 label=_LABEL, passed=False,
                 reason=reason,
                 details={**details, "authoritative": True, "verified": False},
             )
-        errors_only = summary is not None and summary.failed == 0 and summary.errors >= 1
-        if errors_only and head_alive and head_healthy:
+        if summary is not None and summary.failed >= 1:
+            return GateResult(
+                label=_LABEL, passed=False,
+                reason=(
+                    f"ran independent acceptance oracle exit_code={head_run.exit_code} "
+                    "(assertion failed at HEAD)"
+                ),
+                details={**details, "authoritative": True, "verified": False},
+            )
+        if errors_only and healthy_after:
             # LIVENESS, not the rollback set, decides authority now: the app
             # stayed up and healthy through the run, so an errors-only red is
             # the oracle's own problem — the dev is the right party to tell.

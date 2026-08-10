@@ -114,6 +114,20 @@ def test_hint_gives_a_known_good_password_pattern() -> None:
     )
 
 
+def test_hint_gives_a_known_good_email_domain() -> None:
+    """The failure MOVED when only the password was pinned (2026-08-10): the
+    re-authored oracle invented `@example.test`, which pydantic's email
+    validator rejects as a reserved TLD with 422 — same class, next invented
+    credential fact. The hint must pin the whole register credential pair."""
+    hint = _hint()
+    assert "@example.com" in hint, (
+        "acceptance_harness_hint no longer names the known-good email domain "
+        "(@example.com). A dev-blind author will invent domains like "
+        "@example.test that the app's email validator rejects with 422 at "
+        "SETUP."
+    )
+
+
 # ── A1: mechanical cross-check against the derived route surface ────────────
 #
 # Everything below parses ``acceptance_harness_hint`` itself (regex over its
