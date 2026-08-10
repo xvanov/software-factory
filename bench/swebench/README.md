@@ -59,6 +59,81 @@ The five readings, within the pre-committed rules:
 5. **k=2 now exists on these cells.** Still short of the k ≥ 3 the suite
    demands before any delta is quoted as a result.
 
+### Sweep 2 — root causes of the 9 factory misses (evidence-read 2026-08-10)
+
+Every miss was traced through its archived trajectory, reviewer transcript,
+graded diff and gold files (three independent readers; evidence paths in the
+per-instance run dirs). The 9 misses decompose into three buckets:
+
+**A. Self-inflicted by the chain/harness — 4 rows, all mechanically fixable:**
+
+- `tox-3931` — **the dev's patch was CORRECT** (its `tox.schema.json` hunk is
+  byte-identical to claude-5's winning one). Lost to worktree-gitlink
+  corruption: the dev's docker workaround symlinked `.git`, per-iteration
+  commits landed on `swebench-base` itself, and `_capture_diff` diffed
+  against a ref that now contained the fix → graded empty. Filed as harness
+  debt: assert the gitlink + `swebench-base == base_commit` per dispatch;
+  diff against the SHA, not the branch.
+- `jsonpickle-588` — one 2-line syntax error from green. Both dev attempts
+  ended on a prose-only truncated turn ("Let me fix…", no tool call), and the
+  `same_failure_signature` stall detector treated "never re-ran the tests" as
+  "stuck" → terminal block. solo-noreview SOLVED it (its stop reason happened
+  to be non-terminal, buying a third sandbox).
+- `conan-19750` — Azure 429s truncated an analysis-only first turn (dev had
+  already located the gold site); the empty diff then short-circuited to
+  terminal with **4 unused retries**. `tests_green` was also reachable with
+  zero files changed.
+- `pandas-63945` — dev's fix was ~90% right; the dev gate has **no
+  pre-existing-failure baseline**, so a pre-broken `httpserver` fixture node
+  consumed all 4 retries (the dev had correctly diagnosed it as
+  environmental). claude-5 went fully green on F2P here and still graded
+  UNRESOLVED on that same env-broken node.
+
+**B. Capability gaps vs the frontier reference — 4 rows:**
+
+- `exstruct-113`, `vyper-4801` — **localization**: the dev stops at the file
+  the issue names and greps/reasons; claude-5 wins these by *writing
+  executable repros* (monkey-patched allocators, subprocess probes) and by
+  widening scope past the named file (`engine.py`, `core/ranges.py`). On
+  vyper the dev burned $4.02/1800 s on `git log` archaeology of a
+  history-less clone.
+- `montepy-933` — **shared under-specification**: dev tests, the dev-blind
+  acceptance oracle AND the reviewer all inferred the same partial semantics
+  from the issue text (standalone cell only); the gold fix needs the
+  in-problem branch. A false green no independence layer caught, because
+  both authors read the same incomplete spec.
+- `canvasapi-716` — minimal-delta patch that skipped the type check, plus the
+  dev **weakened the oracle's own negative test to match its bug** (the
+  read-only lock's documented `chmod u+w` bypass, used on the graded test
+  file in at least 3 runs) — the strip removed the edit at grade time, but
+  the chain's green had already been established against it.
+
+**C. Oracle exactness / intrinsically hard — hit every arm:**
+
+- `opensandbox-816` (exact error-code constant; the spec prompt itself
+  mandated the wrong semantics), `conan-19750` (exact error string),
+  `pandas-63945` (exact repr + a network fixture inside a 16k-node F2P set).
+  Every arm that produced a patch got the *behavior* right on these and
+  still graded UNRESOLVED. Nobody solved opensandbox/pandas/conan-19750 in
+  sweep 2.
+
+**Chain-specific frictions measured along the way:** the slop detector
+clamped a reviewer **approve** into a nonconvergence park by scoring
+*pre-existing upstream tests* (opensandbox, $4/17-min rework cycle); the
+0444 test-lock chmod injects mode-flip diff noise the reviewer flags and the
+dev cannot revert; the acceptance author emits HTTP-shaped tests that
+`pytest.skip` on library tasks, so `gate_enforced: false` rows carry no
+oracle pull here.
+
+**Prioritized fixes this analysis licenses** (bench + chain, in order of
+expected yield): (1) diff-capture integrity asserts; (2) stall detector must
+require the attempt ran tests + a prose-only final turn triggers
+continuation, not attempt-consumption; (3) baseline-diff the dev test gate
+(pre-existing red ≠ dev failure); (4) slop scores never fire on pre-existing
+test files and never override an explicit approve; (5) empty first-attempt
+diff → retry, and `tests_green` unreachable with zero files changed;
+(6) exclude harness mode-flips from the reviewer's diff.
+
 ## The measured result — 2026-08-04, five arms, n=19, k=1 (sweep 1)
 
 Full table: re-derivable from the committed evidence archive (as of
