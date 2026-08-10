@@ -1,4 +1,4 @@
-# STATUS — measured 2026-08-04, audited 2026-08-07, Exteroception v1 closed 2026-08-07
+# STATUS — measured 2026-08-04, audited 2026-08-07, Exteroception v1 closed 2026-08-07, oracle-author classes fixed 2026-08-10
 
 Point-in-time facts. Verify before you rely on them. The commands are in
 `CLAUDE.md`. **The Exteroception v1 direction is closed** — its seven
@@ -7,6 +7,23 @@ chain** (loop 3 with subagents; see the section below). No successor direction
 is filed yet; the carried-over operator queue lives in "What does not work".
 The retired long-form plan is archived at
 `docs/archive/PLAN-2026-08-07-retired.md`.
+
+**2026-08-10 — the abort, its class fixes, and the staged re-proof.** The
+readiness plan's Workstream D fired its abort trigger on 2026-08-09/10: fresh
+stories 185/186 both blocked on `acceptance-verified` (185 `SETUP failed at
+HEAD` — the author invented `password123`, which the app's strength policy
+rejects; 186 `vacuous_oracle` — a `@pytestFixture` NameError only collection
+can catch). Both were ORACLE-AUTHOR quality defects; every chain guard behaved
+correctly. The class fixes are merged as **PR #297** (`39cca00e`): an
+authoring-time `pytest --collect-only` smoke (fail-safe), the password-policy
+fact + known-good pattern in the harness hint, and a bounded (once per story
+per operator-resume episode, sha-fresh, sanitized-feedback) all-SETUP
+auto-re-author. **E6 stage-2's activation items (a)/(b) merged as PR #298**
+(`5767c1fa`) — the remaining activation step is manual branch protection
+(add `main-green` to required contexts) after a deploy. The oracle is
+re-enabled and fresh D-2/D-3-shaped directions (124/125) are filed for the
+unattended re-proof; stories 185/186 are to be resumed with
+`--reauthor-oracle`.
 
 All systemd units are deliberately **stopped**. Run `factory on` to start.
 
@@ -154,10 +171,35 @@ The run artifacts above are the only proof the gate really ran.
    first ~16 ticks** (#250), measured by re-running the first cut read-only
    against real live state before it ever shipped enabled.
 
-**KNOWN OPEN risks of the oracle runner** — #1 **CLOSED by PR #256**, #2–#4
-still open (from the gate's module docstring,
-`factory/chain/gates/acceptance_verified.py`; each open one has a named v1.1
-candidate — read before any soak):
+**KNOWN OPEN risks of the oracle runner** — decisions recorded 2026-08-10
+(the gate's module docstring, `factory/chain/gates/acceptance_verified.py`,
+is the authoritative and more detailed account; the docstring also carries a
+**#5**, arrange-blind base runs, added 2026-08-09):
+- **#1 CLOSED** by PR #256 (see below).
+- **#2 shared-DB contamination: the HEAD/BASE half is CLOSED** (2026-08-09,
+  per-evaluation run-id nonce, validated live on story 177's evaluation).
+  Two residuals, both DEFERRED with reasons: (a) the ablation-route nonce —
+  the ablation route is the fallback path only, its one fail-open is narrow,
+  and noncifying it requires an ablation cache-key change plus a nonce minted
+  inside `oracle_probe` (docstring: "deferred, not forgotten"); (b) an oracle
+  that hardcodes identifiers instead of using `ACCEPTANCE_RUN_ID` — ACCEPTED,
+  because enforcing the reference statically would false-block read-only
+  oracles (story 172's reads it never).
+- **#3 non-2xx criteria: ACCEPTED.** Measured 2026-08-09: of 20 non-skipped
+  authored criteria exactly 1 was status-only and it passed at base —
+  immaterial. The v1.1 candidate (a third stub variant) costs a global
+  stub-cache invalidation and strictly raises the block rate; not worth it
+  before the benchmark.
+- **#4 behavioural mimicry: ACCEPTED.** Structurally hard to rule out for any
+  black-box oracle; not evidenced. No defense planned.
+- **#5 arrange-blind base runs: ACCEPTED with audit trail** (`base_runs.json`
+  + `setup_failures` in run artifacts). Mitigation discipline: D-2-shaped
+  directions must arrange only via routes that exist at the merge base —
+  directions 124/125 encode this explicitly. A naive fix (excluding
+  setup-failing criteria from base-red) would false-block the legitimate
+  prerequisite-route case; none is attempted.
+
+The original ranked list (kept for history; the docstring supersedes it):
 1. **A healthy-but-semantically-broken BASE forges red — CLOSED 2026-08-07/08,
    PR #256.** `boot._poll_health` *used to* return healthy on the first
    response under 400, so a health endpoint answering before its own
@@ -263,6 +305,8 @@ Note (audit): **"deployed" is a state name, not a deploy.** All 102
 | Merge-gate precision is unknown | Every published precision number is chain-verdict precision; `gate_enforced: false` in all six bench arms | Still open. No direction filed yet |
 | A sweep silently loses runs to provider 429s; sweep aggregates contradict their rows | See archive notes | Still open — paired with 019's out-of-scope operator queue, not yet actioned |
 | Clean reviewer-ablation re-run (~$62) not yet run | See reviewer-ablation note above | Still open — same paired queue, not yet actioned |
+| C1 recovery bluntness: `blocked_review_nonconvergent` auto-recovery re-enters at `SM_DONE`, re-running SM+dev+review to retry a later step | Story 177 burned $5.96 over two recoveries | **DEFERRED with reason (2026-08-10):** the signal-changed guard already escalates an identical failure instead of burning a second cycle, and C2's tech_writer parser fix (`cd750e7e`) removed the known cause. Re-entry-at-predecessor is state-machine surgery on shared control flow that the benchmark does not need |
+| C5 `detector_watch` disabled | Ships `detector_watch.enabled: false`; liveness scoping added but never run in production | **DEFERRED with reason (2026-08-10):** stays disabled through the benchmark window — an untested detector filing directions mid-run would contaminate the measurement. Soak read-only after the re-proof |
 | State has no backup | The twin guards source only | Still open (E.1 carried over; not scoped into 019) |
 | `software-factory-copy` is public | It receives every candidate self-edit diff | Still open (E.3 carried over; not scoped into 019) |
 
