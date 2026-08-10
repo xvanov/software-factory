@@ -25,6 +25,30 @@ re-enabled and fresh D-2/D-3-shaped directions (124/125) are filed for the
 unattended re-proof; stories 185/186 are to be resumed with
 `--reauthor-oracle`.
 
+**2026-08-10 (later) — the re-proof RAN, 4/4 stories deployed; E6 stage-2 is
+ACTIVE.** `main-green` was added to branch protection required contexts
+(after #298 merged and deploy verified in sync), so the stage-2 guard is
+live, not inert. The re-proof, verified against real artifacts (merge commit
++ `acceptance-verified` in `merge_actions.gates_passed_json` + `stub_runs` /
+`base_runs` on disk for every story):
+
+| story | shape | outcome | PR / merge |
+|---|---|---|---|
+| 188 (d125 server_time) | fresh D-3′ | **fully unattended single pass**, $0.28 | sacrifice #415 |
+| 186 (d123 unread stats) | resumed `--reauthor-oracle` | clean pass on the fresh oracle, $1.21 | #410 `4e3774b7b616` |
+| 185 (d122 notif count) | resumed ×2 | gen-2 oracle invented `@example.test` (422 reserved TLD) → parked → **PR #301** (`4face345`) fixed the class (fixture-borne SETUP failures now classify `oracle_setup_failed`; email-domain fact pinned in the hint) → gen-3 oracle passed, $1.44 | #409 `e08a83f6b6b4` |
+| 187 (d124 draft count) | fresh D-2′, 3 interventions | parked 4× on a REVIEWER content hallucination: DeepSeek-V4-Flash quoted the dev's fixed token string while describing its pre-fix shape, every cycle, through the rubric fix **#302**; **PR #303** rerouted reviewer → Kimi-K2.7-Code, which approved on first read; $2.22 | #416 `5799cee6619b` |
+
+Honest accounting: 188 is the unattended proof; 185/186 prove the resume +
+class-fix loop; 187 is NOT an unattended pass — it measured a reviewer-model
+defect (the strongest live evidence yet for the queued reviewer/solo-mode
+ablation) and consumed the C1 auto-recovery once (bounded, worked). Every
+class fix shipped the same day it was observed: #301 (credential-fact
+family + fixture SETUP shape), #302 (framework-wiring severities), #303
+(reviewer routing). The `scheduled-security` persona burst-filed directions
+126-130 into the approval queue when the factory woke — correctly
+operator-gated, left for the operator to triage.
+
 All systemd units are deliberately **stopped**. Run `factory on` to start.
 
 **Read this first.** The clean five-arm benchmark is in. **The chain shows no
