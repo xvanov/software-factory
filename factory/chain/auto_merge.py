@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -115,21 +116,26 @@ _CI_FAILURE_BUCKETS = frozenset(
 #     re-run the held PR's checks; something has to re-run them. This is the
 #     starvation the review flagged, and it is why the checklist below exists.
 #
-# ACTIVATION CHECKLIST — ``main-green`` MUST NOT be added to branch protection
-# until all three are done. The hold is safe (it destroys nothing); it is NOT
-# yet complete (it can starve), and a starved story is silent.
+# ACTIVATION CHECKLIST — status as of 2026-08-10. (a) and (b) are IMPLEMENTED
+# (this file, ``_handle_main_green_hold`` / ``_continue_hold_episode``); (c)
+# remains ACCEPTED, not mitigated. The remaining activation step is manual and
+# operator-only: deploy this code, then add ``main-green`` to
+# ``required_status_checks.contexts`` in branch protection.
 #
-#   (a) BOUND THE HOLD. After N consecutive held evaluations, set
-#       ``last_rejection_reason`` so the story surfaces in ``factory inbox``
+#   (a) BOUND THE HOLD — DONE 2026-08-10. A hold episode older than
+#       ``_HOLD_SURFACE_AFTER_SECONDS`` (30 min) sets
+#       ``last_rejection_reason`` (prefix ``ci_hold_main_red:``, once per
+#       episode) so the story surfaces in ``factory inbox``'s needs-human list
 #       (the ``blocked_ci_unresolved`` inbox carve-out in ``cli.py`` is the
-#       precedent). Do NOT park and do NOT close the PR — the whole point of
-#       the hold is that the PR is innocent. An unbounded hold is an invisible
-#       stall, which is the ``detect-without-remediate`` failure class.
-#   (b) GIVE IT A RECOVERY TRIGGER. Either re-run the PR's checks once per hold
-#       episode when main's head SHA has moved since the hold began (``gh run
-#       rerun`` / an empty synchronize), or write the operator runbook step
-#       that says clearing a hold means re-running checks on EVERY open PR.
-#       Without one of these, "main is green again" never reaches the PRs.
+#       precedent). It does NOT park and does NOT close the PR — the whole
+#       point of the hold is that the PR is innocent. An unbounded hold is an
+#       invisible stall, which is the ``detect-without-remediate`` class.
+#   (b) RECOVERY TRIGGER — DONE 2026-08-10. When the base branch's HEAD has
+#       moved since the episode's last recorded sha, the failed ``main-green``
+#       run is re-run (``gh run rerun <id> --failed``), at most once per new
+#       main commit (the ``ci_hold_rerun`` event records the sha and is the
+#       dedupe). Backstop if the rerun fails: the (a) escalation plus the
+#       runbook step — after fixing main, re-run checks on every open PR.
 #   (c) ACCEPT (or close) THE ``.github/**`` SELF-EDIT GAP. A chain PR that
 #       touches ONLY ``.github/**`` does not trip the factory self-edit staging
 #       twin, so nothing runs a clone before it lands. Such a PR could rename a
@@ -2214,29 +2220,227 @@ def _fetch_ci_failure_logs(*, app_config: AppConfig, pr_number: int) -> str:
     return digest[-4000:]
 
 
+#: A hold longer than this surfaces the story in ``factory inbox`` via
+#: ``last_rejection_reason`` (ACTIVATION CHECKLIST item (a)). Long enough that
+#: an ordinary "operator merges the fix to main" cycle never trips it; short
+#: enough that an unattended run cannot starve silently for hours.
+_HOLD_SURFACE_AFTER_SECONDS = 30 * 60
+
+#: Marker prefix for the (a) escalation — the dedupe key for "already
+#: surfaced", and what an operator greps for. Never a park: state is untouched.
+_HOLD_REASON_PREFIX = "ci_hold_main_red:"
+
+#: Events that mean "this story is already inside a hold episode". The rerun
+#: trigger (item (b)) writes its own event, so episode detection must accept
+#: either — keying on ``ci_hold_main_red`` alone would make every rerun attempt
+#: look like a fresh episode and re-emit the transition event each tick.
+_HOLD_EPISODE_EVENTS = frozenset({"ci_hold_main_red", "ci_hold_rerun"})
+
+
+#: Absolute per-episode ceiling on (b)'s rerun attempts. One rerun per new
+#: main commit is the dedupe; this is the backstop against a long red-main
+#: incident with frequent commits turning into unbounded Actions load — the
+#: same cost class ``_MAX_GATE_BLOCK_CYCLES`` bounds. By attempt 3 the (a)
+#: escalation has long since surfaced the story to the operator.
+_MAX_HOLD_RERUNS = 3
+
+
+def _parse_event_ts(ts: object) -> float | None:
+    """Epoch seconds from an event-log ``ts`` (ISO-8601 string), or None.
+
+    ``log_story_event`` writes ``datetime.now(UTC).isoformat()`` — a STRING.
+    Treating it as a float would make every episode age unparseable and the
+    (a) escalation silently never fire (`detect-without-remediate`). A naive
+    string is assumed UTC (``stalled_stories._parse_ts`` precedent): letting
+    ``timestamp()`` read it as LOCAL time would, west of UTC, put every event
+    hours in the future and silently starve the escalation the other way."""
+    if isinstance(ts, int | float):
+        return float(ts)
+    if isinstance(ts, str):
+        try:
+            dt = datetime.fromisoformat(ts)
+        except ValueError:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.timestamp()
+    return None
+
+
+def _in_hold_episode(story: StoryRecord | None, root: Path) -> bool:
+    """True when the story's most recent event is a hold-episode event.
+
+    Used to keep the (b) rerun's in-flight window INSIDE the hold: a re-run
+    check reports ``pending``, and an unintercepted pending evaluation would
+    run the full gate set against a possibly-still-red main and write a
+    ``merge_gates_failed`` event — both the sink the hold exists to prevent
+    and a break of the episode boundary the (a) clock depends on.
+    """
+    from factory.chain.event_log import read_story_events
+
+    if story is None or story.id is None:
+        return False
+    try:
+        events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+    except Exception:  # noqa: BLE001 - unknowable stream = not provably in a hold
+        return False
+    return bool(events) and events[-1].get("event") in _HOLD_EPISODE_EVENTS
+
+
+def _set_hold_reason(
+    story: StoryRecord, db_path: Path | None, reason: str | None, error: str | None = None
+) -> None:
+    """Column-scoped write of the (a) escalation — deliberately NOT
+    ``persist_story``, which stamps ``updated_at`` and would push the
+    independent ``stalled_stories`` 120-min alarm out by 30 min per episode
+    (the exact move ``orchestrator._bump_dependency_defer_count``'s comment
+    forbids: "stamping updated_at here would hide this very stall from the
+    stalled-story detector"). Passing ``reason=None`` clears a stale hold
+    reason once the hold has genuinely ended. Best-effort."""
+    if db_path is None or story.id is None:
+        return
+    try:
+        eng = _engine(db_path)
+        with Session(eng) as session:
+            row = session.get(StoryRecord, story.id)
+            if row is None:
+                return
+            if reason is None:
+                # Clearing: remove only OUR text — never wipe an unrelated
+                # reason or error another mechanism wrote.
+                if (row.last_rejection_reason or "").startswith(_HOLD_REASON_PREFIX):
+                    row.last_rejection_reason = None
+                if (row.error or "").startswith(_HOLD_REASON_PREFIX):
+                    row.error = None
+            else:
+                row.last_rejection_reason = reason
+                row.error = error or reason
+            new_reason, new_error = row.last_rejection_reason, row.error
+            session.add(row)
+            session.commit()
+        story.last_rejection_reason = new_reason
+        story.error = new_error
+    except Exception:  # noqa: BLE001 - surfacing is advisory, the hold is not
+        pass
+
+
+def _main_head_sha(*, app_config: AppConfig, base_branch: str) -> str | None:
+    """The base branch's current HEAD sha via ``gh``, or None (best-effort)."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            [
+                "gh", "api", f"repos/{app_config.repo}/branches/{base_branch}",
+                "--jq", ".commit.sha",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    sha = (proc.stdout or "").strip()
+    return sha if proc.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", sha) else None
+
+
+def _rerun_failed_main_green(*, app_config: AppConfig, pr_number: int) -> tuple[bool, str]:
+    """Re-run the failed workflow run behind this PR's red ``main-green`` check.
+
+    GitHub freezes ``pull_request`` check verdicts at the head sha: when main
+    goes green again, a held PR's red ``main-green`` NEVER re-evaluates on its
+    own (ACTIVATION CHECKLIST item (b) — the starvation this closes). The run
+    id comes from the failing row's details URL in ``gh pr checks``; the rerun
+    is ``gh run rerun <id> --failed``, which re-executes only the failed jobs.
+
+    Returns ``(ok, detail)``. Best-effort: a False simply leaves the hold in
+    place — the (a) escalation and the operator runbook remain the backstop.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "checks", str(pr_number), "--repo", app_config.repo, "--required"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return False, f"gh pr checks unavailable: {exc!r}"
+    run_id: str | None = None
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 4 and parts[0].strip().lower() == _MAIN_GREEN_CHECK_NAME:
+            # The row must STILL be failing: this re-query runs later than the
+            # fixture's ci_state read, and re-running a run whose main-green
+            # already recovered (or is in flight) would burn the sha's single
+            # recovery attempt on a no-op.
+            if parts[1].strip().lower() not in _CI_FAILURE_BUCKETS:
+                return False, (
+                    f"main-green row is no longer failing "
+                    f"(now {parts[1].strip()!r}) — nothing to re-run"
+                )
+            m = re.search(r"/actions/runs/(\d+)", parts[3])
+            if m:
+                run_id = m.group(1)
+            break
+    if run_id is None:
+        return False, "could not resolve the main-green run id from gh pr checks"
+    try:
+        rerun = subprocess.run(
+            ["gh", "run", "rerun", run_id, "--failed", "--repo", app_config.repo],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return False, f"gh run rerun unavailable: {exc!r}"
+    if rerun.returncode != 0:
+        return False, f"gh run rerun {run_id} exited {rerun.returncode}: {(rerun.stderr or '')[:200]}"
+    return True, f"re-ran failed jobs of run {run_id}"
+
+
 def _handle_main_green_hold(
     *,
     story: StoryRecord | None,
     pr_number: int,
     root: Path,
+    app_config: AppConfig | None = None,
+    base_branch: str = "main",
+    db_path: Path | None = None,
 ) -> bool:
-    """Record that this PR is held because MAIN is red — and do NOTHING else.
+    """Record that this PR is held because MAIN is red — and (almost) nothing else.
 
     Returns True iff this call is the TRANSITION into a hold episode (i.e. it
     just emitted the event). The caller uses that to decide whether to persist a
     ``merge_actions`` row too — see below.
 
-    The whole point of the hold (see ``_CI_STATE_HOLD``) is that no state is
-    written: no story row is touched, no dev run is dispatched, no PR is
-    closed. The only side effect is one auditable event, so ``factory trace``
-    can explain a queue that suddenly stopped moving.
+    The point of the hold (see ``_CI_STATE_HOLD``) is that the story is NOT
+    acted on: no dev run is dispatched, no PR is closed, no state transition.
+    Beyond the transition event, exactly two bounded side effects exist — the
+    two ACTIVATION CHECKLIST items that used to block making ``main-green`` a
+    required check:
+
+    * **(a) BOUNDED SURFACING.** A hold episode older than
+      ``_HOLD_SURFACE_AFTER_SECONDS`` sets ``last_rejection_reason`` (prefix
+      ``_HOLD_REASON_PREFIX``, written once per episode — the prefix is the
+      dedupe) so the story appears in ``factory inbox``'s needs-human list.
+      State stays ``pr_open``; nothing parks, nothing closes. The write is
+      column-scoped (:func:`_set_hold_reason`), NOT ``persist_story`` — a
+      ``updated_at`` stamp would hide the hold from the independent
+      ``stalled_stories`` detector. The tick loop clears the text (prefix-
+      guarded) as soon as the PR's checks resolve to success or failure, so
+      a merged story never carries a stale "main is red" into deploy states.
+    * **(b) RECOVERY TRIGGER.** GitHub freezes ``pull_request`` verdicts at
+      the head sha, so a hold never self-clears when main goes green. When the
+      base branch's HEAD has MOVED since the episode's last recorded sha, the
+      failed ``main-green`` run is re-run once (``_rerun_failed_main_green``)
+      and a ``ci_hold_rerun`` event records the new sha — at most ONE rerun
+      attempt per new main commit, so a rerun that fails (or a still-red main)
+      cannot hammer Actions every tick. While the rerun is in flight the PR's
+      ci_state is ``pending``, which never enters this branch at all.
 
     DEDUPE — "emit on transition into the hold". Ticks run every minute and a
     red main can last hours; one event per tick per PR would bury the story's
     real history. We emit only when the story's most recent event is not
-    already ``ci_hold_main_red``, so a hold episode costs exactly one event and
-    a hold that clears and returns is legible as two. Nothing else writes to a
-    held story's stream, so "last event" is a sound episode boundary.
+    already a hold-episode event (``_HOLD_EPISODE_EVENTS``), so a hold episode
+    costs exactly one transition event and a hold that clears and returns is
+    legible as two. Nothing else writes to a held story's stream, so "last
+    event" is a sound episode boundary.
 
     The SAME transition test gates the ``merge_actions`` row (adversarial
     review, 2026-08-09). A held PR is re-evaluated every tick and a per-tick row
@@ -2260,7 +2464,11 @@ def _handle_main_green_hold(
         return False
     try:
         events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
-        if events and events[-1].get("event") == "ci_hold_main_red":
+        if events and events[-1].get("event") in _HOLD_EPISODE_EVENTS:
+            _continue_hold_episode(
+                story=story, pr_number=pr_number, root=root, events=events,
+                app_config=app_config, base_branch=base_branch, db_path=db_path,
+            )
             return False
         log_story_event(
             story.id,
@@ -2268,14 +2476,19 @@ def _handle_main_green_hold(
             {
                 "pr_number": pr_number,
                 "required_check": _MAIN_GREEN_CHECK_NAME,
+                "main_sha": (
+                    _main_head_sha(app_config=app_config, base_branch=base_branch)
+                    if app_config is not None
+                    else None
+                ),
                 "detail": (
                     f"main's post-merge full lane is red, so this PR's required "
                     f"`{_MAIN_GREEN_CHECK_NAME}` check is failing. This is an "
                     "ENVIRONMENT hold, not a defect in this PR: the story is left "
                     "exactly where it is and re-checked next tick. An operator must "
-                    "make main green — and then RE-RUN THIS PR'S CHECKS, because "
-                    "GitHub does not re-run pull_request checks when the base branch "
-                    "moves (see _CI_STATE_HOLD's ACTIVATION CHECKLIST item (b))."
+                    "make main green; when main's HEAD moves, the factory re-runs "
+                    "this PR's failed main-green check once per new main commit "
+                    "(ci_hold_rerun)."
                 ),
             },
             software_factory_root=root,
@@ -2284,6 +2497,84 @@ def _handle_main_green_hold(
         return True
     except Exception:  # noqa: BLE001 - a hold must never fail louder than it holds
         return False
+
+
+def _continue_hold_episode(
+    *,
+    story: StoryRecord,
+    pr_number: int,
+    root: Path,
+    events: list[dict[str, Any]],
+    app_config: AppConfig | None,
+    base_branch: str,
+    db_path: Path | None,
+) -> None:
+    """The two bounded side effects of an ONGOING hold episode — see
+    :func:`_handle_main_green_hold` items (a) and (b). Best-effort: any
+    failure leaves the hold exactly as it was."""
+    import time as _time
+
+    from factory.chain.event_log import log_story_event
+
+    # Episode facts, from the stream: start = the most recent transition
+    # event; last recorded main sha = the newest episode event carrying one;
+    # rerun attempts spent so far this episode.
+    started_at: float | None = None
+    last_main_sha: str | None = None
+    episode_reruns = 0
+    for e in reversed(events):
+        name = e.get("event")
+        if name not in _HOLD_EPISODE_EVENTS:
+            break
+        if name == "ci_hold_rerun":
+            episode_reruns += 1
+        if last_main_sha is None and e.get("main_sha"):
+            last_main_sha = str(e["main_sha"])
+        if name == "ci_hold_main_red":
+            started_at = _parse_event_ts(e.get("ts"))
+            break
+
+    # (a) surface a long hold in the inbox — once per episode, never a park.
+    if (
+        started_at is not None
+        and (_time.time() - started_at) > _HOLD_SURFACE_AFTER_SECONDS
+        and not (story.last_rejection_reason or "").startswith(_HOLD_REASON_PREFIX)
+    ):
+        held_since = datetime.fromtimestamp(started_at, tz=UTC).isoformat(timespec="minutes")
+        _set_hold_reason(
+            story,
+            db_path,
+            f"{_HOLD_REASON_PREFIX} PR #{pr_number} held since {held_since} "
+            "because main's post-merge full lane is red. Not a PR defect and "
+            "not parked. Fix main — the factory re-runs the held check when "
+            "main's HEAD moves. Do NOT `factory resume-story` for this: a "
+            "resume clears this notice and restarts the hold's clock without "
+            "fixing anything.",
+        )
+
+    # (b) main moved -> re-run the frozen main-green check, once per new sha,
+    # never more than _MAX_HOLD_RERUNS times per episode.
+    if app_config is None or episode_reruns >= _MAX_HOLD_RERUNS:
+        return
+    current = _main_head_sha(app_config=app_config, base_branch=base_branch)
+    if current is None or current == last_main_sha:
+        return
+    ok, detail = _rerun_failed_main_green(app_config=app_config, pr_number=pr_number)
+    try:
+        log_story_event(
+            story.id,
+            "ci_hold_rerun",
+            {
+                "pr_number": pr_number,
+                "main_sha": current,
+                "rerun_ok": ok,
+                "detail": detail,
+            },
+            software_factory_root=root,
+            slug_hint=story.slug,
+        )
+    except Exception:  # noqa: BLE001 - the rerun already happened; telemetry only
+        pass
 
 
 def _handle_ci_failure(
@@ -3088,9 +3379,61 @@ def auto_merge_tick(
         # Skipping the whole evaluation is what makes "the story simply stays
         # where it is" true rather than merely intended. Real-run only, real PRs
         # only — dry-run previews and placeholder fixtures behave as before.
+        # The (b) rerun puts a held PR's checks back in flight: ci_state reads
+        # ``pending`` until they finish. That window must STAY inside the hold
+        # (adversarial review 2026-08-10, blockers 1+2): evaluating it would
+        # run the full gate set against a possibly-still-red main — for the
+        # factory app that is `uv run pytest` in a worktree that just merged
+        # red main, i.e. a guaranteed merge_gates_failed — and that event both
+        # counts toward _MAX_GATE_BLOCK_CYCLES (the park the hold exists to
+        # prevent) and breaks the episode boundary the (a) 30-min clock walks.
+        # Write NOTHING: the episode's last event stays a hold event, and the
+        # finished re-run resolves to success (normal evaluation) or hold
+        # (episode continues) on a later tick. Ordinary pending PRs (not in a
+        # hold episode) are untouched.
+        if (
+            not dry_run
+            and f.pr_number > 0
+            and f.ci_state == "pending"
+            and _in_hold_episode(f.story, root)
+        ):
+            actions.append(
+                MergeAction(
+                    app=app,
+                    pr_number=f.pr_number,
+                    merged=False,
+                    reason=(
+                        "held: main-green checks re-running — still inside the "
+                        "hold episode; story untouched"
+                    ),
+                    gates_passed=[],
+                    blocking_labels=[],
+                )
+            )
+            continue
+
+        # A hold that has genuinely ENDED (checks resolved to success or
+        # failure) must not leave its (a) escalation text behind: a merged
+        # story would carry "main is red" into deploy_pending, and a later
+        # blocked_deploy_failed would show the stale hold text instead of the
+        # real deploy failure (adversarial review 2026-08-10, finding 5).
+        # Clearing is prefix-guarded, so no other mechanism's reason is wiped.
+        if (
+            not dry_run
+            and f.pr_number > 0
+            and f.story is not None
+            and f.ci_state in ("success", "failure")
+            and (f.story.last_rejection_reason or "").startswith(_HOLD_REASON_PREFIX)
+        ):
+            _set_hold_reason(f.story, db, None)
+
         if not dry_run and f.pr_number > 0 and f.ci_state == _CI_STATE_HOLD:
             hold_is_new = _handle_main_green_hold(
-                story=f.story, pr_number=f.pr_number, root=root
+                story=f.story, pr_number=f.pr_number, root=root,
+                # base_branch is pinned to "main": the main-green job itself
+                # hardcodes `repos/$REPO/commits/main`, so watching any other
+                # base would rerun on the wrong trigger (finding 9).
+                app_config=cfg, base_branch="main", db_path=db,
             )
             action = MergeAction(
                 app=app,

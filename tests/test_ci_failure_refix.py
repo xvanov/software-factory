@@ -640,6 +640,22 @@ def test_auto_merge_tick_placeholder_pr_unaffected_by_ci_failure(tmp_path: Path)
 # --------------------------------------------------------------------------- #
 
 
+# Real bodies, captured at import time — the autouse fixture below replaces
+# the module attributes, and the two helper-body tests need the originals.
+_REAL_MAIN_HEAD_SHA = am._main_head_sha
+_REAL_RERUN_FAILED_MAIN_GREEN = am._rerun_failed_main_green
+
+
+@pytest.fixture(autouse=True)
+def _no_real_gh_for_hold_helpers(monkeypatch: pytest.MonkeyPatch):
+    """The hold's episode helpers (`_main_head_sha`, `_rerun_failed_main_green`)
+    shell out to `gh` against the app's real repo — a unit tick must never hit
+    the network. Tests that exercise checklist items (a)/(b) re-patch these
+    explicitly with the shapes they need."""
+    monkeypatch.setattr(am, "_main_head_sha", lambda **kw: None)
+    monkeypatch.setattr(am, "_rerun_failed_main_green", lambda **kw: (False, "patched out"))
+
+
 def _merge_action_rows(db: Path) -> list[am.MergeActionRecord]:
     from sqlmodel import select as _select
 
@@ -903,6 +919,341 @@ def test_main_green_hold_event_is_deduped_across_ticks(
     )
     events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
     assert len([e for e in events if e.get("event") == "ci_hold_main_red"]) == 2
+
+
+def test_long_hold_surfaces_in_inbox_without_parking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ACTIVATION CHECKLIST (a): a hold episode older than the threshold sets
+    ``last_rejection_reason`` (once — the prefix is the dedupe) so the story
+    reaches ``factory inbox``'s needs-human predicate, while the state stays
+    ``pr_open``: no park, no PR close. An unbounded silent hold is the
+    ``detect-without-remediate`` failure class."""
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+
+    assert am._handle_main_green_hold(
+        story=story, pr_number=77, root=tmp_path, db_path=db
+    ) is True  # transition
+
+    # Ongoing episode, still YOUNG: nothing surfaces.
+    assert am._handle_main_green_hold(
+        story=story, pr_number=77, root=tmp_path, db_path=db
+    ) is False
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        r = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
+    assert r.last_rejection_reason is None
+
+    # Ongoing episode, OLD (threshold forced below any real age).
+    monkeypatch.setattr(am, "_HOLD_SURFACE_AFTER_SECONDS", -1)
+    assert am._handle_main_green_hold(
+        story=story, pr_number=77, root=tmp_path, db_path=db
+    ) is False
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        r = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
+    assert r.state == StoryState.PR_OPEN.value, "surfacing must never park"
+    assert (r.last_rejection_reason or "").startswith("ci_hold_main_red:")
+    first_reason = r.last_rejection_reason
+
+    # Write-once per episode: another aged tick leaves the reason unchanged.
+    am._handle_main_green_hold(story=r, pr_number=77, root=tmp_path, db_path=db)
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        r2 = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
+    assert r2.last_rejection_reason == first_reason
+
+
+def test_hold_reruns_failed_main_green_once_per_new_main_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ACTIVATION CHECKLIST (b): GitHub freezes pull_request verdicts at the
+    head sha, so a hold never self-clears when main goes green. When main's
+    HEAD moves during an episode, the failed ``main-green`` run is re-run —
+    exactly once per new main commit, whether or not the rerun succeeds (the
+    ``ci_hold_rerun`` event's sha is the dedupe). And the rerun event must not
+    make the next tick think a NEW episode started."""
+    from factory.app_config import AppConfig
+
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+    cfg = AppConfig(name="sacrifice", repo="o/sacrifice")
+
+    monkeypatch.setattr(am, "_main_head_sha", lambda **kw: "a" * 40)
+    assert am._handle_main_green_hold(
+        story=story, pr_number=77, root=tmp_path, app_config=cfg, db_path=db
+    ) is True  # transition records main_sha a*40
+
+    reruns: list[int] = []
+
+    def _fake_rerun(**kw):  # noqa: ANN003
+        reruns.append(kw["pr_number"])
+        return True, "re-ran run 123"
+
+    monkeypatch.setattr(am, "_rerun_failed_main_green", _fake_rerun)
+
+    # Main has NOT moved: no rerun.
+    am._handle_main_green_hold(
+        story=story, pr_number=77, root=tmp_path, app_config=cfg, db_path=db
+    )
+    assert reruns == []
+
+    # Main MOVED: exactly one rerun, recorded with the new sha.
+    monkeypatch.setattr(am, "_main_head_sha", lambda **kw: "b" * 40)
+    am._handle_main_green_hold(
+        story=story, pr_number=77, root=tmp_path, app_config=cfg, db_path=db
+    )
+    assert reruns == [77]
+
+    # Same new sha again: the recorded ci_hold_rerun event is the dedupe.
+    am._handle_main_green_hold(
+        story=story, pr_number=77, root=tmp_path, app_config=cfg, db_path=db
+    )
+    assert reruns == [77]
+
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    rerun_events = [e for e in events if e.get("event") == "ci_hold_rerun"]
+    assert len(rerun_events) == 1
+    assert rerun_events[0]["main_sha"] == "b" * 40
+    assert rerun_events[0]["rerun_ok"] is True
+    # Episode detection accepts ci_hold_rerun as "still holding": exactly ONE
+    # transition event exists despite four held ticks.
+    assert len([e for e in events if e.get("event") == "ci_hold_main_red"]) == 1
+
+
+def test_pending_inside_a_hold_episode_is_not_evaluated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Blockers 1+2 (adversarial review 2026-08-10): the (b) rerun makes a
+    held PR's checks read ``pending``. Evaluating that window runs the gates
+    against a possibly-still-red main and writes ``merge_gates_failed`` —
+    which both counts toward the park the hold exists to prevent AND breaks
+    the episode boundary the (a) clock walks. Pending-inside-episode must
+    write NOTHING and evaluate nothing."""
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+    # Enter a hold episode.
+    assert am._handle_main_green_hold(story=story, pr_number=77, root=tmp_path, db_path=db)
+
+    monkeypatch.setattr(
+        am, "_evaluate_one_pr", lambda **kw: pytest.fail("pending-in-hold must not evaluate")
+    )
+    monkeypatch.setattr(
+        am, "_handle_ci_failure", lambda **kw: pytest.fail("pending-in-hold must not dispatch")
+    )
+    fixture = am.FixturePR(
+        pr_number=77, head_sha="deadbeef", base_branch="main", labels=[],
+        files_changed=["src/x.py"], ci_state="pending", story=story,
+    )
+    actions = am.auto_merge_tick(
+        tmp_path, "sacrifice", dry_run=False, fixture_prs=[fixture], db_path=db
+    )
+    assert len(actions) == 1
+    assert "re-running" in actions[0].reason
+
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    # The episode boundary is intact: the last event is still the transition.
+    assert events[-1].get("event") == "ci_hold_main_red"
+    assert not [e for e in events if e.get("event") == "merge_gates_failed"]
+
+
+def test_pending_outside_a_hold_episode_still_evaluates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pending short-circuit is scoped to hold episodes only — an
+    ordinary PR whose checks are still running keeps today's behaviour."""
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+
+    reached: list[int] = []
+
+    def _eval(**kw):  # noqa: ANN003
+        reached.append(kw["fixture"].pr_number)
+        return am.MergeAction(
+            app="sacrifice", pr_number=77, merged=False, reason="declined",
+            gates_passed=[], blocking_labels=["tests-green"],
+        )
+
+    monkeypatch.setattr(am, "_evaluate_one_pr", _eval)
+    fixture = am.FixturePR(
+        pr_number=77, head_sha="deadbeef", base_branch="main", labels=[],
+        files_changed=["src/x.py"], ci_state="pending", story=story,
+    )
+    am.auto_merge_tick(tmp_path, "sacrifice", dry_run=False, fixture_prs=[fixture], db_path=db)
+    assert reached == [77]
+
+
+def test_stale_hold_reason_is_cleared_when_checks_resolve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 5 (adversarial review 2026-08-10): a story that leaves a hold
+    must not carry `ci_hold_main_red:` into merge/deploy states — on a later
+    `blocked_deploy_failed` the inbox would show the stale hold text instead
+    of the real failure. Clearing is prefix-guarded: an unrelated reason is
+    never wiped."""
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+    am._set_hold_reason(story, db, f"{am._HOLD_REASON_PREFIX} PR #77 held since forever")
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        r = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
+    assert (r.last_rejection_reason or "").startswith(am._HOLD_REASON_PREFIX)
+
+    monkeypatch.setattr(
+        am,
+        "_evaluate_one_pr",
+        lambda **kw: am.MergeAction(
+            app="sacrifice", pr_number=77, merged=False, reason="declined",
+            gates_passed=[], blocking_labels=["tests-green"],
+        ),
+    )
+    fixture = am.FixturePR(
+        pr_number=77, head_sha="deadbeef", base_branch="main", labels=[],
+        files_changed=["src/x.py"], ci_state="success", story=story,
+    )
+    am.auto_merge_tick(tmp_path, "sacrifice", dry_run=False, fixture_prs=[fixture], db_path=db)
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        r = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
+    assert r.last_rejection_reason is None
+    assert r.error is None
+
+    # Prefix guard: someone else's reason survives a clear attempt.
+    am._set_hold_reason(story, db, None)  # story fields already None
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        row = ses.get(StoryRecord, story.id)
+        row.last_rejection_reason = "gate_block_exhausted: something real"
+        ses.add(row)
+        ses.commit()
+    story.last_rejection_reason = "gate_block_exhausted: something real"
+    am._set_hold_reason(story, db, None)
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        r = ses.exec(select(StoryRecord).where(StoryRecord.id == story.id)).one()
+    assert r.last_rejection_reason == "gate_block_exhausted: something real"
+
+
+def test_hold_rerun_is_capped_per_episode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 6: one rerun per new main sha is the dedupe; _MAX_HOLD_RERUNS
+    is the absolute per-episode backstop against a long red-main incident
+    with frequent commits."""
+    from factory.app_config import AppConfig
+
+    _hold_app(tmp_path)
+    db = _seed(tmp_path)
+    story = _pr_open_story(db)
+    cfg = AppConfig(name="sacrifice", repo="o/sacrifice")
+
+    monkeypatch.setattr(am, "_main_head_sha", lambda **kw: "a" * 40)
+    assert am._handle_main_green_hold(
+        story=story, pr_number=77, root=tmp_path, app_config=cfg, db_path=db
+    )
+    reruns: list[str] = []
+
+    def _fake_rerun(**kw):  # noqa: ANN003
+        reruns.append("x")
+        return True, "re-ran"
+
+    monkeypatch.setattr(am, "_rerun_failed_main_green", _fake_rerun)
+    for sha_char in "bcdef":
+        monkeypatch.setattr(am, "_main_head_sha", lambda _s=sha_char * 40, **kw: _s)
+        am._handle_main_green_hold(
+            story=story, pr_number=77, root=tmp_path, app_config=cfg, db_path=db
+        )
+    assert len(reruns) == am._MAX_HOLD_RERUNS
+
+    events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
+    assert len([e for e in events if e.get("event") == "ci_hold_rerun"]) == am._MAX_HOLD_RERUNS
+
+
+def test_parse_event_ts_handles_aware_naive_and_garbage() -> None:
+    """The (a) clock's substrate. An aware ISO string must round-trip; a
+    naive one is UTC by contract (local-time interpretation would starve the
+    escalation west of UTC); garbage is None, never an exception."""
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    aware = _dt(2026, 8, 10, 12, 0, 0, tzinfo=_UTC)
+    assert am._parse_event_ts(aware.isoformat()) == aware.timestamp()
+    naive_as_utc = am._parse_event_ts("2026-08-10T12:00:00")
+    assert naive_as_utc == aware.timestamp()
+    assert am._parse_event_ts("not a time") is None
+    assert am._parse_event_ts(None) is None
+    assert am._parse_event_ts(1754827200.0) == 1754827200.0
+
+
+_GH_CHECKS_ROWS_FAILING = (
+    "main-green\tfail\t1m2s\thttps://github.com/o/r/actions/runs/31334856219/job/93298923618\tdesc\n"
+    "pytest (1)\tpass\t1m\thttps://github.com/o/r/actions/runs/31334856219/job/93298923619\tdesc\n"
+)
+_GH_CHECKS_ROWS_RECOVERED = (
+    "main-green\tpass\t1m2s\thttps://github.com/o/r/actions/runs/31334856219/job/93298923618\tdesc\n"
+)
+
+
+def test_rerun_helper_parses_real_gh_rows_and_checks_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finding 7: the helpers' real bodies were untested. Pin the tab-parse,
+    the run-id extraction from a JOB url, the still-failing requirement, and
+    the returncode handling — against the real gh 2.45 row shape."""
+    import subprocess as _sp
+
+    from factory.app_config import AppConfig
+
+    cfg = AppConfig(name="sacrifice", repo="o/r")
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kw):  # noqa: ANN001, ANN003
+        calls.append(list(cmd))
+        if cmd[:3] == ["gh", "pr", "checks"]:
+            return _sp.CompletedProcess(cmd, 1, _GH_CHECKS_ROWS_FAILING, "")
+        return _sp.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(_sp, "run", _fake_run)
+    ok, detail = _REAL_RERUN_FAILED_MAIN_GREEN(app_config=cfg, pr_number=77)
+    assert ok, detail
+    assert "31334856219" in detail
+    rerun_calls = [c for c in calls if c[:3] == ["gh", "run", "rerun"]]
+    assert rerun_calls == [["gh", "run", "rerun", "31334856219", "--failed", "--repo", "o/r"]]
+
+    # A recovered row must NOT be re-run.
+    calls.clear()
+
+    def _fake_run_recovered(cmd, **kw):  # noqa: ANN001, ANN003
+        calls.append(list(cmd))
+        return _sp.CompletedProcess(cmd, 0, _GH_CHECKS_ROWS_RECOVERED, "")
+
+    monkeypatch.setattr(_sp, "run", _fake_run_recovered)
+    ok, detail = _REAL_RERUN_FAILED_MAIN_GREEN(app_config=cfg, pr_number=77)
+    assert not ok
+    assert "no longer failing" in detail
+    assert not [c for c in calls if c[:3] == ["gh", "run", "rerun"]]
+
+
+def test_main_head_sha_helper_validates_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess as _sp
+
+    from factory.app_config import AppConfig
+
+    cfg = AppConfig(name="sacrifice", repo="o/r")
+    monkeypatch.setattr(
+        _sp, "run",
+        lambda cmd, **kw: _sp.CompletedProcess(cmd, 0, ("a" * 40) + "\n", ""),
+    )
+    assert _REAL_MAIN_HEAD_SHA(app_config=cfg, base_branch="main") == "a" * 40
+    monkeypatch.setattr(
+        _sp, "run",
+        lambda cmd, **kw: _sp.CompletedProcess(cmd, 0, "gh: Not Found (HTTP 404)\n", ""),
+    )
+    assert _REAL_MAIN_HEAD_SHA(app_config=cfg, base_branch="main") is None
+    monkeypatch.setattr(
+        _sp, "run",
+        lambda cmd, **kw: (_ for _ in ()).throw(FileNotFoundError("gh")),
+    )
+    assert _REAL_MAIN_HEAD_SHA(app_config=cfg, base_branch="main") is None
 
 
 def test_real_ci_failure_alongside_main_green_still_takes_the_failure_path(

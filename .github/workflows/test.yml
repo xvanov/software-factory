@@ -321,24 +321,26 @@ jobs:
   # while it cannot run on `merge_group` would wedge the queue on a vacuous
   # required check — give it a merge_group leg first.
   #
-  # NOT REQUIRED YET — ACTIVATION CHECKLIST. Making `main-green` a required
-  # status check on `main` is a MANUAL operator step in branch protection, and
-  # it must not be done until ALL of these hold:
+  # ACTIVATION CHECKLIST — status as of 2026-08-10: (a) and (b) are
+  # IMPLEMENTED in `factory/chain/auto_merge.py` (`_handle_main_green_hold` /
+  # `_continue_hold_episode`); (c) stays ACCEPTED. Making `main-green` a
+  # required status check on `main` is a MANUAL operator step in branch
+  # protection; the remaining precondition is 0:
   #
-  #   0. This merges AND the factory is redeployed from main
+  #   0. That code is MERGED and the factory is redeployed from main
   #      (`scripts/deploy-factory-from-main.sh`). The live chain needs
   #      `auto_merge._CI_STATE_HOLD` before a red `main-green` can appear on its
   #      PRs, or the pre-hold code closes those PRs and terminally parks their
   #      stories two ticks later. Deploy first, protect second.
-  #   a. THE HOLD IS BOUNDED. After N consecutive held evaluations the chain
-  #      must set `last_rejection_reason` so the story reaches `factory inbox`.
-  #      It must NOT park the story or close the PR — the PR is innocent. An
-  #      unbounded hold is a silent stall (`detect-without-remediate`).
-  #   b. A RECOVERY TRIGGER EXISTS. Because the verdict is frozen (above),
-  #      making main green does not clear a hold by itself. Either the chain
-  #      re-runs the held PR's checks once per hold episode when main's head SHA
-  #      has moved since the hold began, or the operator runbook documents that
-  #      clearing a hold means re-running checks on EVERY open PR.
+  #   a. THE HOLD IS BOUNDED — DONE 2026-08-10. A hold episode older than 30
+  #      minutes sets `last_rejection_reason` (`ci_hold_main_red:` prefix, once
+  #      per episode) so the story reaches `factory inbox`. It does NOT park
+  #      the story or close the PR — the PR is innocent.
+  #   b. A RECOVERY TRIGGER EXISTS — DONE 2026-08-10. When main's HEAD moves
+  #      during a hold, the chain re-runs the held PR's failed `main-green` run
+  #      (`gh run rerun --failed`), at most once per new main commit
+  #      (`ci_hold_rerun` events carry the sha and are the dedupe). Runbook
+  #      backstop: after fixing main, re-run checks on every open PR.
   #   c. THE `.github/**` SELF-EDIT GAP IS ACCEPTED IN WRITING. A chain PR that
   #      touches ONLY `.github/**` does not trip the factory self-edit staging
   #      twin, so no clone is run before it lands. Such a PR could rename a job
