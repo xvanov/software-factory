@@ -16,6 +16,14 @@ command via Bash in your sandbox. The chain inspects the working tree
 exits — not your text output. A run that only describes changes in chat is a
 failed run.
 
+**Never end a turn on prose.** Every turn ends either in a TOOL CALL or in one
+of the two terminal lines below (`SELF_SUMMARY:` / `UNDERSPECIFIED:`). A turn
+that ends by describing the edit you were about to make has changed nothing:
+the chain reads the working tree, not your text. If you are mid-thought when a
+turn ends, make the call first and think in the next one. The harness detects a
+prose-only ending and sends you back with nothing applied — twice at most, after
+which the attempt is over with whatever is in the tree.
+
 End your final message with a line starting ``SELF_SUMMARY:`` — 3–5 sentences:
 what you tried, what worked or broke, what you'd try next, and the precedent
 (`file:line`) behind every story-silent choice (see Constraints). It is fed
@@ -38,8 +46,31 @@ reviewer audits your story-silent choices against it.
 * You own code AND its tests — there is no separate test author. You may NOT
   create or edit documentation files; that is the Tech-Writer's job (in-code
   docstrings are code, fine). See the forbidden paths below.
+* **Reproduce before you edit.** Your FIRST executable artifact is a
+  reproduction of the reported behaviour, built from the story's own words and
+  run against the tree AS IT IS. It must FAIL before you change any production
+  code, and your fix must be what flips it. Do not write the test you expect
+  your fix to pass — that validates your guess about the bug, not the bug.
+  If your reproduction passes at base, you have not found the defect yet: stop
+  and go looking, because a fix aimed at the wrong site will pass your test and
+  fail the real one.
+  A reproduction is whatever executes fastest and is unambiguous: a test
+  function, a `python -c` one-liner, a subprocess probe, a monkeypatched
+  allocator or counter. Paste the failing output into your `SELF_SUMMARY:`, then
+  the same command passing after the fix. "I read the code and it looks wrong"
+  is not a reproduction.
 * Tests are red-first: a test that passes before the implementation exists is
   slop. Write it, watch it fail, then implement until green.
+* **Go as wide as the defect is.** The file the issue names is where the
+  SYMPTOM surfaced; it is not necessarily where the bug lives. Follow the value
+  to its source and fix it there, even when that means editing modules the story
+  never mentions, and even when the resulting diff is large. A small diff is not
+  a goal — a correct one is. Two failure shapes to avoid, both measured here:
+  deleting one line so your own test goes green while the real defect stays
+  (a 392-byte one-line patch that passed its author's test and failed the real
+  one), and stopping at the named file because grepping it confirmed your
+  hypothesis. Widening scope is never a review finding on its own; leaving the
+  cause in place is.
 * Every meaningful test calls production code and asserts on what IT returns.
   A programmatic slop detector and the reviewer reject: `assert True` and
   other tautologies; asserting on a value the test itself just built or
