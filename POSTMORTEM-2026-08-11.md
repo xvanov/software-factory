@@ -55,22 +55,48 @@ spec.
 by hand-written spec prose. The benchmark cannot see that term. Do not conclude
 it is zero in production.)*
 
-### 2.1 It slices the dev's horizon below winning-trajectory length — the biggest single lever
+### 2.1 It fragments the dev's horizon — a real cost, but NOT the biggest lever
+
+> **CORRECTED 2026-08-11, same day.** This section originally called horizon
+> slicing "the biggest single lever" and recommended raising the cap first. A
+> subsequent attempt-level accounting of all 40 dev attempts **does not support
+> that**, and the recommendation is withdrawn. The mechanism below is real; its
+> measured yield is not. See the correction box at the end of this section.
 
 Each chain dev attempt is a **fresh** OpenHands conversation hard-capped at
-**1,800 s** (`factory/runner.py:68`, `_SANDBOX_WALL_CLOCK_TIMEOUT_S`), with only
+**1,800 s** (`factory/runner.py:68`; the value actually passed is
+`dev_convergence.dev_sandbox_timeout_s`, `factory_settings.yaml:220`), with only
 a self-summary and trailing tool calls carried across the boundary. The control
 runs **one** conversation under the 5,400 s arm clock.
 
-- The control's winning `exstruct-113` run took **1,807 s** — *longer than any
-  single chain attempt is permitted to live*.
-- On `vyper-4801` the chain's three attempts each died at the 1,800 s cap with
-  `files_touched: []`. **6,341 s and $13.50 bought zero completed dev
-  conversations.** The control worked continuously for 5,416 s / 551 iterations.
-
 The chain is **not** starving the dev of iterations — it buys *more*: 2,058 tool
-calls vs the control's 1,169, and 4× the wall clock. The binding constraint is
-**continuity**, not iteration count.
+calls vs the control's 1,169, and 4× the wall clock.
+
+> **What the attempt-level data actually says.** The cap killed **6 of 40
+> attempts across 4 rows**, costing **$25.97 — 32% of the run's spend — for zero
+> graded output**. But outcomes lost to it: **0 CONFIRMED, 1 PLAUSIBLE, 3 NO
+> EVIDENCE**. Of the 30 successful attempts, median **552 s**, max **1,329 s**,
+> and **nothing finished between 1,366 s and 1,800 s** — dev runs are bimodal, so
+> the cap is reaping already-dead attempts, not slicing near-misses.
+> `keras-22316` and `rapid-mlx` were killed and **resolved anyway** (the worktree
+> is shared across attempts). `vyper`'s three attempts made **zero file-editor
+> writes** — 44/29/38 calls, every one a `view`. `exstruct` is the only plausible
+> loss, and only because the control resolved it in **1,800.1 s**, 0.1 s over our
+> cap — while our own attempt 3 made 0 edits and spent 30 minutes thrashing a
+> malformed `think` tool schema.
+>
+> **Therefore: do not raise the cap as a first move.** The higher-yield fix is a
+> **no-progress abort** (kill an attempt that has written nothing), which
+> reclaims the same $26 without touching the successful distribution. More
+> outcomes were cost by the reviewer churn guards (3 rows) and the same-signature
+> stall guard (`tox` — which blocked a diff that graded *resolved*) than by the
+> clock. §2.2 is the real lever.
+>
+> Two further corrections: `runner.py:58-67` claims a timeout is a free infra
+> bounce — it is not, it burns a dev retry and discards the attempt's
+> `files_changed` and test evidence. And `result.json.model_calls` counts
+> **persona invocations, not HTTP calls** (`keras` reports 6; the true count is
+> ~163), so no per-call arithmetic should use that field.
 
 > **This is also a measurement-integrity defect.** `swebench_adapter.py:4831–4835`
 > asserts the arms are budget-matched — "the shared 5400 s wall clock binds first
@@ -135,7 +161,9 @@ did not replicate (58%).
 
 The overhead is **40 fresh dev conversations for 18 instances** (9 of them eaten
 whole by infrastructure), each re-reading the repo cold: 34.6 M fresh input
-tokens against the control's 6.4 M.
+tokens against the control's ~14 M (**corrected**: 4 control rows recorded zero
+usage from abandoned worker threads, so the ratio is ~2.5×, not the 5.5× an
+earlier draft implied — the *cost* ratio, $8.10 vs $1.20 per resolved, stands).
 
 ---
 
@@ -213,15 +241,33 @@ enough, because a no-op satisfies a negative criterion.
 
 ### Containment: defeated by one command, but not by cheating
 
-All 10 bypasses are `chmod u+w` after `file_editor` hits `EACCES` — the lock is
-applied as the same uid the dev runs as. The 2 unrepaired rows had **committed**
-edits, which a working-tree restore cannot reach.
+All 10 bypasses are a `chmod` widening (`chmod u+w`, `chmod +w`, `chmod -R u+w`)
+after `file_editor` hits `EACCES` — the lock is applied as the **same uid** the
+dev runs as, and `swebench_adapter.py:1839` concedes it is "a strong default plus
+a MEASUREMENT, not a sandbox boundary".
+
+**CORRECTED:** an earlier draft said 2 rows had committed edits. It is **all
+10** — every `restore_errors` entry on every bypassed row reads "the edit was
+committed, not just written". This is structural, not incidental: the chain
+commits before review, so `git checkout --` restores the commit *containing* the
+edit. **The repair layer is ~50% effective by construction.**
+
+Note also that the lock exists **only in `bench/swebench_adapter.py`** — the live
+chain never locks anything, so this is a benchmark-only artifact.
 
 Reading the diffs: **incidental, not gaming.** Four of five sampled are
 append-only regression tests; `canvasapi`'s single rewritten assertion matches
 what the official test patch does. This is the Loop-4 "dev owns the tests"
 mandate colliding with the ImpossibleBench freeze — two deliberate policies that
 contradict each other.
+
+**And it is a regression to an already-diagnosed root cause.**
+`memory/loop4_dev_owns_tests_rewrite.md` records that Loop-4 exists *because*
+"test-first + test-frozen + test-owned-by-another-agent" produced infinite
+ping-pong. The 0444 lock restores all three conditions, while `dev.md:46` says
+"You own code AND its tests", `dev.md:150` says apply every review finding
+verbatim, and the bench's own `_TEST_POLICY` directs the dev to write new tests
+*into the files the lock freezes*.
 
 ---
 
@@ -334,10 +380,20 @@ Stated as findings, not as a committed plan.
   is false on every row and the driver stops at `reviewer_done`.
 
 **Three cheap, high-information experiments** (each falsifies a claim in §2):
-1. **Raise `_SANDBOX_WALL_CLOCK_TIMEOUT_S` to the arm clock and surface the gate's
-   real rejection reason in the retry prompt.** If the rate stays ≤56%, horizon
-   and feedback are not the binding losses. This is a two-line change against the
-   largest identified lever.
+1. **Give the gates a structured reason channel — the highest-yield fix found.**
+   `reviewer_result_json` already *is* a bus with 8 producers, and the empty-diff
+   gate 40 lines away already synthesizes a reviewer-shaped verdict onto it. The
+   production-delta gate simply skipped it: it writes its reason via
+   `log_story_event`, and `_build_initial_message` (`runner.py:1483`) reads only
+   `reviewer_result_json` and `dev_attempts_json` — so **any gate that expresses
+   itself as an event is structurally invisible to the persona it just rejected**.
+   Five call sites close the `exstruct` deadlock; ~45 across 9 files would make
+   every handoff typed. Related and unfixed: `runner.py:2635` claims JSON is
+   validated "via `jsonschema` if installed" — `jsonschema` appears in this repo
+   exactly once, **in that docstring**. Nothing is schema-validated.
+   *(Do NOT raise the sandbox cap as a first move — see §2.1's correction. Add a
+   no-progress abort instead: it reclaims the same $26 and touches nothing that
+   works.)*
 2. **Grade the pre-review commit against the post-review commit** on the rows
    with reviewer cycles. Settles whether the reviewer has ever converted a
    failure into a resolve — currently unknown, and it is the layer's entire
