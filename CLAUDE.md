@@ -125,11 +125,19 @@ The same rule applies to anything else with a worker pool — the test suite
 (`-n 8 --dist loadfile`), selftest, grading. Never run a benchmark step serially
 "to be safe"; run it wide and re-check the losers.
 
-**But do NOT run the full pytest suite while a sweep is in flight.** Measured
-repeatedly on 2026-08-11: the acceptance-oracle files (they boot servers and
-spawn subprocesses) fail under contention with 4 OpenHands workers + ~22
-containers, and pass 96/96 serially in the same tree. That is the "a red test can
-mean nothing too" class — establish the baseline before blaming a diff.
+**Two exceptions, both measured on 2026-08-11, both in the "a red test can mean
+nothing too" class.** The acceptance-oracle files boot servers and spawn
+subprocesses, so they are contention-sensitive:
+
+1. **Do not run the full suite while a sweep is in flight.** Under 4 OpenHands
+   workers + ~22 containers they fail; they pass 96/96 serially in the same tree.
+2. **`-n 8` is too wide for them on this host.** In a full local run at `-n 8`
+   they fail even with nothing else running; at **`-n 4`** — the width CI's full
+   lane uses — they pass. So a local `-n 8` red in
+   `test_acceptance_oracle*.py` / `test_sacrifice_acceptance_harness_hint.py`
+   means re-run at `-n 4` before believing it.
+
+Establish the baseline before blaming a diff.
 
 CI runs two lanes (E6, 2026-08-09): PRs are gated by a <60 s fast lane (the
 suite minus `tests/fast_lane_excludes.txt` — files that boot servers, run

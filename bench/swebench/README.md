@@ -701,6 +701,58 @@ terminating a story after two. Ambiguity resolves toward NOT firing on purpose:
 not firing costs retries the story already owns, while firing wrongly discarded a
 correct patch.
 
+## Machinery hygiene (2026-08-11) — no resolve yield claimed
+
+Four fixes and one deliberate non-fix. None of them is expected to move the
+resolve rate; every named instance sits in the hard core or is now excluded. They
+exist so the number means what it says.
+
+- **The slop detector had the wrong base ref.** Its candidates were
+  `("origin/main", "main", "HEAD~1")` — no `swebench-base`, which is the only
+  correct base inside the benchmark, where the tree is a `--depth 1` clone with
+  harness commits on top. On `alibaba__opensandbox-816` it diffed from the wrong
+  base, scored **pre-existing upstream test files** as slop, and clamped an
+  explicit reviewer `approve` into a nonconvergence park: a $4, 17-minute rework
+  cycle against the reviewer's judgement. `swebench-base` is now first and
+  `HEAD~1` last. **The veto is kept** — it is documented fail-safe behaviour.
+- **And the wrong scope.** Only files this branch actually authored may be
+  scored, measured with `git diff --numstat`, not `--diff-filter`: git reports a
+  pure **mode** change as `M`, so no filter letter separates it — only the line
+  counts do (`0	0	path`). That matters because the 0444 lock injects
+  `100755 -> 100644` flips the dev cannot revert, and those were the single
+  largest consumer of reviewer attention in sweep 2 (**9 of 40 findings**).
+- **`tests_green` was reachable with zero files changed** — it reads the return
+  code and nothing else, so a dev that changed nothing goes green whenever the
+  suite already passed (`conan-io__conan-19750` declared green on an empty tree).
+  Gated by `gates.require_production_delta`, **off by default and on only for the
+  bench**: on the live chain a docs-only, config-only or already-delivered story
+  legitimately changes no production file, and the reviewer rubric has a section
+  saying exactly that.
+- **The empty-diff short-circuit now consults the retry budget.** It went
+  terminal on the first empty diff with the budget untouched: `conan-19750`
+  blocked with **four unused retries** after 429s truncated its analysis-only
+  first turn. With headroom an empty diff is a red attempt; the reviewer is still
+  never called on one.
+- **Containment now RESTORES, not just measures.** `bypassed_count >= 1` on 33 of
+  38 chain rows. Grading strips test edits, so the graded *patch* was always
+  clean — what was not clean is the **chain's own green**. On
+  `ucfopen__canvasapi-716` the dev rewrote an upstream negative test so its
+  missing type check would pass. `restore_locked_test_files` puts every changed
+  graded test file back from its first-lock digest before the next dispatch, then
+  re-locks (`git checkout --` also resets the mode, which is the same mechanism
+  that makes the lock lapse). The dev keeps full read and run access — nothing is
+  hidden, which ImpossibleBench measured as the better setting. A **committed**
+  edit is reported rather than falsely claimed as restored. Recorded per row in
+  `result.json.test_readonly.restored_test_files`.
+
+**Not built: the pre-existing-failure baseline for the dev gate.** Its only named
+beneficiary was `pandas-dev__pandas-63945` — the sole sweep-2 row with the shape
+(≥3 attempts, all red) — and the re-run control rules that instance **broken**, so
+`--only-working` excludes it. `selftest` plus `--only-working` already *is* the
+pre-existing-failure gate; the baseline only looked necessary because the control
+was nine days stale. Building a subtract-the-failures-and-call-it-green path with
+no remaining beneficiary would add a way to declare a broken patch green.
+
 ## Guardrails built in
 
 - **Test edits are stripped and the strip is asserted** in code, at run time
