@@ -1,0 +1,65 @@
+Checking patch tests/test_reasoning_parsers.py...
+Applied patch tests/test_reasoning_parsers.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_1323b24bfda77282: OK (red as expected)
+Checking patch vllm_mlx/reasoning/gemma4_parser.py...
+Applied patch vllm_mlx/reasoning/gemma4_parser.py cleanly.
+SWEBENCH_APPLY_1323b24bfda77282: OK
+============================= test session starts ==============================
+platform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0
+rootdir: /testbed
+configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
+plugins: anyio-4.13.0
+collected 2 items
+
+tests/test_reasoning_parsers.py ..                                       [100%]
+
+=========================== short test summary info ============================
+PASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_delta_straddles_thought_close_then_content_open
+PASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_delta_straddles_implicit_close_only
+============================== 2 passed in 0.06s ===============================
+SWEBENCH_TALLY_1323b24bfda77282: fail_to_pass ============================== 2 passed in 0.06s ===============================
+[4 node outcomes for fail_to_pass -> grade-nodes.log]
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxExtractReasoning::test_reasoning_pattern_chinese
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxExtractReasoning::test_no_reasoning_pattern
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxExtractReasoning::test_explicit_think_tags
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxExtractReasoning::test_short_reasoning_not_stripped
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxExtractReasoning::test_double_newline_split
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_reset_state
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_explicit_think_tag_in_delta
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_explicit_think_tag_with_content
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_end_think_tag_transition
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_buffering_phase
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_direct_content_detected_early
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_content_phase_passthrough
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_undecided
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_undecided_empty
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_content_phase
+PASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_reasoning_reclassifies
+PASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_full_format
+PASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_analysis_only
+PASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_final_only
+PASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_no_channels
+PASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_multiple_analysis_blocks
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_reset_state
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_analysis_channel_switch
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_final_channel_switch
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_commentary_channel_switch
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_message_start_skipped
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_analysis_content_emitted
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_final_content_emitted
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_end_token_stops_message
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_return_token_stops_message
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_commentary_passed_through
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_control_tokens_skipped
+PASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_full_streaming_simulation
+PASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_empty_delta_returns_none
+PASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_no_channel_seen_defaults_to_content
+PASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_thought_open_then_text_routes_to_reasoning
+PASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_delta_with_no_marker_routes_whole_to_current_channel
+PASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_finished_content_phase_routes_to_content
+PASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_reset_state
+============================= 122 passed in 0.16s ==============================
+SWEBENCH_TALLY_1323b24bfda77282: pass_to_pass ============================= 122 passed in 0.16s ==============================
+[124 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_1323b24bfda77282: RESOLVED

@@ -133,3 +133,7 @@ stories/*.md
 # small per-row evidence files (result.json/audit.json/prediction.diff)
 # there so every published table stays backed by committed artifacts.
 bench/swebench/runs/
+
+# selftest per-instance rows are the parallel driver INTERMEDIATE; `selftest.json`
+# is the artifact they merge into and the one source of truth the sweep reads.
+bench/swebench/selftest-rows/

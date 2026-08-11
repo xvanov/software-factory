@@ -6824,6 +6824,144 @@ def _write_selftest_log(instance_id: str, log: str) -> Path:
     return p
 
 
+SELFTEST_ROWS_DIRNAME = "selftest-rows"
+
+
+def _selftest_row_path(instance_id: str) -> Path:
+    return SWE_DIR / SELFTEST_ROWS_DIRNAME / f"{instance_id}.json"
+
+
+def _write_selftest_row(row: dict[str, Any]) -> Path:
+    path = _selftest_row_path(str(row["instance_id"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(row, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _read_selftest_results(path: Path) -> list[dict[str, Any]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        rows = data["results"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return []
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def _merge_selftest_results(
+    rows: list[dict[str, Any]], *, replace_all: bool
+) -> Path:
+    """Write ``selftest.json``, MERGING by instance id unless replacing all.
+
+    ``selftest --instance X`` used to write the whole file from its single row,
+    silently reducing the 19-instance control to one — and ``run-all
+    --only-working`` reads exactly this file to decide which instances to sweep.
+    So one debugging run of one instance could quietly narrow the next sweep to
+    that instance. Merging is the fix; a full run still replaces, because a full
+    run is the authoritative re-measurement.
+    """
+    out = SWE_DIR / "selftest.json"
+    merged: dict[str, dict[str, Any]] = {}
+    if not replace_all:
+        for existing in _read_selftest_results(out):
+            merged[str(existing.get("instance_id"))] = existing
+    for row in rows:
+        merged[str(row.get("instance_id"))] = row
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(
+            {
+                "checked_at": datetime.now(UTC).isoformat(),
+                "results": [merged[k] for k in sorted(merged)],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return out
+
+
+def selftest_parallel(*, timeout_s: int, workers: int) -> None:
+    """The gold-patch control over every pinned instance, fanned out.
+
+    Serial, 19 instances of docker pull + install replay + two graded pytest
+    runs is tens of minutes for a step that spends no model money and gates
+    every sweep. Operator instruction 2026-08-11: run benchmark steps as wide as
+    the host allows.
+
+    Child processes, not threads — the same choice ``run-all`` makes and for the
+    same reason: this module carries global state (the settings cache, sys.path)
+    and each child must own its own. Each child writes its own row via
+    ``_write_selftest_row``; the parent merges them into ``selftest.json`` at the
+    end, so there is no shared writer to race.
+
+    FAIL SAFE: a child that crashes contributes NO row, and the merge simply has
+    nothing for that instance. A missing row is not a working oracle — that is
+    ``selftest_working_instances``' existing rule — so a crashed control narrows
+    the next sweep rather than admitting an unchecked instance.
+    """
+    manifest = _manifest()
+    targets = [str(i["instance_id"]) for i in manifest["instances"]]
+    _assert_oracle_store_complete(manifest["instances"])
+    rows_dir = SWE_DIR / SELFTEST_ROWS_DIRNAME
+    for iid in targets:
+        with contextlib.suppress(OSError):
+            _selftest_row_path(iid).unlink()
+    width = max(1, min(workers, len(targets)))
+    print(
+        f"selftest: {len(targets)} instance(s) on {width} worker(s) "
+        f"(no model spend; docker only)",
+        flush=True,
+    )
+    failures: list[str] = []
+
+    def _one(iid: str) -> tuple[str, int]:
+        rc, _tail = _bench_subprocess(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "selftest",
+                "--instance",
+                iid,
+                "--timeout-s",
+                str(timeout_s),
+            ],
+            timeout_s=timeout_s + 1800,
+            log_path=_selftest_log_path(iid).with_suffix(".driver.log"),
+        )
+        return iid, rc
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=width) as pool:
+        for iid, rc in pool.map(_one, targets):
+            row = _selftest_row_path(iid)
+            ok = row.is_file()
+            if rc != 0 or not ok:
+                failures.append(f"{iid} (rc={rc}, row={'written' if ok else 'MISSING'})")
+            print(
+                f"[ {len(targets)} ] {iid[:52]:52s} rc={rc} "
+                f"row={'ok' if ok else 'MISSING'}",
+                flush=True,
+            )
+
+    rows = [
+        json.loads(_selftest_row_path(iid).read_text(encoding="utf-8"))
+        for iid in targets
+        if _selftest_row_path(iid).is_file()
+    ]
+    out = _merge_selftest_results(rows, replace_all=True)
+    for line in selftest_summary_lines(rows, out):
+        print(line)
+    if failures:
+        print(f"\ncontrol children that did not produce a row ({len(failures)}):")
+        for f in failures:
+            print(f"  {f}")
+        print(
+            "An instance with no row is NOT a working oracle "
+            "(selftest_working_instances refuses it), so the next sweep is "
+            "narrowed rather than silently admitting an unchecked instance."
+        )
+    _ = rows_dir
+
+
 def selftest(instance_id: str | None, *, timeout_s: int) -> None:
     """Grade the instance's own GOLD patch. It must come back RESOLVED.
 
@@ -7005,15 +7143,15 @@ def selftest(instance_id: str | None, *, timeout_s: int) -> None:
             }
         )
         print(f"  gold_resolves={gold_resolves}  ({note})")
+        # Persisted per row, immediately. A 19-instance control that died on row
+        # 18 used to lose all 17 rows before it, because the only write was after
+        # the loop — the same "one re-run destroys the evidence" class the
+        # archive fix closed. It is also what makes the parallel fan-out below
+        # possible: each child writes its own file and the parent merges.
+        _write_selftest_row(results[-1])
 
-    out = SWE_DIR / "selftest.json"
-    out.write_text(
-        json.dumps(
-            {"checked_at": datetime.now(UTC).isoformat(), "results": results}, indent=2
-        ),
-        encoding="utf-8",
-    )
-    for line in selftest_summary_lines(results, out):
+    out = _merge_selftest_results(results, replace_all=instance_id is None)
+    for line in selftest_summary_lines(_read_selftest_results(out), out):
         print(line)
 
 
@@ -11358,6 +11496,16 @@ def main() -> None:
     )
     p.add_argument("--instance", default=None, help="omit to check every pinned instance")
     p.add_argument("--timeout-s", type=int, default=3600)
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=_default_sweep_workers(),
+        help=(
+            "concurrent instances for a whole-manifest control; defaults to as "
+            f"many as this host can hold (currently {_default_sweep_workers()}). "
+            "Ignored with --instance."
+        ),
+    )
 
     p = sub.add_parser(
         "audit", help="verify one run's ledger, prompts and reported numbers"
@@ -11482,7 +11630,13 @@ def main() -> None:
     elif args.cmd == "grade":
         grade(args.instance, run_key(args.arm, args.model), timeout_s=args.timeout_s)
     elif args.cmd == "selftest":
-        selftest(args.instance, timeout_s=args.timeout_s)
+        if args.instance:
+            selftest(args.instance, timeout_s=args.timeout_s)
+        else:
+            # A whole-manifest control fans out; one instance stays in-process so
+            # the children this driver spawns are the same code path an operator
+            # runs by hand.
+            selftest_parallel(timeout_s=args.timeout_s, workers=args.workers)
     elif args.cmd == "audit":
         audit(
             args.instance,
