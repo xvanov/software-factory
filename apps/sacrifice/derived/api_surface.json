@@ -1,8 +1,8 @@
 {
   "app": "sacrifice",
-  "generated_at": "2026-08-10T16:24:42.386282+00:00",
+  "generated_at": "2026-08-11T05:39:08.244899+00:00",
   "generator": "scripts/generate_sacrifice_api_surface.py",
-  "source_commit": "8cdcaaf77b4a8110242792978b60a25817985272",
+  "source_commit": "5799cee6619bd6b412a76ff84fcf84cb806b6bd3",
   "source_dirty": false,
   "scope_note": "ALL discoverable routes, unpruned by design -- this snapshot is not fed to the acceptance author. The cross-check that reads it (tests/test_sacrifice_acceptance_harness_hint.py) narrows to only the routes the hint names; do not remove routes from here to narrow scope, narrow the consumer instead.",
   "routes": [
@@ -357,6 +357,14 @@
     },
     {
       "method": "GET",
+      "path": "/api/goals/draft-count",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/goal_count.py"
+    },
+    {
+      "method": "GET",
       "path": "/api/goals/recurrence-options",
       "required_fields": [],
       "all_fields": [],
@@ -432,6 +440,14 @@
     {
       "method": "GET",
       "path": "/api/notifications",
+      "required_fields": [],
+      "all_fields": [],
+      "body_model": null,
+      "source_file": "backend/app/routes/notifications.py"
+    },
+    {
+      "method": "GET",
+      "path": "/api/notifications/count",
       "required_fields": [],
       "all_fields": [],
       "body_model": null,
