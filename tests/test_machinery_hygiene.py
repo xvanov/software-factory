@@ -145,15 +145,20 @@ def test_the_bench_driver_opts_in(A: Any) -> None:  # noqa: N803
     assert '"require_production_delta": True' in src
 
 
-def test_green_on_an_unchanged_tree_is_red_only_under_the_flag() -> None:
-    # ``_handle_dev_once`` is the per-attempt body; ``handle_dev`` is the
-    # convergence loop around it.
+def test_green_with_no_production_delta_is_red_only_under_the_flag() -> None:
+    """``_handle_dev_once`` is the per-attempt body; ``handle_dev`` is the loop.
+
+    The question is about the BRANCH, not the attempt — the per-attempt form was a
+    regression that blocked two stories which had already landed green fixes, and
+    is pinned by ``test_production_delta_is_branch_wide.py``.
+    """
     src = inspect.getsource(H._handle_dev_once)
     assert 'getattr(app_config.gates, "require_production_delta", False)' in src
-    assert "dev_green_with_no_changes" in src
-    # The condition must require BOTH the flag and an empty file list, or it would
-    # fail every legitimate no-delta story.
-    assert "not (run_res.files_changed or [])" in src
+    assert "dev_green_with_no_production_delta" in src
+    assert "_branch_has_production_delta(" in src
+    assert "not (run_res.files_changed or [])" not in src, "the per-attempt form was the bug"
+    # And only a CONFIRMED absence blocks: an undeterminable delta keeps the green.
+    assert "if delta is False:" in src
 
 
 # --------------------------------------------------------------------------- #
