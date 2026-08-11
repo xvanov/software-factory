@@ -2628,12 +2628,36 @@ def why_cmd(
     # opening the log file. ``factory trace`` shows the full history.
     from factory.chain.event_log import read_story_events
 
-    recent = read_story_events(
-        story.id,
-        software_factory_root=_FACTORY_ROOT,
-        slug_hint=story.slug,
-        limit=8,
+    # ONE read of the whole log, sliced two ways below: the tail the operator
+    # skims, and the dev-loop stop reason promoted out of it. Two reads would
+    # also have added a second ``story.id`` type error to a file that already
+    # carries one.
+    _all_events = read_story_events(
+        int(story.id or 0), software_factory_root=_FACTORY_ROOT, slug_hint=story.slug
     )
+    recent = _all_events[-8:]
+
+    # The dev convergence loop's stop reason, promoted out of the tail.
+    #
+    # ``dev_inner_loop_stopped`` says the dev was CUT SHORT by a guard —
+    # a spend cap, the wall clock, the attempts cap — rather than having run out
+    # of ideas. It went only to the story log, and the tail above shows the last
+    # 8 events, so on any story that then went to review it had already scrolled
+    # off: the operator saw "dev didn't finish" and not "a $2/h ceiling stopped
+    # it after one attempt". Measured on bench sweep 2, that hid four truncated
+    # rows, one of which is a published capability datapoint. Scan the WHOLE log
+    # and print the most recent one as its own field.
+    _stops = [e for e in _all_events if e.get("event") == "dev_inner_loop_stopped"]
+    if _stops:
+        _last = _stops[-1]
+        dev_loop_line = (
+            f"dev inner loop CUT SHORT: reason=[bold yellow]{_last.get('reason')}[/bold yellow]"
+            f"  inner_attempts={_last.get('inner_attempts')}"
+            f"  dev_retries={_last.get('dev_retries')}"
+            f"  (x{len(_stops)} this story)"
+        )
+    else:
+        dev_loop_line = "dev inner loop: (never stopped early)"
     event_lines: list[str] = []
     for ev in recent:
         ts = ev.get("ts", "?")[11:19] if ev.get("ts") else "?"
@@ -2672,6 +2696,7 @@ def why_cmd(
         f"error=[bold]{story.error or '(none)'}[/bold]",
         f"branch={story.github_branch}  pr=#{story.github_pr_number}",
         f"next legal transitions: {next_edges_str}",
+        dev_loop_line,
         projection_line + remedy,
         "",
         events_block,

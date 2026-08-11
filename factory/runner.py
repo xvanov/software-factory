@@ -572,6 +572,12 @@ class RunResult:
     # back for free as "infra". Defaults False so every non-infra return path
     # (including a normal red run) is correctly counted as a real attempt.
     premodel_infra: bool = False
+    # How many times this run ended on prose and had to be nudged to continue
+    # (see ``_ended_on_prose``). 0 on a healthy run. Non-zero means the model
+    # stopped mid-thought and the harness recovered it — the class that cost
+    # ``jsonpickle-588`` and ``vyper-4801`` in sweep 2 — and it is recorded so
+    # "the harness had to rescue this" is visible rather than invisible.
+    prose_continuations: int = 0
     # Whether the usage/cost numbers on this result are TRUSTWORTHY, as opposed
     # to merely zero. Three-valued on purpose:
     #   None  — not applicable: no model call was attempted (dry-run, pre-model
@@ -1745,6 +1751,115 @@ _MAX_OUTPUT_RETRIES = 4
 _MAX_OUTPUT_RETRY_CEILING = 65536
 
 
+# A sandbox turn must never END ON PROSE.
+#
+# Measured over sweep 2's 35 dev trajectories: SEVEN ended with an agent
+# ``MessageEvent`` carrying neither a tool call nor the persona's required
+# terminal marker — the model stopped mid-thought and the SDK read "assistant
+# message with no tool call" as "the agent is done". The cost is not
+# theoretical:
+#
+#   * ``jsonpickle-588`` — BOTH dev attempts ended that way, the second on the
+#     literal words "Let me first fix the syntax error and". The tree was one
+#     2-line syntax error from green; the stall detector then read "never re-ran
+#     the tests" as "stuck" and blocked the story terminally.
+#   * ``vyper-4801`` — twice, same shape.
+#   * ``conan-19750`` — once, on an analysis-only first turn.
+#   * ``getmoto-9841`` and ``keras-22642`` also did it, and resolved only
+#     because a LATER attempt happened to run. That is luck, not a mechanism.
+#
+# So a run that ends this way is not a finished attempt. Send ONE continuation
+# message into the SAME conversation — which keeps the whole context and costs
+# no dev retry — and run again. Capped at two continuations, strictly below this
+# repo's hard loop cap of 3 (CLAUDE.md), so the guard can never become the
+# unreachable branch.
+_MAX_PROSE_CONTINUATIONS = 2
+
+_PROSE_CONTINUATION_NUDGE = (
+    "STOP. Your last turn ended in prose with no tool call and no terminal "
+    "marker, so NOTHING you just described was applied — the working tree is "
+    "unchanged by that turn. Do not restate the plan and do not summarise. "
+    "Continue from exactly where you stopped by CALLING A TOOL NOW: make the "
+    "edit you were about to make, then run the test command. Only when the work "
+    "is genuinely finished, end with the terminal line your instructions "
+    "require."
+)
+
+# What a FINISHED turn looks like, per persona. A persona with no entry is not
+# policed: without a declared terminal contract there is no way to tell a
+# deliberate ending from a truncated one, and nudging a legitimate ending would
+# spend money to make the run worse. ``dev`` declares both markers in its own
+# prompt — ``SELF_SUMMARY:`` for ordinary completion, ``UNDERSPECIFIED:`` for a
+# deliberate refusal, which is a real ending and must never be nudged.
+_TERMINAL_MARKERS: dict[str, tuple[str, ...]] = {
+    "dev": ("SELF_SUMMARY:", "UNDERSPECIFIED:"),
+}
+
+
+def _ended_on_prose(conversation: Any, persona: str) -> bool:
+    """Did this run stop mid-thought instead of on a decision?
+
+    True only when ALL of these hold, which is what makes it a discriminator
+    rather than a description of every run:
+
+    1. the persona has a declared terminal contract (see ``_TERMINAL_MARKERS``);
+    2. the LAST event is an agent/assistant ``MessageEvent`` — a run that ends
+       on an ``ObservationEvent`` hit the iteration or wall-clock cap, which is
+       a different failure with its own accounting, and one that ends on a
+       ``ConversationErrorEvent`` is an error path;
+    3. that message carries none of the persona's terminal markers;
+    4. no ``finish`` tool call happened anywhere in the run.
+
+    Why all four: on sweep 2, 23 of 35 trajectories ended on an agent
+    ``MessageEvent`` with no ``finish`` call — including 10 that RESOLVED —
+    because delivering ``SELF_SUMMARY:`` in a plain final message is the normal,
+    correct ending. Condition 3 is what separates the 7 truncations from those
+    23 endings. A rule missing it would nudge two thirds of all runs, including
+    every successful one.
+
+    Defensive throughout: a shape change in the SDK must return False (do not
+    continue) rather than raise. Continuing on a bad read would spend money on a
+    finished run; not continuing merely restores today's behaviour.
+    """
+    markers = _TERMINAL_MARKERS.get(persona)
+    if not markers:
+        return False
+    try:
+        state = getattr(conversation, "state", None)
+        events = list(getattr(state, "events", []) or []) if state is not None else []
+    except Exception:  # noqa: BLE001 — a telemetry read must not break the run
+        return False
+    if not events:
+        return False
+    for ev in events:
+        try:
+            name = (
+                getattr(ev, "tool_name", None)
+                or getattr(ev, "name", None)
+                or getattr(getattr(ev, "action", None), "tool", None)
+                or ""
+            )
+        except Exception:  # noqa: BLE001
+            name = ""
+        if str(name).lower() == "finish":
+            return False
+    last = events[-1]
+    try:
+        kind = (getattr(last, "kind", None) or type(last).__name__).lower()
+        if "message" not in kind:
+            return False
+        source = str(getattr(last, "source", "") or "")
+        role = str(getattr(last, "role", "") or source)
+        if role.lower() not in {"assistant", "agent"}:
+            return False
+        text = _stringify_message_content(last)
+    except Exception:  # noqa: BLE001
+        return False
+    if not text:
+        return False
+    return not any(m in text for m in markers)
+
+
 PERSONA_ITERATION_CAPS: dict[str, int] = {
     # Bumped substantially after D007 showed 60/100 was too tight: onboarder
     # needs to read enough code to write coherent context docs, and
@@ -2101,6 +2216,12 @@ async def sandbox_run(
     # ``premodel_infra`` flag fixed it for the post-model-crash path and this
     # path was never covered.
     _live_conversation: dict[str, Any] = {}
+    # How many prose-only endings this run had to be nudged past. Surfaced on
+    # ``RunResult`` and in the ledger row's ``error`` field is NOT the right
+    # channel — this is not an error — so it rides the result object and the
+    # story event. Zero on every healthy run, which is what makes a non-zero
+    # value worth looking at.
+    _prose_continuations: dict[str, int] = {}
 
     def _snapshot_live_usage() -> None:
         """Best-effort usage read from a conversation that has NOT returned.
@@ -2189,6 +2310,16 @@ async def sandbox_run(
         try:
             conversation.send_message(initial_user_text)
             conversation.run()
+            # A turn that ended on prose is not a finished attempt — see
+            # ``_ended_on_prose``. Continue the SAME conversation so the whole
+            # context (and the sandbox's working tree) survives; a fresh attempt
+            # would re-read the repo from scratch and consume a dev retry.
+            for _cont in range(_MAX_PROSE_CONTINUATIONS):
+                if not _ended_on_prose(conversation, persona):
+                    break
+                _prose_continuations["n"] = _cont + 1
+                conversation.send_message(_PROSE_CONTINUATION_NUDGE)
+                conversation.run()
             stats = conversation.conversation_stats.get_combined_metrics()
             tok = stats.accumulated_token_usage
             t_in = int(getattr(tok, "prompt_tokens", 0) or 0)
@@ -2442,6 +2573,7 @@ async def sandbox_run(
         recent_tool_calls=recent_tool_calls,
         self_summary=self_summary,
         usage_reliable=_usage_meta.get("reliable", True),
+        prose_continuations=int(_prose_continuations.get("n", 0)),
     )
 
 

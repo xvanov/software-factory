@@ -2476,6 +2476,45 @@ def _model_mix(events_dir: Path, *, nominal: str | None) -> dict[str, Any]:
     }
 
 
+def _dev_inner_loop_stops(
+    state_root: Path, story_id: int, slug: str
+) -> list[dict[str, Any]]:
+    """Every ``dev_inner_loop_stopped`` record this run wrote, oldest first.
+
+    Read from the story log rather than plumbed through the handler return
+    value: the driver calls ``_invoke_handler`` and discards its
+    ``HandlerResult``, and the log is where the chain already writes this. It is
+    also the only place it was written — ``state/logs/`` is named in CLAUDE.md as
+    carrying signals that reach no event stream, and this is one of them.
+
+    Best-effort. A missing log is an empty list, never an exception: an
+    observability read must not be able to fail a measured row.
+    """
+    try:
+        from factory.chain.event_log import read_story_events
+
+        events = read_story_events(
+            story_id, software_factory_root=state_root.parent, slug_hint=slug
+        )
+    except Exception:  # noqa: BLE001 — telemetry must never fail the row
+        return []
+    return [
+        {k: v for k, v in ev.items() if k not in {"story_id", "event"}}
+        for ev in events
+        if ev.get("event") == "dev_inner_loop_stopped"
+    ]
+
+
+# The global spend caps every bench root runs under. Explicit because the
+# settings model's own defaults ($2/h, $10/day) silently truncated the measured
+# arm — see the comment at the write site in ``_build_bench_root``. Named at
+# module scope so a test can pin them and ``result.json`` can record them.
+_BENCH_ROOT_CAPS: dict[str, float] = {
+    "hourly_spend_usd": 100.0,
+    "daily_spend_usd": 500.0,
+}
+
+
 def _build_bench_root(inst: dict[str, Any], repo: Path, root: Path) -> Path:
     """A minimal factory root: own state db, own settings, app -> the clone.
 
@@ -2519,7 +2558,30 @@ def _build_bench_root(inst: dict[str, Any], repo: Path, root: Path) -> Path:
         json.dumps(cfg, indent=2), encoding="utf-8"
     )
 
-    settings = {"dev_convergence": {"enabled": True}}
+    # The global spend caps MUST be written explicitly, because the model
+    # defaults are ``hourly_spend_usd = 2.0`` / ``daily_spend_usd = 10.0`` and a
+    # settings file that omits them inherits those — which made a $2/h ceiling
+    # the TIGHTEST constraint in the whole benchmark, four times tighter than the
+    # dev loop's own ``per_story_budget_usd = 8.0``.
+    #
+    # Measured on sweep 2: ``dev_inner_loop_stopped: hourly_cap`` truncated 4 of
+    # 38 chain rows, including ``vyperlang__vyper-4801`` on the factory arm after
+    # exactly ONE inner attempt. That row is a published capability datapoint
+    # that is partly a measurement of this default.
+    #
+    # These are deliberately NON-BINDING, not unbounded. A bench row stays
+    # dollar-bounded by ``dev_convergence.per_story_budget_usd`` ($8, the knob
+    # that exists for this), time-bounded by the 5400 s wall clock and the tick
+    # cap, and sweep-bounded by ``run-all``'s spend guard, which re-checks ACTUAL
+    # accumulated cost against the repo's real caps ($120/h, $300/day) after
+    # every completed instance and emits the $50/$75/$100 operator notices. Three
+    # purpose-built limits remain; what is removed is an inherited default nobody
+    # chose. Recorded in ``result.json.bench_caps`` so the number a row ran under
+    # is disclosed rather than implied.
+    settings = {
+        "dev_convergence": {"enabled": True},
+        "caps": dict(_BENCH_ROOT_CAPS),
+    }
     (root / "factory_settings.yaml").write_text(
         json.dumps(settings, indent=2), encoding="utf-8"
     )
@@ -3617,6 +3679,16 @@ def run_factory(
         # frozen before the dev's first model call. See the section comment above
         # ``_ACCEPTANCE_STORED_NAME`` for the four integrity properties.
         "acceptance": acceptance,
+        # WHY the dev's run-until-green loop stopped short, when it did. This
+        # existed only in ``state/logs/<story>.log`` — never in an events stream,
+        # never in ``result.json`` — so a row truncated by a guard was
+        # indistinguishable from a row where the dev simply gave up. On sweep 2
+        # that hid 4 rows cut off at the inherited $2/h default, one of them a
+        # published capability datapoint (``vyper-4801``).
+        "dev_inner_loop_stops": _dev_inner_loop_stops(root / "state", story_id, slug),
+        # The caps this row actually ran under, so the budget is disclosed rather
+        # than inferred from whatever the settings model defaults to today.
+        "bench_caps": dict(_BENCH_ROOT_CAPS),
     }
     out = _write_result(instance_id, arm, result)
     _print_run_summary(result, out)

@@ -590,6 +590,46 @@ which the gold-patch control surfaced before any model spend:
    unclosed brackets that can never match. Repaired at fetch by selecting the
    whole test function — a strict superset, so grading can only get stricter.
 
+## The bench root's spend caps are explicit (fixed 2026-08-11)
+
+`_build_bench_root` used to write a settings file containing only
+`{"dev_convergence": {"enabled": true}}`. Everything else fell back to the
+settings **model defaults** — including `caps.hourly_spend_usd = 2.0` and
+`caps.daily_spend_usd = 10.0`.
+
+So a $2/h ceiling was the tightest constraint in the entire benchmark: **four
+times tighter** than the dev convergence loop's own
+`per_story_budget_usd = 8.0`, and tighter than the ~$3/instance the sweep guard
+projects. The dev inner loop re-checks the global caps mid-flight (by design —
+the settings enforcer only gates dispatch), so it stopped as soon as the
+isolated ledger's last hour reached $2.
+
+Measured on sweep 2: `dev_inner_loop_stopped: hourly_cap` truncated **4 of 38
+chain rows** — `vyper-4801` (factory) after exactly **one** inner attempt,
+plus `jsonpickle-588`, `rapid-mlx-289` and `vyper-4801` on `solo-noreview`.
+`vyper-4801` is one of the three rows the post-mortem calls a *capability* gap;
+part of that row was a spend default nobody chose.
+
+`_BENCH_ROOT_CAPS` now writes them explicitly, deliberately **non-binding**
+rather than unbounded. A bench row stays bounded by three purpose-built limits:
+`per_story_budget_usd` ($8, the knob that exists for a story's dollar cost), the
+5400 s wall clock plus the 16-tick cap, and `run-all`'s own spend guard, which
+re-checks **actual** accumulated cost against the repo's real caps ($120/h,
+$300/day) after every completed instance and emits the $50/$75/$100 operator
+notices. The caps a row ran under are recorded in `result.json.bench_caps`, so
+the budget is disclosed rather than inferred from whatever the settings model
+defaults to that week.
+
+**This is a per-row behaviour change between sweeps** and must be disclosed in
+any pre-registration that compares across it.
+
+`result.json.dev_inner_loop_stops` carries every `dev_inner_loop_stopped` record
+the row produced. That signal previously existed **only** in
+`state/logs/<story>.log` — no event stream, no `result.json` — so a row cut
+short by a guard was indistinguishable from one where the dev ran out of ideas.
+`factory why` now prints the most recent one as its own field, scanned over the
+whole log rather than the 8-event tail it used to scroll off.
+
 ## Guardrails built in
 
 - **Test edits are stripped and the strip is asserted** in code, at run time
