@@ -132,3 +132,98 @@ slowest instance rather than by batch count.
 Evidence backed up before the run:
 `/home/k/backups/sf-bench-openhands-control-2026-08-11/` (1,789 files, SHA256
 verified) — `runs/` is gitignored and a re-run destroys it.
+
+---
+
+# Amendment 1 — 2026-08-11, still BEFORE any published data
+
+**Why this exists.** Everything above was written and committed on 2026-08-11
+before PRs #315–#320 existed. Two launches were then attempted and **neither
+produced a publishable arm result**; both failed for reasons the text above did
+not anticipate, and both were fixed in code that is now in the tree. Amending is
+therefore mandatory: running under behaviour the pre-registration does not
+disclose would make the disclosure list false.
+
+Nothing above this line is altered. This section only **adds** disclosures and
+**supersedes** one operational sentence. It is committed before the run; the
+commit order is the proof, and no outcome section exists yet.
+
+## The two aborted launches, disclosed in full
+
+| launch | width | what happened | rows | spend | evidence |
+|---|---:|---|---:|---:|---|
+| 1 | 18 | Every row died on `LLMRateLimitError` against the shared Azure `deepseek-v4-pro` deployment. 20 trajectories carried the event; 5 "completed" rows had `files_touched: []` and no `SELF_SUMMARY` — the sandbox never worked. | 0 usable | ~$4.10 | destroyed by launch 2 |
+| 2 | 4 | Killed by the operator at 6/18. **5 of the 6 rows landed in `blocked_tests_need_clarification` with a green test tail** — `require_production_delta` asked "did THIS ATTEMPT touch a non-test file" instead of "does the BRANCH carry a production delta", so a green attempt that only re-ran tests was forced red. 1 resolve in 5 graded rows; `pyinfra-1665`, a sweep-2 resolve, regressed to `right_place_wrong_fix`. | 6 of 18 | $23.41 | `/home/k/backups/sf-bench-replay-attempt2-aborted-2026-08-11/` (176 files, SHA256 verified) |
+
+Both are **infrastructure/harness losses** under criterion 4, not outcomes: no
+arm result was computed, reported or published from either. But criterion 4 says
+such a loss "may be re-run **once**". This is the **third** launch, so the strict
+reading of that clause is exceeded, and it is recorded here rather than argued
+away. Launch 2's six rows are published alongside the replay in the report
+whether or not they differ, per the same criterion's "both outcomes published"
+requirement.
+
+Launch 2's row table, verbatim from the backed-up `result.json` files, so it can
+be compared against the replay's rows:
+
+```
+alibaba__opensandbox-816    blocked_tests_need_clarification  green=False diff=5787B  retries=3 rc=1  right_place_wrong_fix  $6.17
+harumiweb__exstruct-113     blocked_tests_need_clarification  green=False diff=6883B  retries=2 rc=0  wrong_place            $5.90
+hkuds__openharness-217      reviewer_done                     green=True  diff=1447B  retries=0 rc=0  resolved               $1.62
+pyinfra-dev__pyinfra-1665   blocked_tests_need_clarification  green=False diff=1357B  retries=2 rc=1  right_place_wrong_fix  $3.30
+tox-dev__tox-3931           blocked_tests_need_clarification  green=False diff=3314B  retries=2 rc=0  right_place_wrong_fix  $4.67
+ucfopen__canvasapi-716      blocked_tests_need_clarification  green=False diff=1092B  retries=2 rc=1  right_place_wrong_fix  $1.75
+```
+
+Note `tox-3931`: deviation 5's diff-capture fix **works** — 0 B became 3,314 B —
+and the recovered patch still grades `right_place_wrong_fix`. **One of the two
+gains the 12/18 projection rests on is therefore already dead before this run
+starts**, and the projection is not revised downward to protect it. It stays at
+12/18 as written, and is still a projection, not a target.
+
+## Deviations 11–15 — everything that landed after the text above
+
+11. **`gates.require_production_delta` asks the BRANCH (#317).** Deviation 8's
+    gate is re-implemented: it diffs the story branch against its base for any
+    non-test change, rather than reading one attempt's `files_changed`. It
+    **fails open** — when the delta cannot be determined the green is kept — on
+    the rule that a gate for a rare "green on an empty tree" must never degrade
+    to "block every story", which is exactly what launch 2 did. Scope is
+    unchanged: bench driver only.
+12. **The empty-diff → dev-retry route is bounded (#319).** Deviation 9 as
+    originally written could route an empty diff back to dev without consuming
+    the retry budget, i.e. unboundedly. It now consumes the budget and stops at
+    the cap. Four review findings from the same PR ride along and are not
+    separable from it.
+13. **Sweep width is provider-bound at 4 (#315).** `run-all --workers` now
+    defaults to `_PROVIDER_SAFE_WORKERS = 4` rather than the host width, because
+    the quota is tokens/minute on one shared deployment and SDK backoff
+    (`num_retries=5`, `retry_multiplier=8.0`, `retry_max_wait=64`) cannot buy
+    throughput above it. Free steps (`selftest`, grading, pytest) still run at
+    host width. **This supersedes the Spend section's "Run at full width (18
+    workers, one batch)" sentence**, which is now known to be the instruction
+    that destroyed launch 1. Wall clock is consequently bounded by batching plus
+    the slow tail, ~2 h, not by the slowest instance alone.
+14. **`factory-self-deploy.service` pins `PATH` (#318)** and **the sacrifice
+    `security.md` context doc was refreshed (#320)**. Neither touches the bench
+    driver, the chain handlers the bench exercises, or grading. Disclosed
+    because they are in the tree the replay runs from, not because a mechanism
+    is claimed.
+15. **The bench run tree is empty at launch.** Launch 2's `runs/` and its
+    `sweep-factory.json` were moved to the backup above and removed from the
+    worktree, so no aborted row can blend into the replay's report. `#316` (a
+    sacrifice `api_surface` snapshot refresh) is in the tree for the same
+    reason as 14.
+
+**Attribution is unchanged and gets weaker, not stronger.** The disclosed set is
+now fifteen changes, not ten. A difference between sweep 2 and this replay is
+attributable to the **set**, never to a member, and criterion 6 stands: the
+`factory` − `openhands` pair inside this manifest is the only comparison that
+holds the model fixed.
+
+## Spend, restated
+
+Launches 1 and 2 already spent **~$27.51**. The replay itself is still projected
+at **~$50** for 18 rows. Operator notices at $50/$75/$100 fire on actual
+accumulated spend and are reported when crossed. Caps unchanged: $120/h,
+$300/day.
