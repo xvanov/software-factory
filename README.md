@@ -9,24 +9,56 @@
 ![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)
 ![Typed](https://img.shields.io/badge/types-mypy-blue)
 
-The thesis under test: **harness quality beats model size.** A well-instrumented pipeline of small, verifiable steps — each gated by real tests and a live runtime smoke check — ships production code unattended on models ~10× cheaper than frontier subscriptions. It does ship: 117 stories merged — 24 of them edits to the factory itself. (Two honesty caveats, audited 2026-08-07: the `deployed` story state records a *merge* — real deploys are `deploy_disabled_in_config` on every app and have never executed; and of this repo's own 173 merged PRs, ~25 came through the chain — the operator authored the rest.)
+The thesis under test: **harness quality beats model size.** A well-instrumented pipeline of small, verifiable steps — each gated by real tests and a live runtime smoke check — ships production code unattended on models ~10× cheaper than frontier subscriptions. It does ship: 138 sacrifice stories, 98 of them reaching the terminal `deployed` state, at ~1.0/day currently. (Two honesty caveats, re-audited 2026-08-11: the `deployed` state records a *merge* — **109 deploy actions have produced 0 successes, 0 smoke checks and 0 health checks**, so it has never once meant deployed; and of this repo's own **248** merged PRs, **24 (9.7%)** came through the chain — the operator authored the rest.)
 
-**The thesis is not proven; the gap is closing but the cost gap is not.**
-Externally graded on SWE-rebench with a hidden oracle, one pinned set of 19
-instances, two sweeps (2026-08-04 five arms; 2026-08-10 re-measuring the
-changed factory — [current result](bench/swebench/results.md), sweep-1 archive
-re-derivable). One row per (harness, model set); latest measurement shown.
-**Harness + models are the two leftmost columns because every other number is
-a property of that pair** — the table scrolls horizontally, those stay first.
-Token and wall-clock columns are **exact measurements**; the dollar columns
-are **derived** (see the cost-methodology note below the table).
+## The headline result: the chain is behind a single agent
+
+**Same 18 instances, same dev model, same week, same grading.** This is the
+matched comparison — it replaces the cross-sweep one that previously suggested
+parity.
+
+| arm | resolved | rate | total $ | $/resolved | median wall |
+|---|---:|---:|---:|---:|---:|
+| **this factory's chain** | **10/18** | **56%** | 81.00 | **8.10** | 30.1 min |
+| **one OpenHands agent, no chain** | **12/18** | **67%** | 14.34 | **1.19** | 7.6 min |
+| Claude Code CLI (frontier reference) | 11/14 | 79% | 30.18 | 2.74 | 4.4 min |
+
+Paired chain vs agent: both 9 · chain-only 1 · agent-only 3 · neither 5,
+**McNemar exact p = 0.625** — descriptive, not a proven delta. k ≥ 3 is the bar.
+
+**Three things this table does not say, stated so it cannot be misread:**
+
+- **56% is charitable to us.** The benchmark grades the *diff*; the live chain
+  ships on a *verdict*. Three of the ten resolves ended in blocked states that
+  would never merge. **Under live-chain semantics the factory is 7/18 = 39%.**
+- **Machinery work is a spent lever.** Fourteen PRs of fixes recovered exactly
+  the three rows they targeted and moved the rate by **zero** (+3/−3 against
+  sweep 2's identical 10/18), while cost per resolved went $5.02 → $8.10.
+- **This suite cannot settle the operator's thesis at all.** `gate_enforced` is
+  `false` on every row and the driver stops at `reviewer_done` — no PM, SM,
+  contract, merge gate or deploy.
+
+The full causal account — horizon slicing, gate signals the dev cannot decode, a
+verdict layer operating at chance, and a workspace that corrupts its own evidence
+— is in **[POSTMORTEM-2026-08-11.md](POSTMORTEM-2026-08-11.md)**.
+
+### Every arm, every sweep
+
+Externally graded on SWE-rebench with a hidden oracle, one pinned manifest, three
+sweeps (2026-08-04 five arms; 2026-08-10 re-measuring the changed factory;
+2026-08-11 the replay + matched control — [current result](bench/swebench/results.md),
+earlier archives re-derivable). One row per (harness, model set); latest
+measurement shown. **Harness + models are the two leftmost columns because every
+other number is a property of that pair.** Token and wall-clock columns are
+**exact measurements**; the dollar columns are **derived** (see the
+cost-methodology note below the table).
 
 **Two denominators appear below and they are not interchangeable.** Rows dated
 2026-08-11 run the **18-instance working set** (`pandas-63945` was ruled a broken
 instance by the re-run gold-patch control — its `fail_to_pass` id is a network
 fixture and grading runs `--network none`). Earlier rows are over 19. Any
 comparison between the two must be re-derived on the same 18 first; the
-2026-08-11 block below does exactly that.
+headline table above does exactly that.
 
 | harness | models — role | solved | rate | fresh tokens in | cache read | tokens out | median wall / instance | total $ | $ / solved | runs | last measured |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|:-:|---|
@@ -80,10 +112,20 @@ Reading it:
   (7/12) against sweep 2's 71%, recall 70% (7/10). Three rows ended blocked while
   producing a resolving patch. Sweep 2's one genuinely positive finding is not
   established.
-- **The reviewer still buys no resolves** (10/19 vs 9/19 without it, McNemar
-  p=1.000) — and the earlier "−29% cost without the reviewer" finding **did
-  not replicate** ($50.18 vs $49.89). What it does buy is verdict precision
-  (71% vs 53%).
+- **The reviewer buys no resolves, and on this data it is net-negative for
+  shipped work.** 10/19 vs 9/19 without it (McNemar p=1.000), and the earlier
+  "−29% cost without the reviewer" finding **did not replicate** ($50.18 vs
+  $49.89). Sweep 2's compensating claim — that it buys verdict precision —
+  **also did not replicate** (58%, not 71%). Meanwhile it blocked **3 resolving
+  patches** in the replay, and **10 of its 18 blocking findings are about test
+  files**, which graded predictions strip. Upper bound on the entire
+  reviewer + oracle apparatus: ≤1 instance.
+- **The acceptance oracle is unenforced in this suite and often vacuous.**
+  `gate_enforced` is `false` on all 18 rows, yet authoring sits on the critical
+  path before the dev's first call and cost $1.03. **7 of 18 oracle files contain
+  zero asserts** — the persona mandates HTTP-only tests and 7 of these repos are
+  libraries with no HTTP surface. Turning the gate *on* would have blocked 7 rows,
+  3 of which resolved: roughly 10/18 → 7/18.
 - **What produces lift is tooling, not orchestration** (sweep 1): 53% with a
   real editor and tool-calling vs 6% with neither, p=0.004 — still the only
   significant pairwise result on the DeepSeek ladder.

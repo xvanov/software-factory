@@ -365,3 +365,43 @@ of sweep 2 did not replicate, and at these interval widths it never could have.
 `exstruct-113`. Both rows completed and `rapid-mlx-289` resolved, so at 4 workers
 the SDK's retries absorbed them — the behaviour #315 predicted, and the reason 4
 is the right default rather than 18.
+
+---
+
+# Correction 1 — 2026-08-11, after publication
+
+Four independent evidence re-reads of the run tree (see `POSTMORTEM-2026-08-11.md`)
+found four errors in the outcome section above. The outcome text is left intact;
+these supersede it.
+
+1. **The "both defects trace to the dev's gitlink surgery" attribution is WRONG
+   for `line-bot-981`.** That row's full trajectories contain **no dev git
+   plumbing at all** — only a chain `worktree_create`. `git worktree add` does not
+   materialise submodules as gitlinks the way a clone does, so the prepared tree
+   carried `line-openapi` as plain files and the diff against the pinned base SHA
+   necessarily contains the teardown. It is a **chain workspace-preparation**
+   defect, not a dev-behaviour one. `tox-3931` IS dev-side (`git
+   --git-dir=<repo>/.git commit` appears in its trajectory). A prompting fix would
+   not have closed the second hole.
+2. **The arms are NOT budget-matched, and the adapter claims they are.**
+   `swebench_adapter.py:4831–4835` asserts "the shared 5400 s wall clock binds
+   first for both". Iteration caps do match (600); **per-conversation wall clock
+   does not**. Each chain dev attempt is capped at **1,800 s**
+   (`factory/runner.py:68`), while the control runs one 5,400 s conversation. The
+   control's winning `exstruct-113` trajectory took 1,807 s — longer than any
+   chain attempt may live — and `vyper-4801`'s three chain attempts each died at
+   1,800 s with `files_touched: []`. This is an **undisclosed arm asymmetry inside
+   a disclosed identical-budget claim**, and it biases in the chain's favour: the
+   true chain-vs-solo gap may be larger than measured.
+3. **`exstruct-113` is classified "not machinery-attributable" only because
+   criterion 2 models diffs, not feedback channels.** Two of its four attempts
+   died to infrastructure; the other two deadlocked because the production-delta
+   gate reported `Summary: tests not green after run` directly above a tail
+   reading `11 passed in 0.82s`, with no reason given.
+4. **A live-chain-equivalent number is missing and should have been reported.**
+   The benchmark grades the diff; the live chain ships on a verdict. Three of the
+   ten resolves (`tox-3931`, `canvasapi-716`, `jsonpickle-588`) ended in blocked
+   states that would never merge. **Under `reviewer_done`-only semantics the
+   factory is 7/18 = 39%.**
+
+Minor: the count of vacuous (zero-assert) acceptance-oracle files is **7 of 18**.
