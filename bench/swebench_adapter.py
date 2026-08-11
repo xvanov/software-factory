@@ -127,7 +127,9 @@ import argparse
 import concurrent.futures
 import contextlib
 import difflib
+import gzip
 import hashlib
+import io
 import json
 import math
 import os
@@ -144,6 +146,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import zlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -8033,13 +8036,72 @@ _ARCHIVED_ROW_EXTRAS = (
     _ACCEPTANCE_SPEC_NAME,
     _ACCEPTANCE_EVENTS_NAME,
 )
+# DIAGNOSTIC evidence: what the run DID, as opposed to how it SCORED.
+#
+# ``_ROW_ARTIFACTS`` and ``_ARCHIVED_ROW_EXTRAS`` above snapshot the SCORING
+# evidence — the verdict, the audit, the graded patch. Every root-cause finding
+# in the sweep-2 post-mortem came from a different category: the UNSTRIPPED diff
+# (the arm's real edits, including the ones the strip removes), the agent's
+# action trail, and the sweep's own per-row log. Those lived only in
+# ``bench/swebench/runs/``, which ``.gitignore`` excludes and
+# ``_reset_run_artifacts`` deletes at the top of the next run of the same cell.
+# Consequence, measured: the published archive could not reproduce its own
+# analysis, and the flagship ``tox-3931`` finding survived only because an
+# operator hand-copied git objects out of an ephemeral cache.
+#
+# Sized against the PER-SWEEP subset, not the whole runs tree (the main
+# checkout's is 2.2 GB / 101,877 files — cumulative across every sweep ever
+# run). One 19-instance × 3-arm sweep is ~58 MB raw, ~10 MB stored: every entry
+# is gzipped with a zeroed mtime, so re-archiving identical bytes produces
+# identical bytes and the archive stays diffable-by-digest.
+_ARCHIVED_ROW_DIAGNOSTICS = ("raw.diff", "sweep-run.log")
+
+# The action trail, per arm. Globs rather than names because the chain arms
+# write ONE trajectory per dev call, and the arm id is not a parameter here —
+# every pattern is tried against every row, so a new arm's trail is archived by
+# adding its shape to this tuple and nothing else.
+_ARCHIVED_TRAJECTORY_GLOBS = (
+    "root/state/events/trajectories/*.ndjson",  # factory / solo-noreview
+    "state/events/trajectories/*.ndjson",  # openhands
+    "bare-commands.ndjson",  # bare
+    _CLAUDE_TRANSCRIPT_NAME,  # claude-5 / claude-4.8
+)
+
+# Per-file ceiling on a stored diagnostic. A pathological run must not commit a
+# 500 MB trajectory, and it must not silently commit HALF of one either: over
+# the cap the head is stored and the entry records ``truncated: true`` with the
+# original size and digest, the same disclose-the-undercount rule
+# ``scan_truncated`` follows in ``test_readonly``.
+_DIAGNOSTIC_MAX_BYTES = 16 * 1024 * 1024
+
+# NEVER archived, whatever the tuples above say. The grading logs carry the
+# HIDDEN test node ids: measured on `tox-dev__tox-3931`, `sweep-grade.log` hits
+# `fail_to_pass`/`pass_to_pass` where `sweep-run.log` hits neither. Committing
+# them would put the answer key in the repository, greppable by every future arm
+# — every arm runs on this filesystem, which is why `grade` already refuses to
+# print `gold_files` to stdout. Enforced at archive time rather than trusted to
+# the tuples, because the tuples are what a later edit would get wrong.
+_NEVER_ARCHIVED = ("grade.log", "grade-nodes.log", "sweep-grade.log", "oracle.json.z")
+
+# The diagnostics' own integrity record: one entry per stored file, carrying the
+# digest of the bytes as stored. ``report --check`` verifies it, so a
+# diagnostic that was corrupted, truncated after the fact or never copied at all
+# fails the same gate the table's byte-stability does.
+_DIAGNOSTICS_MANIFEST_NAME = "diagnostics.json"
+
 _REPORT_META_NAME = "report-meta.json"
 
 # Bumped when the archive gains a field the report reads. An older archive is
 # still re-derivable; the fields it never recorded print as an explicit
 # ``n/a (archive predates …)`` rather than as an empty cell that reads like a
 # measured zero.
-_REPORT_META_VERSION = "1.6"
+_REPORT_META_VERSION = "1.7"
+
+# The version that first PERSISTED the refused/foreign disclosure lists. Named
+# separately from the current version because the "this archive predates it"
+# message names a specific capability: interpolating whatever the current
+# version happens to be made the sentence false the moment the version moved.
+_META_VERSION_FIRST_PERSISTING_DISCLOSURES = "1.6"
 
 # Sweep roll-ups and the gold-patch control travel INTO the archive alongside
 # the per-row evidence. The retracted run's control rested on a summary that
@@ -8952,6 +9014,155 @@ def _archive_stamp(generated_at: str) -> str:
     return generated_at.replace(":", "-").replace("+00-00", "Z")
 
 
+def _deterministic_gzip(data: bytes) -> bytes:
+    """gzip ``data`` reproducibly.
+
+    ``gzip.open``/``GzipFile`` stamp the current time into the header, so the
+    same bytes compress to different bytes on every run — which would make the
+    archive's own integrity record unstable and turn ``report --check`` into a
+    clock reading. ``mtime=0`` and a nameless ``fileobj`` (no FNAME field) make
+    the output a pure function of the input.
+    """
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=9, mtime=0) as fh:
+        fh.write(data)
+    return buf.getvalue()
+
+
+def _row_diagnostic_files(run_dir: Path) -> list[Path]:
+    """Every diagnostic file a row left behind, deduped, in a stable order.
+
+    Stable order matters: the diagnostics manifest is committed evidence, and a
+    list whose order came from the filesystem would churn the file on every
+    re-archive of identical content.
+    """
+    found: list[Path] = []
+    for name in _ARCHIVED_ROW_DIAGNOSTICS:
+        p = run_dir / name
+        if p.is_file():
+            found.append(p)
+    for pattern in _ARCHIVED_TRAJECTORY_GLOBS:
+        found.extend(p for p in sorted(run_dir.glob(pattern)) if p.is_file())
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for p in found:
+        if p.name in _NEVER_ARCHIVED:
+            # A programming error, not a runtime condition: refuse loudly rather
+            # than skip, so the edit that introduced it cannot look like it worked.
+            raise SystemExit(
+                f"refusing to archive {p.name}: it carries the hidden test ids "
+                f"(see _NEVER_ARCHIVED). Committing it would put the answer key "
+                f"in the repo, readable by every later arm."
+            )
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def _archive_row_diagnostics(run_dir: Path, dest: Path) -> list[dict[str, Any]]:
+    """Copy a row's diagnostic evidence into ``dest`` as ``<name>.gz``.
+
+    Returns one manifest entry per stored file. Best-effort per file and NEVER
+    fatal: a row is not refused for missing a trajectory (a run that died before
+    its first model call has none), and an unreadable file is recorded with its
+    ``error`` rather than dropped — a diagnostic that vanishes silently is the
+    failure this whole function exists to fix.
+    """
+    entries: list[dict[str, Any]] = []
+    for src in _row_diagnostic_files(run_dir):
+        rel = src.relative_to(run_dir).as_posix()
+        entry: dict[str, Any] = {
+            "row": f"{run_dir.parent.name}/{run_dir.name}",
+            "path": rel,
+        }
+        try:
+            raw = src.read_bytes()
+        except OSError as exc:  # unreadable, e.g. a dangling symlink
+            entry["error"] = f"unreadable: {exc}"
+            entries.append(entry)
+            continue
+        entry["original_bytes"] = len(raw)
+        entry["original_sha256"] = hashlib.sha256(raw).hexdigest()
+        stored = raw[:_DIAGNOSTIC_MAX_BYTES]
+        entry["truncated"] = len(stored) != len(raw)
+        entry["stored_bytes"] = len(stored)
+        entry["stored_sha256"] = hashlib.sha256(stored).hexdigest()
+        out_path = dest / f"{rel}.gz"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(_deterministic_gzip(stored))
+        entry["stored_as"] = f"{rel}.gz"
+        entries.append(entry)
+    return entries
+
+
+def verify_archive_diagnostics(archive_dir: Path) -> tuple[str, list[str]]:
+    """Re-verify an archive's diagnostic evidence against its own manifest.
+
+    Returns ``(summary, problems)``. An archive written before diagnostics were
+    archived at all has no manifest: that is reported as ``n/a`` with NO
+    problems, exactly as the pre-1.6 disclosure lists are — demanding them
+    retroactively would refuse every committed archive, which is the trap
+    ``_ROW_ARTIFACTS`` documents.
+
+    Every other shortfall IS a problem: a manifest entry with no file behind it,
+    or a file whose bytes no longer hash to what was recorded. Verifying the
+    STORED digest (not the original) is the point — for a truncated entry the
+    original digest is a record of what was lost, and only the stored digest can
+    be checked against the bytes that are actually there.
+    """
+    path = archive_dir / _DIAGNOSTICS_MANIFEST_NAME
+    if not path.is_file():
+        return (
+            f"n/a (archive predates `{_DIAGNOSTICS_MANIFEST_NAME}`: it holds the "
+            "scoring evidence only, so a root-cause analysis over it is not "
+            "reproducible)",
+            [],
+        )
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        entries = list(manifest["files"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        return f"UNREADABLE {_DIAGNOSTICS_MANIFEST_NAME}", [f"{path}: {exc}"]
+
+    problems: list[str] = []
+    ok = truncated = 0
+    stored_total = 0
+    for entry in entries:
+        if entry.get("error"):
+            continue  # recorded as unarchivable when the archive was made
+        rel = str(entry.get("stored_as") or "")
+        row = str(entry.get("row") or "")
+        target = archive_dir / row / rel
+        if not target.is_file():
+            problems.append(f"missing: {row}/{rel}")
+            continue
+        try:
+            data = gzip.decompress(target.read_bytes())
+        except (OSError, gzip.BadGzipFile, EOFError, zlib.error) as exc:
+            problems.append(f"undecompressable: {row}/{rel} ({exc})")
+            continue
+        digest = hashlib.sha256(data).hexdigest()
+        if digest != entry.get("stored_sha256"):
+            problems.append(
+                f"digest drift: {row}/{rel} "
+                f"(recorded {str(entry.get('stored_sha256'))[:12]}, "
+                f"got {digest[:12]})"
+            )
+            continue
+        ok += 1
+        stored_total += len(data)
+        if entry.get("truncated"):
+            truncated += 1
+    summary = (
+        f"{ok}/{len([e for e in entries if not e.get('error')])} diagnostic file(s) "
+        f"verified, {stored_total / 1_048_576:.1f} MB uncompressed"
+    )
+    if truncated:
+        summary += f", {truncated} truncated at the {_DIAGNOSTIC_MAX_BYTES} B cap"
+    return summary, problems
+
+
 def _archive_report_artifacts(
     rows: list[dict[str, Any]],
     *,
@@ -8978,6 +9189,7 @@ def _archive_report_artifacts(
     """
     archive_dir = RESULTS_ARCHIVE_DIR / _archive_stamp(generated_at)
     arms = sorted({r["_arm"] for r in rows})
+    diagnostics: list[dict[str, Any]] = []
     for r in rows:
         run_dir = Path(r["_run_dir"])
         dest = archive_dir / run_dir.parent.name / run_dir.name
@@ -8992,6 +9204,10 @@ def _archive_report_artifacts(
             if src.is_file():
                 (dest / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dest / rel)
+        # The DIAGNOSTIC evidence (see ``_ARCHIVED_ROW_DIAGNOSTICS``): what the
+        # arm actually did, gzipped, with an integrity entry per file. Also
+        # best-effort per row, for the same reason.
+        diagnostics.extend(_archive_row_diagnostics(run_dir, dest))
     sweeps: list[str] = []
     for arm in arms:
         src = SWE_DIR / f"sweep-{arm}.json"
@@ -9021,6 +9237,29 @@ def _archive_report_artifacts(
         manifest_sha = str(manifest.get("manifest_sha256") or "")
     except SystemExit:
         profile_name, manifest_sha = _DEFAULT_PROFILE, ""
+    # The diagnostics' integrity record, written even when EMPTY: its presence is
+    # what tells a later ``--check`` that this archive was made by a version that
+    # snapshots diagnostics at all, so "no diagnostics were found" and "this
+    # archive predates diagnostics" stay distinguishable.
+    stored_total = sum(int(e.get("stored_bytes") or 0) for e in diagnostics)
+    (archive_dir / _DIAGNOSTICS_MANIFEST_NAME).write_text(
+        json.dumps(
+            {
+                "generated_at": generated_at,
+                "max_bytes_per_file": _DIAGNOSTIC_MAX_BYTES,
+                "names": list(_ARCHIVED_ROW_DIAGNOSTICS),
+                "trajectory_globs": list(_ARCHIVED_TRAJECTORY_GLOBS),
+                "count": len(diagnostics),
+                "uncompressed_bytes": stored_total,
+                "truncated": sum(1 for e in diagnostics if e.get("truncated")),
+                "unreadable": sum(1 for e in diagnostics if e.get("error")),
+                "files": diagnostics,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (archive_dir / _REPORT_META_NAME).write_text(
         json.dumps(
             {
@@ -9041,6 +9280,13 @@ def _archive_report_artifacts(
                 "sweeps": sweeps,
                 "extras": extras,
                 "log_files": log_files,
+                # Counts only; the per-file record lives in its own manifest so
+                # report-meta.json stays readable.
+                "diagnostics": {
+                    "manifest": _DIAGNOSTICS_MANIFEST_NAME,
+                    "count": len(diagnostics),
+                    "uncompressed_bytes": stored_total,
+                },
             },
             indent=2,
         )
@@ -9343,7 +9589,8 @@ def report(
             "## Excluded-row disclosure",
             "",
             f"n/a (archive predates `{_REPORT_META_NAME}` version "
-            f"{_REPORT_META_VERSION}, which is the first to PERSIST the refused",
+            f"{_META_VERSION_FIRST_PERSISTING_DISCLOSURES}, which is the first "
+            "to PERSIST the refused",
             "and foreign row lists). Rows refused or excluded when this archive was",
             "made cannot be recovered from it — that gap is exactly why the lists",
             "are persisted now.",
@@ -9407,6 +9654,26 @@ def report(
     text = "\n".join(lines) + "\n"
 
     if check:
+        # The diagnostics are verified BEFORE the table's byte-stability, and a
+        # shortfall is fatal on the same exit path. ``--check`` is the one gate
+        # that runs over committed evidence, so it is where "the analysis is
+        # reproducible from this archive" has to be enforced; leaving it to the
+        # table alone would let the trajectories rot under a green check.
+        if from_archive is not None:
+            summary, problems = verify_archive_diagnostics(from_archive)
+            print(f"diagnostics: {summary}")
+            if problems:
+                for p in problems[:20]:
+                    print(f"  - {p}")
+                if len(problems) > 20:
+                    print(f"  … and {len(problems) - 20} more")
+                raise SystemExit(
+                    f"CHECK FAILED — {len(problems)} diagnostic file(s) in "
+                    f"{from_archive} do not match "
+                    f"`{_DIAGNOSTICS_MANIFEST_NAME}`. The scoring evidence may "
+                    "still be intact, but the root-cause evidence is not "
+                    "reproducible from this archive."
+                )
         return _check_against_committed(text, base_dir)
 
     # Archive BEFORE publishing results.md: a table whose evidence snapshot
@@ -9423,6 +9690,18 @@ def report(
             created=created,
         )
         print(f"archived evidence -> {archive_dir}")
+        # Re-read what was just written, rather than reporting what was intended:
+        # the operator's confirmation that the diagnostics landed is a read of
+        # the archive, which is the same act ``--check`` will perform later.
+        diag_summary, diag_problems = verify_archive_diagnostics(archive_dir)
+        print(f"diagnostics: {diag_summary}")
+        if diag_problems:
+            for p in diag_problems[:20]:
+                print(f"  - {p}")
+            raise SystemExit(
+                f"archive at {archive_dir} failed its own diagnostics check "
+                f"({len(diag_problems)} problem(s)) — results.md NOT written"
+            )
         SWE_DIR.mkdir(parents=True, exist_ok=True)
         out = SWE_DIR / "results.md"
         out.write_text(text, encoding="utf-8")

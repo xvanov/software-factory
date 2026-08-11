@@ -1240,6 +1240,52 @@ that certified them. Plus `sweep-<arm>.json` for every arm that produced a row,
 rested on a summary the next selftest overwrote), the rendered `results.md`, and
 `report-meta.json`.
 
+### The archive also holds the DIAGNOSTIC evidence (as of 2026-08-11)
+
+Everything above is **scoring** evidence: the verdict, the audit, the graded
+patch. Every root-cause finding in the sweep-2 post-mortem came from a different
+category, and that category was **not archived**:
+
+| file | why a root cause needs it |
+|---|---|
+| `raw.diff` | the arm's real edits, *before* the test strip — the containment findings live in the difference between this and `prediction.diff` |
+| `root/state/events/trajectories/*.ndjson` (chain arms), `state/events/trajectories/*.ndjson` (openhands), `bare-commands.ndjson`, `claude-transcript.ndjson` | what the agent actually did, turn by turn |
+| `sweep-run.log` | the per-row run log: stop reason, retry accounting, gate output |
+| `acceptance-events.ndjson` | already archived, listed here for completeness |
+
+They lived only in `bench/swebench/runs/`, which `.gitignore` excludes and
+`_reset_run_artifacts` deletes at the top of the next run of the same cell. So
+the published archive could not reproduce its own analysis: the flagship
+`tox-3931` finding — a **correct** patch destroyed by diff capture — survived
+only because an operator hand-copied git objects out of an ephemeral cache
+before they were overwritten.
+
+Mechanics, and each one is load-bearing:
+
+- **Sized against the per-sweep subset, not the runs tree.** One 19-instance ×
+  3-arm sweep is ~58 MB raw and ~10 MB stored. The main checkout's whole
+  `runs/` is 2.2 GB / 101,877 files — cumulative across every sweep ever run,
+  which is why *that* stays ignored.
+- **Every entry is gzipped with a zeroed mtime.** Default gzip stamps the clock
+  into its header, so the same evidence would compress to different bytes every
+  time and the integrity record below would be a clock reading.
+- **`diagnostics.json` is the integrity record** — one entry per file with the
+  sha256 of the bytes as stored, plus `original_bytes` / `original_sha256` /
+  `truncated` for anything over the 16 MB per-file cap (disclosed, never a
+  silent half-file). `report --check` verifies it and **exits non-zero** on a
+  missing, undecompressable or drifted file, so the trajectories cannot rot
+  under a green check. An archive predating the manifest reports `n/a` and is
+  not retroactively refused — the `_ROW_ARTIFACTS` trap again.
+- **The grading logs are NEVER archived.** `grade.log`, `grade-nodes.log` and
+  `sweep-grade.log` carry the hidden test node ids: measured on `tox-3931`,
+  `sweep-grade.log` matches `fail_to_pass`/`pass_to_pass` where `sweep-run.log`
+  matches neither. Committing them would put the answer key in the repo,
+  greppable by every later arm — every arm runs on this filesystem. The
+  deny-list is enforced where the files are chosen and **refuses loudly**, so
+  an edit that widens the archive into them cannot look like it worked. Checked
+  on the real sweep-2 evidence: 0 hidden-id hits across every archived file
+  type.
+
 An archive may also carry an operator-written `DISCLAIMER.md`, emitted verbatim
 at the top of any table re-derived from it. That is how a run is marked
 **retracted**: by ADDING a file beside the evidence, never by rewriting rows,
