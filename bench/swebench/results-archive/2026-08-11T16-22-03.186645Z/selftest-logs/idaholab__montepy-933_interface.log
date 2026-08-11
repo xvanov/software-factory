@@ -1,0 +1,65 @@
+Checking patch tests/test_universe.py...
+Checking patch tests/test_universe_integration.py...
+Applied patch tests/test_universe.py cleanly.
+Applied patch tests/test_universe_integration.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_945595646ecc0ae1: OK (red as expected)
+Checking patch doc/source/changelog.rst...
+Checking patch montepy/cell.py...
+Applied patch doc/source/changelog.rst cleanly.
+Applied patch montepy/cell.py cleanly.
+SWEBENCH_APPLY_945595646ecc0ae1: OK
+......                                                                   [100%]
+=========================== short test summary info ============================
+PASSED tests/test_universe.py::test_cell_universe_nullify_no_problem
+PASSED tests/test_universe.py::test_cell_universe_delete_no_problem
+PASSED tests/test_universe_integration.py::test_universe_nullify
+PASSED tests/test_universe_integration.py::test_cell_universe_nullify_with_problem
+PASSED tests/test_universe_integration.py::test_cell_universe_nullify_adds_zero_universe
+PASSED tests/test_universe_integration.py::test_cell_universe_delete_adds_zero_universe
+6 passed in 0.46s
+SWEBENCH_TALLY_945595646ecc0ae1: fail_to_pass 6 passed in 0.46s
+[8 node outcomes for fail_to_pass -> grade-nodes.log]
+PASSED tests/test_universe.py::TestUniverse::test_filled_cells_generator[1-expected_cells0]
+PASSED tests/test_universe.py::TestUniverse::test_detached_universe_returns_generator
+PASSED tests/test_universe.py::TestUniverse::test_init
+PASSED tests/test_universe.py::TestUniverse::test_number_setter
+PASSED tests/test_universe.py::TestLattice::test_lattice_init
+PASSED tests/test_universe.py::TestLattice::test_lattice_setter
+PASSED tests/test_universe.py::TestLattice::test_lattice_deleter
+PASSED tests/test_universe.py::TestLattice::test_lattice_merge
+PASSED tests/test_universe.py::TestLattice::test_lattice_cell_format
+PASSED tests/test_universe.py::TestLattice::test_lattice_repr
+PASSED tests/test_universe.py::TestLattice::test_deprecated_lattice
+PASSED tests/test_universe.py::TestFill::test_complex_transform_fill_init
+PASSED tests/test_universe.py::TestFill::test_complicated_lattice_fill_init
+PASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1 0:1 hi-ValueError]
+PASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 hi:1 0:1 hi-ValueError]
+PASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1 0:1 -1-ValueError]
+PASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 1:0 0:1 1 2 3 4 5 6 7 8-ValueError]
+PASSED tests/test_universe.py::TestFill::test_complicated_fill_init_error[1 0 -1 fill=0:1 0:1.5 0:1 1 2 3 4 5 6 7 8-ValueError]
+PASSED tests/test_universe.py::TestFill::test_data_fill_init
+PASSED tests/test_universe.py::TestFill::test_fill_universe_setter
+PASSED tests/test_universe.py::TestFill::test_fill_universes_setter
+PASSED tests/test_universe.py::TestFill::test_fill_str
+PASSED tests/test_universe.py::TestFill::test_fill_merge
+PASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-hi-TypeError]
+PASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-hi-TypeError]
+PASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-value2-TypeError]
+PASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-value3-TypeError]
+PASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[min_index-value4-ValueError]
+PASSED tests/test_universe.py::TestFill::test_fill_index_bad_setter[max_index-value5-ValueError]
+PASSED tests/test_universe.py::TestFill::test_fill_multi_unis
+PASSED tests/test_universe.py::test_cell_universe_setter_type_error
+PASSED tests/test_universe_integration.py::test_universe_setter
+PASSED tests/test_universe_integration.py::test_fill_setter
+PASSED tests/test_universe_integration.py::test_lattice_setter
+PASSED tests/test_universe_integration.py::test_uni_fill_latt_setter
+PASSED tests/test_universe_integration.py::test_mc_workshop_edge_case
+PASSED tests/test_universe_integration.py::test_no_universe
+PASSED tests/test_universe_integration.py::test_fill_multi_universe_order
+PASSED tests/test_universe_integration.py::test_fill_long_mcnp_str_wrap
+44 passed in 1.76s
+SWEBENCH_TALLY_945595646ecc0ae1: pass_to_pass 44 passed in 1.76s
+[46 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_945595646ecc0ae1: RESOLVED

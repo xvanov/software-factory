@@ -1,0 +1,69 @@
+diff --git a/keras/src/ops/function.py b/keras/src/ops/function.py
+index 8d3c524..f306fa7 100644
+--- a/keras/src/ops/function.py
++++ b/keras/src/ops/function.py
+@@ -275,6 +275,7 @@ def map_graph(inputs, outputs):
+     # "depth" is number of operations between output Node and the Node.
+     # Nodes are ordered from inputs -> outputs.
+     nodes_in_decreasing_depth, operation_indices = _build_map(inputs, outputs)
++    nodes_set = set(nodes_in_decreasing_depth)
+     network_nodes = {
+         make_node_key(node.operation, node.operation._inbound_nodes.index(node))
+         for node in nodes_in_decreasing_depth
+@@ -300,9 +301,12 @@ def map_graph(inputs, outputs):
+         # Update the depth of inbound nodes.
+         # The "depth" of a node is the max of the depths
+         # of all nodes it is connected to + 1.
++        # Only walk parent nodes that are part of this computation graph
++        # (i.e., not upstream nodes that produce Function inputs).
+         for node_dep in node.parent_nodes:
+-            previous_depth = nodes_depths.get(node_dep, 0)
+-            nodes_depths[node_dep] = max(depth + 1, previous_depth)
++            if node_dep in nodes_set:
++                previous_depth = nodes_depths.get(node_dep, 0)
++                nodes_depths[node_dep] = max(depth + 1, previous_depth)
+ 
+     # Handle inputs that are not connected to outputs.
+     # We do not error out here because the inputs may be used to compute losses
+@@ -310,10 +314,15 @@ def map_graph(inputs, outputs):
+     for input_t in inputs:
+         input_operation = input_t._keras_history[0]
+         if input_operation and input_operation not in operations_depths:
+-            operations_depths[input_operation] = 0
+-            operation_indices[input_operation] = -1
+-            nodes_depths[input_operation._inbound_nodes[0]] = 0
+-            network_nodes.add(make_node_key(input_operation, 0))
++            node = input_operation._inbound_nodes[0]
++            # Only add source nodes (like InputLayer) that define
++            # the inputs themselves. Upstream operations that produce
++            # the input tensors are not part of this graph.
++            if node.is_input:
++                operations_depths[input_operation] = 0
++                operation_indices[input_operation] = -1
++                nodes_depths[node] = 0
++                network_nodes.add(make_node_key(input_operation, 0))
+ 
+     # Build a dict {depth: list of nodes with this depth}
+     nodes_by_depth = collections.defaultdict(list)
+@@ -450,13 +459,19 @@ def _build_map_helper(
+     if operation not in operation_indices:
+         operation_indices[operation] = len(operation_indices)
+ 
++    # Don't record nodes whose output tensor is a Function input
++    # (i.e., upstream operations that are not part of this Function's
++    # computation graph).
++    if not node.is_input and tensor in tree.flatten(inputs):
++        return
++
+     # Propagate to all previous tensors connected to this node.
+     nodes_in_progress.add(node)
+     if not node.is_input and tensor not in tree.flatten(inputs):
+-        for tensor in node.input_tensors:
++        for t in node.input_tensors:
+             _build_map_helper(
+                 inputs,
+-                tensor,
++                t,
+                 finished_nodes,
+                 nodes_in_progress,
+                 nodes_in_decreasing_depth,

@@ -27,6 +27,10 @@ only** (dev `deepseek-v4-pro`, hard tier a no-op, reviewer + acceptance
 author `Kimi-K2.7-Code`), carries the #302 reviewer rubric, and a dev-retry
 cap of 4 (was 3).
 
+> **SUPERSEDED as the current factory number by the 2026-08-11 replay** — see
+> "Sweep 3" immediately below. The sweep-2 table stays because sweep 2 is the
+> only place `solo-noreview` and `claude-5` were measured.
+
 | arm | harness × model(s) from the ledger | resolved / valid | rate | 95% CI | $ | $/resolved |
 |---|---|---:|---:|---|---:|---:|
 | claude-5 | Claude Code CLI 2.1.226 × `claude-opus-5` | 11/14 | **79%** | [49%, 95%] | 30.18 † | 2.74 † |
@@ -58,6 +62,63 @@ The five readings, within the pre-committed rules:
 4. **claude-5 is flat at 79%** across both sweeps (CLI 2.1.220 → 2.1.226).
 5. **k=2 now exists on these cells.** Still short of the k ≥ 3 the suite
    demands before any delta is quoted as a result.
+
+## Sweep 3 — the factory replay, 2026-08-11 (CURRENT)
+
+`results.md` and `results-archive/2026-08-11T16-22-03.186645Z/` hold this run.
+It replays **one arm** (`factory`) with every machinery fix applied (#310–#320)
+and compares it to the **same-sweep, same-week `openhands` control** run on
+2026-08-11. Denominator is the **18-instance working set**: `pandas-63945` was
+ruled broken by the re-run gold-patch control (PR #313). Every arm below is
+re-derived on those same 18.
+
+| arm, same 18 instances | resolved | rate | total $ | $/resolved | median wall |
+|---|---:|---:|---:|---:|---:|
+| **factory (all fixes)** | **10/18** | **56%** | 81.00 | **8.10** | 1,804 s |
+| **openhands, same sweep** | **12/18** | **67%** | 14.34 | **1.19** | 454 s |
+| factory, sweep 2 | 10/18 | 56% | 50.18 | 5.02 | 1,038 s |
+| solo-noreview, sweep 2 | 9/18 | 50% | — | — | — |
+
+Paired chain vs agent: both 9 · chain-only 1 (`conan-19735`) · agent-only 3
+(`exstruct`, `openharness`, `line-bot`) · neither 5. **McNemar exact
+p = 0.625.**
+
+The readings:
+
+1. **The matched comparison finally exists, and the chain loses it.** Sweep 2
+   could only compare cross-sweep. Here the model, manifest, week and grading are
+   held fixed and the single agent is ahead on rate (67% vs 56%) at **6.8× less
+   cost per resolved**. At n=18, p=0.625 — descriptive, not a proven delta.
+2. **The machinery fixes worked and bought zero net rate.** Same 10/18 as sweep 2
+   with **+3 / −3** turnover. Gains are exactly the targeted rows —
+   `jsonpickle-588` (kept its budget; #312's evidence-freshness rule), `tox-3931`
+   (diff recovered 0 → 3,388 B; #312/#314), `canvasapi-716`. Losses are one new
+   machinery defect (`line-bot-981`) plus `openharness-217` and `hiero-1914` to
+   dev variance.
+3. **Cost per resolved regressed, $5.02 → $8.10.** Deviation #310 removed the
+   inherited $2/h truncation, so long rows now run to the 5,400 s wall-clock cap:
+   `vyper` $13.50, `jsonpickle` $10.43, `rapid-mlx` $9.06, `exstruct` $8.83.
+   Total was $81.00 against a ~$50 projection.
+4. **Chain-verdict quality did not replicate.** Precision **7/12 = 58%** (sweep 2:
+   71%), recall 7/10 = 70%. Three rows blocked while producing a resolving patch
+   (`tox`, `canvasapi`, `jsonpickle`).
+5. **Two new machinery defects, both open.** `_branch_has_production_delta`
+   (`handlers.py:3695`) asks a ref rather than the pinned SHA and maps an empty
+   diff to `False` instead of `None` — the same `ref-not-SHA` class as the
+   `_capture_diff` bug, in a second consumer. And a dissolved submodule is
+   captured as a 575 KB diff whose `deleted file mode 160000` header makes
+   `git apply` exit 2 even though every file applies cleanly — a
+   machinery-attributable lost resolve on `line-bot-981`, waved through by
+   `diff_integrity.trustworthy: true`.
+6. **Containment is not closed.** Bypass on 10 of 18 rows; 2 unrepaired because
+   the dev **committed** the test edit and the restore only rewrites the working
+   tree.
+
+Criteria as pre-registered: primary 12/18 **missed** (10/18); empty-patch
+criterion **passes but is too narrow** to catch the oversized-diff loss;
+containment **fails**; the one-re-run allowance was **exceeded** (third launch,
+disclosed). Full evaluation:
+`PRE-REGISTRATION-2026-08-11-REPLAY.md`.
 
 ### Sweep 2 — root causes of the 9 factory misses (evidence-read 2026-08-10)
 

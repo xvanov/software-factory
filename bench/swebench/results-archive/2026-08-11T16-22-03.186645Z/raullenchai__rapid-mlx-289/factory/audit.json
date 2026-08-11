@@ -1,0 +1,118 @@
+{
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "arm": "factory",
+  "audited_at": "2026-08-11T14:39:06.684075+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 4 call(s) but only 2 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-11T13:26:41.964631+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 11242,
+      "tokens_out": 9542,
+      "cached_input_tokens": 2432,
+      "cost_usd": 0.051746020000000004,
+      "duration_s": 97.999,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T13:40:11.161266+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1144666,
+      "tokens_out": 16363,
+      "cached_input_tokens": 504064,
+      "cost_usd": 1.380186454,
+      "duration_s": 808.615,
+      "success": 0,
+      "error": "sandbox run raised: ConversationRunError('Conversation run failed for id=ace7c931-118f-4984-b8a4-735ea2d3c1ee: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\\n\\nConversation logs are stored at: /tmp/factory-oh-traj-[REDACTED]\\n\\nTo help debug this issue, please file a bug report at:\\n  https://github.com/OpenHands/software-agent-sdk/issues/new\\nand attach the conversation logs from the directory above.')"
+    },
+    {
+      "ts": "2026-08-11T14:10:11.710751+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 4694332,
+      "tokens_out": 45647,
+      "cached_input_tokens": 2533120,
+      "cost_usd": 4.753799490000001,
+      "duration_s": 1800.126,
+      "success": 0,
+      "error": "sandbox run timed out after 1800s (likely a stalled LLM call); treating as retryable infrastructure failure"
+    },
+    {
+      "ts": "2026-08-11T14:23:10.626088+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1971377,
+      "tokens_out": 14652,
+      "cached_input_tokens": 1519872,
+      "cost_usd": 1.1722212020000002,
+      "duration_s": 540.048,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:31:23.619730+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 45150,
+      "tokens_out": 88378,
+      "cached_input_tokens": 20800,
+      "cost_usd": 0.41879869999999997,
+      "duration_s": 491.83,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:38:04.739792+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1178352,
+      "tokens_out": 8604,
+      "cached_input_tokens": 607232,
+      "cost_usd": 1.232979272,
+      "duration_s": 400.483,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:39:00.251441+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 15586,
+      "tokens_out": 9037,
+      "cached_input_tokens": 2944,
+      "cost_usd": 0.053655140000000004,
+      "duration_s": 54.395,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 9.0634,
+  "ledger_tokens_in": 9060705,
+  "ledger_tokens_out": 192223,
+  "result_cost_usd": 9.0634,
+  "prediction_sha256": "4dcec7d07b4722267da496091b8a2f1cce1a62228bd7bbc6eb42fabfe401a5db",
+  "base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+  "stripped_test_paths": [
+    "tests/integrations/test_aider.sh",
+    "tests/test_reasoning_parsers.py",
+    "tests/test_smoke_matrix.sh"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 4,
+  "trails_scanned": 4,
+  "oracle_probe_failures": []
+}

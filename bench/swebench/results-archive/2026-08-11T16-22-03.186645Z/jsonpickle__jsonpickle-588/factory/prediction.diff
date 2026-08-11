@@ -1,0 +1,98 @@
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..4627560 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -4,6 +4,7 @@
+ #
+ # This software is licensed as described in the file COPYING, which
+ # you should have received as part of this distribution.
++import collections
+ import decimal
+ import inspect
+ import itertools
+@@ -648,6 +649,23 @@ class Pickler:
+ 
+                 f, args, state, listitems, dictitems = rv_as_list
+ 
++                # Handle defaultdict factory to avoid losing non-type callables
++                if (
++                    isinstance(obj, collections.defaultdict)
++                    and hasattr(obj, "default_factory")
++                    and callable(obj.default_factory)
++                    and not util._is_type(obj.default_factory)
++                ):
++                    factory = obj.default_factory
++                    if id(factory) not in self._objs:
++                        # New factory: wrap in CloneFactory exemplar so it
++                        # can be pickled in-place without consuming a ref slot
++                        # for the original callable (which is never emitted).
++                        rv_as_list[1] = (handlers.CloneFactory(factory()),)
++                    else:
++                        # Seen before: emit a reference to the factory
++                        rv_as_list[1] = (factory,)
++
+                 # check that getstate/setstate is sane
+                 if not (
+                     state
+@@ -708,7 +726,9 @@ class Pickler:
+                 data = str(obj)  # type: ignore[assignment]
+             return data
+ 
+-        if util._is_dictionary_subclass(obj):
++        if util._is_dictionary_subclass(obj) and not isinstance(
++            obj, collections.defaultdict
++        ):
+             self._flatten_dict_obj(obj, data, exclude=exclude)
+             return data
+ 
+diff --git a/jsonpickle/unpickler.py b/jsonpickle/unpickler.py
+index 7a6f2ba..c2b0dbf 100644
+--- a/jsonpickle/unpickler.py
++++ b/jsonpickle/unpickler.py
+@@ -4,6 +4,7 @@
+ #
+ # This software is licensed as described in the file COPYING, which
+ # you should have received as part of this distribution.
++import collections
+ import dataclasses
+ import warnings
+ from typing import (
+@@ -542,6 +543,10 @@ class Unpickler:
+                 # this happens when there are missing kwargs and args don't match so we bypass
+                 # __init__ since the state dict will set all attributes immediately afterwards
+                 stage1 = f.__new__(f, *args)
++                # Ensure default_factory is set for defaultdict subclasses whose
++                # __init__ doesn't accept the factory argument
++                if isinstance(stage1, collections.defaultdict) and args:
++                    stage1.default_factory = args[0]
+ 
+         if state:
+             try:
+@@ -582,6 +587,13 @@ class Unpickler:
+ 
+         proxy.reset(stage1)
+         self._swapref(proxy, stage1)
++
++        # Resolve any Proxy default_factory for defaultdict subclasses
++        if isinstance(stage1, collections.defaultdict) and isinstance(
++            stage1.default_factory, _Proxy
++        ):
++            stage1.default_factory = stage1.default_factory.get()
++
+         return stage1
+ 
+     def _restore_id(self, obj: Dict[str, Any]) -> Any:
+diff --git a/jsonpickle/util.py b/jsonpickle/util.py
+index 278a1d8..7d08fdf 100644
+--- a/jsonpickle/util.py
++++ b/jsonpickle/util.py
+@@ -332,7 +332,8 @@ def _is_reducible(obj: Any) -> bool:
+     if (
+         type(obj) in NON_REDUCIBLE_TYPES
+         or obj is object
+-        or _is_dictionary_subclass(obj)
++        or (_is_dictionary_subclass(obj)
++            and not isinstance(obj, collections.defaultdict))
+         or isinstance(obj, types.ModuleType)
+         or _is_reducible_sequence_subclass(obj)
+         or _is_list_like(obj)

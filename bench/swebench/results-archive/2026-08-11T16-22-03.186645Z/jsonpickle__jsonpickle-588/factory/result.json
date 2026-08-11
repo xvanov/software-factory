@@ -1,0 +1,221 @@
+{
+  "arm": "factory",
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "repo": "jsonpickle/jsonpickle",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "problem_statement_sha256": "e7d6a3edc32ba6f4ef4ebc10a28b9b9118eda5058b8cc3450bb5e4940970d124",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0099
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 1.5205
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "hard",
+      "calls": 4,
+      "cost_usd": 8.533
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 3,
+      "cost_usd": 0.362
+    }
+  ],
+  "model_escalated_calls": 4,
+  "ts": "2026-08-11T15:22:05.304791+00:00",
+  "wall_clock_s": 4774.0,
+  "final_state": "blocked_review_nonconvergent",
+  "dev_retries": 2,
+  "reviewer_cycles": 3,
+  "steps_used": 6,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 10120424,
+  "tokens_out": 193416,
+  "cached_input_tokens": 5585408,
+  "cost_usd": 10.4255,
+  "persona_calls": 9,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.0,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/object_test.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> blocked_review_nonconvergent"
+  ],
+  "error": null,
+  "factory_says_green": false,
+  "green_state": "reviewer_done",
+  "chain_personas": [
+    "dev",
+    "review"
+  ],
+  "files_changed": [
+    "jsonpickle/pickler.py",
+    "jsonpickle/unpickler.py",
+    "jsonpickle/util.py"
+  ],
+  "test_files_stripped": [
+    "tests/benchmark.py",
+    "tests/object_test.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 3856,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+    "expected_base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+    "base_ref_matches": true,
+    "base_ref_ahead_of_expected": 0,
+    "expected_resolves": true,
+    "gitlink": "file",
+    "head_sha": "acc434c24bfde64a4a40a44f17f904a31f852a6e",
+    "head_is_base": false,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 21,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/object_test.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 3,
+    "refused_samples": [
+      "{\"id\":\"c8406cc7-e955-418d-82c5-3fef64d45ed0\",\"timestamp\":\"2026-08-11T10:08:10.771111\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_3ece4ebf72484c0cac6d3599\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/",
+      "{\"id\":\"a230076d-22ba-4da9-a289-e74cc96c367a\",\"timestamp\":\"2026-08-11T10:29:38.829148\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_923a9902b1134a3783ccfc58\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/",
+      "{\"id\":\"e3f8c447-6dda-422b-acb4-e9fed89e669f\",\"timestamp\":\"2026-08-11T10:39:14.646184\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_1c45155a63074161b9f06d49\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 20,
+    "restored_test_files": [
+      "tests/object_test.py"
+    ],
+    "restore_errors": [
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/object_test.py but the digest still differs \u2014 the edit was committed, not just written"
+    ]
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-w4_bp4yn/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-w4_bp4yn/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-w4_bp4yn",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/jsonpickle__jsonpickle-588__factory/root/state/acceptance",
+    "sha256": "b3d566fee5bc094d2294b083ed329f8651bed16cf769da172e53efc0652030ab",
+    "bytes": 1784,
+    "authored_at": "2026-08-11T14:02:37.710800+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "9598824e4a7d78fc83f12a86f6a18837cdac3b5041281c67c99308abca804f7c",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 6133,
+    "spec_prompt_path": "/home/k/sf-bench-replay/bench/swebench/runs/jsonpickle__jsonpickle-588/factory/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-replay/bench/swebench/runs/jsonpickle__jsonpickle-588/factory/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 5,
+      "acceptance_author_ended_at": "2026-08-11T14:03:01.899854+00:00",
+      "dev_first_started_at": "2026-08-11T14:03:02.393568+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-11T14:03:01.899854+00:00, dev's first call started 2026-08-11T14:03:02.393568+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-w4_bp4yn",
+        "state/acceptance"
+      ],
+      "files_scanned": 6,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-jsonpickle__jsonpickle-588-w4_bp4yn": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "dev_inner_loop_stops": [],
+  "bench_caps": {
+    "hourly_spend_usd": 100.0,
+    "daily_spend_usd": 500.0
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "jsonpickle__jsonpickle-588",
+    "image": "swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588@sha256:0eae843824198c5cfb0b6bb25b5c9b50c1b415ea7295867a314a3a8ce65c7fb4",
+    "graded_at": "2026-08-11T15:22:05.888605+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 82,
+    "pass_to_pass_declared_count": 82,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 8.2,
+    "log_tail": "onpickle/unpickler.py...\nChecking patch jsonpickle/util.py...\nApplied patch jsonpickle/pickler.py cleanly.\nApplied patch jsonpickle/unpickler.py cleanly.\nApplied patch jsonpickle/util.py cleanly.\nSWEBENCH_APPLY_5ea5322775a122ee: OK\n.                                                                        [100%]\n=========================== short test summary info ============================\nPASSED tests/object_test.py::test_defaultdict_preserves_default_factory_key\n1 passed in 0.03s\nSWEBENCH_TALLY_5ea5322775a122ee: fail_to_pass 1 passed in 0.03s\n[3 node outcomes for fail_to_pass -> grade-nodes.log]\nPASSED tests/object_test.py::test_defaultdict_subclass_with_class_as_default_factory\nPASSED tests/object_test.py::test_posix_stat_result\nPASSED tests/object_test.py::test_repr_using_jsonpickle\nPASSED tests/object_test.py::test_broken_repr_dict_key\nPASSED tests/object_test.py::test_ordered_dict_python3\nPASSED tests/object_test.py::test_ordered_dict\nPASSED tests/object_test.py::test_ordered_dict_unpicklable\nPASSED tests/object_test.py::test_ordered_dict_reduces\nPASSED tests/object_test.py::test_int_keys_in_object_with_getstate_only\nPASSED tests/object_test.py::test_ordered_dict_int_keys\nPASSED tests/object_test.py::test_ordered_dict_nested\nPASSED tests/object_test.py::test_deque_roundtrip\nPASSED tests/object_test.py::test_namedtuple_roundtrip\nPASSED tests/object_test.py::test_counter_roundtrip\nPASSED tests/object_test.py::test_counter_roundtrip_with_keys\nPASSED tests/object_test.py::test_list_with_fd\nPASSED tests/object_test.py::test_thing_with_fd\nPASSED tests/object_test.py::test_dict_with_fd\nPASSED tests/object_test.py::test_thing_with_lamda\nPASSED tests/object_test.py::test_newstyleslots\nPASSED tests/object_test.py::test_newstyleslots_inherited\nPASSED tests/object_test.py::test_newstyleslots_inherited_deleted_attr\nPASSED tests/object_test.py::test_newstyleslots_with_children\nPASSED tests/object_test.py::test_newstyleslots_with_children_inherited\nPASSED tests/object_test.py::test_newstyleslots_iterable\nPASSED tests/object_test.py::test_newstyleslots_string_slot\nPASSED tests/object_test.py::test_enum34_nested\nPASSED tests/object_test.py::test_enum_references\nPASSED tests/object_test.py::test_enum_unpicklable\nPASSED tests/object_test.py::test_enum_int_key_and_value\nPASSED tests/object_test.py::test_enum_string_key_and_value\nPASSED tests/object_test.py::test_int_enum_with_auto_value\nPASSED tests/object_test.py::test_multiple_string_enums_when_make_refs_is_false\nPASSED tests/object_test.py::test_unicode_mixin\nPASSED tests/object_test.py::test_datetime_with_tz_copies_refs\nPASSED tests/object_test.py::test_with_exclude\nPASSED tests/object_test.py::test_contained_exclusion\nPASSED tests/object_test.py::test_exclude_slots\nPASSED tests/object_test.py::test_exclude_getstate_from_slots\n82 passed in 0.09s\nSWEBENCH_TALLY_5ea5322775a122ee: pass_to_pass 82 passed in 0.09s\n[84 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_5ea5322775a122ee: RESOLVED\n"
+  }
+}

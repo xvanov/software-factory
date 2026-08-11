@@ -1,0 +1,60 @@
+{
+  "instance_id": "keras-team__keras-22642",
+  "arm": "factory",
+  "audited_at": "2026-08-11T14:41:09.249080+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-11T14:26:32.887512+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 3428,
+      "tokens_out": 8165,
+      "cached_input_tokens": 2880,
+      "cost_usd": 0.037106200000000006,
+      "duration_s": 89.76,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:40:20.863290+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2109826,
+      "tokens_out": 20115,
+      "cached_input_tokens": 1034752,
+      "cost_usd": 2.318528342,
+      "duration_s": 827.369,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:40:43.186938+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 4808,
+      "tokens_out": 3731,
+      "cached_input_tokens": 2880,
+      "cost_usd": 0.019045600000000003,
+      "duration_s": 21.208,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 2.3747,
+  "ledger_tokens_in": 2118062,
+  "ledger_tokens_out": 32011,
+  "result_cost_usd": 2.3747,
+  "prediction_sha256": "2ccf4a2db16adccf82bc0ccb1474944e8d840cd25789ce3655b00dc7ebc9b86f",
+  "base_commit": "2b176bc33233762863fa5f3d60e060de3be934e5",
+  "stripped_test_paths": [],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

@@ -21,9 +21,18 @@ a property of that pair** — the table scrolls horizontally, those stay first.
 Token and wall-clock columns are **exact measurements**; the dollar columns
 are **derived** (see the cost-methodology note below the table).
 
+**Two denominators appear below and they are not interchangeable.** Rows dated
+2026-08-11 run the **18-instance working set** (`pandas-63945` was ruled a broken
+instance by the re-run gold-patch control — its `fail_to_pass` id is a network
+fixture and grading runs `--network none`). Earlier rows are over 19. Any
+comparison between the two must be re-derived on the same 18 first; the
+2026-08-11 block below does exactly that.
+
 | harness | models — role | solved | rate | fresh tokens in | cache read | tokens out | median wall / instance | total $ | $ / solved | runs | last measured |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|:-:|---|
-| **this factory's chain — current** (acceptance oracle authored pre-dev; open-weight only) | `azure/deepseek-v4-pro` — dev (both tiers) · `azure/Kimi-K2.7-Code` — reviewer + oracle author | 10/19 | **53%** | 21,104,155 | 26,849,792 | 1,262,586 | 17.3 min | 50.18 | **5.02** | 1× | 2026-08-10 |
+| **this factory's chain — current** (machinery fixes #310–#320 applied) | `azure/deepseek-v4-pro` — dev (both tiers) · `azure/Kimi-K2.7-Code` — reviewer + oracle author | **10/18** | **56%** | 34,632,647 | 46,529,792 | 1,652,985 | 30.1 min | 81.00 | **8.10** | 1× | 2026-08-11 |
+| **one OpenHands agent, no chain — SAME-SWEEP control** | `azure/deepseek-v4-pro` — the whole agent | **12/18** | **67%** | — | — | — | 7.6 min | 14.34 | **1.19** | 1× | 2026-08-11 |
+| this factory's chain — sweep 2 (before those fixes) | `azure/deepseek-v4-pro` — dev (both tiers) · `azure/Kimi-K2.7-Code` — reviewer + oracle author | 10/19 | **53%** | 21,104,155 | 26,849,792 | 1,262,586 | 17.3 min | 50.18 | **5.02** | 1× | 2026-08-10 |
 | the same chain, **no reviewer** (`solo-noreview`) | `azure/deepseek-v4-pro` — dev · `azure/Kimi-K2.7-Code` — oracle author | 9/19 | **47%** | 22,392,133 | 22,805,760 | 744,760 | 16.3 min | 49.89 | **5.54** | 1× | 2026-08-10 |
 | this factory's chain — **previous config** (no oracle; closed-model tiers; superseded) | `azure/deepseek-v4-pro` — dev · `azure/gpt-5.3-codex` — dev hard-tier · `azure/gpt-5.4` — reviewer | 7/19 | 37% | 14,349,408 | 33,195,520 | 486,506 | 16.6 min | 35.94 | 5.13 | 1× | 2026-08-04 |
 | **one OpenHands agent, no chain** (the matched baseline) | `azure/deepseek-v4-pro` — the whole agent | 10/19 | **53%** | 7,819,890 | 13,629,696 | 239,357 | 6.4 min | 18.20 | **1.82** | 1× ᵃ | 2026-08-04 |
@@ -49,18 +58,28 @@ cannot argue. Never sum Azure and Claude dollars.
 
 Reading it:
 
-- **The current chain matches the single agent's headline rate — 53% vs 53% —
-  where the previous config trailed it by 16 points.** Honest caveat: the
-  single-agent number is from sweep 1 (the operator chose not to re-run an
-  unchanged harness), so that comparison crosses sweeps and is descriptive;
-  within sweep 2 the chain was never paired against it.
-- **The chain is still the most expensive way to solve one instance** — $5.02
-  per solved vs $1.82 for the same model with no chain and $2.74 for Claude
-  Code, a frontier model. The rate gap closed; the ~2.8× cost gap did not.
-- **What the chain's verdict is worth changed the most**: chain-said-green
-  precision moved **40% → 71%**, recall 86% → 100%, and sweep 1's zero-byte
-  green did not recur. The reviewer's three nonconvergence parks were all
-  genuine oracle failures (3/3 correct).
+- **The chain does NOT match the single agent — and this is now a within-manifest
+  comparison, not a cross-sweep one.** On the same 18 instances, same dev model,
+  same week: chain **10/18 = 56%**, one OpenHands agent **12/18 = 67%**. Paired:
+  both 9 · chain-only 1 · agent-only 3 · neither 5, **McNemar exact p = 0.625**.
+  The earlier "53% vs 53% parity" reading crossed sweeps; the matched pair does
+  not reproduce it.
+- **The cost gap got worse, not better** — **$8.10** per solved vs **$1.19** for
+  the same model with no chain: **6.8×**. Sweep 2's ratio was 2.8×. Removing the
+  $2/h truncation (#310) let long rows run to the 5,400 s wall-clock cap, so
+  total spend went $50.18 → $81.00 while the resolve count stayed at 10.
+- **The machinery fixes worked and bought zero net rate.** Against sweep 2 on the
+  same 18 the score is unchanged at 10/18, but the composition turned over
+  completely: **+3 / −3**. The three gains are exactly the rows the fixes
+  targeted (`jsonpickle-588` kept its retry budget, `tox-3931`'s diff was
+  recovered, `canvasapi-716` converged); the three losses are one **new**
+  machinery defect (`line-bot-981`) and two rows of ordinary dev variance. This
+  is the clearest evidence yet for the governing identity: with one dev and no
+  selection term, removing self-inflicted losses cannot raise the ceiling.
+- **Verdict quality did NOT replicate.** Chain-said-green precision **58%**
+  (7/12) against sweep 2's 71%, recall 70% (7/10). Three rows ended blocked while
+  producing a resolving patch. Sweep 2's one genuinely positive finding is not
+  established.
 - **The reviewer still buys no resolves** (10/19 vs 9/19 without it, McNemar
   p=1.000) — and the earlier "−29% cost without the reviewer" finding **did
   not replicate** ($50.18 vs $49.89). What it does buy is verdict precision
@@ -71,6 +90,10 @@ Reading it:
 - The contamination probe came back **clean** (sweep 1): `claude-opus-4-8`
   74% vs `claude-opus-5` 79%, same harness, p=1.000. Memorisation is not
   carrying the frontier number.
+- **The benchmark cannot settle the operator's thesis at all.** `gate_enforced`
+  is `false` on every row of every chain sweep, the driver stops at
+  `reviewer_done`, and there is no PM, SM, contract, merge gate or deploy. Rate
+  and $/solved here say nothing about merged stories per day.
 - **None of the sweep-2 movements are proven deltas.** n=19 resolves ±38
   points at best; these cells are now at k=2 and k ≥ 3 is the pre-registered
   bar. At least **six** changes shipped together between the sweeps and are not

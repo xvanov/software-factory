@@ -1,0 +1,115 @@
+diff --git a/server/opensandbox_server/services/constants.py b/server/opensandbox_server/services/constants.py
+index 12e1224..1dcd466 100644
+--- a/server/opensandbox_server/services/constants.py
++++ b/server/opensandbox_server/services/constants.py
+@@ -91,6 +91,7 @@ class SandboxErrorCodes:
+     INVALID_SUB_PATH = "VOLUME::INVALID_SUB_PATH"
+     INVALID_HOST_PATH = "VOLUME::INVALID_HOST_PATH"
+     HOST_PATH_NOT_ALLOWED = "VOLUME::HOST_PATH_NOT_ALLOWED"
++    HOST_PATH_SYMLINK = "VOLUME::HOST_PATH_SYMLINK"
+     INVALID_PVC_NAME = "VOLUME::INVALID_PVC_NAME"
+     UNSUPPORTED_VOLUME_BACKEND = "VOLUME::UNSUPPORTED_BACKEND"
+     HOST_PATH_NOT_FOUND = "VOLUME::HOST_PATH_NOT_FOUND"
+diff --git a/server/opensandbox_server/services/docker.py b/server/opensandbox_server/services/docker.py
+index 66d4422..9d7c03e 100644
+--- a/server/opensandbox_server/services/docker.py
++++ b/server/opensandbox_server/services/docker.py
+@@ -1484,9 +1484,26 @@ class DockerSandboxService(DockerDiagnosticsMixin, OSSFSMixin, SandboxService, E
+         # allowlist.  Even though sub_path traversal (../) is blocked by
+         # ensure_valid_sub_path(), normalizing and re-checking prevents
+         # any edge-case bypass.
+-        if allowed_prefixes and resolved_path != volume.host.path:
++        if allowed_prefixes:
+             ensure_valid_host_path(resolved_path, allowed_prefixes)
+ 
++        # Symlink-aware path resolution (aligns with _validate_pvc_volume).
++        # Resolve any symlinks in the path to detect symlink-escape attacks
++        # where a symlink within an allowed prefix points outside it.
++        # Use strict=True so realpath raises OSError if intermediate
++        # components don't exist rather than silently returning the
++        # unresolved lexical path.
++        try:
++            real_path = os.path.realpath(resolved_path, strict=True)
++            if real_path != resolved_path and allowed_prefixes:
++                ensure_valid_host_path(real_path, allowed_prefixes)
++        except OSError:
++            # Path does not exist (yet) — it will be auto-created below.
++            # The lexical checks (including symlink component detection in
++            # ensure_valid_host_path) are already enforced during the
++            # initial ensure_volumes_valid call.
++            pass
++
+         # Allow existing host files (for example ISO binds to /boot.iso)
+         # without attempting directory creation.
+         if os.path.isfile(resolved_path):
+diff --git a/server/opensandbox_server/services/validators.py b/server/opensandbox_server/services/validators.py
+index 4b37b57..a23f180 100644
+--- a/server/opensandbox_server/services/validators.py
++++ b/server/opensandbox_server/services/validators.py
+@@ -24,9 +24,11 @@ from __future__ import annotations
+ from datetime import datetime, timedelta, timezone
+ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+ 
+-from fastapi import HTTPException, status
++import os
+ import re
+ 
++from fastapi import HTTPException, status
++
+ from opensandbox_server.services.constants import RESERVED_LABEL_PREFIX, SandboxErrorCodes
+ 
+ if TYPE_CHECKING:
+@@ -450,6 +452,53 @@ def ensure_valid_host_path(
+             },
+         )
+ 
++    # Reject paths containing symlink components.
++    # Walk each intermediate path component and check for symbolic links.
++    # This prevents symlink-escape attacks where a symlink within an allowed
++    # prefix points to a path outside the allowed prefix tree.
++    #
++    # Build the component list by repeatedly splitting off the tail until
++    # we reach the root.  os.path.split('/') returns ('/', ''), and
++    # os.path.split('C:\\') returns ('C:\\', ''), so an empty tail signals
++    # the root in both cases.
++    _check_path = path
++    _parts: list[str] = []
++    while True:
++        _prev = _check_path
++        head, tail = os.path.split(_check_path)
++        if not tail:
++            # Reached root (e.g. "/" or "C:\\").
++            _parts.insert(0, head)
++            break
++        _parts.insert(0, tail)
++        _check_path = head
++        if _check_path == _prev:
++            # head did not change — path cannot be split further.
++            break
++
++    _accumulated = _parts[0]  # root prefix: "/" or "C:"
++    for _comp in _parts[1:]:
++        _accumulated = os.path.join(_accumulated, _comp)
++        try:
++            if os.path.islink(_accumulated):
++                raise HTTPException(
++                    status_code=status.HTTP_400_BAD_REQUEST,
++                    detail={
++                        "code": SandboxErrorCodes.HOST_PATH_SYMLINK,
++                        "message": (
++                            f"Host path '{path}' contains a symbolic link component "
++                            f"('{_comp}') and is not allowed."
++                        ),
++                    },
++                )
++        except OSError:
++            # Component does not exist or is not accessible; os.path.islink
++            # returns False in that case, but an OSError may be raised if the
++            # path is not traversable.  For non-existent components the symlink
++            # check is irrelevant — the path cannot be used to escape because
++            # it does not exist yet.
++            pass
++
+     # Check against allowed prefixes if provided
+     if allowed_prefixes is not None:
+         # Normalize separators for cross-platform prefix checks so Windows-style

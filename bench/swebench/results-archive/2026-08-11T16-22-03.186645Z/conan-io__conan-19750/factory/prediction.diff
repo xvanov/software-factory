@@ -1,0 +1,29 @@
+diff --git a/conan/internal/api/profile/profile_loader.py b/conan/internal/api/profile/profile_loader.py
+index 61342c2..f49721e 100644
+--- a/conan/internal/api/profile/profile_loader.py
++++ b/conan/internal/api/profile/profile_loader.py
+@@ -245,8 +245,22 @@ class _ProfileValueParser:
+         if doc.system_tools:
+             ConanOutput().warning("Profile [system_tools] is deprecated,"
+                                   " please use [platform_tool_requires]")
+-        platform_tool_requires = [RecipeReference.loads(r) for r in doc_platform_tool_requires.splitlines()]
+-        platform_requires = [RecipeReference.loads(r) for r in doc_platform_requires.splitlines()]
++        platform_tool_requires = []
++        for r in doc_platform_tool_requires.splitlines():
++            ref = RecipeReference.loads(r)
++            version = repr(ref.version)
++            if version and version[0] == "[" and version[-1] == "]":
++                raise ConanException(f"Error reading profile: [platform_tool_requires]"
++                                     f" '{r}' must be an exact reference, not a version range")
++            platform_tool_requires.append(ref)
++        platform_requires = []
++        for r in doc_platform_requires.splitlines():
++            ref = RecipeReference.loads(r)
++            version = repr(ref.version)
++            if version and version[0] == "[" and version[-1] == "]":
++                raise ConanException(f"Error reading profile: [platform_requires]"
++                                     f" '{r}' must be an exact reference, not a version range")
++            platform_requires.append(ref)
+ 
+         def load_replace(doc_replace_requires):
+             result = {}

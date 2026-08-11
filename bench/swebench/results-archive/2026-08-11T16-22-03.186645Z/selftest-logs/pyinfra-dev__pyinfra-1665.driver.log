@@ -1,0 +1,6 @@
+
+=== selftest pyinfra-dev__pyinfra-1665 ===
+  gold_resolves=True  (ok)
+
+19/20 instances have a WORKING oracle -> /tmp/claude-1000/-home-k-software-factory/5dd1035c-2b7c-4cd8-98dc-26a64bfea8f0/scratchpad/wt-1b/bench/swebench/selftest.json
+Instances whose gold patch does not resolve are NOT factory failures. Exclude them, or the score measures the harness.

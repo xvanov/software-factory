@@ -1,0 +1,62 @@
+Checking patch tests/object_test.py...
+Applied patch tests/object_test.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_ad46723c5a2fa6cb: OK (red as expected)
+Checking patch CHANGES.rst...
+Checking patch jsonpickle/pickler.py...
+Checking patch jsonpickle/tags.py...
+Checking patch jsonpickle/unpickler.py...
+Applied patch CHANGES.rst cleanly.
+Applied patch jsonpickle/pickler.py cleanly.
+Applied patch jsonpickle/tags.py cleanly.
+Applied patch jsonpickle/unpickler.py cleanly.
+SWEBENCH_APPLY_ad46723c5a2fa6cb: OK
+.                                                                        [100%]
+=========================== short test summary info ============================
+PASSED tests/object_test.py::test_defaultdict_preserves_default_factory_key
+1 passed in 0.09s
+SWEBENCH_TALLY_ad46723c5a2fa6cb: fail_to_pass 1 passed in 0.09s
+[3 node outcomes for fail_to_pass -> grade-nodes.log]
+PASSED tests/object_test.py::test_defaultdict_subclass_with_class_as_default_factory
+PASSED tests/object_test.py::test_posix_stat_result
+PASSED tests/object_test.py::test_repr_using_jsonpickle
+PASSED tests/object_test.py::test_broken_repr_dict_key
+PASSED tests/object_test.py::test_ordered_dict_python3
+PASSED tests/object_test.py::test_ordered_dict
+PASSED tests/object_test.py::test_ordered_dict_unpicklable
+PASSED tests/object_test.py::test_ordered_dict_reduces
+PASSED tests/object_test.py::test_int_keys_in_object_with_getstate_only
+PASSED tests/object_test.py::test_ordered_dict_int_keys
+PASSED tests/object_test.py::test_ordered_dict_nested
+PASSED tests/object_test.py::test_deque_roundtrip
+PASSED tests/object_test.py::test_namedtuple_roundtrip
+PASSED tests/object_test.py::test_counter_roundtrip
+PASSED tests/object_test.py::test_counter_roundtrip_with_keys
+PASSED tests/object_test.py::test_list_with_fd
+PASSED tests/object_test.py::test_thing_with_fd
+PASSED tests/object_test.py::test_dict_with_fd
+PASSED tests/object_test.py::test_thing_with_lamda
+PASSED tests/object_test.py::test_newstyleslots
+PASSED tests/object_test.py::test_newstyleslots_inherited
+PASSED tests/object_test.py::test_newstyleslots_inherited_deleted_attr
+PASSED tests/object_test.py::test_newstyleslots_with_children
+PASSED tests/object_test.py::test_newstyleslots_with_children_inherited
+PASSED tests/object_test.py::test_newstyleslots_iterable
+PASSED tests/object_test.py::test_newstyleslots_string_slot
+PASSED tests/object_test.py::test_enum34_nested
+PASSED tests/object_test.py::test_enum_references
+PASSED tests/object_test.py::test_enum_unpicklable
+PASSED tests/object_test.py::test_enum_int_key_and_value
+PASSED tests/object_test.py::test_enum_string_key_and_value
+PASSED tests/object_test.py::test_int_enum_with_auto_value
+PASSED tests/object_test.py::test_multiple_string_enums_when_make_refs_is_false
+PASSED tests/object_test.py::test_unicode_mixin
+PASSED tests/object_test.py::test_datetime_with_tz_copies_refs
+PASSED tests/object_test.py::test_with_exclude
+PASSED tests/object_test.py::test_contained_exclusion
+PASSED tests/object_test.py::test_exclude_slots
+PASSED tests/object_test.py::test_exclude_getstate_from_slots
+82 passed in 0.17s
+SWEBENCH_TALLY_ad46723c5a2fa6cb: pass_to_pass 82 passed in 0.17s
+[84 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_ad46723c5a2fa6cb: RESOLVED

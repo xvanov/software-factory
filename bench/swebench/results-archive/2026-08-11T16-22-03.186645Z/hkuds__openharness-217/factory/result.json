@@ -1,0 +1,203 @@
+{
+  "arm": "factory",
+  "instance_id": "hkuds__openharness-217",
+  "repo": "HKUDS/OpenHarness",
+  "base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+  "problem_statement_sha256": "5a1163602919f92cffa9aa885f04b1db190c3071b17eff2cf2fc439225841f5a",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.068
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 0.5831
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.056
+    }
+  ],
+  "model_escalated_calls": 2,
+  "ts": "2026-08-11T13:06:50.627425+00:00",
+  "wall_clock_s": 562.9,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 0,
+  "steps_used": 2,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 710681,
+  "tokens_out": 35082,
+  "cached_input_tokens": 457600,
+  "cost_usd": 0.7071,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.7,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/test_auth"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "reviewer_done",
+  "chain_personas": [
+    "dev",
+    "review"
+  ],
+  "files_changed": [
+    "src/openharness/auth/flows.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_auth/test_flows.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1256,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+    "expected_base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+    "base_ref_matches": true,
+    "base_ref_ahead_of_expected": 0,
+    "expected_resolves": true,
+    "gitlink": "file",
+    "head_sha": "d6f1deec24a61c11cb72e1540992afcd06e95e63",
+    "head_is_base": false,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 117,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [],
+    "bypassed_count": 0,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 0,
+    "refused_samples": [],
+    "scan_truncated": false,
+    "locks_applied": 6,
+    "restored_test_files": [],
+    "restore_errors": []
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-hkuds__openharness-217-phoulzst/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-hkuds__openharness-217-phoulzst/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-hkuds__openharness-217-phoulzst",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/hkuds__openharness-217__factory/root/state/acceptance",
+    "sha256": "06602d2e7d0d277bc68d6907f4a160174d9398dd87ec59a9b21ea6e38e890594",
+    "bytes": 1354,
+    "authored_at": "2026-08-11T12:57:36.518096+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "cffaf5a944cd70e68c225112beaa722b7cea54772c32c055b543ca61d3f0d750",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 3226,
+    "spec_prompt_path": "/home/k/sf-bench-replay/bench/swebench/runs/hkuds__openharness-217/factory/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-replay/bench/swebench/runs/hkuds__openharness-217/factory/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 1,
+      "acceptance_author_ended_at": "2026-08-11T13:01:10.164906+00:00",
+      "dev_first_started_at": "2026-08-11T13:01:10.736231+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-11T13:01:10.164906+00:00, dev's first call started 2026-08-11T13:01:10.736231+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-hkuds__openharness-217-phoulzst",
+        "state/acceptance"
+      ],
+      "files_scanned": 2,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-hkuds__openharness-217-phoulzst": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "dev_inner_loop_stops": [],
+  "bench_caps": {
+    "hourly_spend_usd": 100.0,
+    "daily_spend_usd": 500.0
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "hkuds__openharness-217",
+    "image": "swerebench/sweb.eval.x86_64.hkuds_1776_openharness-217@sha256:ad0997cf2e90f0a31f3e6f8fd5cba18ced7f364ae3a62bd59f4c9e1d88b7678d",
+    "graded_at": "2026-08-11T13:06:51.158963+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 2,
+    "pass_to_pass_declared_count": 2,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell']",
+      "tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]']",
+      "tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]']",
+      "tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]']",
+      "tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]']",
+      "tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]: node(s) FAILED/ERROR: ['tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "src/openharness/auth/flows.py"
+    ],
+    "touched_files": [
+      "src/openharness/auth/flows.py"
+    ],
+    "gold_files_overlap": [
+      "src/openharness/auth/flows.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 5.6,
+    "log_tail": "Checking patch tests/test_auth/test_flows.py...\nApplied patch tests/test_auth/test_flows.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_a21e296838782f92: OK (red as expected)\nChecking patch src/openharness/auth/flows.py...\nApplied patch src/openharness/auth/flows.py cleanly.\nSWEBENCH_APPLY_a21e296838782f92: OK\n             ^^^^^^^^^^^^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nname = 'openharness.auth.flows.os'\n\n    def resolve(name: str) -> object:\n        # Simplified from zope.dottedname.\n        parts = name.split(\".\")\n    \n        used = parts.pop(0)\n        found: object = __import__(used)\n        for part in parts:\n            used += \".\" + part\n            try:\n                found = getattr(found, part)\n            except AttributeError:\n                pass\n            else:\n                continue\n            # We use explicit un-nesting of the handling block in order\n            # to avoid nested exceptions.\n            try:\n                __import__(used)\n            except ImportError as ex:\n                expected = str(ex).split()[-1]\n                if expected == used:\n                    raise\n                else:\n>                   raise ImportError(f\"import error in {used}: {ex}\") from ex\nE                   ImportError: import error in openharness.auth.flows.os: No module named 'openharness.auth.flows.os'; 'openharness.auth.flows' is not a package\n\n/opt/conda/envs/testbed/lib/python3.13/site-packages/_pytest/monkeypatch.py:85: ImportError\n=========================== short test summary info ============================\nERROR tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]\nERROR tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]\n6 errors in 0.05s\nSWEBENCH_TALLY_a21e296838782f92: fail_to_pass 6 errors in 0.05s\n[8 node outcomes for fail_to_pass -> grade-nodes.log]\n..                                                                       [100%]\n=========================== short test summary info ============================\nPASSED tests/test_auth/test_flows.py::test_open_browser_macos_uses_open_argv\nPASSED tests/test_auth/test_flows.py::test_open_browser_linux_uses_xdg_open_argv\n2 passed in 0.01s\nSWEBENCH_TALLY_a21e296838782f92: pass_to_pass 2 passed in 0.01s\n[4 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_a21e296838782f92: UNRESOLVED\n"
+  }
+}
