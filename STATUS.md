@@ -49,7 +49,54 @@ family + fixture SETUP shape), #302 (framework-wiring severities), #303
 126-130 into the approval queue when the factory woke — correctly
 operator-gated, left for the operator to triage.
 
-All systemd units are deliberately **stopped**. Run `factory on` to start.
+**Factory is ON** (verified 2026-08-11): all five timers active, mode `normal`,
+`Result=success`. It is **idle, not wedged** — 0 stories in flight in any app and
+$0.00 spent today, because directions 126-130 are waiting in the approval gate.
+Run `factory off` to stop.
+
+## Session of 2026-08-11 — the benchmark plan is COMPLETE, and the answer is negative
+
+Merged: **#321** (the replay result), **#322** (the postmortem), **#323**
+(corrections to it). Full analysis: **`POSTMORTEM-2026-08-11.md`**.
+
+**Step 4 was the last open item in the post-sweep-2 plan. Nothing remains in it.**
+Phase C (best-of-N selection) was cancelled earlier on evidence. **Phase D — move
+the primary gate to live-chain units (merged stories/day, $ per merged story) —
+is defined but NOT started.** That is the only remaining work, and it is the
+right next step precisely because this benchmark cannot measure the thesis.
+
+**What the replay found, in one line:** fourteen PRs of machinery fixes recovered
+exactly the three rows they targeted and moved the resolve rate by **zero**,
+while cost per resolved went $5.02 → $8.10 and the single-agent control beat the
+chain on the same model in the same week.
+
+**The three findings most likely to be acted on next**, in yield order:
+
+1. **Gates are mute to the dev.** `_build_initial_message` reads only
+   `reviewer_result_json` and `dev_attempts_json`; `log_story_event` writes to
+   neither, so a gate's real rejection reason never reaches the persona it
+   rejected — the dev sees `tests not green after run` above `11 passed in
+   0.82s`. The empty-diff gate 40 lines away already does this correctly.
+   **~5 call sites.** Also: nothing in this repo is schema-validated —
+   `runner.py:2635` cites `jsonschema`, which appears in the repo exactly once,
+   in that docstring.
+2. **The 0444 lock re-creates the Loop-4 deadlock** and its repair layer is ~50%
+   effective by construction (see the containment paragraph below).
+3. **A no-progress abort for dev attempts** — the 1,800 s cap wasted $25.97
+   (32% of the run) on attempts that wrote nothing. **Do NOT simply raise the
+   cap**: measured outcomes lost to it are 0 confirmed.
+
+**Two claims from earlier in this session were WITHDRAWN after fuller evidence**
+— "horizon slicing is the biggest lever, raise the timeout first" (attempt-level
+data: 0 confirmed lost outcomes; dev runs are bimodal), and "`line-bot-981`
+traces to the dev's gitlink surgery" (it is chain worktree preparation). Both
+corrections are in `POSTMORTEM-2026-08-11.md`.
+
+**Live-loop numbers re-measured this session** (they matter more than the
+benchmark): loop 1 delivers **~1.0 story/day**; median cost of a *merged* story
+is **$1.40** but the oracle-era cohort spent **$28.57 for 7 deliveries = $4.08
+each**; **loop 2 has shipped nothing since 2026-07-30** and the chain's share of
+this repo is **24 of 248 merged PRs (9.7%)**.
 
 **Read this first — the 2026-08-11 replay is the current result.** The `factory`
 arm was re-run on the pinned manifest with every machinery fix applied
@@ -112,10 +159,21 @@ teardown. It is a **chain workspace-preparation** defect. The distinction is
 load-bearing: a prompting fix will not close a prep-tooling hole.
 
 **Containment is NOT closed.** `test_readonly.bypassed_count > 0` on **10 of 18**
-rows; on **2** (`canvasapi-716`, `hiero-1914`) the repair failed with 11
-`restore_errors` each reading *"the edit was committed, not just written"*. The
-restore operates on the working tree and a committed edit survives it. Grading
-strips test files, so no score is contaminated — the chain's own green is.
+rows. On 2 (`canvasapi-716`, `hiero-1914`) the repair failed outright, but
+**every one of the 10 carries `restore_errors` reading _"the edit was committed,
+not just written"_** — the chain commits before review, so `git checkout --`
+restores the commit *containing* the edit. **The repair layer is ~50% effective
+by construction, not by accident.** Grading strips test files, so no score is
+contaminated — the chain's own green is.
+
+The lock lives **only in `bench/swebench_adapter.py`**; the live chain never
+locks anything. It is applied as the **same uid** the agent runs as
+(`swebench_adapter.py:1839` calls it "a MEASUREMENT, not a sandbox boundary"),
+which is why a `chmod` widening defeats it. And it **re-creates the deadlock
+Loop-4 was built to remove**: `memory/loop4_dev_owns_tests_rewrite.md` records
+that test-first + test-frozen + test-owned-by-another produced infinite
+ping-pong, while `dev.md:46` tells the dev it owns the tests and `dev.md:150`
+tells it to apply every review finding verbatim.
 
 **Earlier sweeps, for context.** Two sweeps exist on the pinned SWE-rebench manifest.
 Sweep 1 (2026-08-04, five arms): **the chain showed no measurable lift over a
@@ -437,8 +495,12 @@ Note (audit): **"deployed" is a state name, not a deploy.** All 102
   `api_check.py`) and the unvalidated dev-sandbox clone URL are **fixed**, with
   wire-level regression tests. Clone-URL policy: validate the **host**, never
   the scheme (ssh/scp-style remotes are a supported feature).
-- Deployment is down (`sacrifice-backend.service` failed, `/api/health` → 502)
-  and stays down until a direction's testbed work needs it.
+- ~~Deployment is down (`sacrifice-backend.service` failed, `/api/health` → 502)~~
+  **STALE, corrected 2026-08-11**: the service is up and both health endpoints
+  return 200. The real deploy finding is different and worse — across the whole
+  history there are **109 deploy actions, 0 successes, 0 smoke checks, 0 health
+  checks**. The `deployed` story state records a *merge*, so it has never once
+  meant deployed.
 - **The out-of-process acceptance oracle is now live**: `gates.acceptance_oracle:
   true` (PR #254, merged `2f81d224`), the boot recipe requires the
   `sacrifice-db` container up (`prerequisite_command` checks with `docker ps`,
