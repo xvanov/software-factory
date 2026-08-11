@@ -110,32 +110,53 @@ uv run pytest -q -n 8 --dist loadfile     # full suite, ~2-4 min parallel (~15 m
 uv run ruff check . && uv run mypy factory
 ```
 
-**RUN BENCHMARKS AS WIDE AS THE HOST ALLOWS. Every time.** Operator instruction,
-2026-08-11. A sweep's wall clock should be bounded by its SLOWEST INSTANCE, never
-by how many batches the pool needs. `run-all --workers` now defaults to
-`min(20, cores*2)` (19 on this host) instead of 4 — the measured cost of the old
-default was **7,297 s for a 19-instance sweep whose longest row was 5,400 s**:
-five batches, most of the wall clock spent queueing rather than measuring. Do not
-pass a smaller `--workers` unless a provider is actively rate-limiting (sweep 1
-lost 3 rows to 429s at four workers, so watch for them and say so if you narrow
-it). The spend guard is width-independent: it re-checks actual accumulated cost
-after every completed instance.
+**RUN BENCHMARKS AS WIDE AS THE LIMIT ALLOWS — and there are TWO limits.**
+Operator instruction 2026-08-11, corrected the same day by a $4.10 mistake.
 
-The same rule applies to anything else with a worker pool — the test suite
-(`-n 8 --dist loadfile`), selftest, grading. Never run a benchmark step serially
-"to be safe"; run it wide and re-check the losers.
+**Free steps: host width.** `selftest`, grading, the test suite — docker and CPU,
+no model calls. Run these as wide as the machine allows. Measured: the whole
+20-instance gold-patch control went from ~1 h serial to **~25 min at 20-wide**.
+`selftest --workers` defaults to `min(20, cores*2)`.
 
-**Two exceptions, both measured on 2026-08-11, both in the "a red test can mean
+**Model-driven sweeps: PROVIDER width, which is 4.** `run-all` on any arm drives
+one shared Azure `deepseek-v4-pro` deployment. Launched 18-wide, **all 18 rows
+died**:
+
+```
+LLMRateLimitError: AzureException RateLimitError - Your requests to
+DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.
+```
+
+20 trajectories carried that event; 5 completed rows had `files_touched: []` and
+no `SELF_SUMMARY` — the sandbox never did any work. **And backoff cannot fix it:**
+the SDK already retries (`num_retries=5`, `retry_multiplier=8.0`,
+`retry_max_wait=64` — 2-3 minutes), and 18 streams saturate the tokens-per-minute
+quota far longer than that. Raising retries only makes 18 workers each wait
+longer, which buys **no throughput**: the quota is tokens/minute, so a width that
+saturates it already extracts everything available. Above it you get contention
+and losses, not speed.
+
+So `run-all --workers` now defaults to `_PROVIDER_SAFE_WORKERS = 4` (the width
+both prior sweeps used) rather than the host width, and a factory sweep is ~2 h no
+matter how big the box is. For scale: the openhands control at 4 workers took
+**7,297 s** for 19 instances whose slowest single row was 5,400 s — so roughly
+30 minutes of that was batching and the rest was the slow tail. Four workers was
+NOT quota-saturated (3 rows lost to provider errors, not 18), which is why it is
+the right default: wide enough to use the quota, not wide enough to thrash it. Raise it only with a bigger quota or a second
+deployment — the override is honoured verbatim and printed. **If you narrow or
+widen it, say so and say why.**
+
+**Two contention traps, both measured 2026-08-11, both in the "a red test can mean
 nothing too" class.** The acceptance-oracle files boot servers and spawn
-subprocesses, so they are contention-sensitive:
+subprocesses:
 
 1. **Do not run the full suite while a sweep is in flight.** Under 4 OpenHands
    workers + ~22 containers they fail; they pass 96/96 serially in the same tree.
 2. **`-n 8` is too wide for them on this host.** In a full local run at `-n 8`
    they fail even with nothing else running; at **`-n 4`** — the width CI's full
-   lane uses — they pass. So a local `-n 8` red in
-   `test_acceptance_oracle*.py` / `test_sacrifice_acceptance_harness_hint.py`
-   means re-run at `-n 4` before believing it.
+   lane uses — they pass. A local `-n 8` red in `test_acceptance_oracle*.py` or
+   `test_sacrifice_acceptance_harness_hint.py` means re-run at `-n 4` before
+   believing it.
 
 Establish the baseline before blaming a diff.
 
