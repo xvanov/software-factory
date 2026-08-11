@@ -2599,10 +2599,62 @@ _BENCH_ROOT_CAPS: dict[str, float] = {
 _SWEEP_WORKERS_CEILING = 20
 
 
+# The width a MODEL-DRIVEN arm may run at, regardless of how big the host is.
+#
+# Measured the hard way on 2026-08-11: the factory replay was launched 18-wide
+# per the "run benchmarks as wide as the host allows" rule, and ALL 18 ROWS DIED
+# with
+#
+#   LLMRateLimitError: AzureException RateLimitError - Your requests to
+#   DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.
+#
+# 20 trajectories carried that event; 5 rows completed with ``files_touched: []``
+# and no ``SELF_SUMMARY`` — the sandbox never did any work. $4.10 metered for no
+# measurement. Re-run at 4 it worked, which is the width both prior sweeps used.
+#
+# AND THE BACKOFF CANNOT SAVE IT. The OpenHands SDK already retries: its ``LLM``
+# defaults are ``num_retries=5``, ``retry_multiplier=8.0``, ``retry_min_wait=8``,
+# ``retry_max_wait=64`` — roughly 2-3 minutes of exponential backoff, and 18
+# concurrent streams saturate the deployment's tokens-per-minute quota for far
+# longer than that. Raising the retry budget would only make 18 workers each WAIT
+# longer, which buys no throughput: the quota is tokens/minute, so a width that
+# saturates it already extracts everything available. Above that, extra workers
+# add contention and losses, not speed.
+#
+# So host width and provider width are DIFFERENT limits, and the free steps are
+# the ones that scale:
+#
+#   * ``selftest``, grading, the test suite — docker and CPU, no model calls.
+#     Run these as wide as the host allows (the whole 20-instance control went
+#     from ~1 h serial to ~25 min at 20-wide).
+#   * ``run-all`` on any arm that drives a model — bounded by the deployment,
+#     not the host.
+#
+# Override with an explicit ``--workers`` when a bigger quota or a second
+# deployment is available; the override is honoured verbatim and reported.
+_PROVIDER_SAFE_WORKERS = 4
+
+
 def _default_sweep_workers() -> int:
-    """As many concurrent instances as this host can reasonably hold."""
+    """As many concurrent instances as this host can reasonably hold.
+
+    HOST width — correct for the steps that spend no model money. A model-driven
+    sweep is bounded by ``_PROVIDER_SAFE_WORKERS`` instead; see
+    ``default_workers_for_arm``.
+    """
     cores = os.cpu_count() or 4
     return max(4, min(_SWEEP_WORKERS_CEILING, cores * 2))
+
+
+def default_workers_for_arm(arm: str) -> int:
+    """The default width for a sweep of ``arm``.
+
+    Every arm in ``_ARMS`` drives a model, so every one is provider-bound; the
+    function takes the arm anyway so a future no-model arm (a replay, a fixture
+    sweep) can opt into host width by name rather than by an operator remembering
+    to pass ``--workers``.
+    """
+    return min(_default_sweep_workers(), _PROVIDER_SAFE_WORKERS)
 
 
 def _build_bench_root(inst: dict[str, Any], repo: Path, root: Path) -> Path:
@@ -11532,10 +11584,13 @@ def main() -> None:
     p.add_argument(
         "--workers",
         type=int,
-        default=_default_sweep_workers(),
+        default=None,
         help=(
-            "concurrent instances; defaults to as many as this host can hold "
-            f"(currently {_default_sweep_workers()}). See _default_sweep_workers."
+            "concurrent instances. Defaults to the PROVIDER-safe width for the "
+            f"arm ({_PROVIDER_SAFE_WORKERS}) — not the host width "
+            f"({_default_sweep_workers()}), because every arm drives one shared "
+            "model deployment and 18-wide lost all 18 rows to 429s on "
+            "2026-08-11. Raise it only with a bigger quota."
         ),
     )
     p.add_argument(
@@ -11703,7 +11758,14 @@ def main() -> None:
         run_all(
             arm=args.arm,
             model=args.model,
-            workers=args.workers,
+            # ``--workers`` unset => the PROVIDER-safe width for this arm, not
+            # the host width. argparse cannot see ``--arm`` while building its
+            # default, so it is resolved here.
+            workers=(
+                args.workers
+                if args.workers is not None
+                else default_workers_for_arm(args.arm)
+            ),
             instances=(
                 [s.strip() for s in args.instances.split(",") if s.strip()]
                 if args.instances

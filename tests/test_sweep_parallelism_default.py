@@ -70,12 +70,47 @@ def test_run_all_uses_it_rather_than_a_literal(A: Any) -> None:  # noqa: N803
     assert 'p.add_argument("--workers", type=int, default=4)' not in src
 
 
+def test_a_model_driven_sweep_defaults_to_the_provider_safe_width(A: Any) -> None:  # noqa: N803
+    """18-wide lost ALL 18 rows to 429s on one shared deployment. Host width is
+    the wrong limit for anything that calls a model."""
+    assert A._PROVIDER_SAFE_WORKERS == 4
+    for arm in ("factory", "solo-noreview", "openhands", "bare", "claude-5"):
+        assert A.default_workers_for_arm(arm) == 4, arm
+    # And it is a MINIMUM against host width, so a tiny host still narrows.
+    assert A.default_workers_for_arm("factory") <= A._default_sweep_workers()
+
+
+def test_backoff_is_not_the_answer_and_the_code_says_why(A: Any) -> None:
+    """The SDK already retries with exponential backoff; the quota is
+    tokens/minute, so more waiting buys no throughput. Recorded at the constant so
+    the next session does not "fix" this by raising num_retries."""
+    import inspect
+
+    src = inspect.getsource(A)
+    i = src.index("_PROVIDER_SAFE_WORKERS = 4")
+    window = src[max(0, i - 2500) : i]
+    assert "num_retries=5" in window
+    assert "tokens/minute" in window or "tokens-per-minute" in window
+
+
+def test_an_explicit_workers_override_is_still_honoured(A: Any) -> None:
+    """A bigger quota or a second deployment must not require a code change."""
+    import inspect
+
+    src = inspect.getsource(A)
+    assert "args.workers\n                if args.workers is not None" in src
+
+
 def test_claude_md_carries_the_standing_instruction() -> None:
     """The rule has to survive the next session, which reads CLAUDE.md."""
     text = (_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    assert "RUN BENCHMARKS AS WIDE AS THE HOST ALLOWS" in text
+    assert "RUN BENCHMARKS AS WIDE AS THE LIMIT ALLOWS" in text
+    assert "there are TWO limits" in text
     assert "7,297 s" in text, "name the measured cost, not a vague preference"
-    assert "slowest instance" in text.lower()
+    # The correction: host width for free steps, provider width for model steps.
+    assert "Free steps: host width" in text
+    assert "Model-driven sweeps: PROVIDER width, which is 4" in text
+    assert "backoff cannot fix it" in text
     # And the one real exception, so the next session does not re-derive it the
     # hard way: a full pytest run during a sweep produces false reds.
     assert "Do not run the full suite while a sweep is in flight" in text
