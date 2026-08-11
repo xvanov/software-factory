@@ -1,0 +1,236 @@
+{
+  "arm": "factory",
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "repo": "line/line-bot-sdk-python",
+  "base_commit": "f0d222be1a25553005bff35c2ace82424a683fd9",
+  "problem_statement_sha256": "ae01809b0f7a08ab816b8aec1d499276a97ea8870462a049af24228ac3261551",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0359
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 2,
+      "cost_usd": 4.5038
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 2,
+      "cost_usd": 0.2313
+    }
+  ],
+  "model_escalated_calls": 3,
+  "ts": "2026-08-11T15:38:31.765335+00:00",
+  "wall_clock_s": 2022.3,
+  "final_state": "reviewer_done",
+  "dev_retries": 0,
+  "reviewer_cycles": 1,
+  "steps_used": 4,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 4275109,
+  "tokens_out": 90486,
+  "cached_input_tokens": 2164544,
+  "cost_usd": 4.771,
+  "persona_calls": 5,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.8,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/api"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "reviewer_done",
+  "chain_personas": [
+    "dev",
+    "review"
+  ],
+  "files_changed": [
+    "line-openapi",
+    "line-openapi/.github/ISSUE_TEMPLATE/bug_report.md",
+    "line-openapi/.github/ISSUE_TEMPLATE/feature_request.md",
+    "line-openapi/.github/ISSUE_TEMPLATE/question.md",
+    "line-openapi/.github/actions/post-comment-action/action.yml",
+    "line-openapi/.github/actions/post-comment-action/main.js",
+    "line-openapi/.github/actions/post-comment-action/package-lock.json",
+    "line-openapi/.github/actions/post-comment-action/package.json",
+    "line-openapi/.github/workflows/ci.yml",
+    "line-openapi/.github/workflows/close-issue.yml",
+    "line-openapi/.github/workflows/label-issue.yml",
+    "line-openapi/.github/workflows/sdk-testing.yml",
+    "line-openapi/.github/workflows/warn-pr-from-forked-repository.yml",
+    "line-openapi/.gitignore",
+    "line-openapi/.spectral.yaml",
+    "line-openapi/CODE_OF_CONDUCT.md",
+    "line-openapi/LICENSE",
+    "line-openapi/README.md",
+    "line-openapi/channel-access-token.yml",
+    "line-openapi/docker-compose.yml",
+    "line-openapi/insight.yml",
+    "line-openapi/liff.yml",
+    "line-openapi/manage-audience.yml",
+    "line-openapi/messaging-api.yml",
+    "line-openapi/module-attach.yml",
+    "line-openapi/module.yml",
+    "line-openapi/package-lock.json",
+    "line-openapi/package.json",
+    "line-openapi/renovate.json5",
+    "line-openapi/shop.yml",
+    "line-openapi/tools/determine-change-type.mjs",
+    "line-openapi/tools/generate-test.mjs",
+    "line-openapi/tools/get-pr-info.mjs",
+    "line-openapi/tools/reformat.mjs",
+    "line-openapi/tools/validate-all.mjs",
+    "line-openapi/tools/validate-inheritance.mjs",
+    "line-openapi/tools/validate-property-camelcase.mjs",
+    "line-openapi/tools/validate-request-suffix.mjs",
+    "line-openapi/webhook.yml",
+    "linebot/v3/oauth/api/async_channel_access_token.py",
+    "linebot/v3/oauth/api/channel_access_token.py"
+  ],
+  "test_files_stripped": [
+    "tests/api/test_issue_stateless_channel_token_convenience.py"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 575185,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "7a7fbf535e13271080d776ee2e95eb8007c1c8a5",
+    "expected_base_commit": "f0d222be1a25553005bff35c2ace82424a683fd9",
+    "base_ref_matches": false,
+    "base_ref_ahead_of_expected": 1,
+    "expected_resolves": true,
+    "gitlink": "file",
+    "head_sha": "ac7d27afc30505a6aa7db66ea943c71ba3936f39",
+    "head_is_base": false,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 68,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [],
+    "bypassed_count": 0,
+    "unlocked_mode": [],
+    "missing": [
+      "tests/v3/oauth/test_issue_stateless_channel_token_convenience.py"
+    ],
+    "lock_lapsed_count": 1,
+    "refused": 0,
+    "refused_samples": [],
+    "scan_truncated": false,
+    "locks_applied": 12,
+    "restored_test_files": [],
+    "restore_errors": []
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-line__line-bot-sdk-python-981_interface-t_vgxqci/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-line__line-bot-sdk-python-981_interface-t_vgxqci/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-line__line-bot-sdk-python-981_interface-t_vgxqci",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/line__line-bot-sdk-python-981_interface__factory/root/state/acceptance",
+    "sha256": "9a7e43d95c45f7de518af3409fa63dcd5337a00f898aa929fcfd686f1f906381",
+    "bytes": 1073,
+    "authored_at": "2026-08-11T15:04:58.781561+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "bf372b6dd743ae71048a15fe646ccbfdb58e86b02ca6928fce86007728d6a5ce",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 2376,
+    "spec_prompt_path": "/home/k/sf-bench-replay/bench/swebench/runs/line__line-bot-sdk-python-981_interface/factory/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-replay/bench/swebench/runs/line__line-bot-sdk-python-981_interface/factory/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 2,
+      "acceptance_author_ended_at": "2026-08-11T15:06:21.776964+00:00",
+      "dev_first_started_at": "2026-08-11T15:06:22.464241+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-11T15:06:21.776964+00:00, dev's first call started 2026-08-11T15:06:22.464241+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-line__line-bot-sdk-python-981_interface-t_vgxqci",
+        "state/acceptance"
+      ],
+      "files_scanned": 3,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-line__line-bot-sdk-python-981_interface-t_vgxqci": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "dev_inner_loop_stops": [],
+  "bench_caps": {
+    "hourly_spend_usd": 100.0,
+    "daily_spend_usd": 500.0
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "line__line-bot-sdk-python-981_interface",
+    "image": "swerebench/sweb.eval.x86_64.line_1776_line-bot-sdk-python-981_interface@sha256:11b622466b7f8734ef20f3e5d595b533a8eb11d01f033a7e929c4e1269b4b1d4",
+    "graded_at": "2026-08-11T15:38:32.296301+00:00",
+    "fail_to_pass_count": 4,
+    "pass_to_pass_count": 1,
+    "pass_to_pass_declared_count": 0,
+    "pass_to_pass_source": "declared_test_targets",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_client_secret: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_jwt_assertion: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_client_secret: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_jwt_assertion: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass",
+      "tests/api/test_issue_stateless_channel_token.py: no PASSED node in pytest's report \u2014 a skipped, deselected, uncollected or missing test is not a pass"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": false,
+    "outcome": "patch_did_not_apply",
+    "exit_code": 2,
+    "grade_wall_s": 11.3,
+    "log_tail": ".\nApplied patch to 'line-openapi/insight.yml' cleanly.\nChecking patch line-openapi/liff.yml...\nPerforming three-way merge...\nApplied patch to 'line-openapi/liff.yml' cleanly.\nChecking patch line-openapi/manage-audience.yml...\nPerforming three-way merge...\nApplied patch to 'line-openapi/manage-audience.yml' cleanly.\nChecking patch line-openapi/messaging-api.yml...\nPerforming three-way merge...\nApplied patch to 'line-openapi/messaging-api.yml' cleanly.\nChecking patch line-openapi/module-attach.yml...\nPerforming three-way merge...\nApplied patch to 'line-openapi/module-attach.yml' cleanly.\nChecking patch line-openapi/module.yml...\nPerforming three-way merge...\nApplied patch to 'line-openapi/module.yml' cleanly.\nChecking patch line-openapi/package-lock.json...\nPerforming three-way merge...\nApplied patch to 'line-openapi/package-lock.json' cleanly.\nChecking patch line-openapi/package.json...\nPerforming three-way merge...\nApplied patch to 'line-openapi/package.json' cleanly.\nChecking patch line-openapi/renovate.json5...\nPerforming three-way merge...\nApplied patch to 'line-openapi/renovate.json5' cleanly.\nChecking patch line-openapi/shop.yml...\nPerforming three-way merge...\n/tmp/prediction.diff:14115: new blank line at EOF.\n+\nApplied patch to 'line-openapi/shop.yml' cleanly.\nChecking patch line-openapi/tools/determine-change-type.mjs...\nPerforming three-way merge...\nApplied patch to 'line-openapi/tools/determine-change-type.mjs' cleanly.\nChecking patch line-openapi/tools/generate-test.mjs...\nPerforming three-way merge...\nApplied patch to 'line-openapi/tools/generate-test.mjs' cleanly.\nChecking patch line-openapi/tools/get-pr-info.mjs...\nPerforming three-way merge...\nApplied patch to 'line-openapi/tools/get-pr-info.mjs' cleanly.\nChecking patch line-openapi/tools/reformat.mjs...\nPerforming three-way merge...\nApplied patch to 'line-openapi/tools/reformat.mjs' cleanly.\nChecking patch line-openapi/tools/validate-all.mjs...\nPerforming three-way merge...\nApplied patch to 'line-openapi/tools/validate-all.mjs' cleanly.\nChecking patch line-openapi/tools/validate-inheritance.mjs...\nPerforming three-way merge...\nApplied patch to 'line-openapi/tools/validate-inheritance.mjs' cleanly.\nChecking patch line-openapi/tools/validate-property-camelcase.mjs...\nPerforming three-way merge...\nApplied patch to 'line-openapi/tools/validate-property-camelcase.mjs' cleanly.\nChecking patch line-openapi/tools/validate-request-suffix.mjs...\nPerforming three-way merge...\nApplied patch to 'line-openapi/tools/validate-request-suffix.mjs' cleanly.\nChecking patch line-openapi/webhook.yml...\nPerforming three-way merge...\nApplied patch to 'line-openapi/webhook.yml' cleanly.\nChecking patch linebot/v3/oauth/api/async_channel_access_token.py...\nApplied patch to 'linebot/v3/oauth/api/async_channel_access_token.py' cleanly.\nChecking patch linebot/v3/oauth/api/channel_access_token.py...\nApplied patch to 'linebot/v3/oauth/api/channel_access_token.py' cleanly.\nSWEBENCH_APPLY_15256cb92329751d: FAILED\n"
+  }
+}

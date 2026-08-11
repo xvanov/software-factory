@@ -1,0 +1,103 @@
+{
+  "instance_id": "keras-team__keras-22316",
+  "arm": "factory",
+  "audited_at": "2026-08-11T14:18:48.310594+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 3 call(s) but only 2 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-11T13:13:25.126689+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 6440,
+      "tokens_out": 36278,
+      "cached_input_tokens": 5632,
+      "cost_usd": 0.16165432000000002,
+      "duration_s": 373.279,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T13:43:26.679001+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 4302838,
+      "tokens_out": 47812,
+      "cached_input_tokens": 2935808,
+      "cost_usd": 3.2941529480000007,
+      "duration_s": 1800.979,
+      "success": 0,
+      "error": "sandbox run timed out after 1800s (likely a stalled LLM call); treating as retryable infrastructure failure"
+    },
+    {
+      "ts": "2026-08-11T14:10:35.814891+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1507832,
+      "tokens_out": 19890,
+      "cached_input_tokens": 701184,
+      "cost_usd": 1.7458999640000004,
+      "duration_s": 1328.623,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:14:09.928888+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 10694,
+      "tokens_out": 37991,
+      "cached_input_tokens": 5696,
+      "cost_usd": 0.17360446000000002,
+      "duration_s": 212.844,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:16:20.437508+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 333814,
+      "tokens_out": 3756,
+      "cached_input_tokens": 274944,
+      "cost_usd": 0.17227056400000001,
+      "duration_s": 129.833,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:18:15.238513+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5410,
+      "tokens_out": 15445,
+      "cached_input_tokens": 2944,
+      "cost_usd": 0.07116554,
+      "duration_s": 113.593,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 5.6187,
+  "ledger_tokens_in": 6167028,
+  "ledger_tokens_out": 161172,
+  "result_cost_usd": 5.6187,
+  "prediction_sha256": "446498f6770b2bb9d1cbe8b674306c7bf01e272bbde9e917176ce69f44224ce3",
+  "base_commit": "34e55d4561ba2a61bbc72562e88b3704e0a43081",
+  "stripped_test_paths": [
+    "keras/src/ops/function_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 3,
+  "trails_scanned": 3,
+  "oracle_probe_failures": []
+}

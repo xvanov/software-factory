@@ -1,0 +1,57 @@
+diff --git a/montepy/cell.py b/montepy/cell.py
+index 18b4f9f..5366e9c 100644
+--- a/montepy/cell.py
++++ b/montepy/cell.py
+@@ -255,10 +255,23 @@ class Cell(Numbered_MCNP_Object):
+ 
+     @universe.setter
+     def universe(self, value):
+-        if not isinstance(value, Universe):
+-            raise TypeError("universe must be set to a Universe")
++        if not isinstance(value, (Universe, type(None))):
++            raise TypeError("universe must be set to a Universe or None")
++        if value is None:
++            if self._problem:
++                value = Universe(0)
++                value.link_to_problem(self._problem)
+         self._universe.universe = value
+ 
++    @universe.deleter
++    def universe(self):
++        if self._problem:
++            uni = Universe(0)
++            uni.link_to_problem(self._problem)
++            self._universe.universe = uni
++        else:
++            self._universe.universe = None
++
+     @property
+     def fill(self):
+         """the Fill object representing how this cell is filled.
+diff --git a/montepy/data_inputs/universe_input.py b/montepy/data_inputs/universe_input.py
+index 4146039..426227d 100644
+--- a/montepy/data_inputs/universe_input.py
++++ b/montepy/data_inputs/universe_input.py
+@@ -103,11 +103,21 @@ class UniverseInput(CellModifierInput):
+         if self.in_cell_block:
+             return self.universe is not None and self.universe.number != 0
+ 
+-    @make_prop_pointer("_universe", Universe)
++    @property
+     def universe(self):
+         if self.in_cell_block:
+             return self._universe
+ 
++    @universe.setter
++    def universe(self, value):
++        if not isinstance(value, (Universe, type(None))):
++            raise TypeError(f"universe must be set to a Universe or None. {value} given.")
++        self._universe = value
++
++    @universe.deleter
++    def universe(self):
++        self._universe = None
++
+     @property
+     def not_truncated(self):
+         """Indicates if this cell has been marked as not being truncated for optimization.

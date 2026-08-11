@@ -1,0 +1,88 @@
+{
+  "instance_id": "hiero-ledger__hiero-sdk-python-1914_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-11T15:52:32.645584+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-11T15:24:21.937258+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 3922,
+      "tokens_out": 9130,
+      "cached_input_tokens": 3136,
+      "cost_usd": 0.04165586,
+      "duration_s": 114.203,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:41:16.545494+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2804223,
+      "tokens_out": 31858,
+      "cached_input_tokens": 1322240,
+      "cost_usd": 3.1951239699999996,
+      "duration_s": 1013.951,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:47:56.935633+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 33330,
+      "tokens_out": 77734,
+      "cached_input_tokens": 16832,
+      "cost_usd": 0.36288722,
+      "duration_s": 399.297,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:48:47.151962+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 189205,
+      "tokens_out": 2375,
+      "cached_input_tokens": 85760,
+      "cost_usd": 0.22255246000000004,
+      "duration_s": 49.489,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:52:17.460255+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 22372,
+      "tokens_out": 40153,
+      "cached_input_tokens": 14080,
+      "cost_usd": 0.18833660000000002,
+      "duration_s": 209.003,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 4.0106,
+  "ledger_tokens_in": 3053052,
+  "ledger_tokens_out": 161250,
+  "result_cost_usd": 4.0106,
+  "prediction_sha256": "522b65bbbfa4b323e3b5f8753ae30989c1a337853a27f4db81b7ae15b96ab69b",
+  "base_commit": "93eed7c340fb65356c3a06ac78f74402c3a169af",
+  "stripped_test_paths": [
+    "tests/unit/account_info_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

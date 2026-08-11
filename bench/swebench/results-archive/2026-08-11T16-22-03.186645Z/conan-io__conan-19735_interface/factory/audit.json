@@ -1,0 +1,60 @@
+{
+  "instance_id": "conan-io__conan-19735_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-11T15:25:26.130194+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-11T15:19:30.313213+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 1447,
+      "tokens_out": 1888,
+      "cached_input_tokens": 1216,
+      "cost_usd": 0.008805110000000001,
+      "duration_s": 21.547,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:24:43.549413+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1206670,
+      "tokens_out": 12218,
+      "cached_input_tokens": 872192,
+      "cost_usd": 0.8327603920000001,
+      "duration_s": 312.612,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:25:19.552280+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 4250,
+      "tokens_out": 7882,
+      "cached_input_tokens": 2880,
+      "cost_usd": 0.0367241,
+      "duration_s": 34.638,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 0.8783,
+  "ledger_tokens_in": 1212367,
+  "ledger_tokens_out": 21988,
+  "result_cost_usd": 0.8783,
+  "prediction_sha256": "e60c7cc131fd706f7492242c9621a2ab1787f9be5b044d374a825b31d85e812e",
+  "base_commit": "4a65d65f53d2ab37f4ce0e52dc3f25cd832b2934",
+  "stripped_test_paths": [],
+  "refused_paths": [],
+  "trajectories_scanned": 1,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

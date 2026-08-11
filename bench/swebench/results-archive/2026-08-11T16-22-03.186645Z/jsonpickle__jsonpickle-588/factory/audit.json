@@ -1,0 +1,143 @@
+{
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "arm": "factory",
+  "audited_at": "2026-08-11T15:22:14.163560+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "dev: 5 call(s) but only 4 response body(ies) captured \u2014 response_bodies.ndjson is incomplete (rotated away, capture disabled, or a failed call)"
+  ],
+  "persona_calls": [
+    {
+      "ts": "2026-08-11T14:03:01.899854+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 2762,
+      "tokens_out": 1821,
+      "cached_input_tokens": 1216,
+      "cost_usd": 0.00989106,
+      "duration_s": 23.011,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:16:30.671765+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1574271,
+      "tokens_out": 18486,
+      "cached_input_tokens": 898048,
+      "cost_usd": 1.520497498,
+      "duration_s": 808.278,
+      "success": 0,
+      "error": "sandbox run raised: ConversationRunError('Conversation run failed for id=04628c44-7c2b-4f64-b962-c86b54a1ec73: litellm.RateLimitError: AzureException RateLimitError - Your requests to DeepSeek-V4-Pro for deepseek-v4-pro in eastus2 have exceeded rate limit.\\n\\nConversation logs are stored at: /tmp/factory-oh-traj-[REDACTED]\\n\\nTo help debug this issue, please file a bug report at:\\n  https://github.com/OpenHands/software-agent-sdk/issues/new\\nand attach the conversation logs from the directory above.')"
+    },
+    {
+      "ts": "2026-08-11T14:35:43.629536+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2851998,
+      "tokens_out": 29669,
+      "cached_input_tokens": 2023168,
+      "cost_usd": 2.039004218,
+      "duration_s": 1152.562,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:37:09.800382+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5809,
+      "tokens_out": 15829,
+      "cached_input_tokens": 2880,
+      "cost_usd": 0.07332785,
+      "duration_s": 85.151,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:43:01.182473+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1296755,
+      "tokens_out": 8303,
+      "cached_input_tokens": 555520,
+      "cost_usd": 1.5518227599999996,
+      "duration_s": 350.752,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:47:19.941786+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 12782,
+      "tokens_out": 35473,
+      "cached_input_tokens": 5888,
+      "cost_usd": 0.16455638,
+      "duration_s": 257.167,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:10:06.288612+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 3324561,
+      "tokens_out": 44605,
+      "cached_input_tokens": 1676032,
+      "cost_usd": 3.622339272000001,
+      "duration_s": 1365.752,
+      "success": 0,
+      "error": "tests not green after run"
+    },
+    {
+      "ts": "2026-08-11T15:17:50.465211+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1037348,
+      "tokens_out": 12494,
+      "cached_input_tokens": 412672,
+      "cost_usd": 1.3199168920000002,
+      "duration_s": 463.772,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:22:04.938368+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 14138,
+      "tokens_out": 26736,
+      "cached_input_tokens": 9984,
+      "cost_usd": 0.12409674000000001,
+      "duration_s": 253.353,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 10.4255,
+  "ledger_tokens_in": 10120424,
+  "ledger_tokens_out": 193416,
+  "result_cost_usd": 10.4255,
+  "prediction_sha256": "3ca58acf7867619b852d86b6ef11c39d94bf2c609168db0b441f52a62f3ae33c",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "stripped_test_paths": [
+    "tests/benchmark.py",
+    "tests/object_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 5,
+  "trails_scanned": 5,
+  "oracle_probe_failures": []
+}

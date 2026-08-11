@@ -1,0 +1,89 @@
+{
+  "instance_id": "getmoto__moto-9841",
+  "arm": "factory",
+  "audited_at": "2026-08-11T15:19:02.574665+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-11T14:45:39.761143+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5637,
+      "tokens_out": 21458,
+      "cached_input_tokens": 2432,
+      "cost_usd": 0.09829117000000001,
+      "duration_s": 261.065,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:00:19.195343+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1728041,
+      "tokens_out": 17109,
+      "cached_input_tokens": 734720,
+      "cost_usd": 2.10092692,
+      "duration_s": 878.639,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:03:37.998866+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 11452,
+      "tokens_out": 26498,
+      "cached_input_tokens": 2880,
+      "cost_usd": 0.1261966,
+      "duration_s": 197.311,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:17:32.272834+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1703831,
+      "tokens_out": 21020,
+      "cached_input_tokens": 1004800,
+      "cost_usd": 1.5914092300000005,
+      "duration_s": 833.419,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:18:41.796609+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 6829,
+      "tokens_out": 11786,
+      "cached_input_tokens": 2944,
+      "cost_usd": 0.056555890000000004,
+      "duration_s": 68.009,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 3.9734,
+  "ledger_tokens_in": 3455790,
+  "ledger_tokens_out": 97871,
+  "result_cost_usd": 3.9734,
+  "prediction_sha256": "67394e1218e8bd48be235ccdee9f2eacd2ef44cc44aaae90400fe29dffb0d9b4",
+  "base_commit": "830a798c567bcdded2447efb7e98ca6d89b6a8c5",
+  "stripped_test_paths": [
+    "scripts/dependency_test.sh",
+    "tests/test_kms/test_kms.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

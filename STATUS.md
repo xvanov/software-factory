@@ -51,7 +51,65 @@ operator-gated, left for the operator to triage.
 
 All systemd units are deliberately **stopped**. Run `factory on` to start.
 
-**Read this first.** Two sweeps exist on the pinned SWE-rebench manifest.
+**Read this first — the 2026-08-11 replay is the current result.** The `factory`
+arm was re-run on the pinned manifest with every machinery fix applied
+(#310–#320), against a **same-sweep, same-week `openhands` control**, on the
+18-instance working set (`pandas-63945` is a broken instance, PR #313):
+
+| arm, same 18 instances | resolved | rate | total $ | $/resolved |
+|---|---:|---:|---:|---:|
+| **factory, all fixes applied** | **10/18** | **56%** | 81.00 | **8.10** |
+| **one OpenHands agent, same sweep** | **12/18** | **67%** | 14.34 | **1.19** |
+| factory, sweep 2 (before the fixes) | 10/18 | 56% | 50.18 | 5.02 |
+| solo-noreview, sweep 2 | 9/18 | 50% | — | — |
+
+Paired chain-vs-agent: both 9 · chain-only 1 · agent-only 3 · neither 5,
+**McNemar exact p = 0.625**. This finally replaces the cross-sweep comparison
+with a matched one, and **the chain is behind the single agent on rate and 6.8×
+its cost.** k=1 at n=18 still resolves nothing; k ≥ 3 remains the bar.
+
+**The headline finding: the machinery fixes worked and bought zero net rate.**
+Against sweep 2 on the same 18 the score is identical (10/18) with **+3 / −3**
+turnover. The three gains are precisely the rows the fixes targeted —
+`jsonpickle-588` (kept its retry budget), `tox-3931` (diff recovered, 0 →
+3,388 B), `canvasapi-716`. The three losses are one **new** machinery defect
+(`line-bot-981`) and two rows of dev variance (`openharness-217`, `hiero-1914`).
+Cost per resolved went the WRONG way, $5.02 → $8.10, because removing the $2/h
+truncation let long rows run to the 5,400 s wall-clock cap. Chain-verdict
+precision **did not replicate**: 58% (7/12) against sweep 2's 71%.
+Full evidence and the pre-registered criteria, evaluated as written:
+`bench/swebench/PRE-REGISTRATION-2026-08-11-REPLAY.md` (outcome section).
+
+**Two machinery defects the replay found, both still OPEN:**
+
+1. **`_branch_has_production_delta` asks a ref, not the pinned SHA**
+   (`handlers.py:3695`). When the branch's own commits land on `swebench-base`
+   the diff is empty, and the function maps empty → `False` ("no production
+   delta") instead of `None` ("cannot determine"), forcing a green to red. On
+   `tox-3931` it fired twice; because the forced-red tail is identical each time,
+   the stall guard then fires at 2 of 4 deterministically. Same `ref-not-SHA`
+   class as the `_capture_diff` bug fixed in #312 — this second consumer was
+   missed. Cost no resolve (grading reads the SHA-anchored diff) but it parks
+   correct fixes on the live chain.
+2. **A dissolved submodule is captured as a 575 KB diff that cannot apply.**
+   `line-bot-981` — resolved by every prior same-model arm — graded
+   `patch_did_not_apply`. Its diff opens `deleted file mode 160000` and re-adds
+   39 vendored files; the grade log shows every file applying cleanly, including
+   both real fixes, and the apply still exiting 2 on the gitlink deletion.
+   `diff_integrity.trustworthy` was `true` — the predicate has no assertion for
+   submodule teardown or size explosion. **A machinery-attributable lost
+   resolve.**
+
+Both trace to the dev's `mv .git .git.file && ln -s` gitlink surgery, now
+implicated in three distinct capture failures.
+
+**Containment is NOT closed.** `test_readonly.bypassed_count > 0` on **10 of 18**
+rows; on **2** (`canvasapi-716`, `hiero-1914`) the repair failed with 11
+`restore_errors` each reading *"the edit was committed, not just written"*. The
+restore operates on the working tree and a committed edit survives it. Grading
+strips test files, so no score is contaminated — the chain's own green is.
+
+**Earlier sweeps, for context.** Two sweeps exist on the pinned SWE-rebench manifest.
 Sweep 1 (2026-08-04, five arms): **the chain showed no measurable lift over a
 single OpenHands agent on the same model** — 37% vs 53%, p=0.375 — at 2.8× the
 cost per resolved instance. Sweep 2 (2026-08-10, re-measuring the CHANGED

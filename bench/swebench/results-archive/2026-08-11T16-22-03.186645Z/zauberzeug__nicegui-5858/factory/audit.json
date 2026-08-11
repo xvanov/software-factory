@@ -1,0 +1,89 @@
+{
+  "instance_id": "zauberzeug__nicegui-5858",
+  "arm": "factory",
+  "audited_at": "2026-08-11T15:04:49.382861+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-11T14:42:22.004024+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 4034,
+      "tokens_out": 9319,
+      "cached_input_tokens": 3200,
+      "cost_usd": 0.0425513,
+      "duration_s": 168.906,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:47:42.251924+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1240866,
+      "tokens_out": 9551,
+      "cached_input_tokens": 552448,
+      "cost_usd": 1.454171198,
+      "duration_s": 319.379,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:48:23.528514+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 5124,
+      "tokens_out": 7521,
+      "cached_input_tokens": 2880,
+      "cost_usd": 0.0360534,
+      "duration_s": 40.071,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T14:58:37.252445+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 1309423,
+      "tokens_out": 12822,
+      "cached_input_tokens": 517888,
+      "cost_usd": 1.6601507780000007,
+      "duration_s": 613.036,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:03:53.447370+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 12008,
+      "tokens_out": 36053,
+      "cached_input_tokens": 8896,
+      "cost_usd": 0.16376896000000002,
+      "duration_s": 314.707,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 3.3567,
+  "ledger_tokens_in": 2571455,
+  "ledger_tokens_out": 75266,
+  "result_cost_usd": 3.3567,
+  "prediction_sha256": "04479c927b4e3d159e710e91c9aef491a512d45d2db64350c5f63ea370030d6c",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "stripped_test_paths": [
+    "test_startup.sh",
+    "tests/test_xterm.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}

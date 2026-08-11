@@ -1,0 +1,218 @@
+{
+  "arm": "factory",
+  "instance_id": "raullenchai__rapid-mlx-289",
+  "repo": "raullenchai/Rapid-MLX",
+  "base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+  "problem_statement_sha256": "3ae27ef5d79a458199fe77579d9c2737af36949b5eba763d0b1ef7f02c8a8edf",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0517
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 1.3802
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "hard",
+      "calls": 3,
+      "cost_usd": 7.159
+    },
+    {
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 2,
+      "cost_usd": 0.4725
+    }
+  ],
+  "model_escalated_calls": 3,
+  "ts": "2026-08-11T14:39:00.726671+00:00",
+  "wall_clock_s": 4443.1,
+  "final_state": "reviewer_done",
+  "dev_retries": 2,
+  "reviewer_cycles": 1,
+  "steps_used": 4,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 9060705,
+  "tokens_out": 192223,
+  "cached_input_tokens": 5190464,
+  "cost_usd": 9.0634,
+  "persona_calls": 7,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.6,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_reasoning_parsers.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> tests_green",
+    "review: tests_green -> reviewer_requested_changes",
+    "dev: reviewer_requested_changes -> tests_green",
+    "review: tests_green -> reviewer_done"
+  ],
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "reviewer_done",
+  "chain_personas": [
+    "dev",
+    "review"
+  ],
+  "files_changed": [
+    "vllm_mlx/reasoning/gemma4_parser.py",
+    "vllm_mlx/reasoning/harmony_parser.py"
+  ],
+  "test_files_stripped": [
+    "tests/integrations/test_aider.sh",
+    "tests/test_reasoning_parsers.py",
+    "tests/test_smoke_matrix.sh"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 17218,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "67c49b5bec9a049e361785090a20a17f6085886d",
+    "expected_base_commit": "67c49b5bec9a049e361785090a20a17f6085886d",
+    "base_ref_matches": true,
+    "base_ref_ahead_of_expected": 0,
+    "expected_resolves": true,
+    "gitlink": "file",
+    "head_sha": "b826b36111c77e040268c857dad812dda2f44aa6",
+    "head_is_base": false,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 110,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/test_reasoning_parsers.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 3,
+    "refused_samples": [
+      "{\"id\":\"586fe261-e5a2-49c5-afa3-4831bf3e9cb0\",\"timestamp\":\"2026-08-11T10:01:17.572759\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_cd704939954a4acaae16ba29\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/",
+      "{\"id\":\"4e3ba9a0-9d2f-4ff5-b4d8-f74d7dd1eae5\",\"timestamp\":\"2026-08-11T10:17:45.945253\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_f3ea104427bd495190a51335\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/",
+      "{\"id\":\"daf236ee-68a5-4aec-a923-b6856dd61366\",\"timestamp\":\"2026-08-11T10:34:02.610149\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_53cedc2127dc40c0971f420a\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 14,
+    "restored_test_files": [
+      "tests/test_reasoning_parsers.py"
+    ],
+    "restore_errors": [
+      "restored tests/test_reasoning_parsers.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/test_reasoning_parsers.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/test_reasoning_parsers.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/test_reasoning_parsers.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/test_reasoning_parsers.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/test_reasoning_parsers.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/test_reasoning_parsers.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/test_reasoning_parsers.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/test_reasoning_parsers.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/test_reasoning_parsers.py but the digest still differs \u2014 the edit was committed, not just written",
+      "restored tests/test_reasoning_parsers.py but the digest still differs \u2014 the edit was committed, not just written"
+    ]
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-raullenchai__rapid-mlx-289-ftlducrw/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-raullenchai__rapid-mlx-289-ftlducrw/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-raullenchai__rapid-mlx-289-ftlducrw",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/raullenchai__rapid-mlx-289__factory/root/state/acceptance",
+    "sha256": "80ed7e8cdc4357129c455dc37686b14d5d01dd975bb97aa3b8e91f97abcf49d6",
+    "bytes": 2118,
+    "authored_at": "2026-08-11T13:25:02.744105+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "f1b3b14b00958b7e538b959d094a1de8d05a54d42f01414c6882ab3ef1fa3ff4",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 15866,
+    "spec_prompt_path": "/home/k/sf-bench-replay/bench/swebench/runs/raullenchai__rapid-mlx-289/factory/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-replay/bench/swebench/runs/raullenchai__rapid-mlx-289/factory/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 4,
+      "acceptance_author_ended_at": "2026-08-11T13:26:41.964631+00:00",
+      "dev_first_started_at": "2026-08-11T13:26:42.546743+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-11T13:26:41.964631+00:00, dev's first call started 2026-08-11T13:26:42.546743+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-raullenchai__rapid-mlx-289-ftlducrw",
+        "state/acceptance"
+      ],
+      "files_scanned": 5,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-raullenchai__rapid-mlx-289-ftlducrw": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "dev_inner_loop_stops": [],
+  "bench_caps": {
+    "hourly_spend_usd": 100.0,
+    "daily_spend_usd": 500.0
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "raullenchai__rapid-mlx-289",
+    "image": "swerebench/sweb.eval.x86_64.raullenchai_1776_rapid-mlx-289@sha256:c518273fc729729206db46632ff3ae99052e00d2279aad795302692b4a6e02b0",
+    "graded_at": "2026-08-11T14:39:01.260225+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 122,
+    "pass_to_pass_declared_count": 122,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 5.3,
+    "log_tail": "ase\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_direct_content_detected_early\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_content_phase_passthrough\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_undecided\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_undecided_empty\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_content_phase\nPASSED tests/test_reasoning_parsers.py::TestMiniMaxStreaming::test_finalize_reasoning_reclassifies\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_full_format\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_analysis_only\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_final_only\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_no_channels\nPASSED tests/test_reasoning_parsers.py::TestHarmonyExtractReasoning::test_multiple_analysis_blocks\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_reset_state\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_analysis_channel_switch\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_final_channel_switch\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_commentary_channel_switch\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_message_start_skipped\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_analysis_content_emitted\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_final_content_emitted\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_end_token_stops_message\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_return_token_stops_message\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_commentary_passed_through\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_control_tokens_skipped\nPASSED tests/test_reasoning_parsers.py::TestHarmonyStreaming::test_full_streaming_simulation\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_empty_delta_returns_none\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_no_channel_seen_defaults_to_content\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_thought_open_then_text_routes_to_reasoning\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_delta_with_no_marker_routes_whole_to_current_channel\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_finished_content_phase_routes_to_content\nPASSED tests/test_reasoning_parsers.py::TestGemma4Streaming::test_reset_state\n============================= 122 passed in 0.07s ==============================\nSWEBENCH_TALLY_5dd23918ea221b7d: pass_to_pass ============================= 122 passed in 0.07s ==============================\n[124 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_5dd23918ea221b7d: RESOLVED\n"
+  }
+}

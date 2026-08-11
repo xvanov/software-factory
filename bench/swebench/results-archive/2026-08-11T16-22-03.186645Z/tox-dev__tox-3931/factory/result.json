@@ -1,0 +1,189 @@
+{
+  "arm": "factory",
+  "instance_id": "tox-dev__tox-3931",
+  "repo": "tox-dev/tox",
+  "base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+  "problem_statement_sha256": "87f7f4920a5afb6ad7dfdb5eb309a9dfe87f72c335218612bb94e7853a35ad8f",
+  "manifest_sha256": "923aef05add32124",
+  "model": "azure/deepseek-v4-pro",
+  "models_used": [
+    "azure/Kimi-K2.7-Code",
+    "azure/deepseek-v4-pro"
+  ],
+  "model_calls": [
+    {
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "model_tier": null,
+      "calls": 1,
+      "cost_usd": 0.0481
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "standard",
+      "calls": 1,
+      "cost_usd": 1.6648
+    },
+    {
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "model_tier": "hard",
+      "calls": 1,
+      "cost_usd": 0.6566
+    }
+  ],
+  "model_escalated_calls": 1,
+  "ts": "2026-08-11T13:16:07.736058+00:00",
+  "wall_clock_s": 1120.0,
+  "final_state": "blocked_tests_need_clarification",
+  "dev_retries": 2,
+  "reviewer_cycles": 0,
+  "steps_used": 1,
+  "step_cap": 16,
+  "termination": "terminal-state",
+  "trajectory": "root/state/events/trajectories/",
+  "tokens_in": 3788640,
+  "tokens_out": 39442,
+  "cached_input_tokens": 2881024,
+  "cost_usd": 2.3694,
+  "persona_calls": 3,
+  "unattributed_persona_calls": 0,
+  "unattributed_cost_usd": 0,
+  "cost_source": "derived-from-price-table",
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/session/cmd/test_schema.py"
+    ],
+    "exit_code": 0
+  },
+  "transitions": [
+    "dev: sm_done -> blocked_tests_need_clarification"
+  ],
+  "error": null,
+  "factory_says_green": false,
+  "green_state": "reviewer_done",
+  "chain_personas": [
+    "dev",
+    "review"
+  ],
+  "files_changed": [
+    "src/tox/session/cmd/schema.py",
+    "src/tox/tox.schema.json"
+  ],
+  "test_files_stripped": [],
+  "refused_paths": [],
+  "diff_bytes": 3388,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "6717b69b69e2d1c36c0af0decbc3298fa4dd3b6b",
+    "expected_base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+    "base_ref_matches": false,
+    "base_ref_ahead_of_expected": 2,
+    "expected_resolves": true,
+    "gitlink": "file",
+    "head_sha": "aa091a7e752a4a20085fcec0c1ba9cc976e114c7",
+    "head_is_base": false,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 131,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [],
+    "bypassed_count": 0,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 2,
+    "refused_samples": [
+      "{\"id\":\"dfbff55a-8deb-4111-b86a-6c9ec3f2688b\",\"timestamp\":\"2026-08-11T09:01:20.678193\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_818874d1685a44289047b892\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/",
+      "{\"id\":\"ccb11bf7-b9fa-467b-96f2-096d678d9e15\",\"timestamp\":\"2026-08-11T09:12:03.107263\",\"source\":\"environment\",\"tool_name\":\"file_editor\",\"tool_call_id\":\"call_782af98b47ac4fd2ae5f9190\",\"observation\":{\"content\":[{\"cache_prompt\":false,\"type\":\"text\",\"text\":\"Ran into [Errno 13] Permission denied: '/home/k/"
+    ],
+    "scan_truncated": false,
+    "locks_applied": 5,
+    "restored_test_files": [
+      "tests/session/cmd/test_schema.py"
+    ],
+    "restore_errors": []
+  },
+  "acceptance": {
+    "expected": true,
+    "authored_ref": "state/acceptance/swebench/1/test_acceptance.py",
+    "ref": "/home/k/.cache/swebench-work/_prepared/acceptance-tox-dev__tox-3931-1yi4i3f9/test_acceptance.py",
+    "stored_path": "/home/k/.cache/swebench-work/_prepared/acceptance-tox-dev__tox-3931-1yi4i3f9/test_acceptance.py",
+    "store_root": "/home/k/.cache/swebench-work/_prepared/acceptance-tox-dev__tox-3931-1yi4i3f9",
+    "in_root_store_removed": "/home/k/.cache/swebench-work/tox-dev__tox-3931__factory/root/state/acceptance",
+    "sha256": "4aa6b7a168883c44a710fc68cbb95235de4daef3ec1077fe132ff75bcec6b65c",
+    "bytes": 3474,
+    "authored_at": "2026-08-11T12:57:35.407384+00:00",
+    "authored_before_dev_dispatch": true,
+    "spec_source": "problem_statement",
+    "spec_prompt_sha256": "80e6ec3c7afd8f00afc3aba34778ca85cbb9810d681216577e249b059b42af7c",
+    "spec_prompt_file": "spec_prompt.md",
+    "spec_prompt_bytes": 1447,
+    "spec_prompt_path": "/home/k/sf-bench-replay/bench/swebench/runs/tox-dev__tox-3931/factory/spec_prompt.md",
+    "events_path": "/home/k/sf-bench-replay/bench/swebench/runs/tox-dev__tox-3931/factory/acceptance-events.ndjson",
+    "outside_dev_tree": true,
+    "stripped_from_prediction_if_present": true,
+    "gate_enforced": false,
+    "gate_not_enforced_reason": "this driver terminates at reviewer_done and runs no merge gates; acceptance-verified would additionally need an app acceptance_test_command that executes inside the instance image",
+    "ordering": {
+      "acceptance_author_calls": 1,
+      "dev_calls": 2,
+      "acceptance_author_ended_at": "2026-08-11T13:00:10.282240+00:00",
+      "dev_first_started_at": "2026-08-11T13:00:10.867478+00:00",
+      "ok": true,
+      "reason": "acceptance_author finished 2026-08-11T13:00:10.282240+00:00, dev's first call started 2026-08-11T13:00:10.867478+00:00"
+    },
+    "authored_before_dev_first_call": true,
+    "ledger_author_rows": 1,
+    "trail_scan": {
+      "needles": [
+        "/home/k/.cache/swebench-work/_prepared/acceptance-tox-dev__tox-3931-1yi4i3f9",
+        "state/acceptance"
+      ],
+      "files_scanned": 3,
+      "hits": 0,
+      "hits_per_needle": {
+        "/home/k/.cache/swebench-work/_prepared/acceptance-tox-dev__tox-3931-1yi4i3f9": 0,
+        "state/acceptance": 0
+      },
+      "scan_truncated": false
+    },
+    "in_graded_diff": [],
+    "in_stripped_paths": []
+  },
+  "dev_inner_loop_stops": [],
+  "bench_caps": {
+    "hourly_spend_usd": 100.0,
+    "daily_spend_usd": 500.0
+  },
+  "attempt": 1,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "factory",
+    "instance_id": "tox-dev__tox-3931",
+    "image": "swerebench/sweb.eval.x86_64.tox-dev_1776_tox-3931@sha256:6c44571aa2f3c2e01be2ba54b3330efcb4b5ba0d00983aa4a309d27853804896",
+    "graded_at": "2026-08-11T13:16:08.268107+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 2,
+    "pass_to_pass_declared_count": 2,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 5.2,
+    "log_tail": "Checking patch tests/session/cmd/test_schema.py...\nApplied patch tests/session/cmd/test_schema.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_12981760291a26a2: OK (red as expected)\nChecking patch src/tox/session/cmd/schema.py...\nChecking patch src/tox/tox.schema.json...\nApplied patch src/tox/session/cmd/schema.py cleanly.\nApplied patch src/tox/tox.schema.json cleanly.\nSWEBENCH_APPLY_12981760291a26a2: OK\n.                                                                        [100%]\n=========================== short test summary info ============================\nPASSED tests/session/cmd/test_schema.py::test_schema_allows_deps_array\n1 passed in 0.02s\nSWEBENCH_TALLY_12981760291a26a2: fail_to_pass 1 passed in 0.02s\n[3 node outcomes for fail_to_pass -> grade-nodes.log]\n..                                                                       [100%]\n=========================== short test summary info ============================\nPASSED tests/session/cmd/test_schema.py::test_show_schema_empty_dir\nPASSED tests/session/cmd/test_schema.py::test_schema_freshness\n2 passed in 0.05s\nSWEBENCH_TALLY_12981760291a26a2: pass_to_pass 2 passed in 0.05s\n[4 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_12981760291a26a2: RESOLVED\n"
+  }
+}

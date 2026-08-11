@@ -1,0 +1,117 @@
+Checking patch tests/nnx/graph_utils_test.py...
+Applied patch tests/nnx/graph_utils_test.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_c7bd1474262a71bc: NO_COLLECT_PRE_PATCH (collection fails before the patch; treated as a red baseline)
+________________ ERROR collecting tests/nnx/graph_utils_test.py ________________
+tests/nnx/graph_utils_test.py:22: in <module>
+    from flax import linen, nnx, struct
+flax/nnx/__init__.py:22: in <module>
+    from .bridge import wrappers as wrappers
+flax/nnx/bridge/__init__.py:16: in <module>
+    from .wrappers import functional as functional
+flax/nnx/bridge/wrappers.py:26: in <module>
+    from flax.nnx import graph
+flax/nnx/graph.py:26: in <module>
+    from flax.nnx import filterlib, reprlib, traversals, variablelib
+flax/nnx/variablelib.py:277: in <module>
+    class VariableEffect(jax.core.Effect):
+                         ^^^^^^^^^^^^^^^
+/opt/conda/envs/testbed/lib/python3.13/site-packages/jax/_src/deprecations.py:55: in getattr
+    warnings.warn(message, DeprecationWarning, stacklevel=2)
+E   DeprecationWarning: jax.core.Effect is deprecated. Use jax.extend.core.Effect.
+=========================== short test summary info ============================
+ERROR tests/nnx/graph_utils_test.py - DeprecationWarning: jax.core.Effect is ...
+no tests collected, 1 error in 4.24s
+Checking patch flax/nnx/helpers.py...
+Applied patch flax/nnx/helpers.py cleanly.
+SWEBENCH_APPLY_c7bd1474262a71bc: OK
+SWEBENCH_POST_PATCH_c7bd1474262a71bc: FAIL_TO_PASS_IDS_DO_NOT_COLLECT (even with the patch applied)
+________________ ERROR collecting tests/nnx/graph_utils_test.py ________________
+tests/nnx/graph_utils_test.py:22: in <module>
+    from flax import linen, nnx, struct
+flax/nnx/__init__.py:22: in <module>
+    from .bridge import wrappers as wrappers
+flax/nnx/bridge/__init__.py:16: in <module>
+    from .wrappers import functional as functional
+flax/nnx/bridge/wrappers.py:26: in <module>
+    from flax.nnx import graph
+flax/nnx/graph.py:26: in <module>
+    from flax.nnx import filterlib, reprlib, traversals, variablelib
+flax/nnx/variablelib.py:277: in <module>
+    class VariableEffect(jax.core.Effect):
+                         ^^^^^^^^^^^^^^^
+/opt/conda/envs/testbed/lib/python3.13/site-packages/jax/_src/deprecations.py:55: in getattr
+    warnings.warn(message, DeprecationWarning, stacklevel=2)
+E   DeprecationWarning: jax.core.Effect is deprecated. Use jax.extend.core.Effect.
+=========================== short test summary info ============================
+ERROR tests/nnx/graph_utils_test.py - DeprecationWarning: jax.core.Effect is ...
+no tests collected, 1 error in 3.38s
+ERROR: found no collectors for /testbed/tests/nnx/graph_utils_test.py::TestGraphUtils::test_recursive_map_with_list
+
+
+==================================== ERRORS ====================================
+________________ ERROR collecting tests/nnx/graph_utils_test.py ________________
+tests/nnx/graph_utils_test.py:22: in <module>
+    from flax import linen, nnx, struct
+flax/nnx/__init__.py:22: in <module>
+    from .bridge import wrappers as wrappers
+flax/nnx/bridge/__init__.py:16: in <module>
+    from .wrappers import functional as functional
+flax/nnx/bridge/wrappers.py:26: in <module>
+    from flax.nnx import graph
+flax/nnx/graph.py:26: in <module>
+    from flax.nnx import filterlib, reprlib, traversals, variablelib
+flax/nnx/variablelib.py:277: in <module>
+    class VariableEffect(jax.core.Effect):
+                         ^^^^^^^^^^^^^^^
+/opt/conda/envs/testbed/lib/python3.13/site-packages/jax/_src/deprecations.py:55: in getattr
+    warnings.warn(message, DeprecationWarning, stacklevel=2)
+E   DeprecationWarning: jax.core.Effect is deprecated. Use jax.extend.core.Effect.
+=========================== short test summary info ============================
+ERROR tests/nnx/graph_utils_test.py - DeprecationWarning: jax.core.Effect is ...
+1 error in 3.71s
+SWEBENCH_TALLY_c7bd1474262a71bc: fail_to_pass 1 error in 3.71s
+[3 node outcomes for fail_to_pass -> grade-nodes.log]
+ERROR: found no collectors for /testbed/tests/nnx/graph_utils_test.py::TestGraphUtils::test_unflatten_pure_dict
+
+ERROR: found no collectors for /testbed/tests/nnx/graph_utils_test.py::TestGraphUtils::test_unflatten_pytree
+
+ERROR: found no collectors for /testbed/tests/nnx/graph_utils_test.py::TestGraphUtils::test_unflatten_return_variables
+
+ERROR: found no collectors for /testbed/tests/nnx/graph_utils_test.py::TestGraphUtils::test_update_dict
+
+ERROR: found no collectors for /testbed/tests/nnx/graph_utils_test.py::TestGraphUtils::test_update_dynamic
+
+ERROR: found no collectors for /testbed/tests/nnx/graph_utils_test.py::TestGraphUtils::test_update_from_pure_dict
+
+ERROR: found no collectors for /testbed/tests/nnx/graph_utils_test.py::TestGraphUtils::test_variable_reference_in_module
+
+ERROR: found no collectors for /testbed/tests/nnx/graph_utils_test.py::TestGraphUtils::test_variables_example
+
+ERROR: found no collectors for /testbed/tests/nnx/graph_utils_test.py::TestThreading::test_threading
+
+
+==================================== ERRORS ====================================
+________________ ERROR collecting tests/nnx/graph_utils_test.py ________________
+tests/nnx/graph_utils_test.py:22: in <module>
+    from flax import linen, nnx, struct
+flax/nnx/__init__.py:22: in <module>
+    from .bridge import wrappers as wrappers
+flax/nnx/bridge/__init__.py:16: in <module>
+    from .wrappers import functional as functional
+flax/nnx/bridge/wrappers.py:26: in <module>
+    from flax.nnx import graph
+flax/nnx/graph.py:26: in <module>
+    from flax.nnx import filterlib, reprlib, traversals, variablelib
+flax/nnx/variablelib.py:277: in <module>
+    class VariableEffect(jax.core.Effect):
+                         ^^^^^^^^^^^^^^^
+/opt/conda/envs/testbed/lib/python3.13/site-packages/jax/_src/deprecations.py:55: in getattr
+    warnings.warn(message, DeprecationWarning, stacklevel=2)
+E   DeprecationWarning: jax.core.Effect is deprecated. Use jax.extend.core.Effect.
+=========================== short test summary info ============================
+ERROR tests/nnx/graph_utils_test.py - DeprecationWarning: jax.core.Effect is ...
+1 error in 3.48s
+SWEBENCH_TALLY_c7bd1474262a71bc: pass_to_pass 1 error in 3.48s
+[3 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_c7bd1474262a71bc: UNRESOLVED

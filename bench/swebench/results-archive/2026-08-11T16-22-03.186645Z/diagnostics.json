@@ -1,0 +1,780 @@
+{
+  "generated_at": "2026-08-11T16:22:03.186645+00:00",
+  "max_bytes_per_file": 16777216,
+  "names": [
+    "raw.diff",
+    "sweep-run.log"
+  ],
+  "trajectory_globs": [
+    "root/state/events/trajectories/*.ndjson",
+    "state/events/trajectories/*.ndjson",
+    "bare-commands.ndjson",
+    "claude-transcript.ndjson"
+  ],
+  "count": 76,
+  "uncompressed_bytes": 40948152,
+  "truncated": 0,
+  "unreadable": 0,
+  "files": [
+    {
+      "row": "alibaba__opensandbox-816/factory",
+      "path": "raw.diff",
+      "original_bytes": 10751,
+      "original_sha256": "d762969b4385940712da1f9a25ee5eb5ee0f77c7509749082325c8722496c422",
+      "truncated": false,
+      "stored_bytes": 10751,
+      "stored_sha256": "d762969b4385940712da1f9a25ee5eb5ee0f77c7509749082325c8722496c422",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 811542,
+      "original_sha256": "7b9487a99af448ae5bedb6aada54d2540366aa7002c1831fff956ffcb37c1270",
+      "truncated": false,
+      "stored_bytes": 811542,
+      "stored_sha256": "7b9487a99af448ae5bedb6aada54d2540366aa7002c1831fff956ffcb37c1270",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 1036310,
+      "original_sha256": "d5d7e16fc23e8583ab5ea5e56019e71e800c620ea8997ed9f5fb72dbc89a3677",
+      "truncated": false,
+      "stored_bytes": 1036310,
+      "stored_sha256": "d5d7e16fc23e8583ab5ea5e56019e71e800c620ea8997ed9f5fb72dbc89a3677",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 856432,
+      "original_sha256": "cd8ef69d6fac20b5990930ac82843faaad67b2abc1985cd152e7bfa3f795151f",
+      "truncated": false,
+      "stored_bytes": 856432,
+      "stored_sha256": "cd8ef69d6fac20b5990930ac82843faaad67b2abc1985cd152e7bfa3f795151f",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "conan-io__conan-19735_interface/factory",
+      "path": "raw.diff",
+      "original_bytes": 1616,
+      "original_sha256": "e60c7cc131fd706f7492242c9621a2ab1787f9be5b044d374a825b31d85e812e",
+      "truncated": false,
+      "stored_bytes": 1616,
+      "stored_sha256": "e60c7cc131fd706f7492242c9621a2ab1787f9be5b044d374a825b31d85e812e",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "conan-io__conan-19735_interface/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 270886,
+      "original_sha256": "b241d4f5a32a7015e6e4f27309fcb156bf5a62e700b2596f8f4feec420a9a583",
+      "truncated": false,
+      "stored_bytes": 270886,
+      "stored_sha256": "b241d4f5a32a7015e6e4f27309fcb156bf5a62e700b2596f8f4feec420a9a583",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "conan-io__conan-19735_interface/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 396682,
+      "original_sha256": "cc5261fdd2b033afa35ee3cf224ff4475ed6fe9ed1857174b986cecef7c175d4",
+      "truncated": false,
+      "stored_bytes": 396682,
+      "stored_sha256": "cc5261fdd2b033afa35ee3cf224ff4475ed6fe9ed1857174b986cecef7c175d4",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "conan-io__conan-19750/factory",
+      "path": "raw.diff",
+      "original_bytes": 1701,
+      "original_sha256": "14d75ddf267b4a3a956cb4c72bfb4f9591bf43ee655f782927719863b25121b1",
+      "truncated": false,
+      "stored_bytes": 1701,
+      "stored_sha256": "14d75ddf267b4a3a956cb4c72bfb4f9591bf43ee655f782927719863b25121b1",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "conan-io__conan-19750/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 421222,
+      "original_sha256": "ce882c8eed982c8be4bfca6e9be129e1ce38d9fa999d6e4d18cfea5940349baa",
+      "truncated": false,
+      "stored_bytes": 421222,
+      "stored_sha256": "ce882c8eed982c8be4bfca6e9be129e1ce38d9fa999d6e4d18cfea5940349baa",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "conan-io__conan-19750/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 572138,
+      "original_sha256": "b5875e22e2dd6658ec9e091982f725911fefe266111c027c110ad8b7a0619a96",
+      "truncated": false,
+      "stored_bytes": 572138,
+      "stored_sha256": "b5875e22e2dd6658ec9e091982f725911fefe266111c027c110ad8b7a0619a96",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/factory",
+      "path": "raw.diff",
+      "original_bytes": 4369,
+      "original_sha256": "1ab2585c5276b899d2480750e6bc6f3d8d713eadf12317b9eb1b8126285633db",
+      "truncated": false,
+      "stored_bytes": 4369,
+      "stored_sha256": "1ab2585c5276b899d2480750e6bc6f3d8d713eadf12317b9eb1b8126285633db",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 661140,
+      "original_sha256": "0f2739f283e2d703487ed465bb02c18bb9d27bcb02606790f03d5ebdde8a94ca",
+      "truncated": false,
+      "stored_bytes": 661140,
+      "stored_sha256": "0f2739f283e2d703487ed465bb02c18bb9d27bcb02606790f03d5ebdde8a94ca",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 625397,
+      "original_sha256": "66c64206a2aaa6268c4b8e274f96dad768d14f97da5d97d82628b2f9eecb3699",
+      "truncated": false,
+      "stored_bytes": 625397,
+      "stored_sha256": "66c64206a2aaa6268c4b8e274f96dad768d14f97da5d97d82628b2f9eecb3699",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 684952,
+      "original_sha256": "605c1025703d0e35e19b69502a902526275752f04ceb7550c1a17d93fa7f7afc",
+      "truncated": false,
+      "stored_bytes": 684952,
+      "stored_sha256": "605c1025703d0e35e19b69502a902526275752f04ceb7550c1a17d93fa7f7afc",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/factory",
+      "path": "raw.diff",
+      "original_bytes": 8175,
+      "original_sha256": "9a314ba9d62e1c4e42ce2e6cbba56619d8ceb89cd7c225de1fb604f38fa1a790",
+      "truncated": false,
+      "stored_bytes": 8175,
+      "stored_sha256": "9a314ba9d62e1c4e42ce2e6cbba56619d8ceb89cd7c225de1fb604f38fa1a790",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 1735742,
+      "original_sha256": "710e79a1e316eb1464d5b296366b8acd4e1f7deffd91535f8a27684ae750f4ff",
+      "truncated": false,
+      "stored_bytes": 1735742,
+      "stored_sha256": "710e79a1e316eb1464d5b296366b8acd4e1f7deffd91535f8a27684ae750f4ff",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 519855,
+      "original_sha256": "9fb2363aa0650486e621830d8b5e4a6c64e10349b40dcbdab63f459f2563455c",
+      "truncated": false,
+      "stored_bytes": 519855,
+      "stored_sha256": "9fb2363aa0650486e621830d8b5e4a6c64e10349b40dcbdab63f459f2563455c",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 377575,
+      "original_sha256": "3036895ebae31c89a62d8c78c40d068fd4b95de893519c8fa4d232d790ba7755",
+      "truncated": false,
+      "stored_bytes": 377575,
+      "stored_sha256": "3036895ebae31c89a62d8c78c40d068fd4b95de893519c8fa4d232d790ba7755",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/factory",
+      "path": "root/state/events/trajectories/1-3.ndjson",
+      "original_bytes": 633875,
+      "original_sha256": "e692ba384279c3c987333bb6e180979ac0a6db95159e6708711bfe0ffddcebf0",
+      "truncated": false,
+      "stored_bytes": 633875,
+      "stored_sha256": "e692ba384279c3c987333bb6e180979ac0a6db95159e6708711bfe0ffddcebf0",
+      "stored_as": "root/state/events/trajectories/1-3.ndjson.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/factory",
+      "path": "root/state/events/trajectories/1-4.ndjson",
+      "original_bytes": 455735,
+      "original_sha256": "fdd7205bb6bd2b738ec3256c70a53a3e6047d6d1fb4dc6528f32a13b9365ffdf",
+      "truncated": false,
+      "stored_bytes": 455735,
+      "stored_sha256": "fdd7205bb6bd2b738ec3256c70a53a3e6047d6d1fb4dc6528f32a13b9365ffdf",
+      "stored_as": "root/state/events/trajectories/1-4.ndjson.gz"
+    },
+    {
+      "row": "hiero-ledger__hiero-sdk-python-1914_interface/factory",
+      "path": "raw.diff",
+      "original_bytes": 26780,
+      "original_sha256": "a1516fc5bfc3bc2544dd1e378cd8d2f4853f2b473fdf4ec5722d11d0d03bca8e",
+      "truncated": false,
+      "stored_bytes": 26780,
+      "stored_sha256": "a1516fc5bfc3bc2544dd1e378cd8d2f4853f2b473fdf4ec5722d11d0d03bca8e",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "hiero-ledger__hiero-sdk-python-1914_interface/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 756173,
+      "original_sha256": "62525a687f88e1b32db86dd1a6b86d8a4ef835c8e1f27496bbe6ca20c95054ae",
+      "truncated": false,
+      "stored_bytes": 756173,
+      "stored_sha256": "62525a687f88e1b32db86dd1a6b86d8a4ef835c8e1f27496bbe6ca20c95054ae",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "hiero-ledger__hiero-sdk-python-1914_interface/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 835463,
+      "original_sha256": "74f1f45d135abc0f31b603f3a0a6ade83f7a7a3b9bdb730c4ddb5a9b45afae85",
+      "truncated": false,
+      "stored_bytes": 835463,
+      "stored_sha256": "74f1f45d135abc0f31b603f3a0a6ade83f7a7a3b9bdb730c4ddb5a9b45afae85",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "hiero-ledger__hiero-sdk-python-1914_interface/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 164317,
+      "original_sha256": "04a34f6aca3a9ae3beca310422f7d77ab820806de6e11a85881b413ad435b854",
+      "truncated": false,
+      "stored_bytes": 164317,
+      "stored_sha256": "04a34f6aca3a9ae3beca310422f7d77ab820806de6e11a85881b413ad435b854",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/factory",
+      "path": "raw.diff",
+      "original_bytes": 5423,
+      "original_sha256": "75c6faa15a0dd6032b4f89e222ddd609fb56e3c8cac606ddac47261edaa63b3d",
+      "truncated": false,
+      "stored_bytes": 5423,
+      "stored_sha256": "75c6faa15a0dd6032b4f89e222ddd609fb56e3c8cac606ddac47261edaa63b3d",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 266324,
+      "original_sha256": "d21d0fbf9e09d29105864aa35e234fd835f4b3e9b5e523d88391bb58ecaa2968",
+      "truncated": false,
+      "stored_bytes": 266324,
+      "stored_sha256": "d21d0fbf9e09d29105864aa35e234fd835f4b3e9b5e523d88391bb58ecaa2968",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 269010,
+      "original_sha256": "6bc0df9e8dfb25cb2a7f070714049650d5a9e74d76fc8c8e1aa1dc6f0d5f2cca",
+      "truncated": false,
+      "stored_bytes": 269010,
+      "stored_sha256": "6bc0df9e8dfb25cb2a7f070714049650d5a9e74d76fc8c8e1aa1dc6f0d5f2cca",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/factory",
+      "path": "raw.diff",
+      "original_bytes": 4934,
+      "original_sha256": "85f20f986515bf227e11060e5546ccc4dbf7d9e28c2b10855869862d98d3f067",
+      "truncated": false,
+      "stored_bytes": 4934,
+      "stored_sha256": "85f20f986515bf227e11060e5546ccc4dbf7d9e28c2b10855869862d98d3f067",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 662100,
+      "original_sha256": "740d599efcbb9ad4a399d839a10b9daf6ed621a9f6c5e79b4fc2ff8c93544cd2",
+      "truncated": false,
+      "stored_bytes": 662100,
+      "stored_sha256": "740d599efcbb9ad4a399d839a10b9daf6ed621a9f6c5e79b4fc2ff8c93544cd2",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 440701,
+      "original_sha256": "2139a88758ab0d23f0e81c0e11911986e156f3e368a09445e2752dca1367e093",
+      "truncated": false,
+      "stored_bytes": 440701,
+      "stored_sha256": "2139a88758ab0d23f0e81c0e11911986e156f3e368a09445e2752dca1367e093",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 423625,
+      "original_sha256": "768f882b40dc8942895a098289341d239085d8261bc2d5c8b09d6e1fc375130b",
+      "truncated": false,
+      "stored_bytes": 423625,
+      "stored_sha256": "768f882b40dc8942895a098289341d239085d8261bc2d5c8b09d6e1fc375130b",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "jsonpickle__jsonpickle-588/factory",
+      "path": "raw.diff",
+      "original_bytes": 5432,
+      "original_sha256": "2b83ffe8e40ce72c1ab6510826ce0a46f63490fa1263f375c8ce8c5340ee80f7",
+      "truncated": false,
+      "stored_bytes": 5432,
+      "stored_sha256": "2b83ffe8e40ce72c1ab6510826ce0a46f63490fa1263f375c8ce8c5340ee80f7",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "jsonpickle__jsonpickle-588/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 1794021,
+      "original_sha256": "9a8f780ea0d3ed94152ad1ec31692cc987c7f4dd14f52cf6b48a34a0e841a328",
+      "truncated": false,
+      "stored_bytes": 1794021,
+      "stored_sha256": "9a8f780ea0d3ed94152ad1ec31692cc987c7f4dd14f52cf6b48a34a0e841a328",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "jsonpickle__jsonpickle-588/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 487681,
+      "original_sha256": "a4cf23683e968775a270df20704fe362f71a2b524c027b073a838d002c7ddc72",
+      "truncated": false,
+      "stored_bytes": 487681,
+      "stored_sha256": "a4cf23683e968775a270df20704fe362f71a2b524c027b073a838d002c7ddc72",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "jsonpickle__jsonpickle-588/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 807989,
+      "original_sha256": "b5c2b5c25bb07beb4038ed04a427fc74f88671949210a37e98843322713bd920",
+      "truncated": false,
+      "stored_bytes": 807989,
+      "stored_sha256": "b5c2b5c25bb07beb4038ed04a427fc74f88671949210a37e98843322713bd920",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "jsonpickle__jsonpickle-588/factory",
+      "path": "root/state/events/trajectories/1-3.ndjson",
+      "original_bytes": 349221,
+      "original_sha256": "730f97a6d5945d477c99c7c1b884326de99b9c3e47097503205ca59b41329cc2",
+      "truncated": false,
+      "stored_bytes": 349221,
+      "stored_sha256": "730f97a6d5945d477c99c7c1b884326de99b9c3e47097503205ca59b41329cc2",
+      "stored_as": "root/state/events/trajectories/1-3.ndjson.gz"
+    },
+    {
+      "row": "jsonpickle__jsonpickle-588/factory",
+      "path": "root/state/events/trajectories/1-4.ndjson",
+      "original_bytes": 1285483,
+      "original_sha256": "35ac0aa7fd3e5a05c8df8ac00e577f01f8bfe823ca62169ab8891f41ac4028ec",
+      "truncated": false,
+      "stored_bytes": 1285483,
+      "stored_sha256": "35ac0aa7fd3e5a05c8df8ac00e577f01f8bfe823ca62169ab8891f41ac4028ec",
+      "stored_as": "root/state/events/trajectories/1-4.ndjson.gz"
+    },
+    {
+      "row": "jsonpickle__jsonpickle-588/factory",
+      "path": "root/state/events/trajectories/1-5.ndjson",
+      "original_bytes": 338815,
+      "original_sha256": "3f6c45fbd5a5553aed0a76d4a11c3aff96619a9df83068c3b30ce2da0bf18ff5",
+      "truncated": false,
+      "stored_bytes": 338815,
+      "stored_sha256": "3f6c45fbd5a5553aed0a76d4a11c3aff96619a9df83068c3b30ce2da0bf18ff5",
+      "stored_as": "root/state/events/trajectories/1-5.ndjson.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/factory",
+      "path": "raw.diff",
+      "original_bytes": 4328,
+      "original_sha256": "d1b571c4491a833ba8ed415b4e7c0d982543871e548f88c9d51be04d0e961ab2",
+      "truncated": false,
+      "stored_bytes": 4328,
+      "stored_sha256": "d1b571c4491a833ba8ed415b4e7c0d982543871e548f88c9d51be04d0e961ab2",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 1288223,
+      "original_sha256": "2732fefbcd722cc034ec52599a581122a894c6a2d36dba13a09c2fb30d8f7faf",
+      "truncated": false,
+      "stored_bytes": 1288223,
+      "stored_sha256": "2732fefbcd722cc034ec52599a581122a894c6a2d36dba13a09c2fb30d8f7faf",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 1170007,
+      "original_sha256": "657c0dc4287172b2d1ca7c1cb4906bc78360e4afcaefdd30501f0b5656517cac",
+      "truncated": false,
+      "stored_bytes": 1170007,
+      "stored_sha256": "657c0dc4287172b2d1ca7c1cb4906bc78360e4afcaefdd30501f0b5656517cac",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 487518,
+      "original_sha256": "f2ef9c756f8f1feeb45be176da2e053b7a0bad16fde3334b2f61b6cce6532d9e",
+      "truncated": false,
+      "stored_bytes": 487518,
+      "stored_sha256": "f2ef9c756f8f1feeb45be176da2e053b7a0bad16fde3334b2f61b6cce6532d9e",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/factory",
+      "path": "root/state/events/trajectories/1-3.ndjson",
+      "original_bytes": 189645,
+      "original_sha256": "c51831900a0c6931331a3074773c812cb3996884a68605d9b81fd53066b1b058",
+      "truncated": false,
+      "stored_bytes": 189645,
+      "stored_sha256": "c51831900a0c6931331a3074773c812cb3996884a68605d9b81fd53066b1b058",
+      "stored_as": "root/state/events/trajectories/1-3.ndjson.gz"
+    },
+    {
+      "row": "keras-team__keras-22642/factory",
+      "path": "raw.diff",
+      "original_bytes": 1623,
+      "original_sha256": "2ccf4a2db16adccf82bc0ccb1474944e8d840cd25789ce3655b00dc7ebc9b86f",
+      "truncated": false,
+      "stored_bytes": 1623,
+      "stored_sha256": "2ccf4a2db16adccf82bc0ccb1474944e8d840cd25789ce3655b00dc7ebc9b86f",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "keras-team__keras-22642/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 337050,
+      "original_sha256": "64d6497de3a8ce732e297a4bdff20af02ab80e8e8c3fe86bdafb8a0e16ffe5bc",
+      "truncated": false,
+      "stored_bytes": 337050,
+      "stored_sha256": "64d6497de3a8ce732e297a4bdff20af02ab80e8e8c3fe86bdafb8a0e16ffe5bc",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "keras-team__keras-22642/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 509536,
+      "original_sha256": "355666123f408be908b79f3b55a612cb5e4faecc0c7e163a1326798fcb28f12d",
+      "truncated": false,
+      "stored_bytes": 509536,
+      "stored_sha256": "355666123f408be908b79f3b55a612cb5e4faecc0c7e163a1326798fcb28f12d",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "line__line-bot-sdk-python-981_interface/factory",
+      "path": "raw.diff",
+      "original_bytes": 588366,
+      "original_sha256": "c48d7d93834447e8cadd3b680863c043277584a626f28693b68830f27535cf19",
+      "truncated": false,
+      "stored_bytes": 588366,
+      "stored_sha256": "c48d7d93834447e8cadd3b680863c043277584a626f28693b68830f27535cf19",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "line__line-bot-sdk-python-981_interface/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 919503,
+      "original_sha256": "4d7a9fe8b6e41cefe0000728c97e622fefdaeaff50f75aa95cb73b2ef91c9838",
+      "truncated": false,
+      "stored_bytes": 919503,
+      "stored_sha256": "4d7a9fe8b6e41cefe0000728c97e622fefdaeaff50f75aa95cb73b2ef91c9838",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "line__line-bot-sdk-python-981_interface/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 953486,
+      "original_sha256": "297ea20fe0cda09ff318235b2259187008073678404d171b69605696f47da555",
+      "truncated": false,
+      "stored_bytes": 953486,
+      "stored_sha256": "297ea20fe0cda09ff318235b2259187008073678404d171b69605696f47da555",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "line__line-bot-sdk-python-981_interface/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 1035474,
+      "original_sha256": "a7993b835ec5cb1dcaa1c3db822ee7315b7797f98f1e0400997c9ff3af624e5d",
+      "truncated": false,
+      "stored_bytes": 1035474,
+      "stored_sha256": "a7993b835ec5cb1dcaa1c3db822ee7315b7797f98f1e0400997c9ff3af624e5d",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/factory",
+      "path": "raw.diff",
+      "original_bytes": 1242,
+      "original_sha256": "05209c05c84b50af0be618b85146ada58028a9f4038988d1ad64429f2bf958ac",
+      "truncated": false,
+      "stored_bytes": 1242,
+      "stored_sha256": "05209c05c84b50af0be618b85146ada58028a9f4038988d1ad64429f2bf958ac",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 304262,
+      "original_sha256": "e3999356c33660d91652382ba15800a811a71d9ce08ea51bbd379fa56a70eb19",
+      "truncated": false,
+      "stored_bytes": 304262,
+      "stored_sha256": "e3999356c33660d91652382ba15800a811a71d9ce08ea51bbd379fa56a70eb19",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 363596,
+      "original_sha256": "dfe982861e4bd74b3d0ac8a75e50365d8aa38c51afc72047d26cb6793c39ce19",
+      "truncated": false,
+      "stored_bytes": 363596,
+      "stored_sha256": "dfe982861e4bd74b3d0ac8a75e50365d8aa38c51afc72047d26cb6793c39ce19",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "raullenchai__rapid-mlx-289/factory",
+      "path": "raw.diff",
+      "original_bytes": 28764,
+      "original_sha256": "3427713066f108d05384b9dd462b8f055d8f2effcd96431bc854a0a216a328e6",
+      "truncated": false,
+      "stored_bytes": 28764,
+      "stored_sha256": "3427713066f108d05384b9dd462b8f055d8f2effcd96431bc854a0a216a328e6",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "raullenchai__rapid-mlx-289/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 2022735,
+      "original_sha256": "e8efca8b3b4a017fae1ea641a9bec0a6cc09447bcab15eef0ab748da56345bb6",
+      "truncated": false,
+      "stored_bytes": 2022735,
+      "stored_sha256": "e8efca8b3b4a017fae1ea641a9bec0a6cc09447bcab15eef0ab748da56345bb6",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "raullenchai__rapid-mlx-289/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 404666,
+      "original_sha256": "c171b3525f4400d14c36b2cde0310b899f423d40c6e20e2989e8710d8873cfb2",
+      "truncated": false,
+      "stored_bytes": 404666,
+      "stored_sha256": "c171b3525f4400d14c36b2cde0310b899f423d40c6e20e2989e8710d8873cfb2",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "raullenchai__rapid-mlx-289/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 1358243,
+      "original_sha256": "e5793824b517c117f931e7f05d071eb210a6886ee731a9873259e5c8685b3572",
+      "truncated": false,
+      "stored_bytes": 1358243,
+      "stored_sha256": "e5793824b517c117f931e7f05d071eb210a6886ee731a9873259e5c8685b3572",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "raullenchai__rapid-mlx-289/factory",
+      "path": "root/state/events/trajectories/1-3.ndjson",
+      "original_bytes": 646764,
+      "original_sha256": "2b92d2269db390eb2c882eb2e48cf453e45d9e64ed9507dd422bef8dcb740759",
+      "truncated": false,
+      "stored_bytes": 646764,
+      "stored_sha256": "2b92d2269db390eb2c882eb2e48cf453e45d9e64ed9507dd422bef8dcb740759",
+      "stored_as": "root/state/events/trajectories/1-3.ndjson.gz"
+    },
+    {
+      "row": "raullenchai__rapid-mlx-289/factory",
+      "path": "root/state/events/trajectories/1-4.ndjson",
+      "original_bytes": 429256,
+      "original_sha256": "c8b5f9bc71459d0a8c41b04cfa6aed5033bccde1aa726581de63244d000f0a42",
+      "truncated": false,
+      "stored_bytes": 429256,
+      "stored_sha256": "c8b5f9bc71459d0a8c41b04cfa6aed5033bccde1aa726581de63244d000f0a42",
+      "stored_as": "root/state/events/trajectories/1-4.ndjson.gz"
+    },
+    {
+      "row": "tox-dev__tox-3931/factory",
+      "path": "raw.diff",
+      "original_bytes": 3388,
+      "original_sha256": "d79231cc98005bc864153563db8a7b0fe238efb934db82d9d98f82a97eec9b35",
+      "truncated": false,
+      "stored_bytes": 3388,
+      "stored_sha256": "d79231cc98005bc864153563db8a7b0fe238efb934db82d9d98f82a97eec9b35",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "tox-dev__tox-3931/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 610769,
+      "original_sha256": "edde5184a7c9057a32b9729f9d8a9a986382e10dc698ddb0be1f4920ae818326",
+      "truncated": false,
+      "stored_bytes": 610769,
+      "stored_sha256": "edde5184a7c9057a32b9729f9d8a9a986382e10dc698ddb0be1f4920ae818326",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "tox-dev__tox-3931/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 456855,
+      "original_sha256": "6b6109def6c837d196c7a739d44603bb1681975adaa1624f5a91dc0e9229ebb4",
+      "truncated": false,
+      "stored_bytes": 456855,
+      "stored_sha256": "6b6109def6c837d196c7a739d44603bb1681975adaa1624f5a91dc0e9229ebb4",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "tox-dev__tox-3931/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 298256,
+      "original_sha256": "60a08b4009ff58e273a026bd6b552197402717251583fc40264c5525ae263325",
+      "truncated": false,
+      "stored_bytes": 298256,
+      "stored_sha256": "60a08b4009ff58e273a026bd6b552197402717251583fc40264c5525ae263325",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "ucfopen__canvasapi-716/factory",
+      "path": "raw.diff",
+      "original_bytes": 1987,
+      "original_sha256": "61a52804a7a05a4ddad81cf4a9385505cacea86082c2dc7202a2476359234698",
+      "truncated": false,
+      "stored_bytes": 1987,
+      "stored_sha256": "61a52804a7a05a4ddad81cf4a9385505cacea86082c2dc7202a2476359234698",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "ucfopen__canvasapi-716/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 383070,
+      "original_sha256": "ec97663c4322f10ea5a84035035576ae5c05a37aaaca7ae9df6497f207afa2db",
+      "truncated": false,
+      "stored_bytes": 383070,
+      "stored_sha256": "ec97663c4322f10ea5a84035035576ae5c05a37aaaca7ae9df6497f207afa2db",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "ucfopen__canvasapi-716/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 330588,
+      "original_sha256": "effed00fb5b36afdde6d7e2a23e018c2d54025f98d3f7498c8492182dc8b7c0e",
+      "truncated": false,
+      "stored_bytes": 330588,
+      "stored_sha256": "effed00fb5b36afdde6d7e2a23e018c2d54025f98d3f7498c8492182dc8b7c0e",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "ucfopen__canvasapi-716/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 150798,
+      "original_sha256": "a28aad57a1fdbdaf2de3803bc1eeab7420f2963d4459e5d05691d8c5711c1cc5",
+      "truncated": false,
+      "stored_bytes": 150798,
+      "stored_sha256": "a28aad57a1fdbdaf2de3803bc1eeab7420f2963d4459e5d05691d8c5711c1cc5",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "vyperlang__vyper-4801/factory",
+      "path": "raw.diff",
+      "original_bytes": 1708,
+      "original_sha256": "4ce926b7643bff0c8114a2d92cbeba81f3d568d6637886064fa339682309c7e6",
+      "truncated": false,
+      "stored_bytes": 1708,
+      "stored_sha256": "4ce926b7643bff0c8114a2d92cbeba81f3d568d6637886064fa339682309c7e6",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "vyperlang__vyper-4801/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 3214928,
+      "original_sha256": "66e97b0d116cfafeb87da0ae9bd6f7f68cfe9d7c2e4cbc708d603cad55537e99",
+      "truncated": false,
+      "stored_bytes": 3214928,
+      "stored_sha256": "66e97b0d116cfafeb87da0ae9bd6f7f68cfe9d7c2e4cbc708d603cad55537e99",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "vyperlang__vyper-4801/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 878612,
+      "original_sha256": "45371e022d4b26eb7aba28b5814be62d9f720f6a129392cf003f84aaecfdf862",
+      "truncated": false,
+      "stored_bytes": 878612,
+      "stored_sha256": "45371e022d4b26eb7aba28b5814be62d9f720f6a129392cf003f84aaecfdf862",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "vyperlang__vyper-4801/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 550777,
+      "original_sha256": "1bfc785b70b84b11bdcd871fd801650a17dc23987ec7c3e9970e9e03a39158f2",
+      "truncated": false,
+      "stored_bytes": 550777,
+      "stored_sha256": "1bfc785b70b84b11bdcd871fd801650a17dc23987ec7c3e9970e9e03a39158f2",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    },
+    {
+      "row": "vyperlang__vyper-4801/factory",
+      "path": "root/state/events/trajectories/1-3.ndjson",
+      "original_bytes": 740695,
+      "original_sha256": "17771ab03753bf680b5f7ec09e6f9abe83c0a46642abfbc0c36c1545950f0f96",
+      "truncated": false,
+      "stored_bytes": 740695,
+      "stored_sha256": "17771ab03753bf680b5f7ec09e6f9abe83c0a46642abfbc0c36c1545950f0f96",
+      "stored_as": "root/state/events/trajectories/1-3.ndjson.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/factory",
+      "path": "raw.diff",
+      "original_bytes": 4868,
+      "original_sha256": "2776c8024da856bf4833af7f02727c6d231c02523d2b0a5b6bc748eea5ec2235",
+      "truncated": false,
+      "stored_bytes": 4868,
+      "stored_sha256": "2776c8024da856bf4833af7f02727c6d231c02523d2b0a5b6bc748eea5ec2235",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/factory",
+      "path": "sweep-run.log",
+      "original_bytes": 595719,
+      "original_sha256": "66703ca30c9d31800b1833f568c9299972dafbc467145da6f37622a96e8b458f",
+      "truncated": false,
+      "stored_bytes": 595719,
+      "stored_sha256": "66703ca30c9d31800b1833f568c9299972dafbc467145da6f37622a96e8b458f",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/factory",
+      "path": "root/state/events/trajectories/1-1.ndjson",
+      "original_bytes": 350058,
+      "original_sha256": "adaa9ae6a7cd0ccefb98b0794e4474c49c87f471d9629dd758daaa3b7c4d9832",
+      "truncated": false,
+      "stored_bytes": 350058,
+      "stored_sha256": "adaa9ae6a7cd0ccefb98b0794e4474c49c87f471d9629dd758daaa3b7c4d9832",
+      "stored_as": "root/state/events/trajectories/1-1.ndjson.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/factory",
+      "path": "root/state/events/trajectories/1-2.ndjson",
+      "original_bytes": 321202,
+      "original_sha256": "213d7a7ae98e394823452a57359413314c336f87e14a22586766526d51e303be",
+      "truncated": false,
+      "stored_bytes": 321202,
+      "stored_sha256": "213d7a7ae98e394823452a57359413314c336f87e14a22586766526d51e303be",
+      "stored_as": "root/state/events/trajectories/1-2.ndjson.gz"
+    }
+  ]
+}

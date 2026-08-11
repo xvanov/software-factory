@@ -227,3 +227,141 @@ Launches 1 and 2 already spent **~$27.51**. The replay itself is still projected
 at **~$50** for 18 rows. Operator notices at $50/$75/$100 fire on actual
 accumulated spend and are reported when crossed. Caps unchanged: $120/h,
 $300/day.
+
+---
+
+# OUTCOME — 2026-08-11, written after the data existed
+
+Run: 18 instances, 4 workers, 12,260 s wall, `sweep done ... 18 ok, 0 failed`.
+Evidence: `results-archive/2026-08-11T16-22-03.186645Z/` — `report --check`
+returns **CHECK OK**, byte-for-byte re-derivable, 76 diagnostic files / 39.1 MB
+now snapshotted into the archive (the Tier-1 "the archive cannot reproduce the
+analysis" gap is closed in practice, not just in intent).
+
+## The number
+
+**10 of 18 = 56%.** The pre-registered primary was 12/18. It was missed, and the
+projection is reported as missed rather than re-expressed on a denominator that
+would flatter it. The harness's own audited-valid convention prints **10/17 =
+59%** because `vyper-4801` failed its audit; the pre-registered denominator is 18
+and 10/18 is the number this document is answerable for.
+
+## Every arm re-derived on the SAME 18 instances
+
+| arm | resolved | rate | total $ | $/resolved | median wall |
+|---|---:|---:|---:|---:|---:|
+| **factory (this replay)** | **10/18** | **56%** | **81.00** | **8.10** | 1,804 s |
+| `openhands`, same-sweep control | 12/18 | 67% | 14.34 | 1.19 | 454 s |
+| `factory`, sweep 2 (before the fixes) | 10/18 | 56% | 50.18 | 5.02 | 1,038 s |
+| `solo-noreview`, sweep 2 | 9/18 | 50% | — | — | — |
+
+Paired against the control: both 9 · factory-only 1 · openhands-only 3 ·
+neither 5. **McNemar exact two-sided p = 0.625.** Criterion 6 stands: this is
+k=1 at n=18 and no delta here is a measured result.
+
+## The finding: the fixes worked, and bought zero net rate
+
+The replay scores **exactly what sweep 2 scored on the same 18 rows — 10/18 —
+but the composition changed completely.** Three rows gained, three lost:
+
+| gained | why | lost | why |
+|---|---|---|---|
+| `jsonpickle-588` | kept its full retry budget instead of dying at 2 on a collection error (#312) | `line-bot-981` | **new machinery loss** — see below |
+| `tox-3931` | diff capture recovered 3,388 B instead of 0 (#312/#314) | `openharness-217` | dev stochasticity (resolved in launch 2) |
+| `canvasapi-716` | reached a resolving patch | `hiero-1914` | dev stochasticity |
+
+All three gains are the exact rows the machinery fixes targeted. They landed.
+The rate did not move, because two of the three were paid back by ordinary
+run-to-run variance and one by a **new** machinery defect. Cost per resolved went
+the wrong way: **$5.02 → $8.10**, because deviation 4 removed sweep 2's $2/h
+truncation and long rows now run to the 5,400 s wall-clock cap instead of being
+cut short. Total spend was **$81.00 against a ~$50 projection, 62% over.**
+
+## Pre-committed criteria, evaluated as written
+
+1. **Primary 12/18 — MISSED.** Landed 10/18 = 56%.
+2. **Zero machinery-attributable empty patches — PASSES as written, but the
+   criterion is too narrow to be worth much.** Both `empty_patch` rows
+   (`exstruct-113`, `vyper-4801`) have `trustworthy: true` and `refused_paths:
+   []`, so neither is machinery-attributable by the stated definition. **The
+   definition anticipated diffs that are too SMALL and has no clause for diffs
+   that are too LARGE**, so it scores a pass while `line-bot-981` — a 575 KB
+   diff that failed to apply — goes uncounted. Recorded as a defect in the
+   criterion, not as a clean result.
+3. **Containment bypass 0 of 18 — FAILS.** `test_readonly.bypassed_count > 0` on
+   **10 of 18 rows**, and on **2** the repair did not succeed:
+   `canvasapi-716` and `hiero-1914` both have `restored_test_files: []` with 11
+   `restore_errors` reading *"restored … but the digest still differs — the edit
+   was committed, not just written"*. Deviation 10 restores the **working tree**;
+   a committed edit survives it. The other 8 rows were genuinely repaired, so the
+   mechanism works — it just cannot reach a commit. Grading strips test files, so
+   no score is contaminated; the chain's own green is.
+4. **One re-run allowed — EXCEEDED, disclosed.** This was the third launch. See
+   Amendment 1; launch 2's six rows are published there.
+5. **`dev_inner_loop_stops` reported per row.** Non-empty on 2 of 18:
+   `exstruct-113` (`attempts_cap`, 3 inner attempts) and `vyper-4801`
+   (`attempts_cap`, plus `budget_exhausted: wall-clock-cap`, 6,341 s against the
+   5,400 s cap). All other 16 rows are `[]`.
+6. **No cross-sweep delta quoted as an improvement.** Honoured. The sweep-2 →
+   replay comparison confounds fifteen disclosed changes and is reported as
+   composition, not as a gain.
+
+## Two machinery defects this run found
+
+**A. `_branch_has_production_delta` asks a ref, not the pinned SHA.**
+`handlers.py:3695` resolves `swebench-base` and diffs the branch against it. On
+`tox-3931` the dev's gitlink surgery put the chain's own commits **on** that ref
+(`base_ref_ahead_of_expected: 2`), so the diff was empty and the function mapped
+empty → `False` ("confirmed no production delta") instead of `None` ("cannot
+determine"). A green run touching `src/tox/session/cmd/schema.py` was forced red
+**twice**; because the forced-red tail is identical every time, the stall guard
+then fired at 2 of 4 deterministically. This is the same `ref-not-SHA` class
+`_capture_diff` was fixed for in #312 — the second consumer was missed. It cost
+no resolve here (grading reads the SHA-anchored diff, and tox still graded
+`resolved`) but it produced a false-negative verdict and would park a correct fix
+on the live chain.
+
+**B. A dissolved submodule is captured as a 575 KB diff that cannot apply.**
+`line-bot-981`, a row every prior same-model arm resolved, graded
+`patch_did_not_apply`. Its diff opens with `deleted file mode 160000` /
+`-Subproject commit 982bad2…` and then re-adds all 39 vendored `line-openapi/`
+files. The grade log shows **every file applying cleanly, including both real
+fixes**, and the apply step still returning exit 2 on the gitlink deletion.
+`diff_integrity.trustworthy` is `true` — the predicate checks base-ref and
+head-SHA relationships and has no assertion for submodule teardown or size
+explosion. **This is a machinery-attributable lost resolve.**
+
+Both defects share one upstream cause: the dev's `mv .git .git.file && ln -s`
+gitlink surgery, which is now implicated in three distinct capture failures.
+
+## What this run does NOT show
+
+- **It does not show the chain is worth its cost, and the gap widened.** The
+  single agent is 12/18 = 67% at **$1.19/resolved** against the chain's 10/18 =
+  56% at **$8.10/resolved** — **6.8× the cost for a lower rate**, on the same
+  manifest, same dev model, same week. Sweep 2's ratio was 2.8×; the machinery
+  fixes made the cost ratio worse, not better.
+- **It does not show the fixes were worthless.** Three targeted rows were
+  recovered exactly as designed. It shows removing self-inflicted losses cannot
+  raise the rate while the chain has one dev and no selection term — the identity
+  `score = capability − tax + selection` with the third term pinned at zero.
+  Phase C is cancelled, so nothing in the plan adds that term.
+- **It cannot settle the operator's tasks/day thesis.** `gate_enforced` is
+  `false` on all 18 rows, the driver stops at `reviewer_done`, and there is no
+  PM, SM, contract, merge gate or deploy. The plan's Phase D moves the primary
+  gate to live-chain units for exactly this reason.
+- **It cannot resolve a delta at this n.** k=1, n=18, p=0.625.
+
+## Verdict quality regressed
+
+Chain-verdict precision **7/12 = 58%** (sweep 2: 71%), recall **7/10 = 70%**.
+Three rows ended in a blocked state while producing a resolving patch —
+`tox-3931`, `canvasapi-716`, `jsonpickle-588`. The one genuinely positive finding
+of sweep 2 did not replicate, and at these interval widths it never could have.
+
+## Provider errors
+
+`RateLimitError` appears in 41 files, concentrated in `rapid-mlx-289` and
+`exstruct-113`. Both rows completed and `rapid-mlx-289` resolved, so at 4 workers
+the SDK's retries absorbed them — the behaviour #315 predicted, and the reason 4
+is the right default rather than 18.

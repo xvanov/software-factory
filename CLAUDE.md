@@ -9,23 +9,33 @@ An autonomous software factory: LLM personas turn markdown work orders
 ("directions") into reviewed, tested, merged pull requests, unattended, on
 cheap non-Anthropic models (Azure gpt-5.x + DeepSeek).
 
-**It ships, and the chain is not proven.** Two sweeps exist on one pinned
-SWE-rebench manifest (n=19). Sweep 1 (2026-08-04, five arms): the chain
-resolved 37% where a *single* OpenHands agent on the same model resolved 53%
-— no measurable lift (p=0.375) at 2.8× the cost per resolved instance;
-Claude Code 79%. Sweep 2 (2026-08-10, re-measuring only the CHANGED factory —
-acceptance oracle authored pre-dev, open-weight-only routing, Kimi reviewer):
-factory **53%** (10/19), solo-noreview 47%, claude-5 79%; chain-verdict
-precision 40% → 71%. The matched `openhands` control was operator-cancelled
-mid-sweep, so chain-vs-single-agent remains **cross-sweep and descriptive**,
-the $/resolved gap stands ($5.02 vs $1.82), and at MDE ≈ ±38 pp none of this
-is a proven delta (k ≥ 3 is the bar). The committed `results.md` is sweep 2
-(`results-archive/2026-08-10T21-53-14.959258Z/`); sweep 1 stays re-derivable
-from `results-archive/2026-08-04T23-19-24.998844Z/` (and its earlier
-`…T04-18-05.349995Z/` variant — openhands 44%/p=0.625 — differs only in three
-429-lost rows re-run as `attempt: 2`; same conclusion either way). Do not
-write docs or directions that assume the chain's value is established; see
-`STATUS.md`. **The Exteroception v1 direction is closed**
+**It ships, and the chain is measurably behind a single agent.** Three sweeps
+exist on one pinned SWE-rebench manifest. The current result is the
+**2026-08-11 replay** on the 18-instance working set (`pandas-63945` is a
+broken instance, PR #313), with every machinery fix applied (#310–#320) and a
+**same-sweep `openhands` control**:
+
+| same 18 instances | resolved | rate | $/resolved |
+|---|---:|---:|---:|
+| factory (all fixes) | **10/18** | **56%** | **8.10** |
+| one OpenHands agent | **12/18** | **67%** | **1.19** |
+| factory, sweep 2 | 10/18 | 56% | 5.02 |
+
+McNemar exact **p = 0.625** — descriptive, not a proven delta; k ≥ 3 is still
+the bar. Two things this replaces: the chain-vs-agent comparison is no longer
+cross-sweep, and it does **not** show parity — the chain is behind on rate at
+6.8× the cost. **The machinery fixes worked and bought zero net rate** (+3/−3
+on the same 10/18), which is the strongest evidence yet that removing
+self-inflicted losses cannot raise the ceiling while there is one dev and no
+selection term. Verdict precision did **not** replicate (58% vs sweep 2's 71%).
+Earlier: sweep 1 (2026-08-04) chain 37% vs agent 53%, p=0.375; sweep 2
+(2026-08-10) factory 53% (10/19), solo-noreview 47%, claude-5 79%. `results.md`
+is now the replay (`results-archive/2026-08-11T16-22-03.186645Z/`); sweep 2
+stays re-derivable from `…T21-53-14.959258Z/` and sweep 1 from
+`…T23-19-24.998844Z/` (and its earlier `…T04-18-05.349995Z/` variant —
+openhands 44%/p=0.625 — differs only in three 429-lost rows re-run as
+`attempt: 2`; same conclusion either way). Do not write docs or directions that
+assume the chain's value is established; see `STATUS.md`. **The Exteroception v1 direction is closed**
 (`apps/factory/directions/019-exteroception-v1-close-the-sensing-gap/`) — its
 seven acceptance criteria shipped as **operator PRs #247–#254, not the
 chain**. No successor direction is filed yet; what it left open (three KNOWN

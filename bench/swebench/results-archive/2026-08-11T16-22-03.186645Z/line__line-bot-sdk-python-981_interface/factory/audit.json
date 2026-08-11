@@ -1,0 +1,88 @@
+{
+  "instance_id": "line__line-bot-sdk-python-981_interface",
+  "arm": "factory",
+  "audited_at": "2026-08-11T15:38:43.759722+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [
+    {
+      "ts": "2026-08-11T15:06:21.776964+00:00",
+      "persona": "acceptance_author",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 3614,
+      "tokens_out": 7754,
+      "cached_input_tokens": 2432,
+      "cost_usd": 0.03586942,
+      "duration_s": 81.77,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:21:40.869892+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2224914,
+      "tokens_out": 23487,
+      "cached_input_tokens": 1161728,
+      "cost_usd": 2.3289423980000006,
+      "duration_s": 918.406,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:24:45.924619+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 26520,
+      "tokens_out": 31092,
+      "cached_input_tokens": 5696,
+      "cost_usd": 0.15986615999999998,
+      "duration_s": 183.835,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:37:24.497684+00:00",
+      "persona": "dev",
+      "model": "azure/deepseek-v4-pro",
+      "story_id": 1,
+      "tokens_in": 2007318,
+      "tokens_out": 14397,
+      "cached_input_tokens": 991744,
+      "cost_usd": 2.174869114,
+      "duration_s": 757.972,
+      "success": 1,
+      "error": null
+    },
+    {
+      "ts": "2026-08-11T15:38:30.758906+00:00",
+      "persona": "reviewer",
+      "model": "azure/Kimi-K2.7-Code",
+      "story_id": 1,
+      "tokens_in": 12743,
+      "tokens_out": 13756,
+      "cached_input_tokens": 2944,
+      "cost_usd": 0.07143359,
+      "duration_s": 64.833,
+      "success": 1,
+      "error": null
+    }
+  ],
+  "ledger_cost_usd": 4.771,
+  "ledger_tokens_in": 4275109,
+  "ledger_tokens_out": 90486,
+  "result_cost_usd": 4.771,
+  "prediction_sha256": "77ae20af81d350ad6b7f3a96d759875c9291e208819a390328a33b43652be47f",
+  "base_commit": "f0d222be1a25553005bff35c2ace82424a683fd9",
+  "stripped_test_paths": [
+    "tests/api/test_issue_stateless_channel_token_convenience.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 2,
+  "trails_scanned": 2,
+  "oracle_probe_failures": []
+}
