@@ -1714,6 +1714,83 @@ _MAX_DEV_RETRIES = _DEFAULT_MAX_DEV_RETRIES
 # silently collapsing two deliberately layered guards into one.
 _MAX_DEV_SAME_SIGNATURE = 2
 
+# The stall guard above keys on "the same failure text twice". That is only
+# evidence of a dead end when the failure text is a TEST RESULT. When the suite
+# never ran, two identical tails mean "we learned nothing, twice" — and blocking
+# the story is then throwing away work on no evidence at all.
+#
+# Measured over all 61 dev attempts in bench sweep 2, 8 red attempts carried no
+# test results, and they are exactly the losses:
+#
+#   * ``jsonpickle-588`` attempts 1 AND 2 — ``2 errors in 0.21s``, a COLLECTION
+#     error from a 2-line syntax error. Same signature twice, story blocked
+#     terminally, two unused retries. The tree was one edit from green and
+#     ``solo-noreview`` solved it.
+#   * ``rapid-mlx-289`` (x2) and ``vyper-4801`` shared ONE signature —
+#     ``sandbox run timed out ... treating as retryable infrastructure failure``.
+#     Two consecutive INFRA TIMEOUTS were being counted as the model failing the
+#     same way twice.
+#   * ``keras-22642`` and ``jsonpickle-588``/solo — an OpenHands crash dump.
+#
+# So an attempt only contributes to the streak when its tail shows at least one
+# test actually passing or failing. Everything else is non-comparable and gets
+# the empty signature, which ``_consecutive_same_dev_signature`` already treats
+# as "no comparable evidence yet" and returns 0 for.
+#
+# The cap is NOT raised: CLAUDE.md requires the early-escalation guard to stay
+# strictly below the hard cap, and at 2 against 4 it does. What changes is which
+# attempts are comparable. And the loop stays bounded for this class — the hard
+# ``_max_dev_retries`` cap and the per-story budget breaker are untouched, so the
+# worst case is a collection error consuming the normal retry budget instead of
+# terminating the story after two.
+#
+# Ambiguity resolves toward NOT firing, on purpose: not firing costs retries the
+# story already owns, while firing wrongly discarded a correct patch.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_TEST_OUTCOME_RE = re.compile(r"\b(\d+)\s+(passed|failed|xfailed|xpassed)\b")
+_TEST_NODE_RESULT_RE = re.compile(r"^(FAILED|PASSED|XFAIL|XPASS)\s+\S+", re.M)
+_TEST_ASSERTION_RE = re.compile(r"\bAssertionError\b")
+
+
+def _tail_shows_test_results(tail: str) -> bool:
+    """Did this test run produce a per-test outcome at all?
+
+    True on positive evidence that at least one TEST ran and reported:
+
+    * a pytest summary counting a passed/failed/xfailed/xpassed test;
+    * a ``FAILED``/``PASSED`` per-node line (``-r`` output);
+    * an ``AssertionError`` — a test-level assertion, as opposed to a
+      collection-time crash.
+
+    False for a collection error, an import error, an all-skipped run, a sandbox
+    crash dump and an infra timeout. A signature over any of those describes our
+    environment, not the dev's fix.
+
+    All three forms are needed, and the third is the one an existing test caught:
+    a real pytest tail always ends with a count line (it is the last thing pytest
+    prints, so it survives truncation), but a bare ``AssertionError: expected 1
+    got 2`` tail IS a test that ran and failed. Requiring the count line alone
+    made the guard unreachable for that shape.
+
+    ANSI is stripped first: pytest colourises the summary, and a naive
+    word-boundary match against ``111\x1b[0m passed`` misses it — four sweep-2
+    attempts have exactly that shape.
+
+    Re-measured over all 61 sweep-2 dev attempts with all three forms: 9 red
+    attempts have comparable evidence and keep feeding the stall guard; the 8
+    that do not are precisely the collection errors, crash dumps and infra
+    timeouts named in the block comment above. The guard stays live; it stops
+    counting non-evidence.
+    """
+    text = _ANSI_RE.sub("", tail or "")
+    if not text.strip():
+        return False
+    if any(int(m.group(1)) > 0 for m in _TEST_OUTCOME_RE.finditer(text)):
+        return True
+    if _TEST_NODE_RESULT_RE.search(text):
+        return True
+    return bool(_TEST_ASSERTION_RE.search(text))
+
 # ImpossibleBench escape hatch (arXiv 2510.20270, ICLR 2026). The marker the
 # dev persona emits to declare a story unsatisfiable AS WRITTEN instead of
 # guessing or making its own tests agree with whatever it built. Measured
@@ -2605,8 +2682,17 @@ def _handle_dev_once(
         # Detection survives across ticks via the persisted field.
         from factory.chain.orchestrator import _failure_signature_from_tail
 
-        attempt_record["failure_signature"] = _failure_signature_from_tail(
-            str(attempt_record["test_output_tail"])
+        _tail = str(attempt_record["test_output_tail"])
+        # EVIDENCE FRESHNESS, not output similarity — see the comment on
+        # ``_tail_shows_test_results``. A tail with no test outcomes in it is not
+        # comparable to anything, so it gets the empty signature and cannot feed
+        # the stall streak. Recorded explicitly as well, so a reader can tell
+        # "no comparable evidence" from "we forgot to stamp it".
+        attempt_record["test_results_seen"] = _tail_shows_test_results(_tail)
+        attempt_record["failure_signature"] = (
+            _failure_signature_from_tail(_tail)
+            if attempt_record["test_results_seen"]
+            else ""
         )
         story.dev_attempts_json = json.dumps(prior[-5:])
 

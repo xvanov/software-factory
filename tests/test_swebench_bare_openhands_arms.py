@@ -195,9 +195,17 @@ def _git(cwd: Path, *args: str) -> None:
     )
 
 
-def _seed_repo(dest: Path) -> None:
+def _seed_repo(dest: Path) -> str:
     """A throwaway repo shaped like a prepared bench clone: one production
-    file, one test file, and the ``swebench-base`` ref the diff capture uses."""
+    file, one test file, and the ``swebench-base`` ref the diff capture uses.
+
+    Returns the base commit sha. Callers stamp it onto the INSTANCE DICT they
+    hand the arm — see ``_clone_stub`` — because a real prepared clone is checked
+    out AT ``base_commit``, so that sha always resolves in the tree. The old
+    ``"0" * 40`` placeholder did not, which made this fixture the only tree in the
+    suite with no honest ref to diff against (measured over 114 real prepared
+    trees: 114/114 carry their manifest base commit).
+    """
     dest.mkdir(parents=True, exist_ok=True)
     _git(dest, "init", "-q")
     (dest / "widget.py").write_text("def widget():\n    return 1\n", encoding="utf-8")
@@ -214,6 +222,24 @@ def _seed_repo(dest: Path) -> None:
         "commit", "-q", "-m", "base",
     )
     _git(dest, "branch", "-f", "swebench-base", "HEAD")
+    return subprocess.run(
+        ["git", "-C", str(dest), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _clone_stub(inst: dict[str, Any], dest: Path) -> None:
+    """``_clone`` stand-in that keeps ``inst["base_commit"]`` true of the tree.
+
+    Deliberately NOT a mutation of the module-level ``_INST``: tests in one
+    worker share it, every ``_seed_repo`` produces a DIFFERENT sha, and under
+    ``-n`` a test then read another test's sha and the diff-capture integrity
+    check correctly refused the row. Stamping the dict the arm was handed, from
+    the tree this call just built, is order-independent.
+    """
+    inst["base_commit"] = _seed_repo(dest)
 
 
 class _ScriptedModel:
@@ -262,7 +288,7 @@ def bare_run(A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:  #
     monkeypatch.setattr(
         A, "instance_test_command", lambda *a, **k: "echo '1 passed'"
     )
-    monkeypatch.setattr(A, "_clone", lambda _inst, dest: _seed_repo(dest))
+    monkeypatch.setattr(A, "_clone", _clone_stub)
 
     def _drive(
         replies: list[str], *, model: Any = None, **kw: Any
@@ -562,7 +588,7 @@ def test_probe_plumbing_exercises_the_pipeline_without_a_model(
         lambda _inst, _repo: {"collect_ok": True, "tail": "", "mode": "existing-targets"},
     )
     monkeypatch.setattr(A, "instance_test_command", lambda *a, **k: "echo ok")
-    monkeypatch.setattr(A, "_clone", lambda _inst, dest: _seed_repo(dest))
+    monkeypatch.setattr(A, "_clone", _clone_stub)
 
     A.run_bare(_INST["instance_id"], max_steps=10, timeout_s=600, probe=True)
 
@@ -946,7 +972,7 @@ def test_openhands_probe_plumbing_runs_the_whole_arm_without_a_model(
         lambda _inst, _repo: {"collect_ok": True, "tail": "", "mode": "existing-targets"},
     )
     monkeypatch.setattr(A, "instance_test_command", lambda *a, **k: "echo ok")
-    monkeypatch.setattr(A, "_clone", lambda _inst, dest: _seed_repo(dest))
+    monkeypatch.setattr(A, "_clone", _clone_stub)
     monkeypatch.setattr(A, "_build_openhands_agent", _fake_agent)
     monkeypatch.setattr(A, "threading", _NoThreads)
 
