@@ -110,6 +110,27 @@ uv run pytest -q -n 8 --dist loadfile     # full suite, ~2-4 min parallel (~15 m
 uv run ruff check . && uv run mypy factory
 ```
 
+**RUN BENCHMARKS AS WIDE AS THE HOST ALLOWS. Every time.** Operator instruction,
+2026-08-11. A sweep's wall clock should be bounded by its SLOWEST INSTANCE, never
+by how many batches the pool needs. `run-all --workers` now defaults to
+`min(20, cores*2)` (19 on this host) instead of 4 — the measured cost of the old
+default was **7,297 s for a 19-instance sweep whose longest row was 5,400 s**:
+five batches, most of the wall clock spent queueing rather than measuring. Do not
+pass a smaller `--workers` unless a provider is actively rate-limiting (sweep 1
+lost 3 rows to 429s at four workers, so watch for them and say so if you narrow
+it). The spend guard is width-independent: it re-checks actual accumulated cost
+after every completed instance.
+
+The same rule applies to anything else with a worker pool — the test suite
+(`-n 8 --dist loadfile`), selftest, grading. Never run a benchmark step serially
+"to be safe"; run it wide and re-check the losers.
+
+**But do NOT run the full pytest suite while a sweep is in flight.** Measured
+repeatedly on 2026-08-11: the acceptance-oracle files (they boot servers and
+spawn subprocesses) fail under contention with 4 OpenHands workers + ~22
+containers, and pass 96/96 serially in the same tree. That is the "a red test can
+mean nothing too" class — establish the baseline before blaming a diff.
+
 CI runs two lanes (E6, 2026-08-09): PRs are gated by a <60 s fast lane (the
 suite minus `tests/fast_lane_excludes.txt` — files that boot servers, run
 sandboxes/docker, or spawn subprocesses in bulk); the full suite runs
