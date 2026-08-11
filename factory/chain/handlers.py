@@ -26,6 +26,7 @@ from typing import Any
 
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from factory import diff_paths as _diff_paths
 from factory.app_config import AppConfig
 from factory.chain.event_log import log_story_event
 from factory.chain.state_machine import (
@@ -2547,33 +2548,60 @@ def _handle_dev_once(
         # assertions) is gated downstream by the reviewer + programmatic slop
         # detector, not here.
         tests_green = bool(run_res.test_run_passed)
-        # GREEN WITH ZERO FILES CHANGED IS NOT GREEN — under the bench driver only.
+        # GREEN WITH NO PRODUCTION DELTA IN THE BRANCH is not green — bench only.
         #
         # ``tests_green`` reads the test command's return code and nothing else, so
         # a dev that changed nothing at all reaches green whenever the suite was
-        # already passing. Measured on sweep 2: `conan-io__conan-19750` did exactly
-        # that — the chain declared green on an empty tree and the row graded
-        # `empty_patch`.
+        # already passing. Measured on sweep 2: `conan-io__conan-19750` declared
+        # green on an empty tree and the row graded `empty_patch`.
+        #
+        # THE QUESTION IS ABOUT THE BRANCH, NOT THIS ATTEMPT. The first cut asked
+        # ``not run_res.files_changed`` — "did THIS attempt touch a file" — and that
+        # is a different question with a catastrophic answer. ``files_changed`` is
+        # per-attempt: a dev that lands its fix on attempt 1 and then re-runs
+        # (after a reviewer round-trip, or to re-verify) reports an EMPTY list on
+        # attempt 2 while the tree still carries the fix. Measured on the
+        # 2026-08-11 replay, which is why that run was killed:
+        #
+        #   * `pyinfra-1665` — attempt 0 touched 2 files and went green; attempts 1
+        #     and 2 were ALSO green ("32 passed") with `files_changed: []`, were
+        #     forced red here, produced an identical signature, and the story
+        #     blocked on `same_failure_signature 2x`. It had RESOLVED in sweep 2.
+        #   * `opensandbox-816` — attempt 1 touched 15 files and went green
+        #     ("108 passed"); attempts 2 and 3 were green ("111 passed") with an
+        #     empty list, and the story blocked the same way.
+        #
+        # So ask the branch. And fail OPEN: when the delta cannot be determined,
+        # keep the green. The gate exists to catch a rare "green on an empty tree";
+        # its failure mode must never be "block every story", which is exactly what
+        # the first cut did.
         #
         # SCOPED TO THE BENCH DRIVER, deliberately. On the live chain a docs-only
         # story, a config-only story and a story whose remaining delta is already
         # on the base branch all legitimately produce no production change, and a
-        # global "must change a file" rule would fail every one of them. The bench
-        # is the one context where the story is always "fix this bug in this repo",
-        # so "no change" is always wrong there.
-        if (
-            tests_green
-            and bool(getattr(app_config.gates, "require_production_delta", False))
-            and not (run_res.files_changed or [])
+        # global rule would fail every one of them. The bench is the one context
+        # where the story is always "fix this bug in this repo".
+        if tests_green and bool(
+            getattr(app_config.gates, "require_production_delta", False)
         ):
-            tests_green = False
-            log_story_event(
-                story.id,
-                "dev_green_with_no_changes",
-                {"reason": "bench driver: green on an unchanged tree is a red attempt"},
-                software_factory_root=software_factory_root,
-                slug_hint=story.slug,
+            delta = _branch_has_production_delta(
+                story, app_config, software_factory_root
             )
+            if delta is False:
+                tests_green = False
+                log_story_event(
+                    story.id,
+                    "dev_green_with_no_production_delta",
+                    {
+                        "reason": (
+                            "bench driver: the BRANCH carries no non-test change, "
+                            "so a green test command proves nothing"
+                        ),
+                        "attempt_files_changed": list(run_res.files_changed or []),
+                    },
+                    software_factory_root=software_factory_root,
+                    slug_hint=story.slug,
+                )
         payload = {
             "files_changed": run_res.files_changed,
             "test_run_passed": tests_green,
@@ -3639,6 +3667,53 @@ def _dry_run_review(story: StoryRecord) -> dict[str, Any]:
 # with one commit and no reachable main is exactly the case it covers. It is now
 # a last resort instead of the third of three.
 _SLOP_BASE_REF_CANDIDATES = ("swebench-base", "origin/main", "main", "HEAD~1")
+
+
+def _resolve_base_ref(worktree: Path) -> str | None:
+    """The first of ``_SLOP_BASE_REF_CANDIDATES`` that resolves in ``worktree``.
+
+    Shared by the slop detector and the production-delta gate so "what is this
+    branch's base" has exactly one answer. ``swebench-base`` is first — inside the
+    benchmark it is the only correct one.
+    """
+    from factory.chain.branch import _run_git
+
+    for candidate in _SLOP_BASE_REF_CANDIDATES:
+        try:
+            _run_git(worktree, "rev-parse", "--verify", candidate)
+            return candidate
+        except Exception:  # noqa: BLE001 — try the next candidate
+            continue
+    return None
+
+
+def _branch_has_production_delta(
+    story: StoryRecord, app_config: AppConfig, software_factory_root: Path
+) -> bool | None:
+    """Does this story's BRANCH change at least one non-test file?
+
+    ``True`` yes, ``False`` confirmed no, ``None`` could not determine.
+
+    Deliberately three-valued, and the caller must only act on ``False``. A green
+    test run with no production change proves nothing; a green test run we could
+    not verify is still a green, and blocking it would trade a rare false green
+    for a systematic false red. The first cut of this gate asked the per-attempt
+    ``files_changed`` question instead and blocked two stories that had already
+    landed real, green fixes — see the call site.
+    """
+    try:
+        worktree = _writing_worktree(app_config, software_factory_root, story)
+        base_ref = _resolve_base_ref(worktree)
+        if base_ref is None:
+            return None
+        paths = _story_authored_paths(worktree, base_ref)
+        if paths is None:
+            return None
+        if not paths:
+            return False
+        return any(not _diff_paths.is_test_path(p) for p in paths)
+    except Exception:  # noqa: BLE001 — an unverifiable delta must not fail the story
+        return None
 
 
 def _story_authored_paths(worktree: Path, base_ref: str) -> set[str] | None:
