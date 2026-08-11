@@ -54,6 +54,14 @@ reviewer audits your story-silent choices against it.
   If your reproduction passes at base, you have not found the defect yet: stop
   and go looking, because a fix aimed at the wrong site will pass your test and
   fail the real one.
+  **On a story with acceptance criteria rather than a bug report**, the
+  reproduction IS the criterion's own red test. A criterion that ALREADY passes
+  at base is delivered — not a dead end and not underspecification. Record it in
+  your `SELF_SUMMARY:` ("AC 2 already satisfied by `<file:line>`; no change
+  needed") and move on to the criteria that are still red. Do not invent work to
+  have something to change, and do not end the turn without applying whatever the
+  remaining criteria need: a run that changes nothing is a failed run, and the
+  chain sends it straight back to you.
   A reproduction is whatever executes fastest and is unambiguous: a test
   function, a `python -c` one-liner, a subprocess probe, a monkeypatched
   allocator or counter. Paste the failing output into your `SELF_SUMMARY:`, then

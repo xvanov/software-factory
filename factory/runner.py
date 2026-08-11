@@ -1775,6 +1775,11 @@ _MAX_OUTPUT_RETRY_CEILING = 65536
 # unreachable branch.
 _MAX_PROSE_CONTINUATIONS = 2
 
+# Fraction of the sandbox wall clock that must remain before a prose-only ending
+# is nudged. Past this the run is left as it is: a nudge that trips the wall clock
+# converts a run whose tree may be GREEN into a timeout that is never graded.
+_PROSE_CONTINUATION_TIME_RESERVE = 0.75
+
 _PROSE_CONTINUATION_NUDGE = (
     "STOP. Your last turn ended in prose with no tool call and no terminal "
     "marker, so NOTHING you just described was applied — the working tree is "
@@ -2216,11 +2221,13 @@ async def sandbox_run(
     # ``premodel_infra`` flag fixed it for the post-model-crash path and this
     # path was never covered.
     _live_conversation: dict[str, Any] = {}
-    # How many prose-only endings this run had to be nudged past. Surfaced on
-    # ``RunResult`` and in the ledger row's ``error`` field is NOT the right
-    # channel — this is not an error — so it rides the result object and the
-    # story event. Zero on every healthy run, which is what makes a non-zero
-    # value worth looking at.
+    # How many prose-only endings this run had to be nudged past, plus
+    # ``skipped_no_time`` when one was detected but left alone for lack of wall
+    # clock. Rides the RESULT OBJECT; the ledger row's ``error`` field is the wrong
+    # channel because this is not an error. (An earlier comment here claimed it
+    # also rode "the story event" — it did not, and nothing outside a test read it
+    # at all. The dev attempt record now carries it, so a nudged run is
+    # distinguishable from a clean one on the live chain.)
     _prose_continuations: dict[str, int] = {}
 
     def _snapshot_live_usage() -> None:
@@ -2316,6 +2323,27 @@ async def sandbox_run(
             # would re-read the repo from scratch and consume a dev retry.
             for _cont in range(_MAX_PROSE_CONTINUATIONS):
                 if not _ended_on_prose(conversation, persona):
+                    break
+                # RESERVE WALL CLOCK. The continuation borrows the SAME
+                # ``asyncio.wait_for`` budget as the original run, and
+                # ``max_iteration_per_run`` resets on every ``run()`` — so a nudge
+                # gets a fresh 600-iteration budget and no time of its own.
+                #
+                # Measured on the live sacrifice trajectories: the ONE run that
+                # would have been nudged (story 178) had already burned 1663 s of
+                # its 1800 s, and 9 of the last 60 live dev runs exceeded 1200 s.
+                # If the wall clock fires mid-continuation the TimeoutError path
+                # returns ``test_run_passed=False, files_changed=[]`` and the
+                # chain's test command NEVER RUNS — so a tree that may have been
+                # green is never graded, a dev retry is burned, the
+                # ``files_touched`` retry memory is lost, and the resulting
+                # timeout tail carries no test results, which means the stall
+                # guard cannot catch the repeat either. The rescue would have
+                # manufactured a worse failure than the one it fixed.
+                if _elapsed() > _PROSE_CONTINUATION_TIME_RESERVE * (
+                    wall_clock_timeout_s or _SANDBOX_WALL_CLOCK_TIMEOUT_S
+                ):
+                    _prose_continuations["skipped_no_time"] = 1
                     break
                 _prose_continuations["n"] = _cont + 1
                 conversation.send_message(_PROSE_CONTINUATION_NUDGE)

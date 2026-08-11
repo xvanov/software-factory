@@ -2719,6 +2719,11 @@ def _handle_dev_once(
             "self_summary": (getattr(run_res, "self_summary", "") or "")[:2000],
             "last_assistant_message": (getattr(run_res, "last_assistant_message", "") or "")[:2000],
             "recent_tool_calls": list(getattr(run_res, "recent_tool_calls", []) or [])[-8:],
+            # How many prose-only endings the harness had to nudge this attempt
+            # past. 0 on a healthy run. Recorded here because the counter was
+            # otherwise unreadable outside a unit test, so an operator could not
+            # tell a rescued run from a clean one.
+            "prose_continuations": int(getattr(run_res, "prose_continuations", 0) or 0),
         }
         try:
             prior = json.loads(story.dev_attempts_json or "[]")
@@ -3733,7 +3738,21 @@ Measured by ``git diff --numstat``, not ``--diff-filter``: git reports a pure
     try:
         from factory.chain.branch import _run_git
 
-        out = _run_git(worktree, "diff", "--numstat", base_ref).stdout
+        # ``--no-renames`` is load-bearing. With rename detection ON, git emits a
+        # detected rename as ONE compressed numstat row —
+        # ``3  1  backend/tests/{test_auth.py => test_auth_email.py}`` — while
+        # ``find_test_files_in_diff`` uses ``--name-only`` and yields the NEW path
+        # alone. The two never intersect, so a renamed-and-edited test file is
+        # silently dropped from the scan. Executed: a renamed test containing
+        # ``assert True`` scanned to a real SlopFinding but the intersection was
+        # empty. The slop detector is a hard veto that can override an LLM
+        # ``approve``, so that is fail-OPEN on a documented fail-safe — and if the
+        # story's only touched test file was renamed, the veto is fully disabled
+        # for that story. ``--no-renames`` emits the old and new paths as separate
+        # rows, and the new path carries the added lines.
+        out = _run_git(
+            worktree, "diff", "--numstat", "--no-renames", base_ref
+        ).stdout
     except Exception:  # noqa: BLE001 — an unreadable diff must not disable the scan
         return None
     authored: set[str] = set()
@@ -3866,8 +3885,35 @@ def handle_review(
         # ending the story. The original reasoning — do not churn review cycles on
         # an empty diff — is preserved exactly, because this is not a review cycle:
         # the reviewer is still never called on an empty diff.
-        if empty_diff is True and story.dev_retries + 1 < _max_dev_retries(
-            software_factory_root
+        # BOUNDED BY reviewer_cycles, NOT ONLY BY dev_retries.
+        #
+        # The first cut gated on `story.dev_retries + 1 < _max_dev_retries()` and
+        # claimed in its own comment that "the review-cycle cap and the stability
+        # guard still bound it". NEITHER DID, and an adversarial review reproduced
+        # 12 unbounded cycles:
+        #
+        #   `dev_retries` is incremented only on the RED path (see the green
+        #   return above it). A story only reaches `handle_review` via
+        #   EVENT_DEV_TESTS_GREEN, so a dev run that goes GREEN while changing
+        #   nothing leaves `dev_retries` at 0 — and `0 + 1 < 4` is true forever.
+        #   Cycle: reviewer_in_progress -> request_changes -> dev -> tests_green ->
+        #   reviewer_in_progress, one dev sandbox run each (live median 644 s,
+        #   ~$0.35), until `per_story_spend_usd: 12.0` trips into
+        #   BLOCKED_BUDGET_EXCEEDED — a sink `factory resume` REFUSES, and which
+        #   emits no `factory_needs_redesign` event at all.
+        #
+        # That is strictly worse than the terminal block it replaced, which fired
+        # once and left an actionable event. And the trigger is already in the
+        # tree: direction 126 asks for a password reset that
+        # `sacrifice/backend/app/routes/auth.py` already implements.
+        #
+        # So count the cycle and cap it at `_MAX_REVIEW_CYCLES` — the guard the
+        # comment always claimed. Three empty-diff round-trips, then the terminal
+        # block with its `factory_needs_redesign` event, as before.
+        if (
+            empty_diff is True
+            and story.dev_retries + 1 < _max_dev_retries(software_factory_root)
+            and story.reviewer_cycles + 1 < _MAX_REVIEW_CYCLES
         ):
             # Back to dev via ``reviewer_request_changes`` — the chain's existing
             # "dev, do more work" route. Deliberately NOT a new transition: from
@@ -3913,6 +3959,12 @@ def handle_review(
             }
             story.state = advance(story, EVENT_REVIEWER_REQUEST_CHANGES).value
             story.error = None
+            # Count it. Without this the loop is unbounded (see above) AND the
+            # synthetic entries below evict real reviewer memory:
+            # `_REVIEWER_HISTORY_MAX_CYCLES` is 4, so four silent cycles would
+            # flush every genuine prior finding out of the history section that
+            # enforces review finality.
+            story.reviewer_cycles += 1
             story.reviewer_result_json = json.dumps(result)
             _append_reviewer_history(story, result)
             persist_story(story, db)
@@ -3922,6 +3974,8 @@ def handle_review(
                 {
                     "dev_retries": story.dev_retries,
                     "cap": _max_dev_retries(software_factory_root),
+                    "reviewer_cycles": story.reviewer_cycles,
+                    "reviewer_cycles_cap": _MAX_REVIEW_CYCLES,
                     "reviewer_called": False,
                     "reason": (
                         "empty diff with retry headroom — back to dev instead of a "
