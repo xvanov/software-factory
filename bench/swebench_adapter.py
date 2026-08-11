@@ -2515,6 +2515,35 @@ _BENCH_ROOT_CAPS: dict[str, float] = {
 }
 
 
+# SWEEP PARALLELISM — run benchmarks as wide as the host allows, by default.
+#
+# The old default of 4 workers made a 19-instance sweep take 7,297 s (2 h 2 m)
+# when the longest single instance was 5,400 s: with 19 rows over 4 slots the
+# pool ran five batches, so most of that wall clock was queueing behind other
+# rows rather than measuring anything. Operator instruction (2026-08-11): a
+# benchmark sweep is bounded by the SLOWEST INSTANCE, not by the batch count.
+#
+# The work is overwhelmingly provider-bound — each worker is a child process
+# waiting on an LLM, with short bursts of docker test execution — so workers may
+# comfortably exceed core count. Two real limits:
+#
+#   * memory: each worker holds a prepared clone plus a docker container;
+#   * provider quota: the arms share one deployment, and sweep 1 lost three rows
+#     to 429s at FOUR workers. More workers means more concurrent requests.
+#
+# So: default to the whole pinned set where the host allows it, capped by cores
+# and by a hard ceiling. The spend guard is unaffected — it re-checks ACTUAL
+# accumulated cost after every completed instance and stops the sweep on breach,
+# whatever the width. Override with --workers when a provider is rate-limiting.
+_SWEEP_WORKERS_CEILING = 20
+
+
+def _default_sweep_workers() -> int:
+    """As many concurrent instances as this host can reasonably hold."""
+    cores = os.cpu_count() or 4
+    return max(4, min(_SWEEP_WORKERS_CEILING, cores * 2))
+
+
 def _build_bench_root(inst: dict[str, Any], repo: Path, root: Path) -> Path:
     """A minimal factory root: own state db, own settings, app -> the clone.
 
@@ -11043,7 +11072,15 @@ def main() -> None:
     )
     p.add_argument("--arm", default="factory", choices=list(_ARM_NAMES))
     _add_model_arg(p)
-    p.add_argument("--workers", type=int, default=4)
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=_default_sweep_workers(),
+        help=(
+            "concurrent instances; defaults to as many as this host can hold "
+            f"(currently {_default_sweep_workers()}). See _default_sweep_workers."
+        ),
+    )
     p.add_argument(
         "--instances",
         default=None,
