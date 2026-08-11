@@ -100,8 +100,16 @@ Full evidence and the pre-registered criteria, evaluated as written:
    submodule teardown or size explosion. **A machinery-attributable lost
    resolve.**
 
-Both trace to the dev's `mv .git .git.file && ln -s` gitlink surgery, now
-implicated in three distinct capture failures.
+**CORRECTED 2026-08-11 (see `POSTMORTEM-2026-08-11.md` §5).** These two do NOT
+share a cause, and the original claim that both trace to the dev's
+`mv .git .git.file && ln -s` gitlink surgery is **wrong**. Defect 1 (`tox-3931`)
+IS dev-side — its trajectory shows `git --git-dir=<repo>/.git commit`. Defect 2
+(`line-bot-981`) has **no dev git plumbing anywhere in its trajectories**, only a
+chain `worktree_create`: a `git worktree add` does not materialise submodules as
+gitlinks the way a clone does, so the prepared tree carried `line-openapi` as
+plain files and the diff against the pinned base SHA necessarily contains the
+teardown. It is a **chain workspace-preparation** defect. The distinction is
+load-bearing: a prompting fix will not close a prep-tooling hole.
 
 **Containment is NOT closed.** `test_readonly.bypassed_count > 0` on **10 of 18**
 rows; on **2** (`canvasapi-716`, `hiero-1914`) the repair failed with 11
