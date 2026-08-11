@@ -3504,7 +3504,12 @@ def run_factory(
         p for p in (root / "state" / "worktrees").glob("swebench-*") if p.name.endswith(slug)
     ]
     graded_wt = matches[0] if matches else repo
-    raw_diff = _capture_diff(graded_wt)
+    diff_integrity: dict[str, Any] = {}
+    raw_diff = _capture_diff(
+        graded_wt,
+        expected_base_commit=str(inst.get("base_commit") or ""),
+        integrity=diff_integrity,
+    )
 
     # What the read-only lock actually bought, measured against the tree the
     # dev worked in and the dev's own tool output (the trajectories the chain
@@ -3568,6 +3573,10 @@ def run_factory(
     (run_dir / "raw.diff").write_text(raw_diff, encoding="utf-8")
     refused: list[str] = []
     try:
+        # Raised INSIDE this try on purpose: the handler below is the one place
+        # that records a refusal into ``result.json``, so an untrustworthy empty
+        # capture is DISCLOSED rather than crashing the driver and vanishing.
+        _refuse_untrustworthy_empty_diff(raw_diff, diff_integrity)
         code_diff, kept, stripped = split_diff(raw_diff)
     except DiffRefused as exc:
         # No prediction.diff is written, so `grade` refuses and `audit` fails:
@@ -3699,6 +3708,11 @@ def run_factory(
         "test_files_stripped": stripped,
         "refused_paths": refused,
         "diff_bytes": len(code_diff),
+        # Whether the capture that produced those bytes can be trusted: the base
+        # ref's real sha vs the manifest's ``base_commit``, and the gitlink's
+        # shape. ``tox-3931`` published a 0-byte capture as ``empty_patch`` with
+        # nothing on disk recording that the ref had moved under it.
+        "diff_integrity": diff_integrity,
         # What the ImpossibleBench read-only lock bought on this row:
         # ``refused`` writes the OS rejected, ``bypassed_count`` files whose
         # content changed anyway. See ``lock_test_files`` for the honest limit.
@@ -3730,7 +3744,159 @@ def run_factory(
     )
 
 
-def _capture_diff(wt: Path, base: str = "swebench-base") -> str:
+def _refuse_untrustworthy_empty_diff(raw_diff: str, integrity: dict[str, Any]) -> None:
+    """A 0-byte capture from a broken capture is REFUSED, not published as empty.
+
+    The two cases must never be conflated:
+
+    * empty from a trustworthy capture — the arm genuinely changed nothing. A
+      real, countable outcome (``empty_patch``).
+    * empty from an untrustworthy one — the base ref moved, the gitlink was
+      replaced, or the ref does not resolve. We did not measure the arm; we
+      measured our own breakage. ``tox-3931`` published the SECOND as the FIRST,
+      and a patch byte-identical to Claude's winning one was scored as nothing.
+
+    FAIL SAFE, by the ``DiffRefused`` route the acceptance layer already uses: no
+    ``prediction.diff`` is written, ``grade`` refuses the row, ``classify_run``
+    buckets it ``run_failed``, and no headline can absorb it. A refused row costs
+    one re-run; a false zero costs a retraction.
+    """
+    if raw_diff.strip():
+        return
+    if integrity.get("trustworthy"):
+        return
+    reasons: list[str] = []
+    if integrity.get("expected_resolves") is False:
+        reasons.append(
+            f"the manifest's base_commit "
+            f"{str(integrity.get('expected_base_commit'))[:12]} is NOT in this "
+            "tree, so there is no honest ref to diff against — a 0-byte result "
+            "here says nothing about the arm"
+        )
+    if integrity.get("gitlink") == "symlink":
+        reasons.append(
+            "the worktree's .git is a SYMLINK (a worktree's .git is a file) — "
+            "commits from this tree land on the shared refs, which is exactly "
+            "how tox-3931 lost a correct patch"
+        )
+    if not integrity.get("base_ref_sha"):
+        reasons.append(f"{integrity.get('base_ref')} does not resolve to a commit")
+    raise DiffRefused(
+        "empty diff from an UNTRUSTWORTHY capture — refusing to grade it as "
+        '"the arm produced nothing": ' + "; ".join(reasons or ["integrity unknown"]),
+        [],
+    )
+
+
+def _rev_parse(wt: Path, ref: str) -> str:
+    """``ref`` resolved to a full sha in ``wt``, or ``""`` if it does not resolve."""
+    proc = subprocess.run(
+        ["git", "-C", str(wt), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def diff_capture_integrity(
+    wt: Path, base: str = "swebench-base", *, expected_base_commit: str | None = None
+) -> dict[str, Any]:
+    """Can this worktree's diff be trusted to be the arm's answer?
+
+    Answering "no" is the whole point. ``tox-dev__tox-3931`` in sweep 2 lost a
+    patch that was **byte-identical to Claude's winning one**: the dev's docker
+    workaround replaced the worktree gitlink with
+    ``mv .git .git.file && ln -s "$GIT_COMMON_DIR" .git``, so the chain's
+    per-iteration commits landed on ``swebench-base`` ITSELF. ``git diff
+    swebench-base`` then compared the fix against a ref that now contained the
+    fix, and returned zero bytes. Both fallbacks were empty for the same reason,
+    and the row was published as ``empty_patch`` — a correct answer scored as
+    "the arm produced nothing", with no artifact anywhere saying otherwise.
+
+    Reported fields:
+
+    * ``base_ref``/``base_ref_sha`` — what the branch name resolves to NOW;
+    * ``expected_base_commit`` — the manifest's ``base_commit``, i.e. what it
+      must resolve to;
+    * ``base_ref_matches`` — False means the ref MOVED, which is the tox failure;
+    * ``gitlink`` — ``dir`` / ``file`` / ``symlink`` / ``missing``. A worktree's
+      ``.git`` is a FILE; a symlink is the specific tampering seen on tox;
+    * ``head_sha`` and ``head_is_base`` — whether HEAD is still the base commit;
+    * ``trustworthy`` — False when any of the above is wrong. A caller must not
+      grade an EMPTY diff from an untrustworthy capture: empty then means "we
+      could not measure", not "the arm changed nothing".
+    """
+    base_sha = _rev_parse(wt, base)
+    head_sha = _rev_parse(wt, "HEAD")
+    dotgit = wt / ".git"
+    if dotgit.is_symlink():
+        gitlink = "symlink"
+    elif dotgit.is_file():
+        gitlink = "file"
+    elif dotgit.is_dir():
+        gitlink = "dir"
+    else:
+        gitlink = "missing"
+    expected = (expected_base_commit or "").strip()
+    # Compare on the shorter length: manifests carry full shas, but a short one
+    # must not silently read as a mismatch.
+    if expected and base_sha:
+        n = min(len(expected), len(base_sha))
+        matches: bool | None = expected[:n] == base_sha[:n]
+    else:
+        matches = None if not expected else False
+    # Does the manifest's base commit exist in THIS tree? This — not
+    # ``base_ref_matches`` — is the load-bearing question, because it decides
+    # whether an honest diff is available at all.
+    expected_resolves = bool(expected) and bool(_rev_parse(wt, expected))
+    ahead = None
+    if expected_resolves and base_sha:
+        proc = subprocess.run(
+            ["git", "-C", str(wt), "rev-list", "--count", f"{expected}..{base}"],
+            capture_output=True,
+            text=True,
+        )
+        with contextlib.suppress(ValueError):
+            ahead = int(proc.stdout.strip())
+    return {
+        "base_ref": base,
+        "base_ref_sha": base_sha,
+        "expected_base_commit": expected or None,
+        "base_ref_matches": matches,
+        # Commits between the manifest base and the base ref. Reported, NOT a
+        # refusal trigger: measured over 114 real prepared trees, 101 have
+        # ``swebench-base == base_commit`` and 12 legitimately sit +1 ahead —
+        # ``line-bot-981`` and ``pandas-63945`` on every arm, from the documented
+        # install-artifact commit (setuptools-scm version files and friends).
+        # The 13th was ``tox-3931`` on the factory arm at +2: the corruption.
+        # So "the ref moved" cannot be the refusal predicate — it would have
+        # false-refused 12 healthy trees on 2 instances.
+        "base_ref_ahead_of_expected": ahead,
+        "expected_resolves": expected_resolves if expected else None,
+        "gitlink": gitlink,
+        "head_sha": head_sha,
+        "head_is_base": bool(base_sha) and head_sha == base_sha,
+        # What actually makes a capture untrustworthy: we cannot diff against the
+        # truth (the manifest's base commit is not in this tree), or the tree's
+        # git plumbing was replaced so nothing it reports can be relied on, or
+        # the base ref does not exist. ``expected is None`` means the caller made
+        # no claim, which is an UNCHECKED capture rather than a broken one — that
+        # is today's behaviour and stays trustworthy by default.
+        "trustworthy": (
+            bool(base_sha)
+            and gitlink != "symlink"
+            and (expected_resolves if expected else True)
+        ),
+    }
+
+
+def _capture_diff(
+    wt: Path,
+    base: str = "swebench-base",
+    *,
+    expected_base_commit: str | None = None,
+    integrity: dict[str, Any] | None = None,
+) -> str:
     """Everything the arm changed relative to the BASE COMMIT.
 
     ``git diff --cached`` alone loses work that was COMMITTED: when dev
@@ -3738,9 +3904,29 @@ def _capture_diff(wt: Path, base: str = "swebench-base") -> str:
     a staged-only diff comes back empty and the run grades as "produced
     nothing" when it actually produced a patch. Stage the worktree, then diff
     against the base ref so committed and uncommitted changes both appear.
+
+    Diffing against the **sha** rather than the branch name is what makes this
+    survive the ``tox-3931`` failure: a branch name is a mutable pointer that the
+    arm's own commits can move, and it moved. When ``expected_base_commit`` is
+    given it is the primary diff target, so a moved ``swebench-base`` cannot
+    hide the patch. ``integrity``, if passed, is filled with
+    ``diff_capture_integrity``'s report — a caller that grades an empty diff
+    without reading it is grading "we could not measure" as "nothing changed".
     """
     subprocess.run(["git", "-C", str(wt), "add", "-A"], capture_output=True)
-    for ref in (base, "HEAD"):
+    report = diff_capture_integrity(wt, base, expected_base_commit=expected_base_commit)
+    if integrity is not None:
+        integrity.clear()
+        integrity.update(report)
+    # The expected SHA FIRST: it is immutable, so nothing the arm did can point
+    # it at a tree that already contains the fix. The branch name and HEAD stay
+    # as fallbacks for callers that pass no expectation.
+    refs: list[str] = []
+    expected = (expected_base_commit or "").strip()
+    if expected and _rev_parse(wt, expected):
+        refs.append(expected)
+    refs += [base, "HEAD"]
+    for ref in refs:
         proc = subprocess.run(
             ["git", "-C", str(wt), "diff", ref], capture_output=True, text=True
         )
@@ -4185,7 +4371,18 @@ def run_bare(
     except Exception:  # noqa: BLE001
         calls = len(transcript)
 
-    raw_diff = _capture_diff(repo)
+    diff_integrity: dict[str, Any] = {}
+    raw_diff = _capture_diff(
+        repo,
+        expected_base_commit=str(inst.get("base_commit") or ""),
+        integrity=diff_integrity,
+    )
+    # This arm has no recording handler around ``split_diff``, so a
+    # ``DiffRefused`` already propagates out of it today; an untrustworthy empty
+    # capture takes the same route and lands in the sweep summary and
+    # ``sweep-run.log`` with its reason. Fail-safe either way: no
+    # ``prediction.diff`` is written, so nothing can be graded as a resolve.
+    _refuse_untrustworthy_empty_diff(raw_diff, diff_integrity)
     code_diff, kept, stripped = split_diff(raw_diff)
     assert_no_test_edits(code_diff)
     (run_dir / "raw.diff").write_text(raw_diff, encoding="utf-8")
@@ -4232,6 +4429,11 @@ def run_bare(
         "files_changed": kept,
         "test_files_stripped": stripped,
         "diff_bytes": len(code_diff),
+        # Whether the capture that produced those bytes can be trusted: the base
+        # ref's real sha vs the manifest's ``base_commit``, and the gitlink's
+        # shape. ``tox-3931`` published a 0-byte capture as ``empty_patch`` with
+        # nothing on disk recording that the ref had moved under it.
+        "diff_integrity": diff_integrity,
         # Read-only test files, same policy as every arm. The refusal count is
         # scanned from this arm's own untruncated command log.
         "test_readonly": readonly_test_report(
@@ -5186,10 +5388,17 @@ def run_claude(
     if error is None and result_ev.get("is_error"):
         error = f"claude CLI reported is_error ({result_ev.get('subtype')})"
 
-    raw_diff = _capture_diff(repo)
+    diff_integrity: dict[str, Any] = {}
+    raw_diff = _capture_diff(
+        repo,
+        expected_base_commit=str(inst.get("base_commit") or ""),
+        integrity=diff_integrity,
+    )
     (run_dir / "raw.diff").write_text(raw_diff, encoding="utf-8")
     refused: list[str] = []
     try:
+        # Inside the try: the handler below RECORDS the refusal via ``_fail``.
+        _refuse_untrustworthy_empty_diff(raw_diff, diff_integrity)
         code_diff, kept, stripped = split_diff(raw_diff)
     except DiffRefused as exc:
         # No prediction.diff: `grade` refuses, `audit` fails, so a refused row
@@ -5251,6 +5460,11 @@ def run_claude(
         "test_files_stripped": stripped,
         "refused_paths": refused,
         "diff_bytes": len(code_diff),
+        # Whether the capture that produced those bytes can be trusted: the base
+        # ref's real sha vs the manifest's ``base_commit``, and the gitlink's
+        # shape. ``tox-3931`` published a 0-byte capture as ``empty_patch`` with
+        # nothing on disk recording that the ref had moved under it.
+        "diff_integrity": diff_integrity,
         # Read-only test files, same policy as every arm. Refusals are scanned
         # from the CLI's own transcript.
         "test_readonly": readonly_test_report(
@@ -5588,7 +5802,18 @@ def run_openhands(
     # audit will independently sum rather than a parallel in-memory tally.
     ledger = _read_ledger_totals(db_path)
 
-    raw_diff = _capture_diff(repo)
+    diff_integrity: dict[str, Any] = {}
+    raw_diff = _capture_diff(
+        repo,
+        expected_base_commit=str(inst.get("base_commit") or ""),
+        integrity=diff_integrity,
+    )
+    # This arm has no recording handler around ``split_diff``, so a
+    # ``DiffRefused`` already propagates out of it today; an untrustworthy empty
+    # capture takes the same route and lands in the sweep summary and
+    # ``sweep-run.log`` with its reason. Fail-safe either way: no
+    # ``prediction.diff`` is written, so nothing can be graded as a resolve.
+    _refuse_untrustworthy_empty_diff(raw_diff, diff_integrity)
     code_diff, kept, stripped = split_diff(raw_diff)
     assert_no_test_edits(code_diff)
     (run_dir / "raw.diff").write_text(raw_diff, encoding="utf-8")
@@ -5629,6 +5854,11 @@ def run_openhands(
         "files_changed": kept,
         "test_files_stripped": stripped,
         "diff_bytes": len(code_diff),
+        # Whether the capture that produced those bytes can be trusted: the base
+        # ref's real sha vs the manifest's ``base_commit``, and the gitlink's
+        # shape. ``tox-3931`` published a 0-byte capture as ``empty_patch`` with
+        # nothing on disk recording that the ref had moved under it.
+        "diff_integrity": diff_integrity,
         # Read-only test files, same policy as every arm. Refusals are scanned
         # from the agent's own copied-out trajectory.
         "test_readonly": readonly_test_report(

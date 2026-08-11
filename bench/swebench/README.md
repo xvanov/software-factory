@@ -629,6 +629,77 @@ the row produced. That signal previously existed **only** in
 short by a guard was indistinguishable from one where the dev ran out of ideas.
 `factory why` now prints the most recent one as its own field, scanned over the
 whole log rather than the 8-event tail it used to scroll off.
+## Diff capture is checked against the base SHA, not a branch name (2026-08-11)
+
+`tox-dev__tox-3931` in sweep 2 lost a patch whose `tox.schema.json` hunk was
+**byte-identical to the winning Claude patch**. The dev's docker workaround ran
+`mv .git .git.file && ln -s "$GIT_COMMON_DIR" .git`, so the chain's
+per-iteration commits landed on **`swebench-base` itself**. `_capture_diff`
+diffed the fix against a ref that now contained the fix, got zero bytes, fell
+through two fallbacks that were empty for the same reason, and the row published
+as `empty_patch` — a correct answer scored as "the arm produced nothing", with
+nothing on disk saying the ref had moved.
+
+Two halves:
+
+- **Diff against the manifest's `base_commit` sha FIRST.** A branch name is a
+  mutable pointer, and the arm's own commits moved it. A sha cannot be moved, so
+  the patch is recovered even from the corrupted tree.
+- **`diff_capture_integrity` reports the tree's plumbing**, recorded per row in
+  `result.json.diff_integrity`: what `swebench-base` resolves to, whether the
+  manifest's base commit is present, how far the ref sits ahead of it, and
+  whether `.git` is a file (correct for a worktree), a dir, or a **symlink**
+  (the tox tampering).
+
+**The refusal predicate is NOT "the ref moved" — that was measured and
+rejected.** Over 114 real prepared trees, 101 have `swebench-base ==
+base_commit` and **12 legitimately sit +1 ahead** — `line-bot-981` and
+`pandas-63945` on every arm, from the documented install-artifact commit. The
+13th was `tox-3931` on the factory arm at +2. Refusing on a moved ref would have
+false-refused 12 healthy trees on 2 instances, and it does not need to: the
+patch is recovered from the sha regardless. `base_ref_ahead_of_expected` is
+therefore **reported, not enforced**.
+
+What IS refused: an **empty** capture whose integrity failed — the manifest's
+base commit is not in the tree (no honest ref to diff against), `.git` is a
+symlink, or the base ref does not resolve. That takes the existing `DiffRefused`
+route: no `prediction.diff`, so `grade` refuses and `classify_run` buckets it
+`run_failed`, and no headline can absorb it. An empty capture from a *healthy*
+tree stays a real `empty_patch` outcome, and a real patch from a suspect tree is
+still graded — only the ambiguous zero is refused. A refused row costs one
+re-run; a false zero cost a retraction.
+
+## The dev stall guard keys on evidence, not on text similarity (2026-08-11)
+
+`jsonpickle__jsonpickle-588` was blocked terminally with **two retries unused**.
+Both attempts' test tails were `2 errors in 0.21s` — a *collection* error from a
+2-line syntax error, i.e. the suite never ran. Identical text, so
+`same_failure_signature` fired at 2 against a cap of 4. `solo-noreview` solved
+the same instance, and the chain's tree was one edit from green.
+
+Measured over all 61 sweep-2 dev attempts: **8 red attempts carried no test
+results at all**, and they are exactly the losses — including `rapid-mlx-289`
+(twice) and `vyper-4801` sharing ONE signature for
+`sandbox run timed out … retryable infrastructure failure`. **Two consecutive
+infrastructure timeouts were being counted as the model failing the same way
+twice.**
+
+`handlers._tail_shows_test_results` now decides whether an attempt's tail is
+comparable at all: a pytest outcome count, a `FAILED`/`PASSED` node line, or an
+`AssertionError` counts; a collection error, an import error, an all-skipped run,
+a crash dump and an infra timeout do not. A non-comparable attempt gets the empty
+signature, which `_consecutive_same_dev_signature` already treats as "no
+comparable evidence yet". 9 red attempts keep comparable signatures, so the guard
+stays live — it stops counting non-evidence.
+
+**`_MAX_DEV_SAME_SIGNATURE` is deliberately NOT raised.** CLAUDE.md requires the
+early-escalation guard to stay strictly below the hard cap, and at 2 against 4 it
+does. What changed is which attempts are comparable. The loop stays bounded for
+this class by the hard retry cap and the per-story budget breaker, so the worst
+case is a collection error consuming the normal retry budget instead of
+terminating a story after two. Ambiguity resolves toward NOT firing on purpose:
+not firing costs retries the story already owns, while firing wrongly discarded a
+correct patch.
 
 ## Guardrails built in
 
