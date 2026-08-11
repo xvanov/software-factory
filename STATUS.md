@@ -67,6 +67,27 @@ chain-vs-single-agent is cross-sweep and DESCRIPTIVE, and the cost gap stands
 `bench/swebench/results.md`. Nothing here supports "the chain is proven";
 k ≥ 3 remains the bar for quoting deltas.
 
+**The 37% → 53% move is NOT a machinery result — do not write it as one.**
+Re-derived from the two committed archives (`tests/test_cross_sweep_attribution.py`
+re-derives it on every run, so this paragraph cannot drift from the evidence):
+
+- The move is **+4 / −1** on identical instances. The four gains are
+  `conan-19735`, `hiero-sdk-1914`, `pyinfra-1665`, `rapid-mlx-289`.
+- **All four had already produced a real patch in sweep 1** — 1,360 / 15,039 /
+  1,072 / 8,341 bytes, every one graded `right_place_wrong_fix`. There was no
+  machinery loss on any of them to remove, and in sweep 2 all four landed in
+  **zero dev retries**. Whatever moved, it was the dev writing a *different,
+  correct* patch — not a subtraction being lifted.
+- **The machinery's own losses got worse**: empty-patch rows **1 → 3**
+  (`exstruct` → `conan-19750`, `tox-3931`, `vyper-4801`), and one sweep-1
+  resolve was lost (`jsonpickle-588`, 2,670 B → a 1,393 B wrong fix).
+- At least **six** capability changes shipped between the sweeps, not the four
+  the pre-registration disclosed: the oracle layer, open-weight routing, the
+  #302 rubric, retry cap 3 → 4, **plus four undisclosed dev-retry-signal fixes**
+  in `factory/runner.py` (#267, #270, #273, #276), each of which changes what
+  the dev sees on a retry. p = 0.375 at k = 1 over ≥ 6 confounded changes
+  supports no attribution at all.
+
 **The 2026-08-07 audit.** A four-agent independent audit re-derived the sensor
 report's claims (report: the "Sensor Problem" artifact; summary in memory
 `sensor_report_audit_2026_08_07`). The sensing thesis survived; six claims were
