@@ -78,4 +78,6 @@ def test_claude_md_carries_the_standing_instruction() -> None:
     assert "slowest instance" in text.lower()
     # And the one real exception, so the next session does not re-derive it the
     # hard way: a full pytest run during a sweep produces false reds.
-    assert "do NOT run the full pytest suite while a sweep is in flight" in text
+    assert "Do not run the full suite while a sweep is in flight" in text
+    # And the width finding, which cost three separate false diagnoses.
+    assert "`-n 8` is too wide for them on this host" in text

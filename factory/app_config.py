@@ -211,6 +211,21 @@ class AppGatesConfig(BaseModel):
     # load-time validator for every OTHER app is a follow-up in the operator
     # queue, not built here.
     acceptance_oracle: bool = False
+    # "Green with zero files changed is not green." OFF by default and ON only
+    # for the SWE-bench driver, which writes it in ``_build_bench_root``.
+    #
+    # ``tests_green`` reads the test command's return code and nothing else, so a
+    # dev that changed nothing reaches green whenever the suite already passed.
+    # Measured on bench sweep 2: `conan-io__conan-19750` declared green on an
+    # empty tree and graded `empty_patch`.
+    #
+    # It CANNOT default to True. On the live chain a docs-only story, a
+    # config-only story, and a story whose remaining delta already landed on the
+    # base branch all legitimately produce no production change — the reviewer
+    # rubric even has a section saying so ("The diff is a delta"). A global rule
+    # would fail every one of them. The benchmark is the one context where the
+    # story is always "fix this bug in this repo", so "no change" is always wrong.
+    require_production_delta: bool = False
     # WS1.2-era in-process settings. INERT since 019 AC3 — the out-of-process
     # runner never copies the oracle into any checkout at all, so there is no
     # "where does it land" or "what command runs it" left to configure here.

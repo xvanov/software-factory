@@ -2547,6 +2547,33 @@ def _handle_dev_once(
         # assertions) is gated downstream by the reviewer + programmatic slop
         # detector, not here.
         tests_green = bool(run_res.test_run_passed)
+        # GREEN WITH ZERO FILES CHANGED IS NOT GREEN — under the bench driver only.
+        #
+        # ``tests_green`` reads the test command's return code and nothing else, so
+        # a dev that changed nothing at all reaches green whenever the suite was
+        # already passing. Measured on sweep 2: `conan-io__conan-19750` did exactly
+        # that — the chain declared green on an empty tree and the row graded
+        # `empty_patch`.
+        #
+        # SCOPED TO THE BENCH DRIVER, deliberately. On the live chain a docs-only
+        # story, a config-only story and a story whose remaining delta is already
+        # on the base branch all legitimately produce no production change, and a
+        # global "must change a file" rule would fail every one of them. The bench
+        # is the one context where the story is always "fix this bug in this repo",
+        # so "no change" is always wrong there.
+        if (
+            tests_green
+            and bool(getattr(app_config.gates, "require_production_delta", False))
+            and not (run_res.files_changed or [])
+        ):
+            tests_green = False
+            log_story_event(
+                story.id,
+                "dev_green_with_no_changes",
+                {"reason": "bench driver: green on an unchanged tree is a red attempt"},
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
         payload = {
             "files_changed": run_res.files_changed,
             "test_run_passed": tests_green,
@@ -3597,6 +3624,67 @@ def _dry_run_review(story: StoryRecord) -> dict[str, Any]:
     }
 
 
+# Where the slop detector's diff starts, in priority order.
+#
+# ``swebench-base`` is FIRST because it is the only correct answer inside the
+# benchmark, and the old list did not contain it. A bench worktree is a
+# ``--depth 1`` clone with the harness's own commits on top, so ``origin/main`` /
+# ``main`` are the upstream project's refs and ``HEAD~1`` is whatever commit
+# happens to precede the tip. Measured cost on sweep 2: the detector diffed from
+# the wrong base on `alibaba__opensandbox-816`, scored PRE-EXISTING UPSTREAM test
+# files as slop, and clamped an explicit reviewer `approve` into a nonconvergence
+# park — a $4, 17-minute rework cycle against the reviewer's judgement.
+#
+# ``HEAD~1`` is kept LAST rather than removed: on the live chain a story branch
+# with one commit and no reachable main is exactly the case it covers. It is now
+# a last resort instead of the third of three.
+_SLOP_BASE_REF_CANDIDATES = ("swebench-base", "origin/main", "main", "HEAD~1")
+
+
+def _story_authored_paths(worktree: Path, base_ref: str) -> set[str] | None:
+    """Paths whose CONTENT this branch changed since ``base_ref``.
+
+Measured by ``git diff --numstat``, not ``--diff-filter``: git reports a pure
+    MODE change as ``M`` (modified), so no filter letter separates it — only the
+    line counts do, and a mode-only change is ``0\t0\tpath``. That distinction is
+    load-bearing here: the bench's 0444 test-file lock injects
+    ``100755 -> 100644`` flips the dev cannot revert, and they were the single
+    largest consumer of reviewer attention in sweep 2 (9 of 40 findings).
+
+    Returns ``None`` when git cannot answer, which the caller reads as "no scope
+    information available" and leaves the file list untouched — narrowing on a
+    failed read would silently disable the detector.
+    """
+    try:
+        from factory.chain.branch import _run_git
+
+        out = _run_git(worktree, "diff", "--numstat", base_ref).stdout
+    except Exception:  # noqa: BLE001 — an unreadable diff must not disable the scan
+        return None
+    authored: set[str] = set()
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        added, deleted, path = parts[0], parts[1], parts[-1].strip()
+        if not path:
+            continue
+        if added == "-" or deleted == "-":
+            # Binary: no line counts to reason about. Count it as authored — a
+            # binary test file is unusual, and guessing "not authored" would
+            # silently exempt it from the scan.
+            authored.add(path)
+            continue
+        if (added, deleted) == ("0", "0"):
+            # No content change. A pure MODE flip lands here, and that is the
+            # whole point: git reports a mode change as `M`, so --diff-filter
+            # cannot separate it (the first cut of this used ACMR and a test
+            # caught it). numstat can.
+            continue
+        authored.add(path)
+    return authored
+
+
 def _slop_findings_for_story(
     story: StoryRecord, app_config: AppConfig, software_factory_root: Path
 ) -> list[dict[str, Any]]:
@@ -3615,7 +3703,7 @@ def _slop_findings_for_story(
 
         worktree = _writing_worktree(app_config, software_factory_root, story)
         base_ref = None
-        for candidate in ("origin/main", "main", "HEAD~1"):
+        for candidate in _SLOP_BASE_REF_CANDIDATES:
             try:
                 from factory.chain.branch import _run_git
 
@@ -3627,6 +3715,17 @@ def _slop_findings_for_story(
         if base_ref is None:
             return []
         test_paths = find_test_files_in_diff(worktree, base_ref=base_ref)
+        # SCOPE: only files this story's own diff CHANGED may be scored. Even
+        # with the right base ref, ``find_test_files_in_diff`` is a diff read, and
+        # a diff can list a file for reasons that are not authorship — a mode
+        # flip, a rename, a merge bringing upstream tests along. Scoring a file
+        # the dev did not write means demanding the dev fix somebody else's test,
+        # which it cannot do and which the reviewer then re-raises every cycle.
+        # Intersect with the files git says have CONTENT changes attributable to
+        # this branch.
+        authored = _story_authored_paths(worktree, base_ref)
+        if authored is not None:
+            test_paths = [rel for rel in test_paths if rel in authored]
         findings: list[dict[str, Any]] = []
         for rel in test_paths:
             for f in scan_file(worktree / rel):
@@ -3680,6 +3779,88 @@ def handle_review(
     # occurrence instead.
     if fixture is None and not dry_run and _has_real_dev_attempt(story):
         empty_diff = _dev_produced_empty_diff(story, app_config, software_factory_root)
+        # CONSULT THE RETRY BUDGET FIRST. Going terminal on the first empty diff
+        # is right only when there is nothing left to try — and it was firing with
+        # the budget untouched. Measured on sweep 2: `conan-io__conan-19750` had
+        # its analysis-only first turn truncated by Azure 429s, produced no diff,
+        # and short-circuited to a terminal block with FOUR UNUSED RETRIES. The
+        # dev had already located the gold site.
+        #
+        # With headroom, an empty diff is a red attempt: send it back through
+        # ``dev_retry`` (which carries the prior-attempt memory forward) instead of
+        # ending the story. The original reasoning — do not churn review cycles on
+        # an empty diff — is preserved exactly, because this is not a review cycle:
+        # the reviewer is still never called on an empty diff.
+        if empty_diff is True and story.dev_retries + 1 < _max_dev_retries(
+            software_factory_root
+        ):
+            # Back to dev via ``reviewer_request_changes`` — the chain's existing
+            # "dev, do more work" route. Deliberately NOT a new transition: from
+            # ``reviewer_in_progress`` the legal events are approve /
+            # request_changes / nonconvergent, and inventing a fourth to reach
+            # ``dev_retry`` would add an edge to a 32-state machine to serve one
+            # branch. (The first cut of this DID emit ``dev_tests_red`` from here
+            # and raised ``IllegalTransitionError``; the existing
+            # ``test_empty_diff_short_circuit`` tests caught it.)
+            #
+            # The original reason for the short-circuit is preserved in full: the
+            # reviewer LLM is NEVER CALLED on an empty diff. What the D092/D094
+            # churn cost was six review MODEL calls, not six counter increments,
+            # and this path makes zero. The review-cycle cap and the stability
+            # guard still bound it.
+            reason = (
+                f"Dev attempt {story.dev_retries} produced an EMPTY DIFF — the "
+                "working tree is unchanged, so there is nothing to review. Retry "
+                f"budget remains ({story.dev_retries}/"
+                f"{_max_dev_retries(software_factory_root)}), so this goes back to "
+                "dev rather than ending the story."
+            )
+            result = {
+                "verdict": "request_changes",
+                "summary": reason,
+                "findings": [
+                    {
+                        "severity": "high",
+                        "criterion": "correctness",
+                        "location": "(whole diff)",
+                        "what": "The diff is empty: no file was changed.",
+                        "fix_suggestion": (
+                            "Make the edit in the working tree. The chain reads "
+                            "`git diff`, not your summary — describing a change "
+                            "does not apply it."
+                        ),
+                        "regression": False,
+                    }
+                ],
+                "test_quality_findings": [],
+                "test_quality_score": 0.0,
+                "empty_diff_dev_retry": True,
+            }
+            story.state = advance(story, EVENT_REVIEWER_REQUEST_CHANGES).value
+            story.error = None
+            story.reviewer_result_json = json.dumps(result)
+            _append_reviewer_history(story, result)
+            persist_story(story, db)
+            log_story_event(
+                story.id,
+                "empty_diff_dev_retry",
+                {
+                    "dev_retries": story.dev_retries,
+                    "cap": _max_dev_retries(software_factory_root),
+                    "reviewer_called": False,
+                    "reason": (
+                        "empty diff with retry headroom — back to dev instead of a "
+                        "terminal block; the reviewer LLM is still not called"
+                    ),
+                },
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
+            return HandlerResult(
+                next_state=StoryState(story.state),
+                payload={"empty_diff_dev_retry": True, "summary": reason},
+                error=None,
+            )
         if empty_diff is True:
             reason = (
                 f"empty diff after dev attempt {story.dev_retries} — the dev "

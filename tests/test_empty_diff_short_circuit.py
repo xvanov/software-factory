@@ -29,6 +29,7 @@ from factory.chain.branch import feature_branch_name
 from factory.chain.handlers import (
     _dev_produced_empty_diff,
     _has_real_dev_attempt,
+    _max_dev_retries,
     handle_review,
     persist_story,
 )
@@ -91,8 +92,20 @@ def _story_file(root: Path, slug: str) -> str:
 
 
 def _mk_story(
-    root: Path, *, slug: str, dev_attempts: list[dict[str, Any]] | None
+    root: Path,
+    *,
+    slug: str,
+    dev_attempts: list[dict[str, Any]] | None,
+    dev_retries: int | None = None,
 ) -> StoryRecord:
+    """``dev_retries`` defaults to the historical 1-if-attempts shape.
+
+    Pass it explicitly to choose which side of the retry budget the story is on:
+    the empty-diff short-circuit is TERMINAL only when the budget is spent, and a
+    red attempt (back to dev) while it remains. Before 2026-08-11 it went terminal
+    on the first empty diff regardless, which cost `conan-io__conan-19750` four
+    unused retries in bench sweep 2.
+    """
     db = root / "state" / "factory.db"
     story = StoryRecord(
         direction_id="099",
@@ -104,7 +117,7 @@ def _mk_story(
         github_issue_number=1,
         story_file_path=_story_file(root, slug),
         github_branch=feature_branch_name(1, slug),
-        dev_retries=1 if dev_attempts else 0,
+        dev_retries=(dev_retries if dev_retries is not None else (1 if dev_attempts else 0)),
         dev_attempts_json=json.dumps(dev_attempts) if dev_attempts is not None else None,
     )
     return persist_story(story, db)
@@ -160,14 +173,28 @@ def test_has_real_dev_attempt_true_after_real_run() -> None:
 def test_empty_diff_short_circuits_to_blocked_without_review_churn(
     temp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Dev ran for real but produced nothing -> immediate BLOCKED_REVIEW_
-    NONCONVERGENT + factory_needs_redesign, WITHOUT burning review cycles."""
+    """Dev ran for real, produced nothing, AND THE RETRY BUDGET IS SPENT ->
+    immediate BLOCKED_REVIEW_NONCONVERGENT + factory_needs_redesign, without
+    burning review cycles.
+
+    The budget condition was added 2026-08-11. Going terminal on the first empty
+    diff regardless cost `conan-io__conan-19750` FOUR unused retries in bench
+    sweep 2 after 429s truncated its analysis-only first turn. With headroom the
+    story now goes back to dev instead — see
+    ``test_empty_diff_with_retry_headroom_goes_back_to_dev`` below. Everything
+    this test asserts about the terminal case is unchanged.
+    """
     app_dir = temp_root / "sacrifice"
     _init_repo_with_origin(app_dir)
     app_config = AppConfig(
         name="sacrifice", repo="x/y", app_repo_path=str(app_dir), default_branch="main",
     )
-    story = _mk_story(temp_root, slug="empty-diff-story", dev_attempts=_ONE_GREEN_ATTEMPT)
+    story = _mk_story(
+        temp_root,
+        slug="empty-diff-story",
+        dev_attempts=_ONE_GREEN_ATTEMPT,
+        dev_retries=_max_dev_retries(temp_root),
+    )
     db = temp_root / "state" / "factory.db"
 
     # If the short-circuit fails to fire, this would be reached — fail loudly
@@ -333,6 +360,49 @@ def test_uncommitted_real_work_routes_back_to_dev_without_model_call(
     assert any("commit" in (f.get("what") or "") for f in payload["findings"])
 
 
+def test_empty_diff_with_retry_headroom_goes_back_to_dev(
+    temp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other side of the budget check.
+
+    `conan-io__conan-19750` in bench sweep 2: Azure 429s truncated an
+    analysis-only first turn, the diff was empty, and the story went TERMINAL with
+    four retries unused — the dev had already located the gold site. With headroom
+    an empty diff is now a red attempt routed back to dev.
+
+    The original point of the short-circuit is preserved exactly: the reviewer LLM
+    is still never called on an empty diff.
+    """
+    app_dir = temp_root / "sacrifice"
+    _init_repo_with_origin(app_dir)
+    app_config = AppConfig(
+        name="sacrifice", repo="x/y", app_repo_path=str(app_dir), default_branch="main",
+    )
+    story = _mk_story(
+        temp_root, slug="empty-headroom-story", dev_attempts=_ONE_GREEN_ATTEMPT, dev_retries=1
+    )
+    db = temp_root / "state" / "factory.db"
+    assert story.dev_retries + 1 < _max_dev_retries(temp_root), "budget must remain"
+
+    def _must_not_be_called(**_kw: Any) -> Any:
+        raise AssertionError("text_run must NOT be called on a confirmed empty diff")
+
+    import factory.runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "text_run", _must_not_be_called)
+
+    result = handle_review(story, app_config, temp_root, dry_run=False, db_path=db)
+
+    assert result.next_state == StoryState.REVIEWER_REQUESTED_CHANGES
+    assert story.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
+    assert result.payload.get("empty_diff_dev_retry") is True
+    # Not a terminal sink, and the story keeps its remaining retries.
+    assert story.state != StoryState.BLOCKED_REVIEW_NONCONVERGENT.value
+    payload = json.loads(story.reviewer_result_json)
+    assert payload["empty_diff_dev_retry"] is True
+    assert any("empty" in (f.get("what") or "").lower() for f in payload["findings"])
+
+
 def test_no_remote_confirmed_empty_diff_short_circuits_via_local_base(
     temp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -346,7 +416,13 @@ def test_no_remote_confirmed_empty_diff_short_circuits_via_local_base(
     app_config = AppConfig(
         name="sacrifice", repo="x/y", app_repo_path=str(app_dir), default_branch="main",
     )
-    story = _mk_story(temp_root, slug="git-error-story", dev_attempts=_ONE_GREEN_ATTEMPT)
+    # Budget SPENT: this is the case where a terminal block is correct.
+    story = _mk_story(
+        temp_root,
+        slug="git-error-story",
+        dev_attempts=_ONE_GREEN_ATTEMPT,
+        dev_retries=_max_dev_retries(temp_root),
+    )
     db = temp_root / "state" / "factory.db"
 
     # Sanity: the helper now CONFIRMS the empty diff via the local-base
