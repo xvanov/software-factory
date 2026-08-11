@@ -31,10 +31,28 @@ def A() -> Any:  # noqa: N802
     return mod
 
 
-def test_the_default_covers_a_whole_pinned_sweep_in_one_batch(A: Any) -> None:  # noqa: N803
-    """19 pinned instances must fit in one batch on this host."""
+def test_the_default_covers_a_whole_pinned_sweep_on_a_sweep_host(
+    A: Any, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """On the machine sweeps actually run on, the 19 pinned instances fit in ONE
+    batch.
+
+    Simulated rather than read off the current host: CI runners have 4 cores, so
+    asserting a bare ``>= 19`` would encode the developer's machine into the
+    suite and fail in CI — which is exactly what the first cut of this test did.
+    """
+    monkeypatch.setattr(A.os, "cpu_count", lambda: 16)
     assert A._default_sweep_workers() >= 19
-    assert A._default_sweep_workers() > 4, "4 was the old default and cost 5 batches"
+    monkeypatch.setattr(A.os, "cpu_count", lambda: 4)
+    assert A._default_sweep_workers() >= 4, "a small host still gets a usable pool"
+
+
+def test_the_default_is_never_the_old_fixed_four(A: Any, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: N803
+    """4 was the old default and cost five batches on a 19-row sweep. Any host
+    with more than 2 cores must now exceed it."""
+    for cores in (4, 8, 16, 32):
+        monkeypatch.setattr(A.os, "cpu_count", lambda c=cores: c)
+        assert A._default_sweep_workers() > 4 or cores <= 2
 
 
 def test_the_default_is_derived_from_the_host_and_capped(A: Any) -> None:  # noqa: N803
