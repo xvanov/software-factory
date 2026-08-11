@@ -73,9 +73,19 @@ Reading it:
   carrying the frontier number.
 - **None of the sweep-2 movements are proven deltas.** n=19 resolves ±38
   points at best; these cells are now at k=2 and k ≥ 3 is the pre-registered
-  bar. The candidate causes of the 37→53 move (oracle layer, Kimi reviewer,
-  reviewer rubric, retry cap 4) shipped together and are not separable in
-  this design.
+  bar. At least **six** changes shipped together between the sweeps and are not
+  separable in this design: the oracle layer, the Kimi reviewer, the reviewer
+  rubric, retry cap 4, **and four dev-retry-signal fixes in `factory/runner.py`**
+  (#267, #270, #273, #276) that the sweep-2 pre-registration did not disclose.
+- **The 37→53 move is not a machinery result.** It is **+4 / −1** on identical
+  instances, and all four gained rows had already produced a real patch in
+  sweep 1 (1,360 / 15,039 / 1,072 / 8,341 bytes, every one
+  `right_place_wrong_fix`) — so no machinery loss was lifted on any of them, and
+  all four landed in **zero** dev retries. The machinery's own losses got
+  *worse*: empty-patch rows **1 → 3**, plus one sweep-1 resolve lost
+  (`jsonpickle-588`). `tests/test_cross_sweep_attribution.py` re-derives this
+  from the two committed archives, so the sentence cannot drift from the
+  evidence.
 
 **`solo-noreview` explained.** It is the factory's own chain with exactly one
 thing removed: the reviewer round-trip (dev-only, green = dev's tests pass; the
