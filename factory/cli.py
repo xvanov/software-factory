@@ -314,18 +314,24 @@ def _resolve_direction_dir(app_name: str, id_or_slug: str) -> Path | None:
     return None
 
 
-def _awaiting_approval_rows(apps: list[str]) -> list[tuple[str, str, str, str]]:
-    """``(app, dir_name, title, reason)`` for every direction parked at the
-    operator-approval gate. Shared by ``inbox`` and ``approve-direction``."""
+def _awaiting_approval_rows(apps: list[str]) -> list[tuple[str, str, str, str, str]]:
+    """``(app, dir_name, title, reason, shipped_routes)`` for every direction parked
+    at the operator-approval gate. Shared by ``inbox`` and ``approve-direction``.
+
+    ``shipped_routes`` answers the question that decides whether approving costs
+    money for nothing: does this direction ask for a route the app already has?
+    It is derived from ``apps/<app>/derived/api_surface.json``, never from prose.
+    """
     from factory.directions.approval import approval_blocked_reason, awaiting_operator_approval
     from factory.directions.parser import list_direction_dirs, parse_direction_dir
+    from factory.directions.route_premise import check_direction_route_premises
     from factory.directions.watcher import _engine, hydrate_direction_source
 
     state_db = _FACTORY_ROOT / "state" / "factory.db"
     # One engine for the whole listing: ``_engine`` runs ``migrate`` every call,
     # so building one per direction would be O(directions) redundant migrations.
     engine = _engine(state_db) if state_db.exists() else None
-    rows: list[tuple[str, str, str, str]] = []
+    rows: list[tuple[str, str, str, str, str]] = []
     for a in apps:
         for ddir in list_direction_dirs(a, _FACTORY_ROOT):
             try:
@@ -336,8 +342,16 @@ def _awaiting_approval_rows(apps: list[str]) -> list[tuple[str, str, str, str]]:
             # otherwise this listing and the gate could disagree about which
             # directions are parked.
             hydrate_direction_source(d, state_db, engine=engine)
-            if awaiting_operator_approval(d):
-                rows.append((a, ddir.name, d.title[:60], approval_blocked_reason(d)))
+            if not awaiting_operator_approval(d):
+                continue
+            claims = check_direction_route_premises(d, _FACTORY_ROOT)
+            if claims is None:
+                shipped = "(no route table)"
+            elif claims:
+                shipped = f"[red]{len(claims)} ALREADY EXIST[/red]"
+            else:
+                shipped = "-"
+            rows.append((a, ddir.name, d.title[:60], approval_blocked_reason(d), shipped))
     return rows
 
 
@@ -353,6 +367,12 @@ def approve_direction_cmd(
     ),
     by: str | None = typer.Option(
         None, "--by", help="Who approved (default: $USER / 'operator')"
+    ),
+    acknowledge_shipped_routes: bool = typer.Option(
+        False,
+        "--acknowledge-shipped-routes",
+        help="Approve even though the app's derived route table already has the "
+        "routes this direction asks for (recorded in state.yaml).",
     ),
 ) -> None:
     """Approve (or --reject) a MACHINE-FILED direction so the chain may build it.
@@ -385,6 +405,7 @@ def approve_direction_cmd(
         table.add_column("direction")
         table.add_column("title")
         table.add_column("why parked")
+        table.add_column("routes it asks for")
         for row in rows:
             table.add_row(*row)
         console.print(table)
@@ -448,9 +469,57 @@ def approve_direction_cmd(
         )
         return
 
+    # Premise check against the app's REAL route table, before any spend. A
+    # scheduled persona reads prose context docs and cannot verify a single claim
+    # in them; one stale "no password reset flow" bullet re-filed shipped work
+    # five times, and five more directions landed on 2026-08-10. Approving a
+    # re-file spends a whole chain run rebuilding what is already deployed.
+    from factory.directions.route_premise import (
+        check_direction_route_premises,
+        surface_provenance,
+    )
+
+    claims = check_direction_route_premises(direction, _FACTORY_ROOT)
+    acknowledged: list[str] = []
+    if claims is None:
+        console.print(
+            f"[yellow]note:[/yellow] app {app_name!r} ships no "
+            f"apps/{app_name}/derived/api_surface.json — the already-shipped-route "
+            "check did NOT run. Verify the direction's premises by hand."
+        )
+    elif claims:
+        acknowledged = [c.route for c in claims]
+        if not acknowledge_shipped_routes:
+            claim_table = Table(title=f"{target.name} asks for routes that ALREADY EXIST")
+            claim_table.add_column("existing route")
+            claim_table.add_column("matched in the direction")
+            claim_table.add_column("how")
+            for claim in claims:
+                claim_table.add_row(claim.route, ", ".join(claim.matched), claim.kind)
+            console.print(claim_table)
+            console.print(
+                f"[dim]source:[/dim] apps/{app_name}/derived/api_surface.json "
+                f"({surface_provenance(app_name, _FACTORY_ROOT)})"
+            )
+            console.print(
+                "[red]refusing to approve.[/red] An existing route can still hide a "
+                "real gap (a handler that returns 202 and does nothing is one), so "
+                "read the handler, not the context doc.\n"
+                "[dim]If the finding is real, re-run with[/dim] "
+                "--acknowledge-shipped-routes --note '<what is actually missing "
+                "behind the route>'   [dim]If it is a re-file, use[/dim] "
+                "--reject --note '<evidence>'\n"
+                "[dim]And fix the context doc that produced the premise, or it "
+                "re-files next cycle.[/dim]"
+            )
+            raise typer.Exit(code=3)
+
     reason = approval_blocked_reason(direction)
     record = approve_direction(
-        direction, by=(by or os.environ.get("USER") or "operator"), note=note
+        direction,
+        by=(by or os.environ.get("USER") or "operator"),
+        note=note,
+        acknowledged_shipped_routes=acknowledged if acknowledge_shipped_routes else None,
     )
     console.print(
         Panel.fit(
@@ -1587,6 +1656,7 @@ def inbox_cmd(
         appr_table.add_column("direction")
         appr_table.add_column("title")
         appr_table.add_column("why parked")
+        appr_table.add_column("routes it asks for")
         for appr_row in approval_rows:
             appr_table.add_row(*appr_row)
         console.print(appr_table)

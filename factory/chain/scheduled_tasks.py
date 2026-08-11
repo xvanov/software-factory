@@ -850,6 +850,18 @@ def _live_run(persona: str, app: str, software_factory_root: Path) -> dict[str, 
     if persona == "ux_auditor":
         ux_context = _build_ux_auditor_context(app, software_factory_root)
         prompt = f"{persona_prompt}\n\n{ux_context}\n\n# Context prelude\n\n{prelude}\n"
+    elif persona == "security":
+        # The persona prompt requires a route citation before any "X is missing"
+        # claim. It has NO tools — this is a ``text_run`` — so that rule is
+        # unenforceable unless the route table is in the prompt. Without it, the
+        # only auth facts reaching this persona are prose "remaining gaps"
+        # bullets, and one stale bullet re-filed shipped password reset five
+        # times (memory: stale_context_doc_refiles_shipped_work), then five more
+        # directions on 2026-08-10.
+        from factory.directions.route_premise import render_route_table_block
+
+        route_table = render_route_table_block(app, software_factory_root)
+        prompt = f"{persona_prompt}\n\n{route_table}\n\n# Context prelude\n\n{prelude}\n"
     else:
         prompt = f"{persona_prompt}\n\n# Context prelude\n\n{prelude}\n"
 

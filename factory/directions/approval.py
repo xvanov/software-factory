@@ -191,6 +191,7 @@ def approve_direction(
     by: str,
     note: str | None = None,
     now: datetime | None = None,
+    acknowledged_shipped_routes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Record an operator approval on ``direction`` and return the record.
 
@@ -215,6 +216,13 @@ def approve_direction(
     }
     if note:
         record["note"] = note
+    if acknowledged_shipped_routes:
+        # The routes ``factory.directions.route_premise`` said this direction
+        # asks for although they already exist, which the operator overrode.
+        # Recorded because the note is otherwise the only trace of why, and a
+        # duplicate approved on purpose must be distinguishable from one nobody
+        # looked at (memory: stale_context_doc_refiles_shipped_work).
+        record["acknowledged_shipped_routes"] = list(acknowledged_shipped_routes)
 
     # Append to the audit trail as it is ON DISK, not as it was when this
     # Direction was parsed: ``merge_state`` merges into the current file, so
