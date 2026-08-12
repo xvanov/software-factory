@@ -110,9 +110,12 @@ The readings:
    `git apply` exit 2 even though every file applies cleanly — a
    machinery-attributable lost resolve on `line-bot-981`, waved through by
    `diff_integrity.trustworthy: true`.
-6. **Containment is not closed.** Bypass on 10 of 18 rows; 2 unrepaired because
-   the dev **committed** the test edit and the restore only rewrites the working
-   tree.
+6. **Containment is not closed.** Bypass on 10 of 18 rows, 2 unrepaired — but
+   **all 10** carry `restore_errors` reading "the edit was committed, not just
+   written". The chain commits before review, so the restore is ~50% effective
+   **by construction**.
+
+Causal analysis of all six readings: **`POSTMORTEM-2026-08-11.md`** (repo root).
 
 Criteria as pre-registered: primary 12/18 **missed** (10/18); empty-patch
 criterion **passes but is too narrow** to catch the oversized-diff loss;

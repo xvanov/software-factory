@@ -35,7 +35,13 @@ stays re-derivable from `…T21-53-14.959258Z/` and sweep 1 from
 `…T23-19-24.998844Z/` (and its earlier `…T04-18-05.349995Z/` variant —
 openhands 44%/p=0.625 — differs only in three 429-lost rows re-run as
 `attempt: 2`; same conclusion either way). Do not write docs or directions that
-assume the chain's value is established; see `STATUS.md`. **The Exteroception v1 direction is closed**
+assume the chain's value is established; see `STATUS.md`. **The full causal
+account of why the chain loses — mute gates, a verdict layer at chance, a
+containment lock that re-creates the Loop-4 deadlock, and an oracle that is
+unenforced AND vacuous on 7 of 18 rows — is `POSTMORTEM-2026-08-11.md`. Read it
+before proposing any chain change.** The post-sweep-2 plan is COMPLETE; only
+Phase D (move the primary gate to live-chain units) remains, and it is not
+started. **The Exteroception v1 direction is closed**
 (`apps/factory/directions/019-exteroception-v1-close-the-sensing-gap/`) — its
 seven acceptance criteria shipped as **operator PRs #247–#254, not the
 chain**. No successor direction is filed yet; what it left open (three KNOWN
