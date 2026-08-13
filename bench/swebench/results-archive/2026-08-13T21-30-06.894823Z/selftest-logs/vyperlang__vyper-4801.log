@@ -1,0 +1,28 @@
+Checking patch tests/functional/codegen/features/test_immutable_allocator_overlap.py...
+Checking patch tests/unit/compiler/venom/test_memory_allocator.py...
+Applied patch tests/functional/codegen/features/test_immutable_allocator_overlap.py cleanly.
+Applied patch tests/unit/compiler/venom/test_memory_allocator.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_bc2ab7db3b7b67b2: OK (red as expected)
+Checking patch vyper/venom/memory_allocator.py...
+Applied patch vyper/venom/memory_allocator.py cleanly.
+SWEBENCH_APPLY_bc2ab7db3b7b67b2: OK
+bringing up nodes...
+bringing up nodes...
+
+.                                                                        [100%]
+=========================== short test summary info ============================
+PASSED tests/unit/compiler/venom/test_memory_allocator.py::test_allocate_overlapping_reserved_intervals
+1 passed in 23.37s
+SWEBENCH_TALLY_bc2ab7db3b7b67b2: fail_to_pass 1 passed in 23.37s
+[3 node outcomes for fail_to_pass -> grade-nodes.log]
+bringing up nodes...
+bringing up nodes...
+
+.                                                                        [100%]
+=========================== short test summary info ============================
+PASSED tests/functional/codegen/features/test_immutable_allocator_overlap.py::test_immutable_hashing_overlap_regression
+1 passed in 21.21s
+SWEBENCH_TALLY_bc2ab7db3b7b67b2: pass_to_pass 1 passed in 21.21s
+[3 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_bc2ab7db3b7b67b2: RESOLVED

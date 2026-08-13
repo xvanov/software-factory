@@ -47,8 +47,11 @@ import yaml
 _REPO_ROOT = Path(__file__).parent.parent
 _ADAPTER = _REPO_ROOT / "bench" / "swebench_adapter.py"
 
-_ARMS_UNDER_TEST = ("gpt54-solo", "chain", "v32-solo")
+_ARMS_UNDER_TEST = ("gpt54-solo", "chain", "v32-solo", "full-sdlc")
 _SOLO = ("gpt54-solo", "v32-solo")
+# The only arm that skips NOTHING: all four roles, all 13 phases. Named because
+# several invariants below are stated as "every arm except this one skips a role".
+_FULL = "full-sdlc"
 
 
 def _load() -> Any:
@@ -87,7 +90,7 @@ def run_sssf_ast(tree: ast.Module) -> ast.FunctionDef:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_three_arms_render_a_byte_identical_task(
+def test_all_four_arms_render_a_byte_identical_task(
     A: Any, run_sssf_ast: ast.FunctionDef  # noqa: N803
 ) -> None:
     """Prompt asymmetry between arms of one comparison invalidates the comparison,
@@ -97,7 +100,11 @@ def test_the_three_arms_render_a_byte_identical_task(
     task is assembled by exactly one ``_STORY_TEMPLATE.format(...)`` call whose
     arguments come only from the instance and the clone, so there is no expression
     through which the arm id could reach the prompt. A string comparison would
-    only prove the three arms agree TODAY; this proves they cannot disagree.
+    only prove the four arms agree TODAY; this proves they cannot disagree.
+
+    ``full-sdlc`` is included for a reason beyond completeness: it is the only arm
+    whose roster names all four roles, so it is the one an "adapt the prompt to the
+    roster" change would look most reasonable in.
     """
     calls = [
         n
@@ -121,11 +128,21 @@ def test_the_three_arms_render_a_byte_identical_task(
         "prompted differently, which is the defect that retracted the bare column"
     )
     assert "roster" not in names, "the roster reaches the rendered task"
-    # And the rendering is genuinely arm-free: same bytes, whoever asks.
-    rendered = A._STORY_TEMPLATE.format(
-        instance_id="i", statement="s", test_command="CMD"
-    )
-    assert A._TEST_POLICY in rendered and A._BASE_TESTS_NOTE in rendered
+    # And the rendering is genuinely arm-free: same bytes, whoever asks. Rendered
+    # once PER ARM — through each arm's own roster, so a registered arm that somehow
+    # could not be rendered would fail here — and reduced to a set of one.
+    rendered = set()
+    for arm in _ARMS_UNDER_TEST:
+        roster = A._sssf_roster_for(arm)
+        assert roster["builder"], f"{arm} routes no builder"
+        rendered.add(
+            A._STORY_TEMPLATE.format(
+                instance_id="i", statement="s", test_command="CMD"
+            )
+        )
+    assert len(rendered) == 1, "the four sssf arms do not render one task text"
+    only = rendered.pop()
+    assert A._TEST_POLICY in only and A._BASE_TESTS_NOTE in only
 
 
 def test_the_story_assembly_is_not_inside_a_conditional(
@@ -225,10 +242,11 @@ def test_no_sssf_arm_learned_about_the_factory_arms_acceptance_oracle(A: Any) ->
 # --------------------------------------------------------------------------- #
 
 
-def test_the_rosters_are_exactly_the_pre_registered_three(A: Any) -> None:
-    strong, cheap = A._SSSF_STRONG, A._SSSF_CHEAP
+def test_the_rosters_are_exactly_the_registered_four(A: Any) -> None:
+    strong, cheap, flash = A._SSSF_STRONG, A._SSSF_CHEAP, A._SSSF_FLASH
     assert strong == "azure/gpt-5.4"
     assert cheap == "azure/DeepSeek-V3.2"
+    assert flash == "azure/DeepSeek-V4-Flash"
     assert A._SSSF_ROSTERS == {
         "gpt54-solo": {
             "planner": None,
@@ -248,21 +266,53 @@ def test_the_rosters_are_exactly_the_pre_registered_three(A: Any) -> None:
             "reviewer": None,
             "documenter": None,
         },
+        # THE COMPLETE GRAPH, one model for all four roles.
+        "full-sdlc": {
+            "planner": flash,
+            "builder": flash,
+            "reviewer": flash,
+            "documenter": flash,
+        },
     }
 
 
-def test_no_arm_runs_the_documenter(A: Any) -> None:
-    """Load-bearing for the diff-exclusion rule.
+def test_exactly_one_arm_runs_the_documenter_and_it_skips_nothing(A: Any) -> None:
+    """``full-sdlc`` is the arm that makes the exclusion bucket load-bearing.
 
-    ``_SSSF_EXCLUDED_PREFIXES`` is a narrow PATH rule, and it is only sufficient
-    because no arm runs the documenter — whose declared ``writes`` is markdown
-    ANYWHERE (``**/*.md``), which a path rule cannot cover and which must never be
-    covered by blanket-excluding markdown (that would discard legitimate
-    production markdown from a gold patch, biased in the arm's favour).
+    Until it existed, every roster skipped the documenter and
+    ``_SSSF_EXCLUDED_PREFIXES``' ``app_docs/`` and ``docs/`` entries were
+    configuration nothing had ever hit. This pins both halves of the new state: the
+    other arms still skip the role (so their diffs cannot contain documentation at
+    all), and this one skips NOTHING — an empty ``skip_phases`` is what makes
+    ``adw_simple_sdlc.py`` run its ``changes``, ``document`` and ``commit_docs``
+    phases.
     """
     for arm, roster in A._SSSF_ROSTERS.items():
+        if arm == _FULL:
+            continue
         assert roster["documenter"] is None, arm
         assert "documenter" in A._sssf_skip_list(roster), arm
+    full = A._SSSF_ROSTERS[_FULL]
+    assert all(full[role] for role in A._SSSF_ROLES), full
+    assert A._sssf_skip_list(full) == [], (
+        "the whole point of this arm is that it skips nothing — a non-empty "
+        "skip_phases means the graph it runs is not the complete one"
+    )
+
+
+def test_the_documenters_own_fence_is_the_shipped_one(A: Any) -> None:
+    """``full-sdlc``'s documenter keeps the engine's shipped ``writes`` list.
+
+    Narrowing it here would change the ENGINE's permission behaviour rather than
+    just the routing — a documenter fenced to two directories that then edits
+    ``README.md`` is refused by ``permissions.enforce`` and the whole run is lost
+    to a writes-scope breach the harness caused. The graded diff is kept honest by
+    the exclusion bucket instead (see
+    ``test_markdown_is_never_blanket_excluded``).
+    """
+    writes = A._sssf_agent_block("documenter", A._SSSF_FLASH)["writes"]
+    assert writes == ["app_docs/", "docs/", "**/*.md", "*.md"]
+    assert A._SSSF_ROSTERS[_FULL]["documenter"] == A._SSSF_FLASH
 
 
 def test_the_two_solo_arms_differ_only_in_the_builders_model(A: Any) -> None:
@@ -443,6 +493,9 @@ def test_the_sssf_arms_are_registered_last(A: Any) -> None:
         "claude-4.8",
     )
     assert A._ARM_NAMES[7:] == _ARMS_UNDER_TEST
+    assert A._ARM_NAMES[-1] == _FULL, (
+        "the newest arm is appended, so no published arm's index moves"
+    )
     assert A._ARM_NAMES == tuple(A._ARMS)
 
 
@@ -677,7 +730,7 @@ def test_the_adw_id_is_stable_and_unique_per_instance_and_arm(A: Any) -> None:
         for i in ("i1", "i2")
         for a in _ARMS_UNDER_TEST
     }
-    assert len(ids) == 6
+    assert len(ids) == 2 * len(_ARMS_UNDER_TEST)
     assert len(A._sssf_adw_id("i1", "chain")) == 8
 
 
@@ -801,8 +854,12 @@ def test_a_real_run_refuses_when_skip_phases_is_unsupported(
     with pytest.raises(SystemExit) as exc:
         A.run_sssf("i1", arm="chain", max_steps=18, timeout_s=60)
     msg = str(exc.value)
-    assert "pre-flight refused this run at $0" in msg
+    assert "pre-flight refused this run before the clone" in msg
     assert "skip_phases" in msg
+    # The refusal discloses what the pre-flight itself spent. It is not $0 any more
+    # — the reachability probe issues one real request per deployment — so the
+    # message states the figure instead of claiming a zero it cannot promise.
+    assert "on reachability probes" in msg
 
 
 def test_the_skipped_role_tripwire_message_is_fail_closed(A: Any) -> None:
@@ -1968,8 +2025,12 @@ def test_markdown_is_never_blanket_excluded(A: Any) -> None:
     """The documenter's declared ``writes`` is markdown ANYWHERE, and this repo's
     own rules count markdown as PRODUCTION. Excluding ``**/*.md`` would discard
     the legitimate documentation edits a gold patch may contain — grading the arm
-    as having matched a patch it only partly produced, biased in its favour. The
-    narrow path rule is sufficient only because no arm runs the documenter."""
+    as having matched a patch it only partly produced, biased in its favour.
+
+    ``full-sdlc`` runs the documenter, so this is no longer hypothetical: that arm
+    really can emit markdown outside ``app_docs/`` and ``docs/``, and when it does
+    the file is GRADED as the production change this repo's rules say it is. The
+    narrow path rule stays narrow on purpose."""
     excluded: list[str] = []
     _code, kept, _stripped = A.split_diff(
         _diff("README.md", "pkg/api.md", "pkg/deep/nested/notes.md"),
@@ -2160,7 +2221,7 @@ def test_the_new_arms_cannot_destroy_another_arms_artifacts(
     corpus.parent.mkdir(parents=True, exist_ok=True)
     corpus.write_text('{"persona": "reviewer"}\n', encoding="utf-8")
     dirs = {arm: A._run_dir("inst-1", arm) for arm in _ARMS_UNDER_TEST}
-    assert len(set(dirs.values())) == 3
+    assert len(set(dirs.values())) == len(_ARMS_UNDER_TEST)
     for arm, d in dirs.items():
         assert d != factory_dir, arm
         (d / "result.json").write_text("{}", encoding="utf-8")
@@ -2625,8 +2686,12 @@ def test_the_probe_writes_a_gradeable_row_for_every_arm(
     run_dir = A._run_dir("acme__widget-1", arm)
     result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
     assert result["arm"] == arm
+    # DERIVED FROM THE ROSTER, never from the arm id: the two arms that route a
+    # reviewer make the stronger claim, the solo arms the weaker one.
     assert result["green_state"] == (
-        A._SSSF_GREEN_CHAIN if arm == "chain" else A._SSSF_GREEN_TESTS
+        A._SSSF_GREEN_CHAIN
+        if A._SSSF_ROSTERS[arm]["reviewer"]
+        else A._SSSF_GREEN_TESTS
     )
     assert result["files_changed"] == [A._SSSF_PROBE_FILE]
     # Two of the three _ROW_ARTIFACTS exist after a run; `audit` writes the third.

@@ -1,0 +1,63 @@
+{
+  "generated_at": "2026-08-13T21:30:06.894823+00:00",
+  "max_bytes_per_file": 16777216,
+  "names": [
+    "raw.diff",
+    "sweep-run.log",
+    "sssf-adw.log"
+  ],
+  "trajectory_globs": [
+    "root/state/events/trajectories/*.ndjson",
+    "state/events/trajectories/*.ndjson",
+    "bare-commands.ndjson",
+    "claude-transcript.ndjson",
+    "sssf-events.jsonl",
+    "sssf-turns.jsonl"
+  ],
+  "count": 4,
+  "uncompressed_bytes": 843210,
+  "truncated": 0,
+  "unreadable": 0,
+  "files": [
+    {
+      "row": "jsonpickle__jsonpickle-588/full-sdlc",
+      "path": "raw.diff",
+      "original_bytes": 13898,
+      "original_sha256": "abd3dc3d3018a9264cd79d0ece52a855288b3a9e32fd8e3c0048f5b080d23859",
+      "truncated": false,
+      "stored_bytes": 13898,
+      "stored_sha256": "abd3dc3d3018a9264cd79d0ece52a855288b3a9e32fd8e3c0048f5b080d23859",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "jsonpickle__jsonpickle-588/full-sdlc",
+      "path": "sssf-adw.log",
+      "original_bytes": 8560,
+      "original_sha256": "a3d6fb3cd042a4dc03fdc07dcda93bbf0e0d00ce9027c486c3db9ff15a386744",
+      "truncated": false,
+      "stored_bytes": 8560,
+      "stored_sha256": "a3d6fb3cd042a4dc03fdc07dcda93bbf0e0d00ce9027c486c3db9ff15a386744",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "jsonpickle__jsonpickle-588/full-sdlc",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 819228,
+      "original_sha256": "442e7a1fa8566e3edf35a9af4d3539def01609f587fd0e80925e3d83d2516b9d",
+      "truncated": false,
+      "stored_bytes": 819228,
+      "stored_sha256": "442e7a1fa8566e3edf35a9af4d3539def01609f587fd0e80925e3d83d2516b9d",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "jsonpickle__jsonpickle-588/full-sdlc",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 1524,
+      "original_sha256": "fb2ea6a36c90ec9d4a5777095403abe4f2e1f07820043af564abe26f2a64e602",
+      "truncated": false,
+      "stored_bytes": 1524,
+      "stored_sha256": "fb2ea6a36c90ec9d4a5777095403abe4f2e1f07820043af564abe26f2a64e602",
+      "stored_as": "sssf-turns.jsonl.gz"
+    }
+  ]
+}

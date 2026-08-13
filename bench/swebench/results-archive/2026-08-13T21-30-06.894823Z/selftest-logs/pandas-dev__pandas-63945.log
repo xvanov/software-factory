@@ -1,0 +1,114 @@
+Checking patch pandas/tests/test_col.py...
+Applied patch pandas/tests/test_col.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_d32ee5079f4ec5c5: NO_COLLECT_PRE_PATCH (collection fails before the patch; treated as a red baseline)
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_expression_getitem
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_property
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_cached_property
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_qcut
+
+ERROR: found no collectors for /testbed/pandas/tests/test_col.py::test_where
+
+
+==================================== ERRORS ====================================
+__________________ ERROR collecting pandas/tests/test_col.py ___________________
+pandas/tests/test_col.py:50: in <module>
+    (-pd.col("a"), [-1, -2], "-col('a')"),
+     ^^^^^^^^^^^^
+E   TypeError: bad operand type for unary -: 'Expression'
+=========================== short test summary info ============================
+ERROR pandas/tests/test_col.py - TypeError: bad operand type for unary -: 'Ex...
+16918 tests collected, 1 error in 3.79s
+Checking patch doc/source/whatsnew/v3.0.1.rst...
+Checking patch pandas/core/col.py...
+Applied patch doc/source/whatsnew/v3.0.1.rst cleanly.
+Applied patch pandas/core/col.py cleanly.
+SWEBENCH_APPLY_d32ee5079f4ec5c5: OK
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Series-values2-True]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Series-values2-False]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Index-values0-True]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Index-values0-False]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Index-values1-True]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Index-values1-False]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Index-values2-True]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Index-values2-False]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Categorical-values0-True]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Categorical-values0-False]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Categorical-values1-True]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Categorical-values1-False]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Categorical-values2-True]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[Categorical-values2-False]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[CategoricalIndex-values0-True]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[CategoricalIndex-values0-False]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[CategoricalIndex-values1-True]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[CategoricalIndex-values1-False]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[CategoricalIndex-values2-True]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike[CategoricalIndex-values2-False]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike_invalid_dtype[arg0-values0]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike_invalid_dtype[arg0-values1]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike_invalid_dtype[arg0-values2]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike_invalid_dtype[arg1-values0]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike_invalid_dtype[arg1-values1]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike_invalid_dtype[arg1-values2]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike_invalid_dtype[arg2-values0]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike_invalid_dtype[arg2-values1]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_searchsorted_datetimelike_with_listlike_invalid_dtype[arg2-values2]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_period_index_construction_from_strings[list]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_period_index_construction_from_strings[tuple]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_period_index_construction_from_strings[array]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_period_index_construction_from_strings[Series]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_from_pandas_array[M8[ns]]
+PASSED pandas/tests/arrays/test_datetimelike.py::test_from_pandas_array[m8[ns]]
+SKIPPED [4] pandas/tests/strings/test_split_partition.py:192: Could not import 'pyarrow'
+SKIPPED [270] pandas/tests/arrays/test_datetimelike.py:302: Could not import 'pyarrow'
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_tuple_labels[split-] - Produces JSON but not in a consistent manner
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_tuple_labels[table-] - Produces JSON but not in a consistent manner
+16693 passed, 274 skipped, 2 xfailed in 28.49s
+SWEBENCH_TALLY_d32ee5079f4ec5c5: fail_to_pass 16693 passed, 274 skipped, 2 xfailed in 28.49s
+[16699 node outcomes for fail_to_pass -> grade-nodes.log]
+XFAIL pandas/tests/groupby/test_categorical.py::test_category_order_reducer[False-False-False-corrwith-False-range] - GH#49950 - corrwith with as_index=False may not have grouping column
+XFAIL pandas/tests/groupby/test_categorical.py::test_category_order_reducer[False-False-False-corrwith-False-multi] - GH#49950 - corrwith with as_index=False may not have grouping column
+XFAIL pandas/tests/groupby/test_categorical.py::test_agg_list[True-True-corrwith-keys0-False] - GH#32293: attempts to call SeriesGroupBy.corrwith
+XFAIL pandas/tests/groupby/test_categorical.py::test_agg_list[True-True-corrwith-keys1-False] - GH#32293: attempts to call SeriesGroupBy.corrwith
+XFAIL pandas/tests/groupby/test_categorical.py::test_agg_list[True-False-corrwith-keys0-False] - GH#32293: attempts to call SeriesGroupBy.corrwith
+XFAIL pandas/tests/groupby/test_categorical.py::test_agg_list[True-False-corrwith-keys1-False] - GH#32293: attempts to call SeriesGroupBy.corrwith
+XFAIL pandas/tests/groupby/test_categorical.py::test_agg_list[False-True-corrwith-keys0-False] - GH#32293: attempts to call SeriesGroupBy.corrwith
+XFAIL pandas/tests/groupby/test_categorical.py::test_agg_list[False-True-corrwith-keys1-False] - GH#32293: attempts to call SeriesGroupBy.corrwith
+XFAIL pandas/tests/groupby/test_categorical.py::test_agg_list[False-False-corrwith-keys0-False] - GH#32293: attempts to call SeriesGroupBy.corrwith
+XFAIL pandas/tests/groupby/test_categorical.py::test_agg_list[False-False-corrwith-keys1-False] - GH#32293: attempts to call SeriesGroupBy.corrwith
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_roundtrip_categorical[index-True] - Can't have duplicate index values for orient 'index')
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_roundtrip_categorical[index-False] - Can't have duplicate index values for orient 'index')
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_roundtrip_categorical[columns-True] - Can't have duplicate index values for orient 'columns')
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_roundtrip_categorical[columns-False] - Can't have duplicate index values for orient 'columns')
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_roundtrip_multiindex[columns0] - #50456 Column multiindex is stored and loaded differently
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_roundtrip_multiindex[columns1] - #50456 Column multiindex is stored and loaded differently
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_roundtrip_multiindex[columns2] - #50456 Column multiindex is stored and loaded differently
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val0] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val1] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val2] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val3] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val4] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val5] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val6] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val7] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[category-val8] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val0] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val1] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val2] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val3] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val4] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val5] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val6] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val7] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_latin_encoding[object-val8] - GH#13774 encoding kwarg not supported
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_tuple_labels[split-] - Produces JSON but not in a consistent manner
+XFAIL pandas/tests/io/json/test_pandas.py::TestPandasContainer::test_tuple_labels[table-] - Produces JSON but not in a consistent manner
+XFAIL pandas/tests/series/test_arithmetic.py::test_none_comparison[numexpr-empty] - Test doesn't make sense on empty data
+XFAIL pandas/tests/series/test_arithmetic.py::test_none_comparison[python-empty] - Test doesn't make sense on empty data
+16693 passed, 1629 skipped, 54 xfailed, 1 error in 29.87s
+SWEBENCH_TALLY_d32ee5079f4ec5c5: pass_to_pass 16693 passed, 1629 skipped, 54 xfailed, 1 error in 29.87s
+[16925 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_d32ee5079f4ec5c5: UNRESOLVED

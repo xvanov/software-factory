@@ -1,0 +1,57 @@
+Checking patch tests/test_util.py...
+Applied patch tests/test_util.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_8f399cf184bb5540: OK (red as expected)
+Checking patch canvasapi/util.py...
+Applied patch canvasapi/util.py cleanly.
+SWEBENCH_APPLY_8f399cf184bb5540: OK
+..                                                                       [100%]
+=========================== short test summary info ============================
+PASSED tests/test_util.py::TestUtil::test_obj_or_str_invalid_obj_type
+PASSED tests/test_util.py::TestUtil::test_obj_or_str_str
+2 passed in 0.16s
+SWEBENCH_TALLY_8f399cf184bb5540: fail_to_pass 2 passed in 0.16s
+[4 node outcomes for fail_to_pass -> grade-nodes.log]
+PASSED tests/test_util.py::TestUtil::test_file_or_path_invalid_path
+PASSED tests/test_util.py::TestUtil::test_file_or_path_valid_path
+PASSED tests/test_util.py::TestUtil::test_get_institution_url
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_bool
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_bytes
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_chain
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_dict
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_items
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_iter
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_keys
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_dict_values
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_generator_call
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_generator_expr
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_integer
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_list
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_list_iter
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_set
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_set_iter
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_str
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_tuple
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_tuple_iter
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_unicode
+PASSED tests/test_util.py::TestUtil::test_is_multivalued_zip
+PASSED tests/test_util.py::TestUtil::test_normalize_bool_boolean
+PASSED tests/test_util.py::TestUtil::test_normalize_bool_str_invalid
+PASSED tests/test_util.py::TestUtil::test_normalize_bool_str_lower
+PASSED tests/test_util.py::TestUtil::test_normalize_bool_str_upper
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_int
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_multiple_objs
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_nonuser_self
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_obj
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_obj_no_id
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_str_invalid
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_str_valid
+PASSED tests/test_util.py::TestUtil::test_obj_or_id_user_self
+PASSED tests/test_util.py::TestUtil::test_obj_or_str_invalid_attr_parameter
+PASSED tests/test_util.py::TestUtil::test_obj_or_str_mult_obj
+PASSED tests/test_util.py::TestUtil::test_obj_or_str_obj_attr
+PASSED tests/test_util.py::TestUtil::test_obj_or_str_obj_no_attr
+60 passed in 0.23s
+SWEBENCH_TALLY_8f399cf184bb5540: pass_to_pass 60 passed in 0.23s
+[62 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_8f399cf184bb5540: RESOLVED

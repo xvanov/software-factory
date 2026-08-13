@@ -1,0 +1,121 @@
+defaults:
+  coding_agent: pi
+  model: azure/DeepSeek-V4-Flash
+  thinking: medium
+  harness_engineering: []
+  tools:
+  - read
+  - bash
+  - edit
+  - write
+  - grep
+  - find
+  - ls
+  protected_files: []
+  data_dir: /home/k/.cache/swebench-work/jsonpickle__jsonpickle-588__full-sdlc/adw_data
+  skip_phases: &id001 []
+observability:
+  db: /home/k/software-factory/bench/swebench/runs/sssf-bench.db
+  poll_ms: 500
+quality:
+  tools: {}
+  checks:
+  - name: swebench_tests
+    area: swebench
+    operation: test
+    argv:
+    - bash
+    - -lc
+    - docker run --rm -v "$PWD":/testbed -w /testbed --user "$(id -u):$(id -g)" -e
+      HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588@sha256:0eae843824198c5cfb0b6bb25b5c9b50c1b415ea7295867a314a3a8ce65c7fb4
+      -lc 'source /opt/conda/bin/activate testbed && python -m pytest -p no:cacheprovider
+      '\''tests/object_test.py'\'''
+    timeout_seconds: 3600
+  sets:
+    tests:
+    - swebench_tests
+    quality:
+    - swebench_tests
+agents:
+- name: planner
+  coding_agent: pi
+  model: azure/DeepSeek-V4-Flash
+  thinking: medium
+  purpose: 'swebench bench arm: the planner role of the sssf ADW.'
+  prompt_engineering:
+    system: /home/k/sssf/adws/adw_data/prompt_engineering/planner/system.md
+    user: /home/k/sssf/adws/adw_data/prompt_engineering/planner/user.md
+  harness_engineering: []
+  tools:
+  - read
+  - grep
+  - find
+  - ls
+  - bash
+  - write
+  writes:
+  - specs/
+- name: builder
+  coding_agent: pi
+  model: azure/DeepSeek-V4-Flash
+  thinking: medium
+  purpose: 'swebench bench arm: the builder role of the sssf ADW.'
+  prompt_engineering:
+    system: /home/k/sssf/adws/adw_data/prompt_engineering/builder/system.md
+    user: /home/k/sssf/adws/adw_data/prompt_engineering/builder/user.md
+  harness_engineering: []
+  tools:
+  - read
+  - grep
+  - find
+  - ls
+  - bash
+  - edit
+  - write
+- name: reviewer
+  coding_agent: pi
+  model: azure/DeepSeek-V4-Flash
+  thinking: medium
+  purpose: 'swebench bench arm: the reviewer role of the sssf ADW.'
+  prompt_engineering:
+    system: /home/k/sssf/adws/adw_data/prompt_engineering/reviewer/system.md
+    user: /home/k/sssf/adws/adw_data/prompt_engineering/reviewer/user.md
+  harness_engineering: []
+  tools:
+  - read
+  - grep
+  - find
+  - ls
+  - bash
+  - write
+  writes: []
+- name: documenter
+  coding_agent: pi
+  model: azure/DeepSeek-V4-Flash
+  thinking: medium
+  purpose: 'swebench bench arm: the documenter role of the sssf ADW.'
+  prompt_engineering:
+    system: /home/k/sssf/adws/adw_data/prompt_engineering/documenter/system.md
+    user: /home/k/sssf/adws/adw_data/prompt_engineering/documenter/user.md
+  harness_engineering: []
+  tools:
+  - read
+  - grep
+  - find
+  - ls
+  - bash
+  - write
+  - edit
+  writes:
+  - app_docs/
+  - docs/
+  - '**/*.md'
+  - '*.md'
+skip_phases: *id001
+limits:
+  fix_loops: 3
+  revision_loops: 2
+  agent_retries: 1
+  json_fix_attempts: 2
+_bench_arm: full-sdlc
+_bench_skip_declared_in: SSSFConfig

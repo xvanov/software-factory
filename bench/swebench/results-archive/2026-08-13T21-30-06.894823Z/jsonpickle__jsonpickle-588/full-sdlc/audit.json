@@ -1,0 +1,23 @@
+{
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "arm": "full-sdlc",
+  "audited_at": "2026-08-13T21:29:30.276144+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.4124,
+  "ledger_tokens_in": 1195969,
+  "ledger_tokens_out": 77410,
+  "result_cost_usd": 0.4124,
+  "prediction_sha256": "b8ebc6b84c93727b894bb0d9098b8c65ae5d53d99a661c9cd378cca45f538646",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "stripped_test_paths": [
+    "tests/benchmark.py",
+    "tests/object_test.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}
