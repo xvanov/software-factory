@@ -404,15 +404,27 @@ def test_selecting_a_grading_log_for_archiving_is_refused_loudly(
 
 def test_every_arms_trail_shape_is_covered_by_a_glob(A: Any) -> None:  # noqa: N803
     """The trail location differs per arm and the arm id is NOT a parameter of
-    the archiver. Pin the four shapes, so adding an arm without adding its shape
-    is a failing test rather than a silently unarchived trail."""
+    the archiver. Pin the six shapes, so adding an arm without adding its shape
+    is a failing test rather than a silently unarchived trail.
+
+    The sssf pair was MISSING until 2026-08-13: those three arms wrote their trail
+    to ``sssf-events.jsonl`` and their cost evidence to ``sssf-turns.jsonl``, and
+    neither was swept into ``results-archive/`` — so an archived sssf row could not
+    be re-cleared of oracle access, and its dollars could not be re-summed at all,
+    from the archive alone."""
     assert A._ARCHIVED_ROW_DIAGNOSTICS == ("raw.diff", "sweep-run.log")
     assert A._ARCHIVED_TRAJECTORY_GLOBS == (
         "root/state/events/trajectories/*.ndjson",
         "state/events/trajectories/*.ndjson",
         "bare-commands.ndjson",
         "claude-transcript.ndjson",
+        "sssf-events.jsonl",
+        "sssf-turns.jsonl",
     )
+    # The trail the oracle-probe scan reads and the digest the audit re-sums are
+    # the two files an sssf row cannot be re-verified without.
+    assert A._SSSF_EVENTS_NAME in A._ARCHIVED_TRAJECTORY_GLOBS
+    assert A._SSSF_TURNS_NAME in A._ARCHIVED_TRAJECTORY_GLOBS
 
 
 def test_each_arms_documented_trajectory_path_matches_a_glob(
@@ -428,6 +440,8 @@ def test_each_arms_documented_trajectory_path_matches_a_glob(
         "openhands": "state/events/trajectories/nostory-1.ndjson",
         "bare": "bare-commands.ndjson",
         "claude-5": A._CLAUDE_TRANSCRIPT_NAME,
+        "v32-solo": A._SSSF_EVENTS_NAME,
+        "chain": A._SSSF_TURNS_NAME,
     }
     for arm, rel in cases.items():
         d = _row(runs, "inst_a", arm, diagnostics=False)

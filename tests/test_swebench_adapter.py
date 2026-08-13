@@ -347,7 +347,16 @@ def test_fresh_run_result_drops_stale_keys(
     data = json.loads((tmp_path / "i1" / "factory" / "result.json").read_text())
     # Nothing survives from the previous run: not the context keys, and not the
     # grade — that verdict was for a prediction that no longer exists. The
-    # attempt/budget stamps are added BY this write, not carried over.
+    # attempt/budget/provenance stamps are added BY this write, not carried over.
+    #
+    # ``provenance_stamp`` is compared by SHAPE, not by value: it carries the two
+    # repos' live git shas (see ``_provenance_stamp``), which move with every
+    # commit. Pinning its value would make this test fail on the next commit;
+    # pinning its presence is what the assertion is for — a fresh row that lost
+    # its provenance is a row nothing can reproduce.
+    stamp = data.pop("provenance_stamp")
+    assert set(stamp) >= {"captured_at", "repos", "arm_spec"}
+    assert set(stamp["repos"]) == {"harness", "engine"}
     assert data == {
         "cost_usd": 2.0,
         "attempt": 1,

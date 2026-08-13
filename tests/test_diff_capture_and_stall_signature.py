@@ -220,13 +220,38 @@ def test_an_unchecked_capture_is_not_treated_as_broken(A: Any, tmp_path: Path) -
 
 
 def test_every_capture_site_passes_the_manifest_base_commit(A: Any) -> None:  # noqa: N803
-    """All four arms, or the fix reaches only the one that was debugged."""
+    """EVERY arm, or the fix reaches only the one that was debugged.
+
+    DERIVED from the runner functions rather than pinned to a count. It was pinned
+    at 4, which had two failure modes pointing opposite ways: adding an arm failed
+    here even when that arm did it right, and — worse — an arm could have been added
+    that captured a diff WITHOUT the expected base commit while the count still read
+    4 because another site had two.
+
+    So the property is asserted per runner: every function that captures a diff must
+    pin it to the manifest's base commit, refuse an untrustworthy empty capture, and
+    record the integrity report in its row.
+    """
     import inspect
 
     src = inspect.getsource(A)
-    assert src.count("expected_base_commit=str(inst.get(\"base_commit\") or \"\")") == 4
-    assert src.count("_refuse_untrustworthy_empty_diff(raw_diff, diff_integrity)") == 4
-    assert src.count('"diff_integrity": diff_integrity,') >= 4
+    runners = [
+        name
+        for name in dir(A)
+        if name.startswith("run_")
+        and inspect.isfunction(getattr(A, name))
+        and "_capture_diff(" in inspect.getsource(getattr(A, name))
+    ]
+    assert len(runners) >= 5, f"expected every arm's runner, found {runners}"
+    for name in runners:
+        body = inspect.getsource(getattr(A, name))
+        assert 'expected_base_commit=str(inst.get("base_commit") or "")' in body, name
+        assert "_refuse_untrustworthy_empty_diff(raw_diff, diff_integrity)" in body, name
+        assert '"diff_integrity": diff_integrity,' in body, name
+    # And no capture site anywhere is left un-pinned.
+    assert src.count("_capture_diff(") == src.count(
+        'expected_base_commit=str(inst.get("base_commit") or "")'
+    ) + 1, "a _capture_diff call site does not pass the manifest base commit"
 
 
 # --------------------------------------------------------------------------- #
