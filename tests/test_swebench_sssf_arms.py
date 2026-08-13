@@ -589,6 +589,123 @@ def test_thinking_is_pinned_identically_across_every_role_and_arm(
     assert levels == {A._SSSF_THINKING}
 
 
+_HEX = "0123456789abcdef"
+# The rosters the ENGINE ships. Read, never copied: the point of the harness's
+# palette is that it agrees with these files, and a second hard-coded copy here
+# would agree with itself while both drifted from the UI.
+_SHIPPED_ROSTERS = tuple(
+    (Path("/home/k/sssf") / "adws" / "adw_sssf_config" / name)
+    for name in ("sssf.config.yaml", "sssf.azure.config.yaml")
+)
+
+
+def _shipped_colors(path: Path) -> dict[str, str]:
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return {a["name"]: a.get("color", "") for a in doc["agents"]}
+
+
+@pytest.mark.parametrize("arm", _ARMS_UNDER_TEST)
+def test_every_role_in_every_arm_gets_a_non_empty_lane_colour(
+    A: Any, arm: str, tmp_path: Path  # noqa: N803
+) -> None:
+    """``agent_sessions.color`` was the EMPTY STRING for every benchmark agent.
+
+    The tracer writes the roster's ``color`` straight into that column and the
+    observability UI paints lanes from it, so a synthesised roster that omitted the
+    field rendered a whole unattended hour-long sweep as invisible blocks. Asserted
+    through the engine's own config model, which is what the tracer reads — not
+    just on the dict, which could carry a key the model drops.
+    """
+    assert set(_ARMS_UNDER_TEST) == set(A._SSSF_ROSTERS), (
+        "a registered sssf arm is not parametrized here, so its roster's colours "
+        "are unasserted — add it to _ARMS_UNDER_TEST"
+    )
+    doc = _document(A, arm, data_dir=tmp_path / "adw_data")
+    cfg = A._sssf_engine_config_model()(**yaml.safe_load(yaml.safe_dump(doc)))
+    assert [a.name for a in cfg.agents] == [a["name"] for a in doc["agents"]]
+    for agent in cfg.agents:
+        color = agent.color
+        assert color, f"{arm}/{agent.name} would render as an invisible lane"
+        assert color[0] == "#" and len(color) == 7, (arm, agent.name, color)
+        assert all(c in _HEX for c in color[1:]), (arm, agent.name, color)
+
+
+@pytest.mark.parametrize("shipped", _SHIPPED_ROSTERS, ids=lambda p: p.name)
+def test_the_lane_colours_are_the_shipped_rosters_own_values(
+    A: Any, shipped: Path  # noqa: N803
+) -> None:
+    """Same role, same colour as an ordinary run — so the UI cannot tell a
+    benchmark lane from a factory lane by its palette, and a timeline from either
+    reads the same way."""
+    if not shipped.is_file():
+        pytest.skip(f"engine roster not present: {shipped}")
+    theirs = _shipped_colors(shipped)
+    for role, color in theirs.items():
+        assert color, f"the shipped roster stopped colouring {role}"
+        assert A._sssf_role_color(role) == color, role
+    for role in A._SSSF_ROLES:
+        assert role in theirs, f"{role} is not in the shipped roster at all"
+
+
+def test_the_lane_colour_is_a_pure_function_of_the_role_name(
+    A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    """Deterministic per ROLE, across arms and across runs.
+
+    A colour keyed off the model or the arm would paint the planner violet in one
+    row and pink in the next, and two sweep timelines could not be compared
+    side by side. An unknown role is digest-indexed into the same palette rather
+    than left empty, so adding a role cannot silently reintroduce the bug — and
+    ``sha256`` rather than ``hash()``, which is salted per process.
+    """
+    seen: dict[str, set[str]] = {}
+    for arm in _ARMS_UNDER_TEST:
+        for agent in _document(A, arm, data_dir=tmp_path / arm)["agents"]:
+            seen.setdefault(agent["name"], set()).add(agent["color"])
+    assert seen, "no agents were emitted at all"
+    for role, colors in seen.items():
+        assert len(colors) == 1, f"{role} is painted {sorted(colors)} across arms"
+    palette = set(A._SSSF_ROLE_COLORS.values())
+    for unknown in ("auditor", "scribe", "role-that-does-not-exist-yet"):
+        picked = A._sssf_role_color(unknown)
+        assert picked in palette and picked == A._sssf_role_color(unknown)
+
+
+def test_the_lane_colour_is_inside_sssf_roster_sha256_and_adds_no_variance(
+    A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    """The colour is presentation, and it is nevertheless hashed into provenance.
+
+    ``sssf_roster_sha256`` is taken over the serialised roster as a whole, so a
+    cosmetic field is inside it. That is deliberate — a digest that covered only
+    "semantic" fields would no longer cover the bytes the engine was handed — but
+    it has one real consequence, pinned here so it is stated rather than
+    discovered: rows written before and after this change carry DIFFERENT roster
+    digests for the SAME model wiring.
+
+    What must hold is that the colour adds no per-run variance: two builds of the
+    same arm still serialise identically, so the digest is as stable going forward
+    as it ever was.
+    """
+    def sha(doc: dict[str, Any]) -> str:
+        text = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True)
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    for arm in _ARMS_UNDER_TEST:
+        first = _document(A, arm, data_dir=tmp_path / "adw_data")
+        again = _document(A, arm, data_dir=tmp_path / "adw_data")
+        assert sha(first) == sha(again), (
+            f"{arm}: the roster digest moves between two identical builds"
+        )
+        uncoloured = json.loads(json.dumps(first))
+        for agent in uncoloured["agents"]:
+            del agent["color"]
+        assert sha(uncoloured) != sha(first), (
+            "the colour is expected to be INSIDE the provenance digest; if this "
+            "ever passes, the docstring above is wrong"
+        )
+
+
 @pytest.mark.parametrize("arm", _ARMS_UNDER_TEST)
 def test_the_roster_declares_only_the_roles_that_run(
     A: Any, arm: str, tmp_path: Path  # noqa: N803
