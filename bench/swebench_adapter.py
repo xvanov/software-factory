@@ -5279,6 +5279,75 @@ _SSSF_THINKING = "medium"
 
 _SSSF_ROLES: tuple[str, ...] = ("planner", "builder", "reviewer", "documenter")
 
+# ── the agent's lane colour in the observability UI ──────────────────────────
+#
+# `AgentConfig.color` defaults to `""` and the tracer writes whatever the roster
+# says straight into `agent_sessions.color` (adw_modules/tracer.py: the column,
+# its MIGRATION and the upsert). Every roster the engine SHIPS sets it per agent;
+# this harness synthesises its roster from scratch and did not, so all 34
+# `agent_sessions` rows written by benchmark runs to date carry the empty string
+# and the UI paints those lanes as invisible blocks. A benchmark run is the run an
+# operator most needs to watch — it is the one that spends money unattended for an
+# hour — so the roster we write has to be as watchable as the ones we do not.
+#
+# THE SAME FIVE VALUES the shipped rosters use (`sssf.config.yaml`,
+# `sssf.azure.config.yaml` and the four sibling profiles all agree, byte for
+# byte), so the UI treats a benchmark lane exactly like an ordinary one instead of
+# rendering the same role in two different colours depending on who launched it.
+#
+# A TABLE keyed by role name, not a hash of the model or the arm: the colour has
+# to be a pure function of the ROLE, or the planner is violet in one row and pink
+# in the next and two timelines cannot be read side by side. `_sssf_role_color`
+# falls back to a digest-indexed pick from this same palette, so a role added to
+# `_SSSF_ROLES` later still gets a stable, non-empty colour rather than silently
+# reintroducing the invisible lane.
+#
+# PRESENTATION ONLY — and it is nevertheless inside `sssf_roster_sha256`, which is
+# provenance. See `_sssf_role_color` for what that costs.
+_SSSF_ROLE_COLORS: dict[str, str] = {
+    "planner": "#a78bfa",
+    "builder": "#22d3ee",
+    "scout": "#fbbf24",  # not an sssf bench role; kept so the palette matches
+    "reviewer": "#fb7185",
+    "documenter": "#e879f9",
+}
+
+
+def _sssf_role_color(role: str) -> str:
+    """This role's lane colour. Deterministic, non-empty, stable across arms.
+
+    Known roles get the shipped roster's own value. An unknown one gets a colour
+    picked from the same palette by the sha256 of its NAME — deterministic across
+    runs, arms and machines (unlike ``hash()``, which is salted per process), so a
+    future role's lane still has one identity everywhere instead of an empty
+    string.
+
+    **This value is hashed into ``sssf_roster_sha256``**, because that digest is
+    taken over the whole serialised roster and the colour is a field in it. The
+    consequence, stated rather than discovered later:
+
+    * a row written before colours existed and a row written after them have
+      different roster digests **for the same model wiring**, so a digest equality
+      check across that boundary reports a difference that is purely cosmetic. The
+      rosters themselves are archived verbatim (``provenance.roster_yaml``) and
+      ``benchmark_store.py`` compares the recorded digest to the digest of those
+      bytes, so nothing is unverifiable — the diff is visible and explainable;
+    * going forward the digest is as stable as it ever was: this function is a
+      pure function of the role name, so two runs of the same arm still serialise
+      to identical bytes and hash identically. The colour adds no per-run
+      variance, which is the property that matters for provenance.
+
+    Narrowing the digest to "semantic" fields was the alternative and is worse: it
+    would mean the recorded hash no longer covers the bytes the engine was handed,
+    and a real field could then change without the provenance digest moving.
+    """
+    known = _SSSF_ROLE_COLORS.get(role)
+    if known:
+        return known
+    palette = sorted(set(_SSSF_ROLE_COLORS.values()))
+    digest = hashlib.sha256(role.encode("utf-8")).digest()
+    return palette[digest[0] % len(palette)]
+
 # role -> model, or None for "this role's phases do not run in this arm".
 # A TABLE, not branches: the same reason ``_FACTORY_DRIVER_MODES`` is a table.
 _SSSF_ROSTERS: dict[str, dict[str, str | None]] = {
@@ -7106,6 +7175,10 @@ def _sssf_agent_block(role: str, model: str) -> dict[str, Any]:
         "model": model,
         # PINNED across every role of every arm — see _SSSF_THINKING.
         "thinking": _SSSF_THINKING,
+        # The lane colour, so a benchmark run is watchable in the same UI as an
+        # ordinary one. Presentation only, and inside ``sssf_roster_sha256``:
+        # see ``_sssf_role_color``.
+        "color": _sssf_role_color(role),
         "purpose": f"swebench bench arm: the {role} role of the sssf ADW.",
         "prompt_engineering": {
             # ABSOLUTE. The engine resolves these against the process cwd, which

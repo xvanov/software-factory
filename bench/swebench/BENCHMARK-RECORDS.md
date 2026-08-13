@@ -361,6 +361,75 @@ uv run python bench/swebench/benchmark_store.py ingest \
 Provenance is resolved against the directory being ingested, so an archive is
 compared to its own manifest.
 
+## What the store already says about choosing a model
+
+Two of its columns settle something the decision doc could only project, and the
+answer is one query away rather than one sweep away:
+
+```sql
+SELECT roster_model, SUM(calls), SUM(input_tokens), SUM(cache_read_tokens),
+       ROUND(SUM(cost_usd), 4)
+FROM role_usage WHERE skipped = 0 GROUP BY roster_model;
+```
+
+| roster_model | calls | fresh input | cached input | spend |
+|---|---:|---:|---:|---:|
+| `azure/DeepSeek-V3.2` | 1,364 | 51,724,304 | **0** | $30.98 |
+| `azure/gpt-5.4` | 61 | 385,156 | 1,588,224 | $2.23 |
+| `azure/DeepSeek-V4-Flash` | 122 | 1,195,969 | 3,802,624 | **$0.41** |
+
+**V3.2's cache tier does not exist.** `models.json` prices its `cacheRead` at the
+full input rate (0.580 per 1M) because that meter family publishes no cached tier —
+and over 1,364 calls the provider reported **not one cached token**, so the pricing
+was never even the binding fact. Every re-sent token of a 51.7 M-token pilot was
+billed fresh, on a graph whose whole shape is re-sending a growing context to
+several roles.
+
+**Flash's is real, and it is most of the bill.** That $0.41 is one attempt —
+`jsonpickle__jsonpickle-588` / `full-sdlc` / attempt 1, ran 2026-08-13, all four
+roles on `azure/DeepSeek-V4-Flash`
+(`show --instance jsonpickle__jsonpickle-588 --arm full-sdlc`, or
+`roles --arm full-sdlc` for exactly this table):
+
+| role | calls | fresh | cached | out | $ |
+|---|---:|---:|---:|---:|---:|
+| builder | 77 | 886,073 | 3,010,560 | 46,248 | 0.3053 |
+| reviewer | 19 | 188,827 | 433,664 | 15,084 | 0.0615 |
+| planner | 18 | 93,967 | 305,152 | 13,273 | 0.0366 |
+| documenter | 8 | 27,102 | 53,248 | 2,805 | 0.0089 |
+
+`steps_used = 13` with nothing skipped, oracle `resolved`, `audit_ok = 1`, 122
+calls, **$0.4124**, 1999.8 s, `cost_source = derived-from-price-table`. The builder
+was **77% cache-warm** — 3,010,560 cached tokens against 886,073 fresh, billed at
+0.031 rather than its own 0.210 — which is the entire reason the most expensive graph
+the engine can run (13 phases, four personas, three commits) came to 40 cents.
+
+What it means when the next run has to pick a model:
+
+* **A machinery-coverage run belongs on Flash, and belongs serially.** Its quota
+  pools are both at 0 free, so it cannot be widened — but width was never what
+  that kind of run needed, and at width 1 it completed the full graph with no 429
+  and no empty-response turn (`empty_response_turns = 0` on all four roles).
+* **A cost comparison against it is not a capability comparison.** This is
+  **one instance, one attempt**. It is a measurement of the price of the graph, not
+  of the model's resolve rate, and `reportable = 1` on a single row licenses
+  neither. Read it as the cost axis only.
+* **Cheap per token is not cheap per run.** V3.2 is 2.8× Flash's input rate and
+  cost **75× more in total** across this store, because the pilot re-sent every
+  token at V3.2's full 0.580 while Flash re-read three quarters of its context at
+  0.031. When a candidate deployment's cached rate is absent or equal to
+  its input rate, price the run as if every re-send is fresh — for these graphs
+  that is the number that decides it.
+* **Check the deployment's `compat` block before routing anything to it.** V3.2,
+  `DeepSeek-V4-Flash` and `deepseek-v4-pro` all shipped without
+  `compat.supportsDeveloperRole: false`, and without it Azure's DeepSeek serving
+  422s every request while `pi` swallows it and returns an empty assistant message
+  with all-zero usage — so the arm reports **$0.00 and an empty patch** instead of
+  failing, which is a row that looks like a finding.
+  `tests/test_benchmark_regressions.py` now asserts the flag for every DeepSeek
+  deployment in the price table. The rates were not touched, so no dollar figure in
+  this store moves; only the table's sha256 did (`provenance.price_table_sha256`).
+
 ## See also
 
 * `bench/swebench/PRE-REGISTRATION-1.6.md` — the five arms, the five tables and
