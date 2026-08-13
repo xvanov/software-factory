@@ -1,0 +1,163 @@
+{
+  "arm": "v32-solo",
+  "instance_id": "tox-dev__tox-3931",
+  "repo": "tox-dev/tox",
+  "base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+  "problem_statement_sha256": "87f7f4920a5afb6ad7dfdb5eb309a9dfe87f72c335218612bb94e7853a35ad8f",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-13T03:26:21.493728+00:00",
+  "cost_source": "derived-from-price-table",
+  "preflight": {
+    "skip_phases_supported": true,
+    "skip_phases_declared_in": "SSSFConfig",
+    "skip_phases_problem": null,
+    "credential_problem": null,
+    "engine": "/home/k/sssf/adws/adw_simple_sdlc.py"
+  },
+  "model": null,
+  "sssf_roster": {
+    "planner": null,
+    "builder": "azure/DeepSeek-V3.2",
+    "reviewer": null,
+    "documenter": null
+  },
+  "sssf_skip_phases": [
+    "planner",
+    "reviewer",
+    "documenter"
+  ],
+  "sssf_roster_sha256": "a89ece98b6bdd4080b5c04466e13a5c6bbee0747caa9b2cb5478ead5559f273f",
+  "sssf_roster_file": "sssf-roster.yaml",
+  "sssf_adw_id": "46493598",
+  "sssf_thinking": "medium",
+  "sssf_roles_run": [],
+  "sssf_roles_skipped": [
+    "planner",
+    "reviewer",
+    "documenter"
+  ],
+  "sssf_engine": "/home/k/sssf/adws/adw_simple_sdlc.py",
+  "models_used": [],
+  "model_calls": 0,
+  "model_escalated_calls": 0,
+  "models_off_roster": [],
+  "wall_clock_s": 4.2,
+  "steps_used": 0,
+  "step_cap": 18,
+  "termination": "probe",
+  "trajectory": "sssf-adw.log",
+  "sssf_events_file": null,
+  "probe_plumbing": true,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/session/cmd/test_schema.py"
+    ],
+    "exit_code": 0
+  },
+  "tokens_in": 0,
+  "cached_input_tokens": 0,
+  "cache_write_tokens": 0,
+  "tokens_out": 0,
+  "reasoning_tokens": 0,
+  "total_tokens": 0,
+  "cost_usd": 0.0,
+  "usage_by_role": {},
+  "persona_calls": 0,
+  "usage_source": "none (plumbing probe: the engine never ran)",
+  "shared_db": "sssf-bench.db",
+  "shared_db_totals": null,
+  "cost_usd_shared_db": null,
+  "cost_mismatch_usd": null,
+  "price_table": {
+    "path": "/home/k/.pi/agent/models.json",
+    "sha256": "ad91286e51a1311dd3ab1e8a74e93faa2cddf2ea51a3029b850ea393599a425f",
+    "sha256_pinned": "ad91286e51a1311dd3ab1e8a74e93faa2cddf2ea51a3029b850ea393599a425f",
+    "matches_pinned": true,
+    "units": "USD per 1,000,000 tokens",
+    "rates": {
+      "azure/DeepSeek-V3.2": {
+        "cost": {
+          "input": 0.58,
+          "output": 1.68,
+          "cacheRead": 0.58,
+          "cacheWrite": 0.0
+        },
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "reasoning": true,
+        "api": "openai-completions"
+      }
+    },
+    "missing": [],
+    "error": null
+  },
+  "error": "PLUMBING PROBE \u2014 not a measurement: the sssf ADW was never invoked and no model was called. Re-run without --probe-plumbing for a real row.",
+  "factory_says_green": false,
+  "green_state": "adw_accepted:tests_green",
+  "sssf_chain_roles": [
+    "builder"
+  ],
+  "adw_exit_code": null,
+  "adw_session_status": null,
+  "adw_not_accepted_reason": null,
+  "files_changed": [
+    "swebench_sssf_plumbing_probe.py"
+  ],
+  "test_files_stripped": [
+    "test_swebench_sssf_plumbing_probe.py"
+  ],
+  "sssf_paths_excluded": [
+    "app_docs/46493598.md",
+    "specs/46493598_plan.md"
+  ],
+  "sssf_excluded_prefixes": [
+    "specs/",
+    "app_docs/",
+    "docs/",
+    "adw_data/",
+    "adws/"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 314,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "f025b207bb783f0834f924b00aa41c22bcfc05a6",
+    "expected_base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+    "base_ref_matches": false,
+    "base_ref_ahead_of_expected": 3,
+    "expected_resolves": true,
+    "gitlink": "dir",
+    "head_sha": "f025b207bb783f0834f924b00aa41c22bcfc05a6",
+    "head_is_base": true,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 131,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [],
+    "bypassed_count": 0,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 0,
+    "refused_samples": [],
+    "scan_truncated": false
+  },
+  "sssf_caps": {
+    "run_cost_cap_usd": 6.0,
+    "wall_clock_cap_s": 5400,
+    "phase_cap": 18,
+    "ledger_poll_s": 5.0,
+    "enforced_by": "harness (the sssf engine has no spend limit)",
+    "spend_signal": "max(this run's events.jsonl, shared db sessions.total_cost); an unreadable shared db never kills a run"
+  },
+  "ledger_cost_at_stop_usd": 0.0,
+  "attempt": 0,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null
+}

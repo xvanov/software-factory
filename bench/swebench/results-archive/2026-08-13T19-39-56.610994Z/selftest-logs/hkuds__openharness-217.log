@@ -1,0 +1,26 @@
+Checking patch tests/test_auth/test_flows.py...
+Applied patch tests/test_auth/test_flows.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_45c25ade900cd3b8: OK (red as expected)
+Checking patch src/openharness/auth/flows.py...
+Applied patch src/openharness/auth/flows.py cleanly.
+SWEBENCH_APPLY_45c25ade900cd3b8: OK
+......                                                                   [100%]
+=========================== short test summary info ============================
+PASSED tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell
+PASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]
+PASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]
+PASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]
+PASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]
+PASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]
+6 passed in 0.05s
+SWEBENCH_TALLY_45c25ade900cd3b8: fail_to_pass 6 passed in 0.05s
+[8 node outcomes for fail_to_pass -> grade-nodes.log]
+..                                                                       [100%]
+=========================== short test summary info ============================
+PASSED tests/test_auth/test_flows.py::test_open_browser_macos_uses_open_argv
+PASSED tests/test_auth/test_flows.py::test_open_browser_linux_uses_xdg_open_argv
+2 passed in 0.02s
+SWEBENCH_TALLY_45c25ade900cd3b8: pass_to_pass 2 passed in 0.02s
+[4 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_45c25ade900cd3b8: RESOLVED

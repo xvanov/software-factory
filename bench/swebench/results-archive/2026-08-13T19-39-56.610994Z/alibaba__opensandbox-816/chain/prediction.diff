@@ -1,0 +1,128 @@
+diff --git a/server/opensandbox_server/services/validators.py b/server/opensandbox_server/services/validators.py
+index 4b37b57..5941e96 100644
+--- a/server/opensandbox_server/services/validators.py
++++ b/server/opensandbox_server/services/validators.py
+@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+ 
+ from fastapi import HTTPException, status
+ import re
++import os
+ 
+ from opensandbox_server.services.constants import RESERVED_LABEL_PREFIX, SandboxErrorCodes
+ 
+@@ -67,6 +68,63 @@ def _normalize_prefix_path(path: str) -> str:
+         return normalized[:-1]
+     return normalized
+ 
++def _validate_no_symlinks(path: str) -> None:
++    """
++    Raise HTTPException if any existing component of `path` is a symbolic link.
++
++    Args:
++        path: Absolute host path (native separators).
++
++    Raises:
++        HTTPException with code INVALID_HOST_PATH if a symlink is detected.
++    """
++    # Cross-platform parsing of absolute path.
++    # Convert backslashes to forward slashes for consistent parsing.
++    path_fwd = path.replace("\\", "/")
++    # Check for Windows drive letter prefix.
++    windows_drive_match = re.match(r"^[A-Za-z]:/", path_fwd)
++    if windows_drive_match:
++        # Extract drive letter and separator from original path.
++        # The separator after colon is either '/' or '\\'.
++        sep = path[2]  # colon at index 1, separator at index 2
++        drive_prefix = path[:3]  # e.g., "C:/" or "C:\\"
++        tail = path[3:]
++    else:
++        # Unix-style absolute path.
++        if not path_fwd.startswith("/"):
++            # Should not happen because ensure_valid_host_path already validated.
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST,
++                detail={
++                    "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                    "message": f"Host path '{path}' is not absolute.",
++                },
++            )
++        sep = "/"
++        drive_prefix = "/"
++        tail = path[1:] if len(path) > 1 else ""
++
++    # Normalize tail separators to forward slashes for splitting.
++    tail_fwd = tail.replace("\\", "/")
++    components = [c for c in tail_fwd.split("/") if c]
++
++    # Walk through each component, checking symlinks.
++    # Start with drive_prefix, removing any trailing separator to avoid double slash.
++    current = drive_prefix.rstrip(sep) if drive_prefix.endswith(sep) else drive_prefix
++    for comp in components:
++        # Append separator and component, preserving the original separator style.
++        # On Windows, both '/' and '\\' are accepted by os.path.islink.
++        if not current.endswith(sep):
++            current += sep
++        current += comp
++        if os.path.lexists(current) and os.path.islink(current):
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST,
++                detail={
++                    "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                    "message": f"Host path '{path}' contains a symbolic link at '{current}'.",
++                },
++            )
+ 
+ def _is_valid_label_key(key: str) -> bool:
+     if "/" in key:
+@@ -449,6 +507,43 @@ def ensure_valid_host_path(
+                 "message": f"Host path '{path}' is not normalized. Remove redundant slashes.",
+             },
+         )
++    # --- Symbolic link detection ---
++    _validate_no_symlinks(path)
++
++    # --- Realpath validation (if accessible) ---
++    try:
++        real = os.path.realpath(path, strict=True)
++    except OSError:
++        # Path (or a parent) does not exist or cannot be read; skip realpath check.
++        pass
++    else:
++        # If the resolved real path differs from the lexical path, reject.
++        # This catches symlinks that were not caught by _validate_no_symlinks
++        # (e.g., on Windows where os.path.islink may be false).
++        if os.path.normpath(real) != os.path.normpath(path):
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST,
++                detail={
++                    "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                    "message": f"Host path '{path}' resolves to a different real path '{real}'.",
++                },
++            )
++        # Ensure the real path also satisfies the allowed‑prefix constraint.
++        if allowed_prefixes is not None:
++            norm_real = _normalize_prefix_path(real)
++            is_allowed = any(
++                norm_real == _normalize_prefix_path(prefix)
++                or norm_real.startswith(_normalize_prefix_path(prefix) + "/")
++                for prefix in allowed_prefixes
++            )
++            if not is_allowed:
++                raise HTTPException(
++                    status_code=status.HTTP_400_BAD_REQUEST,
++                    detail={
++                        "code": SandboxErrorCodes.HOST_PATH_NOT_ALLOWED,
++                        "message": f"Resolved host path '{real}' is not under any allowed prefix. Allowed prefixes: {allowed_prefixes}",
++                    },
++                )
+ 
+     # Check against allowed prefixes if provided
+     if allowed_prefixes is not None:
+diff --git a/test.txt b/test.txt
+new file mode 100644
+index 0000000..b6fc4c6
+--- /dev/null
++++ b/test.txt
+@@ -0,0 +1 @@
++hello
+\ No newline at end of file

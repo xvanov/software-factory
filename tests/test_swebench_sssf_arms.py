@@ -2822,3 +2822,619 @@ def test_the_audit_reads_the_sssf_state_root_from_the_run_family(A: Any) -> None
     assert 'state_root = run_dir / "root" if _audit_base == "factory" else run_dir' in src
     for arm in _ARMS_UNDER_TEST:
         assert A._ARMS[arm].base == "sssf"
+
+
+# --------------------------------------------------------------------------- #
+# FIX 1 — the phase cap is DERIVED from the limits the row ran under
+# --------------------------------------------------------------------------- #
+
+
+def test_the_harness_states_the_loop_bounds_in_the_roster_it_writes(A: Any) -> None:
+    """A limit the row does not state is a limit the row cannot be reproduced under.
+
+    The engine's ``limits:`` defaults are the ENGINE's to change. A roster that
+    says nothing about ``fix_loops`` therefore reproduces whatever the engine
+    happens to default to on the day it is replayed — which is not necessarily the
+    graph this row measured. So the harness writes them explicitly, at the engine's
+    current defaults, and the archived roster becomes self-sufficient.
+    """
+    document = A._sssf_roster_document(
+        "chain",
+        A._sssf_roster_for("chain"),
+        data_dir=Path("/tmp/d"),
+        db_path=Path("/tmp/db.sqlite"),
+        test_command="pytest -q",
+        timeout_s=600,
+        skip_where="top-level",
+    )
+    assert A._SSSF_LIMITS_KEY in document, (
+        "the roster must STATE its loop bounds, not inherit them silently"
+    )
+    stated = document[A._SSSF_LIMITS_KEY]
+    assert set(stated) == {
+        "fix_loops",
+        "revision_loops",
+        "agent_retries",
+        "json_fix_attempts",
+    }
+    # And it is what the engine's own config model reads, at its own defaults —
+    # so stating them changes no graph.
+    engine_defaults = _engine_default_limits(A)
+    for key, value in engine_defaults.items():
+        assert stated[key] == value, (
+            f"the harness writes {key}={stated[key]} but the engine defaults to "
+            f"{value}; if that divergence is intended, say so in _SSSF_LIMITS"
+        )
+    # The synthesised document must still satisfy the engine's own validator.
+    assert A._sssf_validate_roster(document, A._sssf_roster_for("chain")) is None
+
+
+@pytest.mark.parametrize(
+    ("limits", "expected"),
+    [
+        # The engine's defaults: 4 + 2*3 + (2*2-1) + 1 + 4 = 18, the number the
+        # cap used to be a bare constant for.
+        ({"fix_loops": 3, "revision_loops": 2}, 18),
+        # A roster that gives the builder five repair passes legitimately emits
+        # four more phases. Under the old constant this healthy run was flagged as
+        # "the graph changed under us".
+        ({"fix_loops": 5, "revision_loops": 2}, 22),
+        # And one that reviews three times emits two more.
+        ({"fix_loops": 3, "revision_loops": 3}, 20),
+        # The floors the engine permits.
+        ({"fix_loops": 1, "revision_loops": 1}, 12),
+    ],
+)
+def test_the_cap_is_a_function_of_the_limits_not_a_constant(
+    A: Any, limits: dict[str, int], expected: int
+) -> None:
+    assert A._sssf_phase_cap(limits) == expected
+
+
+def test_the_retry_limits_do_not_widen_the_phase_budget(A: Any) -> None:
+    """``agent_retries`` and ``json_fix_attempts`` are retries INSIDE one phase — a
+    re-entered agent session, a re-parsed response. They buy turns and dollars but
+    never open a second ``phase_start``, so a cap derived from them would be a
+    budget the graph cannot spend."""
+    base = A._sssf_phase_cap({"fix_loops": 3, "revision_loops": 2})
+    for key in ("agent_retries", "json_fix_attempts"):
+        assert (
+            A._sssf_phase_cap({"fix_loops": 3, "revision_loops": 2, key: 9}) == base
+        ), f"{key} must not move the phase cap"
+
+
+def test_the_named_default_is_the_formula_evaluated_at_the_defaults(A: Any) -> None:
+    """``ArmSpec.max_steps`` is built at import time, before any roster exists, so
+    it needs a static number. It must come through the SAME formula, or the
+    registry and the per-run budget can disagree about the arithmetic as well as
+    about the limits."""
+    assert A._SSSF_PHASE_CAP == A._sssf_phase_cap(A._SSSF_LIMITS)
+    for arm in _ARMS_UNDER_TEST:
+        assert A._ARMS[arm].max_steps == A._SSSF_PHASE_CAP
+
+
+def test_the_effective_cap_prefers_the_derivation_but_obeys_an_override(A: Any) -> None:
+    """``_resolve_max_steps`` hands ``run_sssf`` the registry default when nobody
+    overrode it, so "requested == the registry default" IS "nobody overrode this"
+    and the derived value is the better answer. An explicit ``--max-steps`` must
+    still win: a harness that quietly ignored it would enforce a bound the command
+    line did not ask for."""
+    wide = {**A._SSSF_LIMITS, "fix_loops": 5}
+    cap, source = A._sssf_effective_phase_cap(A._SSSF_PHASE_CAP, wide)
+    assert cap == A._sssf_phase_cap(wide) == 22
+    assert "derived" in source and "fix_loops=5" in source
+
+    cap, source = A._sssf_effective_phase_cap(7, wide)
+    assert cap == 7, "an explicit budget must win"
+    assert "explicit" in source and "22" in source, source
+
+    # At the defaults the two agree, which is why this change moves no old row.
+    cap, _ = A._sssf_effective_phase_cap(A._SSSF_PHASE_CAP, A._SSSF_LIMITS)
+    assert cap == A._SSSF_PHASE_CAP == 18
+
+
+def test_the_limits_block_is_read_back_from_the_document_not_the_constant(
+    A: Any,
+) -> None:
+    """The budget must come from the bytes handed to the engine. This is the line
+    that makes an arm which declares its own ``limits:`` get the right cap without
+    a second edit somewhere else."""
+    assert A._sssf_limits_of({}) == A._SSSF_LIMITS
+    assert A._sssf_limits_of({"limits": {"fix_loops": 5}})["fix_loops"] == 5
+    # Junk in the roster must not take a run down; the default stands.
+    assert A._sssf_limits_of({"limits": {"fix_loops": "nope"}})["fix_loops"] == (
+        A._SSSF_LIMITS["fix_loops"]
+    )
+    assert A._sssf_limits_of({"limits": "not-a-dict"}) == A._SSSF_LIMITS
+
+
+def test_run_sssf_derives_its_budget_and_never_reads_the_bare_constant(
+    run_sssf_ast: ast.FunctionDef,
+) -> None:
+    """Structural, because the failure this prevents is a future edit reaching for
+    ``_SSSF_PHASE_CAP`` again inside the per-run path — where it is exactly the
+    stale constant this fix removed."""
+    names = [
+        n.id for n in ast.walk(run_sssf_ast) if isinstance(n, ast.Name)
+    ]
+    assert "_SSSF_PHASE_CAP" not in names, (
+        "run_sssf must derive its phase budget from the roster's limits, not read "
+        "the registry's static default"
+    )
+    calls = [
+        n.func.id
+        for n in ast.walk(run_sssf_ast)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    ]
+    assert "_sssf_effective_phase_cap" in calls
+    assert "_sssf_limits_of" in calls
+
+
+# --------------------------------------------------------------------------- #
+# FIX 2 — a resumed attempt must not be charged for the dead one's phases
+# --------------------------------------------------------------------------- #
+
+
+def _resumed_events(path: Path) -> Path:
+    """Two attempts in ONE ``events.jsonl``, exactly as the engine leaves it.
+
+    The tracer's path is keyed by ``adw_id`` alone (``session.ensure``) and a
+    resume REUSES the id, so attempt 2 appends. Attempt 2 records the FULL graph
+    with the prefix it served from attempt 1 marked ``replayed`` — the keras
+    session's seq 1-8 then 9-16 in one file — and continues the sequence rather
+    than resetting it.
+
+    Attempt 1: 8 real phases, then a crash.
+    Attempt 2: 5 replayed + 3 real = 8 phase_start events, 3 of which cost money.
+    """
+    lines: list[str] = []
+
+    def config() -> None:
+        lines.append(
+            json.dumps(
+                {
+                    "adw_id": "6000935a",
+                    "type": "config",
+                    "name": "run_config",
+                    "payload": {
+                        "limits": {
+                            "fix_loops": 3,
+                            "revision_loops": 2,
+                            "agent_retries": 1,
+                            "json_fix_attempts": 2,
+                        },
+                        "skip_phases": ["documenter"],
+                    },
+                }
+            )
+        )
+
+    def phase(seq: int, name: str, *, replayed: bool) -> None:
+        pid = f"6000935a_{seq:02d}_{name}"
+        lines.append(
+            json.dumps(
+                {
+                    "adw_id": "6000935a",
+                    "phase_id": pid,
+                    "type": "phase_start",
+                    "name": name,
+                    "payload": {
+                        "kind": "agent",
+                        "owner": "builder",
+                        "description": name,
+                        "replayed": replayed,
+                    },
+                }
+            )
+        )
+        if replayed:
+            lines.append(
+                json.dumps(
+                    {
+                        "adw_id": "6000935a",
+                        "phase_id": pid,
+                        "type": "resume_replay",
+                        "name": "builder",
+                        "tokens": 0,
+                        "payload": {
+                            "source_phase_id": f"6000935a_{seq - 8:02d}_{name}",
+                            "cost": 0.0,
+                            "output_type": "BuildOutput",
+                            "summary": "replayed",
+                            "artifacts": [],
+                        },
+                    }
+                )
+            )
+        lines.append(
+            json.dumps(
+                {
+                    "adw_id": "6000935a",
+                    "phase_id": pid,
+                    "type": "phase_end",
+                    "name": name,
+                    "payload": {"status": "success"},
+                }
+            )
+        )
+
+    graph = [
+        "request", "plan", "commit_plan", "build",
+        "test_1", "fix_1", "test_2", "review_1",
+    ]
+    config()
+    for i, name in enumerate(graph, start=1):
+        phase(i, name, replayed=False)
+    # ---- attempt 2: a new process, so a new config event, then the full graph --
+    config()
+    for i, name in enumerate(graph, start=9):
+        phase(i, name, replayed=(i - 9) < 5)
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_a_resumed_attempt_counts_only_the_phases_it_actually_bought(
+    A: Any, tmp_path: Path
+) -> None:
+    """THE BUG: ``_sssf_phase_count`` counted every ``phase_start`` in the file. A
+    resumed attempt APPENDS to the prior attempt's log, so the count included dead
+    attempts, overflowed ``step_cap`` and flagged a good row — or, mid-run, made
+    ``run_sssf`` kill it for a "phase cap exceeded" it had not exceeded.
+
+    16 ``phase_start`` events are in this file. 8 belong to a dead attempt and 5 of
+    the survivors were replayed from it at $0. THREE cost money.
+    """
+    events = A._sssf_read_events(_resumed_events(tmp_path / "events.jsonl"))
+    assert sum(1 for e in events if e.get("type") == "phase_start") == 16, (
+        "the fixture must really contain both attempts"
+    )
+    assert A._sssf_phase_count(events) == 3
+    assert A._sssf_replayed_phase_count(events) == 5
+    assert A._sssf_attempt_count(events) == 2
+    # ... and the count must be under the cap, which is the point: 16 > 18 is
+    # false only by luck, and 8 + 8 phases of a wider graph would not be.
+    assert A._sssf_phase_count(events) <= A._SSSF_PHASE_CAP
+
+
+def test_a_first_attempt_is_unaffected(A: Any, tmp_path: Path) -> None:
+    """The fix must not cost the single-attempt case anything: one ``config``
+    event, no replays, every phase counted."""
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "config", "name": "run_config",
+                            "payload": {"limits": {"fix_loops": 3}}}),
+                json.dumps({"type": "phase_start", "name": "request",
+                            "payload": {"replayed": False}}),
+                json.dumps({"type": "phase_start", "name": "plan",
+                            "payload": {"replayed": False}}),
+                json.dumps({"type": "phase_end", "name": "plan",
+                            "payload": {"status": "success"}}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    events = A._sssf_read_events(path)
+    assert A._sssf_phase_count(events) == 2
+    assert A._sssf_replayed_phase_count(events) == 0
+    assert A._sssf_attempt_count(events) == 1
+
+
+def test_a_trace_with_no_config_marker_is_read_whole(A: Any, tmp_path: Path) -> None:
+    """An older engine emitted neither ``config`` nor ``replayed``. Reading such a
+    trace whole is the CORRECT answer for it, not a fallback: the engine version
+    that marks replays is the same one that emits the boundary, so a trace missing
+    the marker also cannot contain a resumed attempt."""
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        "\n".join(
+            json.dumps({"type": t, "name": n})
+            for t, n in [("phase_start", "request"), ("phase_start", "plan")]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    events = A._sssf_read_events(path)
+    assert A._sssf_attempt_count(events) == 0, "absent is not the same as one"
+    assert A._sssf_phase_count(events) == 2
+
+
+def test_the_engines_own_limits_are_read_back_as_a_cross_check(
+    A: Any, tmp_path: Path
+) -> None:
+    """``SSSFConfig.snapshot`` is written into the ``config`` event, so the engine
+    states the graph shape it actually ran. Recorded beside the harness's copy and
+    never merged with it: a disagreement means the engine did not honour the
+    roster, and that is a finding rather than a number to average."""
+    events = A._sssf_read_events(_resumed_events(tmp_path / "events.jsonl"))
+    assert A._sssf_engine_limits(events) == {
+        "fix_loops": 3,
+        "revision_loops": 2,
+        "agent_retries": 1,
+        "json_fix_attempts": 2,
+    }
+    assert A._sssf_engine_limits([]) is None
+
+
+def test_the_replay_flag_is_read_from_the_payload_the_engine_writes(A: Any) -> None:
+    """``runner.Run.phase`` writes ``payload.replayed`` on every ``phase_start``
+    (the same boolean it stores in the ``phases.replayed`` column). Absent means
+    False — an older engine's row is a real phase, not a replayed one."""
+    assert A._sssf_event_replayed({"payload": {"replayed": True}}) is True
+    assert A._sssf_event_replayed({"payload": {"replayed": False}}) is False
+    assert A._sssf_event_replayed({"payload": {}}) is False
+    assert A._sssf_event_replayed({}) is False
+
+
+# --------------------------------------------------------------------------- #
+# FIX 3 — a plumbing abort is not a capability failure; an agent's abort is
+# --------------------------------------------------------------------------- #
+
+_CRASH_LOG = """\
+▶ 06 plan  agent · planner  Turn the request into an implementable plan
+  ✗ plan 149.4s  'str' object has no attribute 'get'
+Traceback (most recent call last):
+  File "/home/k/sssf/adws/adw_simple_sdlc.py", line 221, in <module>
+    sys.exit(main(utils.resolve_prompt(args.prompt), args.config, args.adw_id))
+  File "/home/k/sssf/adws/adw_modules/agent_pi.py", line 315, in run
+    if event.get("type") == "message_end":
+       ^^^^^^^^^
+AttributeError: 'str' object has no attribute 'get'
+"""
+
+_BREACH_LOG = """\
+▶ 18 plan  agent · planner  Turn the request into an implementable plan
+Traceback (most recent call last):
+  File "/home/k/sssf/adws/adw_simple_sdlc.py", line 221, in <module>
+    sys.exit(main(utils.resolve_prompt(args.prompt), args.config, args.adw_id))
+  File "/home/k/sssf/adws/adw_modules/permissions.py", line 282, in enforce
+    raise PermissionBreach(
+adw_modules.permissions.PermissionBreach: planner is limited to ['specs/'] but \
+modified 18 path(s):
+  - add_map_print.py — deleted
+  - test_fix.py — deleted
+"""
+
+
+def _crash_events() -> list[dict[str, Any]]:
+    """montepy's trace: ONE generic error event, ``name`` == the phase name, a
+    payload whose only key is ``error``. No cause label anywhere, because nothing
+    decided this — the engine fell over."""
+    return [
+        {"type": "config", "name": "run_config", "payload": {"limits": {}}},
+        {"type": "phase_start", "name": "plan", "phase_id": "dbe9e440_06_plan",
+         "payload": {"kind": "agent", "owner": "planner", "replayed": False}},
+        {"type": "error", "name": "plan", "phase_id": "dbe9e440_06_plan",
+         "payload": {"error": "'str' object has no attribute 'get'"}},
+        {"type": "phase_end", "name": "plan", "phase_id": "dbe9e440_06_plan",
+         "payload": {"status": "fail"}},
+    ]
+
+
+def _breach_events() -> list[dict[str, Any]]:
+    """keras's trace: the engine's own LABELLED event (``agents.execute`` emits
+    ``permission_breach`` with ``agent``/``writes``/``protected_files`` and
+    re-raises), followed by the generic one carrying the identical message under
+    the PHASE's name — which is precisely why message text cannot classify this."""
+    msg = "planner is limited to ['specs/'] but modified 18 path(s):\n  - x.py — deleted"
+    return [
+        {"type": "config", "name": "run_config", "payload": {"limits": {}}},
+        {"type": "phase_start", "name": "plan", "phase_id": "6000935a_18_plan",
+         "payload": {"kind": "agent", "owner": "planner", "replayed": False}},
+        {"type": "gate_pass", "name": "artifacts_exist",
+         "phase_id": "6000935a_18_plan", "payload": {}},
+        {"type": "error", "name": "permission_breach",
+         "phase_id": "6000935a_18_plan",
+         "payload": {"agent": "planner", "error": msg, "writes": ["specs/"],
+                     "protected_files": []}},
+        {"type": "error", "name": "plan", "phase_id": "6000935a_18_plan",
+         "payload": {"error": msg}},
+        {"type": "phase_end", "name": "plan", "phase_id": "6000935a_18_plan",
+         "payload": {"status": "fail"}},
+    ]
+
+
+def test_an_unhandled_engine_exception_is_refused_from_every_rate(A: Any) -> None:
+    """``idaholab__montepy-933_interface``: ``plan -> fail ERR:'str' object has no
+    attribute 'get'`` — an ``AttributeError`` inside the engine's own stream
+    reader. The planner never got to decide anything, so the arm was never asked
+    the question and the row is not a capability result on EITHER side of a rate.
+    """
+    got = A._sssf_failure_classification(_crash_events(), _CRASH_LOG)
+    assert got["kind"] == "engine_crash"
+    assert got["counted"] is False
+    assert "AttributeError" in got["reason"]
+    # The evidence, so the verdict is re-derivable from the archived row.
+    assert got["evidence"]["traceback"]["exception"] == "AttributeError"
+    assert "agent_pi.py" in got["evidence"]["traceback"]["frame"]
+
+
+def test_a_writes_scope_breach_stays_counted_under_its_own_reason(A: Any) -> None:
+    """``keras-team__keras-22316``: the PLANNER wrote 18 paths outside its declared
+    ``writes`` scope and ``permissions.enforce`` refused the run. That is the
+    agent's own behaviour, and behaviour is what the arm is measured on — so it
+    stays COUNTED, and gets its own reason so it can be re-classified later from
+    the record instead of by re-running it."""
+    got = A._sssf_failure_classification(_breach_events(), _BREACH_LOG)
+    assert got["kind"] == "writes_scope_breach"
+    assert got["counted"] is True
+    assert "specs/" in got["reason"]
+    assert got["evidence"]["abort_events"][0]["name"] == "permission_breach"
+    assert got["evidence"]["abort_events"][0]["payload"]["writes"] == ["specs/"]
+
+
+def test_the_two_failures_are_not_the_same_verdict(A: Any) -> None:
+    """The point of the whole fix: these two rows were BOTH in the chain arm's
+    denominator as ``empty_patch``, and every field of ``result.json`` that a
+    reader could have used to tell them apart was identical."""
+    crash = A._sssf_failure_classification(_crash_events(), _CRASH_LOG)
+    breach = A._sssf_failure_classification(_breach_events(), _BREACH_LOG)
+    assert crash["kind"] != breach["kind"]
+    assert crash["counted"] is not breach["counted"]
+
+
+def test_the_classification_is_structural_not_a_message_match(A: Any) -> None:
+    """Two proofs that this is not string-matching one message:
+
+    1. the breach is recognised from the engine's LABELLED event alone, with the
+       message text replaced by something unrecognisable;
+    2. the crash is recognised from the exception CLASS, with a message this
+       harness has never seen.
+    """
+    events = _breach_events()
+    for ev in events:
+        if isinstance(ev.get("payload"), dict) and "error" in ev["payload"]:
+            ev["payload"]["error"] = "totally different wording"
+    got = A._sssf_failure_classification(events, "")
+    assert got["kind"] == "writes_scope_breach", "the engine's LABEL is the signal"
+
+    novel = _CRASH_LOG.replace(
+        "AttributeError: 'str' object has no attribute 'get'",
+        "KeyError: 'some_field_nobody_has_seen'",
+    )
+    got = A._sssf_failure_classification(_crash_events(), novel)
+    assert got["kind"] == "engine_crash", "the exception CLASS is the signal"
+
+
+def test_a_deliberate_engine_refusal_is_not_called_a_crash(A: Any) -> None:
+    """The engine raises on purpose all the time — a failed gate, an envelope that
+    will not parse, a SIGTERM from this harness's own kill. "There is a traceback"
+    is therefore NOT a crash signal: the breach case has one too."""
+    for exc, tail in [
+        ("GateFailure", "adw_modules.agents.GateFailure: gate diff_matches_claims"),
+        ("ValueError", "ValueError: no JSON object found in the response"),
+        ("SystemExit", "SystemExit: 143"),
+    ]:
+        log = _CRASH_LOG.replace(
+            "AttributeError: 'str' object has no attribute 'get'", tail
+        )
+        got = A._sssf_failure_classification(_crash_events(), log)
+        assert got["kind"] != "engine_crash", f"{exc} is deliberate"
+        assert got["counted"] is True
+
+
+def test_an_unclassified_exception_stays_counted(A: Any) -> None:
+    """Fail-closed toward COUNTING. ``classify_run``'s posture is that a flagged
+    counted row is safer than a silently dropped one, because a dropped row moves
+    a published denominator — so only a NAMED, understood infra class earns the
+    exclusion."""
+    log = _CRASH_LOG.replace(
+        "AttributeError: 'str' object has no attribute 'get'",
+        "SomeBrandNewError: who knows",
+    )
+    got = A._sssf_failure_classification(_crash_events(), log)
+    assert got["kind"] == "unclassified_exception"
+    assert got["counted"] is True
+
+
+def test_a_clean_failure_with_no_traceback_classifies_as_nothing(A: Any) -> None:
+    """A red verdict the ADW reached on purpose (tests never went green) has no
+    traceback and no abort label. It must stay exactly what it was."""
+    got = A._sssf_failure_classification(
+        [{"type": "config", "payload": {}},
+         {"type": "phase_start", "name": "test_3", "payload": {"replayed": False}}],
+        "▶ 12 test_3\n  ✗ tests still red\n",
+    )
+    assert got["kind"] is None
+    assert got["counted"] is True
+
+
+def test_the_last_traceback_wins_over_a_chained_one(A: Any) -> None:
+    """Exception chaining emits several tracebacks; the final one is what actually
+    killed the process."""
+    chained = (
+        "Traceback (most recent call last):\n"
+        '  File "/home/k/sssf/adws/adw_modules/agents.py", line 1, in x\n'
+        "    raise ValueError('first')\n"
+        "ValueError: first\n"
+        "\n"
+        "During handling of the above exception, another exception occurred:\n"
+        "\n"
+        "Traceback (most recent call last):\n"
+        '  File "/home/k/sssf/adws/adw_modules/tracer.py", line 9, in y\n'
+        "    row['k']\n"
+        "TypeError: string indices must be integers\n"
+    )
+    tb = A._sssf_traceback_exception(chained)
+    assert tb["exception"] == "TypeError"
+    assert "tracer.py:9" in tb["frame"]
+    assert A._sssf_failure_classification([], chained)["kind"] == "engine_crash"
+
+
+def test_the_crash_termination_is_refused_the_way_a_starved_row_is(A: Any) -> None:
+    """The mechanism, not just the label: ``engine-crash`` is in
+    ``_ERROR_TERMINATIONS``, so the step-count fallback cannot re-label it as
+    budget-exhausted and hand it back to the denominator it has to stay out of —
+    exactly the treatment ``provider-empty-response`` gets."""
+    assert A._SSSF_ENGINE_CRASH_TERMINATION in A._ERROR_TERMINATIONS
+    row = {"termination": A._SSSF_ENGINE_CRASH_TERMINATION, "error": "engine-crash: …",
+           "steps_used": 18, "step_cap": 18}
+    assert A.budget_exhausted_reason(row) is None, (
+        "a crashed run must not be re-labelled as a cap hit"
+    )
+    assert A.classify_run(row)[0] == A._RUN_FAILED
+    assert A._row_engine_crashed(row) is True
+
+    # A writes-scope breach is deliberately NOT in that set, and carries no
+    # ``error``: it must stay a COUNTED failure of the arm.
+    breach = {"termination": A._SSSF_WRITES_SCOPE_TERMINATION, "error": None,
+              "steps_used": 2, "step_cap": 18}
+    assert A._SSSF_WRITES_SCOPE_TERMINATION not in A._ERROR_TERMINATIONS
+    assert A.classify_run(breach)[0] == A._RUN_OK
+    assert A._row_writes_scope_breach(breach) is True
+    assert A._row_engine_crashed(breach) is False
+
+
+def test_the_row_predicates_derive_from_the_classification_too(A: Any) -> None:
+    """A row written before the termination value existed is still recognised from
+    its recorded ``sssf_failure_class`` — the derive-don't-trust posture that lets
+    an archived row be re-read under the new rule instead of taken on faith."""
+    assert A._row_engine_crashed({"sssf_failure_class": "engine_crash"}) is True
+    assert (
+        A._row_writes_scope_breach({"sssf_failure_class": "writes_scope_breach"})
+        is True
+    )
+    assert A._row_engine_crashed({"sssf_failure_class": "writes_scope_breach"}) is False
+
+
+def test_the_report_gives_each_failure_its_own_cell_code(A: Any) -> None:
+    """`C` excluded and `W` counted, each with its own legend line. Lumping them
+    would hide which of two different problems, with two different owners, is
+    happening."""
+    crash = {"grade": {"oracle_resolved": False, "outcome": "empty_patch"},
+             "termination": A._SSSF_ENGINE_CRASH_TERMINATION,
+             "_audit_ok": True, "_run_failed": True, "_budget_exhausted": False,
+             "_attempt": 1}
+    breach = {"grade": {"oracle_resolved": False, "outcome": "empty_patch"},
+              "termination": A._SSSF_WRITES_SCOPE_TERMINATION,
+              "_audit_ok": True, "_run_failed": False, "_budget_exhausted": False,
+              "_attempt": 1}
+    plain = {"grade": {"oracle_resolved": False, "outcome": "empty_patch"},
+             "termination": "terminal-state",
+             "_audit_ok": True, "_run_failed": False, "_budget_exhausted": False,
+             "_attempt": 1}
+    assert A._outcome_cell(crash) == "C"
+    assert A._outcome_cell(breach) == "W"
+    assert A._outcome_cell(plain) == "E", "the plain empty patch is unchanged"
+    codes = A._outcome_codes([crash, breach])
+    assert "`C` engine-crash" in codes
+    assert "`W` writes-scope breach" in codes
+    assert "COUNTED" in codes
+
+
+def test_run_sssf_classifies_from_the_artifacts_and_records_the_evidence(
+    run_sssf_ast: ast.FunctionDef,
+) -> None:
+    """Structural: the classification has to be made where the artifacts are still
+    on disk and written into the row, because nothing downstream can re-derive it
+    from the fields the two rows shared."""
+    src = ast.unparse(run_sssf_ast)
+    assert "_sssf_failure_classification(" in src
+    assert "sssf_failure_class" in src
+    assert "sssf_failure_evidence" in src
+    # The crash sets an ``error`` (which is what excludes it); the breach must not.
+    assert "_SSSF_ENGINE_CRASH_TERMINATION" in src
+    assert "_SSSF_WRITES_SCOPE_TERMINATION" in src

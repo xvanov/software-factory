@@ -1,0 +1,259 @@
+{
+  "arm": "v32-solo",
+  "instance_id": "keras-team__keras-22316",
+  "repo": "keras-team/keras",
+  "base_commit": "34e55d4561ba2a61bbc72562e88b3704e0a43081",
+  "problem_statement_sha256": "19ccbc1e05bc8e92e3a4f0adbc94eb3ee098d7ef27b3c37fdc2061a7cbc855f1",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-13T17:15:34.155413+00:00",
+  "cost_source": "derived-from-price-table",
+  "preflight": {
+    "skip_phases_supported": true,
+    "skip_phases_declared_in": "SSSFConfig",
+    "skip_phases_problem": null,
+    "credential_problem": null,
+    "engine": "/home/k/sssf/adws/adw_simple_sdlc.py"
+  },
+  "model": null,
+  "sssf_roster": {
+    "planner": null,
+    "builder": "azure/DeepSeek-V3.2",
+    "reviewer": null,
+    "documenter": null
+  },
+  "sssf_skip_phases": [
+    "planner",
+    "reviewer",
+    "documenter"
+  ],
+  "sssf_roster_sha256": "1817930d256defffe2cda2ef1c595bb83af433a7581fc29905cddf396ab05bfe",
+  "sssf_roster_file": "sssf-roster.yaml",
+  "sssf_adw_id": "2713178d",
+  "sssf_thinking": "medium",
+  "sssf_roles_run": [
+    "builder"
+  ],
+  "sssf_roles_skipped": [
+    "planner",
+    "reviewer",
+    "documenter"
+  ],
+  "sssf_engine": "/home/k/sssf/adws/adw_simple_sdlc.py",
+  "models_used": [
+    "azure/DeepSeek-V3.2"
+  ],
+  "model_calls": 64,
+  "model_escalated_calls": 0,
+  "models_off_roster": [],
+  "wall_clock_s": 373.9,
+  "steps_used": 4,
+  "step_cap": 18,
+  "termination": "terminal-state",
+  "trajectory": "sssf-adw.log",
+  "sssf_events_file": "sssf-events.jsonl",
+  "probe_plumbing": false,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 3.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "keras/src/ops/function_test.py"
+    ],
+    "exit_code": 0
+  },
+  "tokens_in": 2122214,
+  "cached_input_tokens": 0,
+  "cache_write_tokens": 0,
+  "tokens_out": 32796,
+  "reasoning_tokens": 0,
+  "total_tokens": 2155010,
+  "cost_usd": 1.286,
+  "usage_by_role": {
+    "builder": {
+      "input_tokens": 2122214,
+      "output_tokens": 32796,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 2155010,
+      "total_cost": 1.285981,
+      "calls": 64,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V3.2": {
+          "input_tokens": 2122214,
+          "output_tokens": 32796,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 56643
+    }
+  },
+  "persona_calls": 64,
+  "usage_source": "/home/k/.cache/swebench-work/keras-team__keras-22316__v32-solo/adw_data/sessions/2713178d/<role>/raw_output.jsonl (64 assistant turn(s) across 1 role stream(s))",
+  "sssf_turn_digest_file": "sssf-turns.jsonl",
+  "sssf_raw_output_streams": {
+    "builder": "/home/k/.cache/swebench-work/keras-team__keras-22316__v32-solo/adw_data/sessions/2713178d/builder/raw_output.jsonl"
+  },
+  "sssf_assistant_turns": 64,
+  "peak_turn_input_tokens": 56643,
+  "cost_usd_events": 1.285981,
+  "tokens_in_events": 2122214,
+  "tokens_out_events": 32796,
+  "cached_input_tokens_events": 0,
+  "sssf_roles_run_events": [
+    "builder"
+  ],
+  "usage_by_role_events": {
+    "builder": {
+      "input_tokens": 2122214,
+      "output_tokens": 32796,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 2155010,
+      "total_cost": 1.285981,
+      "calls": 1,
+      "reported_cost": 1.285981,
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ]
+    }
+  },
+  "events_source": "/home/k/.cache/swebench-work/keras-team__keras-22316__v32-solo/adw_data/sessions/2713178d/events.jsonl",
+  "cost_missing_from_events_usd": 0.0,
+  "shared_db": "sssf-bench.db",
+  "shared_db_totals": {
+    "cost_usd": 2.747534599999999,
+    "total_tokens": 4598265
+  },
+  "cost_usd_shared_db": 2.7475,
+  "cost_mismatch_usd": 1.461554,
+  "cost_usd_rederived": 1.285981,
+  "cost_rederived_by_role": {
+    "builder": 1.285981
+  },
+  "cost_rederivation_drift_usd": 0.0,
+  "cost_rederivation_tolerance_usd": 0.01,
+  "cost_rederivation_disagrees": false,
+  "models_missing_a_rate": [],
+  "empty_response_turns": 0,
+  "empty_response_by_role": {},
+  "empty_response_reasons": [],
+  "provider_starved": false,
+  "price_table": {
+    "path": "/home/k/.pi/agent/models.json",
+    "sha256": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "sha256_pinned": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "matches_pinned": true,
+    "units": "USD per 1,000,000 tokens",
+    "rates": {
+      "azure/DeepSeek-V3.2": {
+        "cost": {
+          "input": 0.58,
+          "output": 1.68,
+          "cacheRead": 0.58,
+          "cacheWrite": 0.0
+        },
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "reasoning": true,
+        "api": "openai-completions"
+      }
+    },
+    "missing": [],
+    "error": null
+  },
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "adw_accepted:tests_green",
+  "sssf_chain_roles": [
+    "builder"
+  ],
+  "adw_exit_code": 0,
+  "adw_session_status": "success",
+  "adw_not_accepted_reason": null,
+  "files_changed": [
+    "keras/src/ops/function.py"
+  ],
+  "test_files_stripped": [
+    "keras/src/ops/function_test.py"
+  ],
+  "sssf_paths_excluded": [],
+  "sssf_excluded_prefixes": [
+    "specs/",
+    "app_docs/",
+    "docs/",
+    "adw_data/",
+    "adws/"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 1879,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "62d5e26e952fb63d9f8350abb4365166c362cc32",
+    "expected_base_commit": "34e55d4561ba2a61bbc72562e88b3704e0a43081",
+    "base_ref_matches": false,
+    "base_ref_ahead_of_expected": 1,
+    "expected_resolves": true,
+    "gitlink": "dir",
+    "head_sha": "62d5e26e952fb63d9f8350abb4365166c362cc32",
+    "head_is_base": true,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 290,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "keras/src/ops/function_test.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 1,
+    "refused_samples": [
+      "{\"event_id\": \"evt_9f502322fde3\", \"ts\": \"2026-08-13T17:11:57.422+00:00\", \"adw_id\": \"2713178d\", \"phase_id\": \"2713178d_06_build\", \"type\": \"tool_call\", \"name\": \"bash: cd /home/k/.cache/swebench-work/keras-team__keras-22316__v32-solo/repo && python\\u2026\", \"payload\": {\"tool\": \"bash\", \"tool_call_id\": \"cal"
+    ],
+    "scan_truncated": false
+  },
+  "sssf_caps": {
+    "run_cost_cap_usd": 6.0,
+    "wall_clock_cap_s": 5400,
+    "phase_cap": 18,
+    "ledger_poll_s": 5.0,
+    "enforced_by": "harness (the sssf engine has no spend limit)",
+    "spend_signal": "max(this run's events.jsonl, shared db sessions.total_cost); an unreadable shared db never kills a run"
+  },
+  "ledger_cost_at_stop_usd": 2.747535,
+  "attempt": 2,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "v32-solo",
+    "instance_id": "keras-team__keras-22316",
+    "image": "swerebench/sweb.eval.x86_64.keras-team_1776_keras-22316@sha256:2a85415e1bcc6b0e03d08d36e0d922d9428d4b4fc0b6299dadf4c36d9f6a6520",
+    "graded_at": "2026-08-13T17:15:34.276385+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 8,
+    "pass_to_pass_declared_count": 8,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 23.3,
+    "log_tail": "9.0.3, pluggy-1.6.0 -- /opt/conda/envs/testbed/bin/python\ncachedir: .pytest_cache\nrootdir: /testbed\nconfigfile: pyproject.toml\nplugins: jaxtyping-0.3.9, cov-7.1.0\ncollecting ... collected 2 items\n\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input PASSED [ 50%]\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain PASSED [100%]\n\n=========================== short test summary info ============================\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain\n============================== 2 passed in 0.03s ===============================\nSWEBENCH_TALLY_064c3ded30560b0b: fail_to_pass ============================== 2 passed in 0.03s ===============================\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\n============================= test session starts ==============================\nplatform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- /opt/conda/envs/testbed/bin/python\ncachedir: .pytest_cache\nrootdir: /testbed\nconfigfile: pyproject.toml\nplugins: jaxtyping-0.3.9, cov-7.1.0\ncollecting ... collected 8 items\n\nkeras/src/ops/function_test.py::FunctionTest::test_define_and_call PASSED [ 12%]\nkeras/src/ops/function_test.py::FunctionTest::test_dict_io PASSED        [ 25%]\nkeras/src/ops/function_test.py::FunctionTest::test_dynamic_shape_inference PASSED [ 37%]\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_empty_inputs PASSED [ 50%]\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_empty_outputs PASSED [ 62%]\nkeras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs PASSED [ 75%]\nkeras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error PASSED [ 87%]\nkeras/src/ops/function_test.py::FunctionTest::test_serialization PASSED  [100%]\n\n=========================== short test summary info ============================\nPASSED keras/src/ops/function_test.py::FunctionTest::test_define_and_call\nPASSED keras/src/ops/function_test.py::FunctionTest::test_dict_io\nPASSED keras/src/ops/function_test.py::FunctionTest::test_dynamic_shape_inference\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_inputs\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_outputs\nPASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs\nPASSED keras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error\nPASSED keras/src/ops/function_test.py::FunctionTest::test_serialization\n============================== 8 passed in 0.07s ===============================\nSWEBENCH_TALLY_064c3ded30560b0b: pass_to_pass ============================== 8 passed in 0.07s ===============================\n[10 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_064c3ded30560b0b: RESOLVED\n"
+  }
+}

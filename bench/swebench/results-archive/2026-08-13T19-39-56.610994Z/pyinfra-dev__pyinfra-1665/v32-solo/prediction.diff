@@ -1,0 +1,65 @@
+diff --git a/src/pyinfra/connectors/util.py b/src/pyinfra/connectors/util.py
+index ab9d15b..654481e 100644
+--- a/src/pyinfra/connectors/util.py
++++ b/src/pyinfra/connectors/util.py
+@@ -235,13 +235,43 @@ def write_stdin(stdin, buffer):
+ def remove_any_sudo_askpass_file(host) -> None:
+     sudo_askpass_path = host.connector_data.get("sudo_askpass_path")
+     if sudo_askpass_path:
+-        host.run_shell_command(StringCommand("rm", "-f", QuoteString(sudo_askpass_path)))
+-        host.connector_data["sudo_askpass_path"] = None
++        try:
++            ok, output = host.run_shell_command(StringCommand("rm", "-f", QuoteString(sudo_askpass_path)))
++            if ok:
++                host.connector_data["sudo_askpass_path"] = None
++            else:
++                logger.debug(
++                    "Failed to remove sudo askpass file %s (exit code non-zero): %s",
++                    sudo_askpass_path,
++                    output.output,
++                )
++        except Exception as e:  # noqa
++            # If the host is disconnected (e.g., after reboot), we cannot remove the file now.
++            # Keep the path for later cleanup.
++            logger.debug(
++                "Failed to remove sudo askpass file %s due to exception: %s",
++                sudo_askpass_path,
++                e,
++            )
+ 
+     su_askpass_path = host.connector_data.get("su_askpass_path")
+     if su_askpass_path:
+-        host.run_shell_command(StringCommand("rm", "-f", QuoteString(su_askpass_path)))
+-        host.connector_data["su_askpass_path"] = None
++        try:
++            ok, output = host.run_shell_command(StringCommand("rm", "-f", QuoteString(su_askpass_path)))
++            if ok:
++                host.connector_data["su_askpass_path"] = None
++            else:
++                logger.debug(
++                    "Failed to remove su askpass file %s (exit code non-zero): %s",
++                    su_askpass_path,
++                    output.output,
++                )
++        except Exception as e:  # noqa
++            logger.debug(
++                "Failed to remove su askpass file %s due to exception: %s",
++                su_askpass_path,
++                e,
++            )
+ 
+ 
+ @memoize
+diff --git a/src/pyinfra/operations/server.py b/src/pyinfra/operations/server.py
+index e72dce2..9f6e417 100644
+--- a/src/pyinfra/operations/server.py
++++ b/src/pyinfra/operations/server.py
+@@ -111,7 +111,7 @@ def reboot(delay=10, interval=1, reboot_timeout=300):
+ 
+     # On certain systems sudo files are lost on reboot
+     def clean_sudo_info(state, host):
+-        host.connector_data["sudo_askpass_path"] = None
++        remove_any_sudo_askpass_file(host)
+ 
+     yield FunctionCommand(clean_sudo_info, (), {})
+ 

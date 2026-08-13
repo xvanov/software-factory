@@ -1,0 +1,23 @@
+{
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "arm": "chain",
+  "audited_at": "2026-08-13T17:55:33.238969+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.8222,
+  "ledger_tokens_in": 2808990,
+  "ledger_tokens_out": 36374,
+  "result_cost_usd": 1.8222,
+  "prediction_sha256": "bcee4879d1aee67155bda34d4f82dd5fde96d81c83d8ffb45071523e551ced02",
+  "base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+  "stripped_test_paths": [
+    "tests/test_connectors/test_util.py",
+    "tests/test_connectors/test_util.py.bak"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

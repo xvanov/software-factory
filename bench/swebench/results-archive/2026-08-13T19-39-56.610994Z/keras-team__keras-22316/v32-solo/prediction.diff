@@ -1,0 +1,48 @@
+diff --git a/keras/src/ops/function.py b/keras/src/ops/function.py
+index 8d3c524..ac11ad2 100644
+--- a/keras/src/ops/function.py
++++ b/keras/src/ops/function.py
+@@ -301,13 +301,24 @@ def map_graph(inputs, outputs):
+         # The "depth" of a node is the max of the depths
+         # of all nodes it is connected to + 1.
+         for node_dep in node.parent_nodes:
++            if node_dep not in nodes_in_decreasing_depth:
++                continue
+             previous_depth = nodes_depths.get(node_dep, 0)
+             nodes_depths[node_dep] = max(depth + 1, previous_depth)
+ 
++    # Collect tensors that are referenced as input by any node in the graph.
++    referenced_input_tensors = set()
++    for node in nodes_in_decreasing_depth:
++        for tensor in tree.flatten(node.input_tensors):
++            referenced_input_tensors.add(tensor)
++
+     # Handle inputs that are not connected to outputs.
+     # We do not error out here because the inputs may be used to compute losses
+     # and metrics.
+     for input_t in inputs:
++        # Skip inputs that are referenced in the graph (they are already connected)
++        if input_t in referenced_input_tensors:
++            continue
+         input_operation = input_t._keras_history[0]
+         if input_operation and input_operation not in operations_depths:
+             operations_depths[input_operation] = 0
+@@ -428,13 +439,17 @@ def _build_map_helper(
+     (
+         operation,
+         node_index,
+-        _,
++        _, 
+     ) = tensor._keras_history
+     if not operation:
+         return
+ 
+     node = operation._inbound_nodes[node_index]
+ 
++    # Skip nodes whose output tensor is an input to the function, unless it's an input node.
++    if tensor in tree.flatten(inputs) and not node.is_input:
++        return
++
+     # Don't repeat work for shared subgraphs
+     if node in finished_nodes:
+         return

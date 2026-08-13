@@ -1,0 +1,352 @@
+{
+  "arm": "chain",
+  "instance_id": "hkuds__openharness-217",
+  "repo": "HKUDS/OpenHarness",
+  "base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+  "problem_statement_sha256": "5a1163602919f92cffa9aa885f04b1db190c3071b17eff2cf2fc439225841f5a",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-13T17:45:49.454725+00:00",
+  "cost_source": "derived-from-price-table",
+  "preflight": {
+    "skip_phases_supported": true,
+    "skip_phases_declared_in": "SSSFConfig",
+    "skip_phases_problem": null,
+    "credential_problem": null,
+    "engine": "/home/k/sssf/adws/adw_simple_sdlc.py"
+  },
+  "model": null,
+  "sssf_roster": {
+    "planner": "azure/DeepSeek-V3.2",
+    "builder": "azure/DeepSeek-V3.2",
+    "reviewer": "azure/gpt-5.4",
+    "documenter": null
+  },
+  "sssf_skip_phases": [
+    "documenter"
+  ],
+  "sssf_roster_sha256": "6350e8ad4405cb7cb36d8fcf4fa8a23d61994007366f254a9fb96c8ed3dd2fef",
+  "sssf_roster_file": "sssf-roster.yaml",
+  "sssf_adw_id": "297faa65",
+  "sssf_thinking": "medium",
+  "sssf_roles_run": [
+    "builder",
+    "planner",
+    "reviewer"
+  ],
+  "sssf_roles_skipped": [
+    "documenter"
+  ],
+  "sssf_engine": "/home/k/sssf/adws/adw_simple_sdlc.py",
+  "models_used": [
+    "azure/DeepSeek-V3.2",
+    "azure/gpt-5.4"
+  ],
+  "model_calls": 83,
+  "model_escalated_calls": 0,
+  "models_off_roster": [],
+  "wall_clock_s": 324.8,
+  "steps_used": 7,
+  "step_cap": 18,
+  "termination": "terminal-state",
+  "trajectory": "sssf-adw.log",
+  "sssf_events_file": "sssf-events.jsonl",
+  "probe_plumbing": false,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.6,
+    "mode": "ancestor-env-check",
+    "collected_targets": [
+      "tests/test_auth"
+    ],
+    "exit_code": 0
+  },
+  "tokens_in": 1627425,
+  "cached_input_tokens": 44416,
+  "cache_write_tokens": 0,
+  "tokens_out": 35554,
+  "reasoning_tokens": 0,
+  "total_tokens": 1707395,
+  "cost_usd": 1.0962,
+  "usage_by_role": {
+    "builder": {
+      "input_tokens": 1277464,
+      "output_tokens": 22684,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 1300148,
+      "total_cost": 0.779038,
+      "calls": 53,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V3.2": {
+          "input_tokens": 1277464,
+          "output_tokens": 22684,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 50132
+    },
+    "planner": {
+      "input_tokens": 331305,
+      "output_tokens": 9445,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 340750,
+      "total_cost": 0.208024,
+      "calls": 24,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V3.2": {
+          "input_tokens": 331305,
+          "output_tokens": 9445,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 23844
+    },
+    "reviewer": {
+      "input_tokens": 18656,
+      "output_tokens": 3425,
+      "cache_read_tokens": 44416,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 66497,
+      "total_cost": 0.109119,
+      "calls": 6,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/gpt-5.4"
+      ],
+      "tokens_by_model": {
+        "azure/gpt-5.4": {
+          "input_tokens": 18656,
+          "output_tokens": 3425,
+          "cache_read_tokens": 44416,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 15181
+    }
+  },
+  "persona_calls": 83,
+  "usage_source": "/home/k/.cache/swebench-work/hkuds__openharness-217__chain/adw_data/sessions/297faa65/<role>/raw_output.jsonl (83 assistant turn(s) across 3 role stream(s))",
+  "sssf_turn_digest_file": "sssf-turns.jsonl",
+  "sssf_raw_output_streams": {
+    "builder": "/home/k/.cache/swebench-work/hkuds__openharness-217__chain/adw_data/sessions/297faa65/builder/raw_output.jsonl",
+    "planner": "/home/k/.cache/swebench-work/hkuds__openharness-217__chain/adw_data/sessions/297faa65/planner/raw_output.jsonl",
+    "reviewer": "/home/k/.cache/swebench-work/hkuds__openharness-217__chain/adw_data/sessions/297faa65/reviewer/raw_output.jsonl"
+  },
+  "sssf_assistant_turns": 83,
+  "peak_turn_input_tokens": 50132,
+  "cost_usd_events": 1.096181,
+  "tokens_in_events": 1627425,
+  "tokens_out_events": 35554,
+  "cached_input_tokens_events": 44416,
+  "sssf_roles_run_events": [
+    "builder",
+    "planner",
+    "reviewer"
+  ],
+  "usage_by_role_events": {
+    "planner": {
+      "input_tokens": 331305,
+      "output_tokens": 9445,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 340750,
+      "total_cost": 0.208024,
+      "calls": 1,
+      "reported_cost": 0.208024,
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ]
+    },
+    "builder": {
+      "input_tokens": 1277464,
+      "output_tokens": 22684,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 1300148,
+      "total_cost": 0.779038,
+      "calls": 1,
+      "reported_cost": 0.779038,
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ]
+    },
+    "reviewer": {
+      "input_tokens": 18656,
+      "output_tokens": 3425,
+      "cache_read_tokens": 44416,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 66497,
+      "total_cost": 0.109119,
+      "calls": 1,
+      "reported_cost": 0.109119,
+      "models": [
+        "azure/gpt-5.4"
+      ]
+    }
+  },
+  "events_source": "/home/k/.cache/swebench-work/hkuds__openharness-217__chain/adw_data/sessions/297faa65/events.jsonl",
+  "cost_missing_from_events_usd": 0.0,
+  "shared_db": "sssf-bench.db",
+  "shared_db_totals": {
+    "cost_usd": 1.80217478,
+    "total_tokens": 2883088
+  },
+  "cost_usd_shared_db": 1.8022,
+  "cost_mismatch_usd": 0.705994,
+  "cost_usd_rederived": 1.096182,
+  "cost_rederived_by_role": {
+    "builder": 0.779038,
+    "planner": 0.208025,
+    "reviewer": 0.109119
+  },
+  "cost_rederivation_drift_usd": 1e-06,
+  "cost_rederivation_tolerance_usd": 0.01,
+  "cost_rederivation_disagrees": false,
+  "models_missing_a_rate": [],
+  "empty_response_turns": 0,
+  "empty_response_by_role": {},
+  "empty_response_reasons": [],
+  "provider_starved": false,
+  "price_table": {
+    "path": "/home/k/.pi/agent/models.json",
+    "sha256": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "sha256_pinned": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "matches_pinned": true,
+    "units": "USD per 1,000,000 tokens",
+    "rates": {
+      "azure/gpt-5.4": {
+        "cost": {
+          "input": 2.5,
+          "output": 15.0,
+          "cacheRead": 0.25,
+          "cacheWrite": 0.0
+        },
+        "contextWindow": 272000,
+        "maxTokens": 65536,
+        "reasoning": true,
+        "api": "openai-completions"
+      },
+      "azure/DeepSeek-V3.2": {
+        "cost": {
+          "input": 0.58,
+          "output": 1.68,
+          "cacheRead": 0.58,
+          "cacheWrite": 0.0
+        },
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "reasoning": true,
+        "api": "openai-completions"
+      }
+    },
+    "missing": [],
+    "error": null
+  },
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "adw_accepted:tests_green+review_approved",
+  "sssf_chain_roles": [
+    "builder",
+    "planner",
+    "reviewer"
+  ],
+  "adw_exit_code": 0,
+  "adw_session_status": "success",
+  "adw_not_accepted_reason": null,
+  "files_changed": [
+    "src/openharness/auth/flows.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_auth/test_flows.py"
+  ],
+  "sssf_paths_excluded": [
+    "specs/297faa65_windows-browser-open-fix.md"
+  ],
+  "sssf_excluded_prefixes": [
+    "specs/",
+    "app_docs/",
+    "docs/",
+    "adw_data/",
+    "adws/"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 2109,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "91be2f52417e5d53d699d3af65fdf96ca0820e2d",
+    "expected_base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+    "base_ref_matches": false,
+    "base_ref_ahead_of_expected": 2,
+    "expected_resolves": true,
+    "gitlink": "dir",
+    "head_sha": "91be2f52417e5d53d699d3af65fdf96ca0820e2d",
+    "head_is_base": true,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 116,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [],
+    "bypassed_count": 0,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 0,
+    "refused_samples": [],
+    "scan_truncated": false
+  },
+  "sssf_caps": {
+    "run_cost_cap_usd": 6.0,
+    "wall_clock_cap_s": 5400,
+    "phase_cap": 18,
+    "ledger_poll_s": 5.0,
+    "enforced_by": "harness (the sssf engine has no spend limit)",
+    "spend_signal": "max(this run's events.jsonl, shared db sessions.total_cost); an unreadable shared db never kills a run"
+  },
+  "ledger_cost_at_stop_usd": 1.693056,
+  "attempt": 2,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "chain",
+    "instance_id": "hkuds__openharness-217",
+    "image": "swerebench/sweb.eval.x86_64.hkuds_1776_openharness-217@sha256:ad0997cf2e90f0a31f3e6f8fd5cba18ced7f364ae3a62bd59f4c9e1d88b7678d",
+    "graded_at": "2026-08-13T17:45:49.571749+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 2,
+    "pass_to_pass_declared_count": 2,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 4.9,
+    "log_tail": "Checking patch tests/test_auth/test_flows.py...\nApplied patch tests/test_auth/test_flows.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_41c98536504f0981: OK (red as expected)\nChecking patch src/openharness/auth/flows.py...\nApplied patch src/openharness/auth/flows.py cleanly.\nSWEBENCH_APPLY_41c98536504f0981: OK\n......                                                                   [100%]\n=========================== short test summary info ============================\nPASSED tests/test_auth/test_flows.py::test_open_browser_windows_uses_startfile_not_shell\nPASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[javascript:alert(1)]\nPASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[file:///etc/passwd]\nPASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[ftp://example.com/payload]\nPASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[]\nPASSED tests/test_auth/test_flows.py::test_open_browser_rejects_non_http_scheme[calc.exe]\n6 passed in 0.01s\nSWEBENCH_TALLY_41c98536504f0981: fail_to_pass 6 passed in 0.01s\n[8 node outcomes for fail_to_pass -> grade-nodes.log]\n..                                                                       [100%]\n=========================== short test summary info ============================\nPASSED tests/test_auth/test_flows.py::test_open_browser_macos_uses_open_argv\nPASSED tests/test_auth/test_flows.py::test_open_browser_linux_uses_xdg_open_argv\n2 passed in 0.01s\nSWEBENCH_TALLY_41c98536504f0981: pass_to_pass 2 passed in 0.01s\n[4 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_41c98536504f0981: RESOLVED\n"
+  }
+}

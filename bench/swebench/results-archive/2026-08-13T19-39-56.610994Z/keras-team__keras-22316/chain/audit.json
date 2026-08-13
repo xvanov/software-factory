@@ -1,0 +1,20 @@
+{
+  "instance_id": "keras-team__keras-22316",
+  "arm": "chain",
+  "audited_at": "2026-08-13T18:24:21.018201+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 1.981,
+  "ledger_tokens_in": 3310199,
+  "ledger_tokens_out": 36353,
+  "result_cost_usd": 1.981,
+  "prediction_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "base_commit": "34e55d4561ba2a61bbc72562e88b3704e0a43081",
+  "stripped_test_paths": [],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

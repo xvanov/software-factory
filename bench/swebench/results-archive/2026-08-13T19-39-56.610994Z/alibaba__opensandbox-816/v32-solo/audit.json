@@ -1,0 +1,33 @@
+{
+  "instance_id": "alibaba__opensandbox-816",
+  "arm": "v32-solo",
+  "audited_at": "2026-08-13T17:02:21.000189+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 2.1674,
+  "ledger_tokens_in": 3604890,
+  "ledger_tokens_out": 45602,
+  "result_cost_usd": 2.1674,
+  "prediction_sha256": "d5e0725e0d31dce8361a18c747c8bc5aa8641b177307c5c35dcd3f6546c13a11",
+  "base_commit": "fb78091f947f62ae2c71a372af42425a764aacee",
+  "stripped_test_paths": [
+    "components/egress/tests/bench-dns-nft.sh",
+    "components/egress/tests/bench-mitm-overhead.sh",
+    "components/egress/tests/egress-in-webhook.sh",
+    "components/egress/tests/smoke-dns-upstream-probe.sh",
+    "components/egress/tests/smoke-dns.sh",
+    "components/egress/tests/smoke-dynamic-ip.sh",
+    "components/egress/tests/smoke-nft.sh",
+    "components/execd/tests/jupyter.sh",
+    "components/execd/tests/sigterm_forward.sh",
+    "components/execd/tests/smoke.sh",
+    "server/tests/smoke.sh",
+    "tests/java/gradlew"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

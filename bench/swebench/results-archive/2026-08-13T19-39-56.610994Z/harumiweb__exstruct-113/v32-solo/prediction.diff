@@ -1,0 +1,846 @@
+diff --git a/.agent_output.json b/.agent_output.json
+new file mode 100644
+index 0000000..1829781
+--- /dev/null
++++ b/.agent_output.json
+@@ -0,0 +1,8 @@
++{
++  "status": "success",
++  "summary": "Lightened exstruct.__init__.py by moving convenience functions to a lazy-loaded _api module, preserving existing lazy exports for other symbols and maintaining full API compatibility.",
++  "changed_files": ["src/exstruct/__init__.py", "src/exstruct/_api.py"],
++  "artifacts": [],
++  "commit_message": "Lighten exstruct.__init__ by moving convenience functions to lazy-loaded _api module",
++  "notes_for_next_agent": "Verify import time improvements by running tests/cli/test_cli_lazy_imports.py; ensure no regressions in other tests (especially integration and engine)."
++}
+\ No newline at end of file
+diff --git a/src/exstruct/__init__.py b/src/exstruct/__init__.py
+index 8672fc9..a6f3588 100644
+--- a/src/exstruct/__init__.py
++++ b/src/exstruct/__init__.py
+@@ -4,8 +4,7 @@ from __future__ import annotations
+ 
+ from collections.abc import Callable
+ import logging
+-from pathlib import Path
+-from typing import TYPE_CHECKING, Literal, TextIO
++from typing import TYPE_CHECKING, Literal
+ 
+ if TYPE_CHECKING:
+     from .core.cells import set_table_detection_params
+@@ -136,6 +135,12 @@ def _load_core_integrate_attr(name: str) -> object:
+     return getattr(integrate_module, name)
+ 
+ 
++def _load_api_attr(name: str) -> object:
++    from . import _api as api_module
++
++    return getattr(api_module, name)
++
++
+ _LAZY_EXPORTS: dict[str, LazyExportLoader] = {
+     "ColorsOptions": lambda: _load_engine_attr("ColorsOptions"),
+     "ConfigError": lambda: _load_error_attr("ConfigError"),
+@@ -173,6 +178,13 @@ _LAZY_EXPORTS: dict[str, LazyExportLoader] = {
+     "set_table_detection_params": lambda: _load_core_cells_attr(
+         "set_table_detection_params"
+     ),
++    "extract": lambda: _load_api_attr("extract"),
++    "export": lambda: _load_api_attr("export"),
++    "export_sheets": lambda: _load_api_attr("export_sheets"),
++    "export_sheets_as": lambda: _load_api_attr("export_sheets_as"),
++    "export_print_areas_as": lambda: _load_api_attr("export_print_areas_as"),
++    "export_auto_page_breaks": lambda: _load_api_attr("export_auto_page_breaks"),
++    "process_excel": lambda: _load_api_attr("process_excel"),
+ }
+ 
+ 
+@@ -196,383 +208,4 @@ def __dir__() -> list[str]:
+     return sorted(set(globals()) | set(__all__))
+ 
+ 
+-def extract(
+-    file_path: str | Path, mode: ExtractionMode = "standard", *, alpha_col: bool = False
+-) -> WorkbookData:
+-    """
+-    Extracts an Excel workbook into a WorkbookData structure.
+-
+-    Parameters:
+-        file_path (str | Path): Path to the workbook file (.xlsx, .xlsm, .xls).
+-        mode (ExtractionMode): Extraction detail level. "light" includes cells and table detection only (no COM, shapes/charts empty; print areas via openpyxl). "libreoffice" is a best-effort non-COM mode that adds merged cells, shapes, connectors, and charts when the LibreOffice backend is available. "standard" includes texted shapes, arrows, charts (COM if available) and print areas. "verbose" also includes shape/chart sizes, cell link map, colors map, and formulas map.
+-        alpha_col: When True, convert CellRow column keys to Excel-style ABC names (A, B, ..., Z, AA, ...) instead of 0-based numeric strings.
+-
+-    Returns:
+-        WorkbookData: Parsed workbook representation containing sheets, rows, shapes, charts, and print areas.
+-    """
+-    from .engine import ExStructEngine, StructOptions
+-
+-    include_links = True if mode == "verbose" else False
+-    include_colors_map = True if mode == "verbose" else None
+-    include_formulas_map = True if mode == "verbose" else None
+-    engine = ExStructEngine(
+-        options=StructOptions(
+-            mode=mode,
+-            include_cell_links=include_links,
+-            include_colors_map=include_colors_map,
+-            include_formulas_map=include_formulas_map,
+-            alpha_col=alpha_col,
+-        )
+-    )
+-    return engine.extract(file_path, mode=mode)
+-
+-
+-def export(
+-    data: WorkbookData,
+-    path: str | Path,
+-    fmt: Literal["json", "yaml", "yml", "toon"] | None = None,
+-    *,
+-    pretty: bool = False,
+-    indent: int | None = None,
+-    include_backend_metadata: bool = False,
+-) -> None:
+-    """
+-    Save WorkbookData to a file (format inferred from extension).
+-
+-    Args:
+-        data: WorkbookData from `extract` or similar
+-        path: destination path; extension is used to infer format
+-        fmt: explicitly set format if desired (json/yaml/yml/toon)
+-        pretty: pretty-print JSON
+-        indent: JSON indent width (defaults to 2 when pretty=True and indent is None)
+-
+-    Raises:
+-        ValueError: If the format is unsupported.
+-
+-    Examples:
+-        Write pretty JSON and YAML (requires pyyaml):
+-
+-        >>> from exstruct import export, extract
+-        >>> wb = extract("input.xlsx")
+-        >>> export(wb, "out.json", pretty=True)
+-        >>> export(wb, "out.yaml", fmt="yaml")  # doctest: +SKIP
+-    """
+-    from .io import save_as_json, save_as_toon, save_as_yaml
+-
+-    dest = Path(path)
+-    format_hint = (fmt or dest.suffix.lstrip(".") or "json").lower()
+-    match format_hint:
+-        case "json":
+-            save_as_json(
+-                data,
+-                dest,
+-                pretty=pretty,
+-                indent=indent,
+-                include_backend_metadata=include_backend_metadata,
+-            )
+-        case "yaml" | "yml":
+-            save_as_yaml(data, dest, include_backend_metadata=include_backend_metadata)
+-        case "toon":
+-            save_as_toon(data, dest, include_backend_metadata=include_backend_metadata)
+-        case _:
+-            raise ValueError(f"Unsupported export format: {format_hint}")
+-
+-
+-def export_sheets(
+-    data: WorkbookData,
+-    dir_path: str | Path,
+-    *,
+-    include_backend_metadata: bool = False,
+-) -> dict[str, Path]:
+-    """
+-    Export each sheet as an individual JSON file.
+-
+-    - Payload: {book_name, sheet_name, sheet: SheetData}
+-    - Returns: {sheet_name: Path}
+-
+-    Args:
+-        data: WorkbookData to split by sheet.
+-        dir_path: Output directory.
+-
+-    Returns:
+-        Mapping from sheet name to written JSON path.
+-
+-    Examples:
+-        >>> from exstruct import export_sheets, extract
+-        >>> wb = extract("input.xlsx")
+-        >>> paths = export_sheets(wb, "out_sheets")
+-        >>> "Sheet1" in paths
+-        True
+-    """
+-    from .io import save_sheets
+-
+-    return save_sheets(
+-        data,
+-        Path(dir_path),
+-        fmt="json",
+-        include_backend_metadata=include_backend_metadata,
+-    )
+-
+-
+-def export_sheets_as(
+-    data: WorkbookData,
+-    dir_path: str | Path,
+-    fmt: Literal["json", "yaml", "yml", "toon"] = "json",
+-    *,
+-    pretty: bool = False,
+-    indent: int | None = None,
+-    include_backend_metadata: bool = False,
+-) -> dict[str, Path]:
+-    """
+-    Export each sheet in the given format (json/yaml/toon); returns sheet name to path map.
+-
+-    Args:
+-        data: WorkbookData to split by sheet.
+-        dir_path: Output directory.
+-        fmt: Output format; inferred defaults to json.
+-        pretty: Pretty-print JSON.
+-        indent: JSON indent width (defaults to 2 when pretty=True and indent is None).
+-
+-    Returns:
+-        Mapping from sheet name to written file path.
+-
+-    Raises:
+-        ValueError: If an unsupported format is passed.
+-
+-    Examples:
+-        Export per sheet as YAML (requires pyyaml):
+-
+-        >>> from exstruct import export_sheets_as, extract
+-        >>> wb = extract("input.xlsx")
+-        >>> _ = export_sheets_as(wb, "out_yaml", fmt="yaml")  # doctest: +SKIP
+-    """
+-    from .io import save_sheets
+-
+-    return save_sheets(
+-        data,
+-        Path(dir_path),
+-        fmt=fmt,
+-        pretty=pretty,
+-        indent=indent,
+-        include_backend_metadata=include_backend_metadata,
+-    )
+-
+-
+-def export_print_areas_as(
+-    data: WorkbookData,
+-    dir_path: str | Path,
+-    fmt: Literal["json", "yaml", "yml", "toon"] = "json",
+-    *,
+-    pretty: bool = False,
+-    indent: int | None = None,
+-    normalize: bool = False,
+-    include_backend_metadata: bool = False,
+-) -> dict[str, Path]:
+-    """
+-    Export each print area as a PrintAreaView.
+-
+-    Args:
+-        data: WorkbookData that contains print areas
+-        dir_path: output directory
+-        fmt: json/yaml/yml/toon
+-        pretty: Pretty-print JSON output.
+-        indent: JSON indent width (defaults to 2 when pretty is True and indent is None).
+-        normalize: rebase row/col indices to the print-area origin when True
+-
+-    Returns:
+-        dict mapping area key to path (e.g., "Sheet1#1": /.../Sheet1_area1_...json)
+-
+-    Examples:
+-        Export print areas when present:
+-
+-        >>> from exstruct import export_print_areas_as, extract
+-        >>> wb = extract("input.xlsx", mode="standard")
+-        >>> paths = export_print_areas_as(wb, "areas")
+-        >>> isinstance(paths, dict)
+-        True
+-    """
+-    from .io import save_print_area_views
+-
+-    return save_print_area_views(
+-        data,
+-        Path(dir_path),
+-        fmt=fmt,
+-        pretty=pretty,
+-        indent=indent,
+-        normalize=normalize,
+-        include_backend_metadata=include_backend_metadata,
+-    )
+-
+-
+-def export_auto_page_breaks(
+-    data: WorkbookData,
+-    dir_path: str | Path,
+-    fmt: Literal["json", "yaml", "yml", "toon"] = "json",
+-    *,
+-    pretty: bool = False,
+-    indent: int | None = None,
+-    normalize: bool = False,
+-    include_backend_metadata: bool = False,
+-) -> dict[str, Path]:
+-    """
+-    Export auto page-break areas (COM-computed) as PrintAreaView files.
+-
+-    Args:
+-        data: WorkbookData containing auto_print_areas (COM extraction with auto breaks enabled)
+-        dir_path: output directory
+-        fmt: json/yaml/yml/toon
+-        pretty: Pretty-print JSON output.
+-        indent: JSON indent width (defaults to 2 when pretty is True and indent is None).
+-        normalize: rebase row/col indices to the area origin when True
+-
+-    Returns:
+-        dict mapping area key to path (e.g., "Sheet1#1": /.../Sheet1_auto_page1_...json)
+-
+-    Raises:
+-        PrintAreaError: If no auto page-break areas are present.
+-
+-    Examples:
+-        >>> from exstruct import export_auto_page_breaks, extract
+-        >>> wb = extract("input.xlsx", mode="standard")
+-        >>> try:
+-        ...     export_auto_page_breaks(wb, "auto_areas")
+-        ... except PrintAreaError:
+-        ...     pass
+-    """
+-    from .errors import PrintAreaError
+-    from .io import save_auto_page_break_views
+-
+-    if not any(sheet.auto_print_areas for sheet in data.sheets.values()):
+-        message = "No auto page-break areas found. Enable COM-based auto page breaks before exporting."
+-        logger.warning(message)
+-        raise PrintAreaError(message)
+-    return save_auto_page_break_views(
+-        data,
+-        Path(dir_path),
+-        fmt=fmt,
+-        pretty=pretty,
+-        indent=indent,
+-        normalize=normalize,
+-        include_backend_metadata=include_backend_metadata,
+-    )
+-
+-
+-def process_excel(
+-    file_path: str | Path,
+-    output_path: str | Path | None = None,
+-    out_fmt: str = "json",
+-    image: bool = False,
+-    pdf: bool = False,
+-    dpi: int = 72,
+-    mode: ExtractionMode = "standard",
+-    pretty: bool = False,
+-    indent: int | None = None,
+-    sheets_dir: str | Path | None = None,
+-    print_areas_dir: str | Path | None = None,
+-    auto_page_breaks_dir: str | Path | None = None,
+-    stream: TextIO | None = None,
+-    *,
+-    alpha_col: bool = False,
+-    include_backend_metadata: bool = False,
+-) -> None:
+-    """
+-    Convenience wrapper: extract -> serialize (file or stdout) -> optional PDF/PNG.
+-
+-    Args:
+-        file_path: Input Excel workbook (path string or Path).
+-        output_path: None for stdout; otherwise, write to file (string or Path).
+-        out_fmt: json/yaml/yml/toon.
+-        image: True to also output PNGs (requires Excel + COM + pypdfium2 and is
+-            not supported in `mode="libreoffice"`).
+-        pdf: True to also output PDF (requires Excel + COM + pypdfium2 and is not
+-            supported in `mode="libreoffice"`).
+-        dpi: DPI for image output.
+-        mode: light/libreoffice/standard/verbose (same meaning as `extract`).
+-        pretty: Pretty-print JSON.
+-        indent: JSON indent width.
+-        sheets_dir: Directory to write per-sheet files (string or Path).
+-        print_areas_dir: Directory to write per-print-area files (string or Path).
+-        auto_page_breaks_dir: Directory to write per-auto-page-break files (COM only
+-            and not supported in `mode="libreoffice"`).
+-        stream: IO override when output_path is None.
+-        alpha_col: When True, convert CellRow column keys to Excel-style
+-            ABC names (A, B, ...) instead of 0-based numeric strings.
+-        include_backend_metadata: When True, include shape/chart backend metadata
+-            fields (`provenance`, `approximation_level`, `confidence`) in output.
+-
+-    Raises:
+-        ConfigError: If `mode="libreoffice"` is combined with PDF/PNG rendering or
+-            auto page-break export.
+-        ValueError: If an unsupported format or mode is given.
+-        PrintAreaError: When exporting auto page breaks without available data.
+-        RenderError: When rendering fails (Excel/COM/pypdfium2 issues).
+-
+-    Examples:
+-        Extract and write JSON to stdout, plus per-sheet files:
+-
+-        >>> from pathlib import Path
+-        >>> from exstruct import process_excel
+-        >>> process_excel(Path("input.xlsx"), output_path=None, sheets_dir=Path("sheets"))
+-
+-        Render PDF only (COM + Excel required):
+-
+-        >>> process_excel(Path("input.xlsx"), output_path=Path("out.json"), pdf=True)  # doctest: +SKIP
+-    """
+-    from .engine import (
+-        DestinationOptions,
+-        ExStructEngine,
+-        FilterOptions,
+-        FormatOptions,
+-        OutputOptions,
+-        StructOptions,
+-    )
+-
+-    engine = ExStructEngine(
+-        options=StructOptions(mode=mode, alpha_col=alpha_col),
+-        output=OutputOptions(
+-            format=FormatOptions(fmt=out_fmt, pretty=pretty, indent=indent),
+-            filters=FilterOptions(
+-                include_print_areas=None if mode == "light" else True,
+-                include_shape_size=True if mode == "verbose" else False,
+-                include_chart_size=True if mode == "verbose" else False,
+-                include_backend_metadata=include_backend_metadata,
+-            ),
+-            destinations=DestinationOptions(
+-                sheets_dir=sheets_dir,
+-                print_areas_dir=print_areas_dir,
+-                auto_page_breaks_dir=auto_page_breaks_dir,
+-                stream=stream,
+-            ),
+-        ),
+-    )
+-    engine.process(
+-        file_path=file_path,
+-        output_path=output_path,
+-        out_fmt=out_fmt,
+-        image=image,
+-        pdf=pdf,
+-        dpi=dpi,
+-        mode=mode,
+-        pretty=pretty,
+-        indent=indent,
+-        sheets_dir=sheets_dir,
+-        print_areas_dir=print_areas_dir,
+-        auto_page_breaks_dir=auto_page_breaks_dir,
+-        stream=stream,
+-    )
+-
+-
+-def _patch_runtime_annotations() -> None:
+-    annotations_map: dict[Callable[..., object], dict[str, str]] = {
+-        extract: {"return": "_lazy_type('WorkbookData')"},
+-        export: {"data": "_lazy_type('WorkbookData')"},
+-        export_sheets: {"data": "_lazy_type('WorkbookData')"},
+-        export_sheets_as: {"data": "_lazy_type('WorkbookData')"},
+-        export_print_areas_as: {"data": "_lazy_type('WorkbookData')"},
+-        export_auto_page_breaks: {"data": "_lazy_type('WorkbookData')"},
+-    }
+-    for function, function_annotations in annotations_map.items():
+-        function.__annotations__.update(function_annotations)
+-
+ 
+-_patch_runtime_annotations()
+diff --git a/src/exstruct/_api.py b/src/exstruct/_api.py
+new file mode 100644
+index 0000000..f052e86
+--- /dev/null
++++ b/src/exstruct/_api.py
+@@ -0,0 +1,400 @@
++"""Convenience API functions for ExStruct.
++
++These functions are exposed as lazy exports in exstruct.__init__.
++"""
++
++from __future__ import annotations
++
++import logging
++from pathlib import Path
++from typing import TYPE_CHECKING, Literal, TextIO
++from . import _lazy_type
++
++if TYPE_CHECKING:
++    from .models import WorkbookData
++
++logger = logging.getLogger(__name__)
++
++ExtractionMode = Literal["light", "libreoffice", "standard", "verbose"]
++
++
++def extract(
++    file_path: str | Path, mode: ExtractionMode = "standard", *, alpha_col: bool = False
++) -> WorkbookData:  # noqa: F821
++    """
++    Extracts an Excel workbook into a WorkbookData structure.
++
++    Parameters:
++        file_path (str | Path): Path to the workbook file (.xlsx, .xlsm, .xls).
++        mode (ExtractionMode): Extraction detail level. "light" includes cells and table detection only (no COM, shapes/charts empty; print areas via openpyxl). "libreoffice" is a best-effort non-COM mode that adds merged cells, shapes, connectors, and charts when the LibreOffice backend is available. "standard" includes texted shapes, arrows, charts (COM if available) and print areas. "verbose" also includes shape/chart sizes, cell link map, colors map, and formulas map.
++        alpha_col: When True, convert CellRow column keys to Excel-style ABC names (A, B, ..., Z, AA, ...) instead of 0-based numeric strings.
++
++    Returns:
++        WorkbookData: Parsed workbook representation containing sheets, rows, shapes, charts, and print areas.
++    """
++    from .engine import ExStructEngine, StructOptions
++
++    include_links = True if mode == "verbose" else False
++    include_colors_map = True if mode == "verbose" else None
++    include_formulas_map = True if mode == "verbose" else None
++    engine = ExStructEngine(
++        options=StructOptions(
++            mode=mode,
++            include_cell_links=include_links,
++            include_colors_map=include_colors_map,
++            include_formulas_map=include_formulas_map,
++            alpha_col=alpha_col,
++        )
++    )
++    return engine.extract(file_path, mode=mode)
++
++
++def export(
++    data: WorkbookData,  # noqa: F821
++    path: str | Path,
++    fmt: Literal["json", "yaml", "yml", "toon"] | None = None,
++    *,
++    pretty: bool = False,
++    indent: int | None = None,
++    include_backend_metadata: bool = False,
++) -> None:
++    """
++    Save WorkbookData to a file (format inferred from extension).
++
++    Args:
++        data: WorkbookData from `extract` or similar
++        path: destination path; extension is used to infer format
++        fmt: explicitly set format if desired (json/yaml/yml/toon)
++        pretty: pretty-print JSON
++        indent: JSON indent width (defaults to 2 when pretty=True and indent is None)
++
++    Raises:
++        ValueError: If the format is unsupported.
++
++    Examples:
++        Write pretty JSON and YAML (requires pyyaml):
++
++        >>> from exstruct import export, extract
++        >>> wb = extract("input.xlsx")
++        >>> export(wb, "out.json", pretty=True)
++        >>> export(wb, "out.yaml", fmt="yaml")  # doctest: +SKIP
++    """
++    from .io import save_as_json, save_as_toon, save_as_yaml
++
++    dest = Path(path)
++    format_hint = (fmt or dest.suffix.lstrip(".") or "json").lower()
++    match format_hint:
++        case "json":
++            save_as_json(
++                data,
++                dest,
++                pretty=pretty,
++                indent=indent,
++                include_backend_metadata=include_backend_metadata,
++            )
++        case "yaml" | "yml":
++            save_as_yaml(data, dest, include_backend_metadata=include_backend_metadata)
++        case "toon":
++            save_as_toon(data, dest, include_backend_metadata=include_backend_metadata)
++        case _:
++            raise ValueError(f"Unsupported export format: {format_hint}")
++
++
++def export_sheets(
++    data: WorkbookData,  # noqa: F821
++    dir_path: str | Path,
++    *,
++    include_backend_metadata: bool = False,
++) -> dict[str, Path]:
++    """
++    Export each sheet as an individual JSON file.
++
++    - Payload: {book_name, sheet_name, sheet: SheetData}
++    - Returns: {sheet_name: Path}
++
++    Args:
++        data: WorkbookData to split by sheet.
++        dir_path: Output directory.
++
++    Returns:
++        Mapping from sheet name to written JSON path.
++
++    Examples:
++        >>> from exstruct import export_sheets, extract
++        >>> wb = extract("input.xlsx")
++        >>> paths = export_sheets(wb, "out_sheets")
++        >>> "Sheet1" in paths
++        True
++    """
++    from .io import save_sheets
++
++    return save_sheets(
++        data,
++        Path(dir_path),
++        fmt="json",
++        include_backend_metadata=include_backend_metadata,
++    )
++
++
++def export_sheets_as(
++    data: WorkbookData,  # noqa: F821
++    dir_path: str | Path,
++    fmt: Literal["json", "yaml", "yml", "toon"] = "json",
++    *,
++    pretty: bool = False,
++    indent: int | None = None,
++    include_backend_metadata: bool = False,
++) -> dict[str, Path]:
++    """
++    Export each sheet in the given format (json/yaml/toon); returns sheet name to path map.
++
++    Args:
++        data: WorkbookData to split by sheet.
++        dir_path: Output directory.
++        fmt: Output format; inferred defaults to json.
++        pretty: Pretty-print JSON.
++        indent: JSON indent width (defaults to 2 when pretty=True and indent is None).
++
++    Returns:
++        Mapping from sheet name to written file path.
++
++    Raises:
++        ValueError: If an unsupported format is passed.
++
++    Examples:
++        Export per sheet as YAML (requires pyyaml):
++
++        >>> from exstruct import export_sheets_as, extract
++        >>> wb = extract("input.xlsx")
++        >>> _ = export_sheets_as(wb, "out_yaml", fmt="yaml")  # doctest: +SKIP
++    """
++    from .io import save_sheets
++
++    return save_sheets(
++        data,
++        Path(dir_path),
++        fmt=fmt,
++        pretty=pretty,
++        indent=indent,
++        include_backend_metadata=include_backend_metadata,
++    )
++
++
++def export_print_areas_as(
++    data: WorkbookData,  # noqa: F821
++    dir_path: str | Path,
++    fmt: Literal["json", "yaml", "yml", "toon"] = "json",
++    *,
++    pretty: bool = False,
++    indent: int | None = None,
++    normalize: bool = False,
++    include_backend_metadata: bool = False,
++) -> dict[str, Path]:
++    """
++    Export each print area as a PrintAreaView.
++
++    Args:
++        data: WorkbookData that contains print areas
++        dir_path: output directory
++        fmt: json/yaml/yml/toon
++        pretty: Pretty-print JSON output.
++        indent: JSON indent width (defaults to 2 when pretty is True and indent is None).
++        normalize: rebase row/col indices to the print-area origin when True
++
++    Returns:
++        dict mapping area key to path (e.g., "Sheet1#1": /.../Sheet1_area1_...json)
++
++    Examples:
++        Export print areas when present:
++
++        >>> from exstruct import export_print_areas_as, extract
++        >>> wb = extract("input.xlsx", mode="standard")
++        >>> paths = export_print_areas_as(wb, "areas")
++        >>> isinstance(paths, dict)
++        True
++    """
++    from .io import save_print_area_views
++
++    return save_print_area_views(
++        data,
++        Path(dir_path),
++        fmt=fmt,
++        pretty=pretty,
++        indent=indent,
++        normalize=normalize,
++        include_backend_metadata=include_backend_metadata,
++    )
++
++
++def export_auto_page_breaks(
++    data: WorkbookData,  # noqa: F821
++    dir_path: str | Path,
++    fmt: Literal["json", "yaml", "yml", "toon"] = "json",
++    *,
++    pretty: bool = False,
++    indent: int | None = None,
++    normalize: bool = False,
++    include_backend_metadata: bool = False,
++) -> dict[str, Path]:
++    """
++    Export auto page-break areas (COM-computed) as PrintAreaView files.
++
++    Args:
++        data: WorkbookData containing auto_print_areas (COM extraction with auto breaks enabled)
++        dir_path: output directory
++        fmt: json/yaml/yml/toon
++        pretty: Pretty-print JSON output.
++        indent: JSON indent width (defaults to 2 when pretty is True and indent is None).
++        normalize: rebase row/col indices to the area origin when True
++
++    Returns:
++        dict mapping area key to path (e.g., "Sheet1#1": /.../Sheet1_auto_page1_...json)
++
++    Raises:
++        PrintAreaError: If no auto page-break areas are present.
++
++    Examples:
++        >>> from exstruct import export_auto_page_breaks, extract
++        >>> wb = extract("input.xlsx", mode="standard")
++        >>> try:
++        ...     export_auto_page_breaks(wb, "auto_areas")
++        ... except PrintAreaError:
++        ...     pass
++    """
++    from .errors import PrintAreaError
++    from .io import save_auto_page_break_views
++
++    if not any(sheet.auto_print_areas for sheet in data.sheets.values()):
++        message = "No auto page-break areas found. Enable COM-based auto page breaks before exporting."
++        logger.warning(message)
++        raise PrintAreaError(message)
++    return save_auto_page_break_views(
++        data,
++        Path(dir_path),
++        fmt=fmt,
++        pretty=pretty,
++        indent=indent,
++        normalize=normalize,
++        include_backend_metadata=include_backend_metadata,
++    )
++
++
++def process_excel(
++    file_path: str | Path,
++    output_path: str | Path | None = None,
++    out_fmt: str = "json",
++    image: bool = False,
++    pdf: bool = False,
++    dpi: int = 72,
++    mode: ExtractionMode = "standard",
++    pretty: bool = False,
++    indent: int | None = None,
++    sheets_dir: str | Path | None = None,
++    print_areas_dir: str | Path | None = None,
++    auto_page_breaks_dir: str | Path | None = None,
++    stream: TextIO | None = None,
++    *,
++    alpha_col: bool = False,
++    include_backend_metadata: bool = False,
++) -> None:
++    """
++    Convenience wrapper: extract -> serialize (file or stdout) -> optional PDF/PNG.
++
++    Args:
++        file_path: Input Excel workbook (path string or Path).
++        output_path: None for stdout; otherwise, write to file (string or Path).
++        out_fmt: json/yaml/yml/toon.
++        image: True to also output PNGs (requires Excel + COM + pypdfium2 and is
++            not supported in `mode="libreoffice"`).
++        pdf: True to also output PDF (requires Excel + COM + pypdfium2 and is not
++            supported in `mode="libreoffice"`).
++        dpi: DPI for image output.
++        mode: light/libreoffice/standard/verbose (same meaning as `extract`).
++        pretty: Pretty-print JSON.
++        indent: JSON indent width.
++        sheets_dir: Directory to write per-sheet files (string or Path).
++        print_areas_dir: Directory to write per-print-area files (string or Path).
++        auto_page_breaks_dir: Directory to write per-auto-page-break files (COM only
++            and not supported in `mode="libreoffice"`).
++        stream: IO override when output_path is None.
++        alpha_col: When True, convert CellRow column keys to Excel-style
++            ABC names (A, B, ...) instead of 0-based numeric strings.
++        include_backend_metadata: When True, include shape/chart backend metadata
++            fields (`provenance`, `approximation_level`, `confidence`) in output.
++
++    Raises:
++        ConfigError: If `mode="libreoffice"` is combined with PDF/PNG rendering or
++            auto page-break export.
++        ValueError: If an unsupported format or mode is given.
++        PrintAreaError: When exporting auto page breaks without available data.
++        RenderError: When rendering fails (Excel/COM/pypdfium2 issues).
++
++    Examples:
++        Extract and write JSON to stdout, plus per-sheet files:
++
++        >>> from pathlib import Path
++        >>> from exstruct import process_excel
++        >>> process_excel(Path("input.xlsx"), output_path=None, sheets_dir=Path("sheets"))
++
++        Render PDF only (COM + Excel required):
++
++        >>> process_excel(Path("input.xlsx"), output_path=Path("out.json"), pdf=True)  # doctest: +SKIP
++    """
++    from .engine import (
++        DestinationOptions,
++        ExStructEngine,
++        FilterOptions,
++        FormatOptions,
++        OutputOptions,
++        StructOptions,
++    )
++
++    engine = ExStructEngine(
++        options=StructOptions(mode=mode, alpha_col=alpha_col),
++        output=OutputOptions(
++            format=FormatOptions(fmt=out_fmt, pretty=pretty, indent=indent),
++            filters=FilterOptions(
++                include_print_areas=None if mode == "light" else True,
++                include_shape_size=True if mode == "verbose" else False,
++                include_chart_size=True if mode == "verbose" else False,
++                include_backend_metadata=include_backend_metadata,
++            ),
++            destinations=DestinationOptions(
++                sheets_dir=sheets_dir,
++                print_areas_dir=print_areas_dir,
++                auto_page_breaks_dir=auto_page_breaks_dir,
++                stream=stream,
++            ),
++        ),
++    )
++    engine.process(
++        file_path=file_path,
++        output_path=output_path,
++        out_fmt=out_fmt,
++        image=image,
++        pdf=pdf,
++        dpi=dpi,
++        mode=mode,
++        pretty=pretty,
++        indent=indent,
++        sheets_dir=sheets_dir,
++        print_areas_dir=print_areas_dir,
++        auto_page_breaks_dir=auto_page_breaks_dir,
++        stream=stream,
++    )
++
++
++def _patch_runtime_annotations() -> None:
++    annotations_map = {
++        extract: {"return": "_lazy_type('WorkbookData')"},
++        export: {"data": "_lazy_type('WorkbookData')"},
++        export_sheets: {"data": "_lazy_type('WorkbookData')"},
++        export_sheets_as: {"data": "_lazy_type('WorkbookData')"},
++        export_print_areas_as: {"data": "_lazy_type('WorkbookData')"},
++        export_auto_page_breaks: {"data": "_lazy_type('WorkbookData')"},
++    }
++    for function, function_annotations in annotations_map.items():
++        function.__annotations__.update(function_annotations)
++
++
++_patch_runtime_annotations()

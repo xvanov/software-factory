@@ -1643,7 +1643,23 @@ _BUDGET_ERROR_MARK = "wall-clock cap"
 # step-count fallback below re-labelling such a row as budget-exhausted, which
 # would put it straight back into the denominator it must stay out of.
 _ERROR_TERMINATIONS = frozenset(
-    {"error", "model-call-error", "agent-error", "provider-empty-response"}
+    {
+        "error",
+        "model-call-error",
+        "agent-error",
+        "provider-empty-response",
+        # ``engine-crash`` — an unhandled infra exception inside the engine (see
+        # ``_SSSF_ENGINE_CRASH_TERMINATION``). Here for the identical reason
+        # ``provider-empty-response`` is: the arm was never asked the question, so
+        # the row is not a capability result and the step-count fallback below
+        # must not re-label it as budget-exhausted and return it to the
+        # denominator it has to stay out of.
+        #
+        # NOTE ``writes-scope-breach`` is deliberately ABSENT. That one IS the
+        # agent's own behaviour, so it stays a counted failure; it has its own
+        # termination only so the reason survives on the record.
+        "engine-crash",
+    }
 )
 
 
@@ -1906,6 +1922,76 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+# --------------------------------------------------------------------------- #
+# the base ref cannot be allowed to move
+# --------------------------------------------------------------------------- #
+#
+# ``_clone`` used to leave the tree CHECKED OUT ON ``swebench-base``, and the ADW
+# then committed onto it. Verified live: in ``hkuds__openharness-217__chain/repo``
+# the local ``swebench-base`` was the ADW's own build commit, 2 ahead of the real
+# base (``origin/swebench-base``), and ``diff_integrity`` recorded
+# ``base_ref_matches: false`` with ``base_ref_ahead_of_expected: 3``. The diff was
+# captured correctly ANYWAY — but only because ``_capture_diff`` tries the
+# manifest's immutable sha before the branch name. That is correctness by fallback
+# ORDER: reorder those two lines and every sssf row silently becomes an empty
+# patch, which is exactly how ``tox-dev__tox-3931`` lost a patch that was
+# byte-identical to the winning one.
+#
+# THE FIX IS TOPOLOGICAL. The work is checked out on its own branch and the base
+# is additionally recorded as a TAG, so:
+#
+#   * ``git commit`` moves ``swebench-work``. It cannot move ``swebench-base``,
+#     because HEAD does not point there any more — including under the docker
+#     gitlink tampering that caused the tox failure, whose whole mechanism was
+#     "the worktree's commits land on the MAIN tree's HEAD".
+#   * ``swebench-base-pinned`` is a tag. Nothing in a normal commit/merge/rebase
+#     flow moves a tag, so even a tree that somehow gets back onto the base branch
+#     leaves one immutable name for the truth.
+#
+# ``swebench-base`` and ``origin/swebench-base`` both KEEP their meaning and their
+# position (the reviewer's ``git diff origin/<default_branch>...HEAD`` now finally
+# gets an honest answer instead of one polluted by its own commits), and
+# ``_capture_diff`` keeps trying the manifest sha first as defence in depth.
+_BASE_BRANCH = "swebench-base"
+_BASE_TAG = "swebench-base-pinned"
+_WORK_BRANCH = "swebench-work"
+
+
+def _pin_base_ref(repo: Path) -> None:
+    """Make ``swebench-base`` un-movable by the agent, and check work out elsewhere.
+
+    Idempotent: ``-f`` on both the tag and the branch checkout, so a tree that is
+    prepared twice (``grade`` re-clones and re-prepares) converges rather than
+    failing on "tag already exists".
+
+    Best-effort by design, and PER COMMAND: a tree whose git plumbing is already
+    too broken to accept one of these is a tree ``diff_capture_integrity`` will
+    refuse anyway, and raising here would turn a reportable capture problem into a
+    crashed run. Per command rather than around the block, because one failure must
+    not skip the steps after it — a suppressed ``branch -f`` that also swallowed
+    the ``checkout`` is how this function silently did nothing at all.
+
+    ORDER IS LOAD-BEARING:
+
+    1. the tag first, so if everything below fails the truth is already under a
+       ref that ``git commit`` cannot move;
+    2. the work-branch checkout SECOND. It has to precede the ``branch -f``,
+       because git refuses to force-update the branch that is currently checked
+       out ("cannot force update the branch ... checked out at") — and the pre-fix
+       topology has ``swebench-base`` checked out, which is the whole problem;
+    3. the base branch and its remote-tracking ref last, asserted at HEAD's commit
+       (unchanged by step 2) rather than left inherited.
+    """
+    for args in (
+        ("tag", "-f", _BASE_TAG, "HEAD"),
+        ("checkout", "-q", "-B", _WORK_BRANCH),
+        ("branch", "-f", _BASE_BRANCH, "HEAD"),
+        ("update-ref", f"refs/remotes/origin/{_BASE_BRANCH}", "HEAD"),
+    ):
+        with contextlib.suppress(subprocess.CalledProcessError, OSError):
+            _git(repo, *args)
+
+
 _PREPARE_TIMEOUT_S = 3600
 
 
@@ -1938,7 +2024,32 @@ def _prepare_cloned_tree(
     Returns an error string when the install step fails — the caller treats
     that as environment-not-preparable BEFORE any model spend (for selftest
     that honestly excludes the instance; for run it fails the run at $0).
-    Pro stays on its frozen baked topology and returns None untouched.
+    Pro stays on its frozen baked topology and skips the install step.
+
+    3. PIN THE BASE (both profiles, always — see ``_pin_base_ref``). This is the
+       last thing that happens to the tree before an agent can touch it, which is
+       exactly where the pin has to be: everything above legitimately commits, and
+       everything after it must not be able to.
+    """
+    error = _run_install_step(inst, repo, timeout_s=timeout_s)
+    if error is not None:
+        return error
+    # AFTER the install commit, so the pin captures the PREPARED base — the tree
+    # the diff must be measured against — and not the pristine fetch. Runs for the
+    # Pro profile too, which skips the install step entirely: the shadowing bug is
+    # a property of the checkout, not of the dataset.
+    _pin_base_ref(repo)
+    return None
+
+
+def _run_install_step(
+    inst: dict[str, Any], repo: Path, *, timeout_s: int = _PREPARE_TIMEOUT_S
+) -> str | None:
+    """Steps 1-2 of ``_prepare_cloned_tree``: replay the dataset's install/build
+    step and commit what it generated. rebench-only; Pro returns None untouched.
+
+    Split out of ``_prepare_cloned_tree`` so the base-ref pin can run for BOTH
+    profiles without the early return skipping it.
     """
     profile = _profile_of(inst)
     if profile.name != "swe-rebench":
@@ -4126,6 +4237,24 @@ def _rev_parse(wt: Path, ref: str) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
+def _rev_parse_symbolic(wt: Path) -> str:
+    """The branch HEAD is on, ``"(detached)"``, or ``""`` if git cannot say.
+
+    Reported by ``diff_capture_integrity`` because WHICH branch the work landed on
+    is the whole of the shadowing bug: commits land on HEAD's branch, so HEAD
+    sitting on ``swebench-base`` is the defect and HEAD on ``swebench-work`` is
+    the fix (see ``_pin_base_ref``).
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(wt), "symbolic-ref", "--quiet", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 0 and proc.stdout.strip():
+        return proc.stdout.strip()
+    return "(detached)" if _rev_parse(wt, "HEAD") else ""
+
+
 def diff_capture_integrity(
     wt: Path, base: str = "swebench-base", *, expected_base_commit: str | None = None
 ) -> dict[str, Any]:
@@ -4200,6 +4329,16 @@ def diff_capture_integrity(
         # So "the ref moved" cannot be the refusal predicate — it would have
         # false-refused 12 healthy trees on 2 instances.
         "base_ref_ahead_of_expected": ahead,
+        # THE PIN, reported so its presence is auditable per row (see
+        # ``_pin_base_ref``). ``base_ref_pinned`` False on a row whose tree was
+        # prepared by this harness means the pin did not take, which is the
+        # condition that used to be invisible: ``hkuds__openharness-217`` recorded
+        # ``base_ref_matches: false`` and nothing said whether that was expected.
+        # ``head_branch`` is the other half — work belongs on ``swebench-work``,
+        # and HEAD sitting on ``swebench-base`` is how the shadowing happens.
+        "base_ref_pinned_sha": _rev_parse(wt, _BASE_TAG) or None,
+        "base_ref_pinned": bool(_rev_parse(wt, _BASE_TAG)),
+        "head_branch": _rev_parse_symbolic(wt),
         "expected_resolves": expected_resolves if expected else None,
         "gitlink": gitlink,
         "head_sha": head_sha,
@@ -4253,6 +4392,16 @@ def _capture_diff(
     expected = (expected_base_commit or "").strip()
     if expected and _rev_parse(wt, expected):
         refs.append(expected)
+    # The PINNED TAG between the manifest sha and the branch NAME (see
+    # ``_pin_base_ref``). Ordered after the sha, which stays primary because it is
+    # the one ref no local operation can even in principle affect; ordered before
+    # the branch, because a tag is not moved by ``git commit`` and a branch is.
+    # It changes the answer only for a caller that passes no
+    # ``expected_base_commit`` (or one that does not resolve in this tree) — which
+    # is precisely the case the old code had to fall through to the movable branch
+    # name for.
+    if _rev_parse(wt, _BASE_TAG):
+        refs.append(_BASE_TAG)
     refs += [base, "HEAD"]
     for ref in refs:
         proc = subprocess.run(
@@ -5128,6 +5277,10 @@ _SSSF_ROSTERS: dict[str, dict[str, str | None]] = {
 # if the engine's vocabulary turns out to be PHASE names instead, one dict
 # changes and no arm definition moves.
 _SSSF_SKIP_KEY = "skip_phases"
+# The roster key the engine reads its loop bounds from (``SSSFConfig.limits``).
+# Named for the same reason ``_SSSF_SKIP_KEY`` is: if the engine's vocabulary
+# moves, one constant changes and no arm definition or cap derivation moves.
+_SSSF_LIMITS_KEY = "limits"
 _SSSF_SKIP_TOKENS: dict[str, str] = {
     "planner": "planner",
     "builder": "builder",
@@ -5135,14 +5288,116 @@ _SSSF_SKIP_TOKENS: dict[str, str] = {
     "documenter": "documenter",
 }
 
-# The most phases ``adw_simple_sdlc.py``'s graph can emit, derived from the
-# script rather than guessed: request 1 + plan 1 + commit_plan 1 + build 1
-# + (test_i, fix_i) * MAX_FIX_LOOPS=3 -> 6 + (review_i, revise_i) bounded by
-# MAX_REVISION_LOOPS=2 -> 3 + retest 1 + commit_build 1 + changes 1 + document 1
-# + commit_docs 1  =  18. Used as ``step_cap``: more phases than the graph can
-# produce means the graph changed under us, so the row is flagged rather than
-# published against a budget that no longer describes it.
-_SSSF_PHASE_CAP = 18
+# ── the phase budget, DERIVED FROM THE LIMITS THIS ROW RAN UNDER ─────────────
+#
+# The engine's loop bounds are CONFIGURABLE (``SSSFConfig.limits``: ``fix_loops``,
+# ``revision_loops``, ``agent_retries``, ``json_fix_attempts``). They used to be
+# module constants, and this cap used to be the single number 18 derived from
+# them by hand. A constant cap is wrong the moment the bounds move: a roster with
+# ``fix_loops: 5`` legitimately opens more phases, and a fixed 18 would flag that
+# healthy run as "the graph changed under us" — the harness would be reporting
+# its own stale arithmetic as an anomaly in the engine.
+#
+# So the cap is a FUNCTION of the limits, and the harness is entitled to evaluate
+# it because the harness SYNTHESISES the roster: it writes ``limits:`` itself
+# (``_SSSF_LIMITS`` below, emitted by ``_sssf_roster_document``) and therefore
+# knows the bounds the run executed under without having to ask the engine.
+#
+# THE LIMITS THIS HARNESS WRITES. Stated explicitly at the engine's defaults
+# rather than left to the engine's implicit ones, because a limit the roster does
+# not state is a limit the row cannot be reproduced under: a later engine that
+# changes ``MAX_FIX_LOOPS`` would silently reshape every past arm's graph while
+# the archived roster still looked identical. Written into the roster, recorded in
+# ``result.json`` (``sssf_limits``), and cross-checked after the run against the
+# engine's own ``config`` event (``sssf_limits_engine``).
+_SSSF_LIMITS: dict[str, int] = {
+    "fix_loops": 3,
+    "revision_loops": 2,
+    "agent_retries": 1,
+    "json_fix_attempts": 2,
+}
+
+
+def _sssf_phase_cap(limits: dict[str, Any] | None = None) -> int:
+    """The most phases ``adw_simple_sdlc.py``'s graph can emit under ``limits``.
+
+    Derived from the script rather than guessed:
+
+    * the fixed head — request 1 + plan 1 + commit_plan 1 + build 1        -> 4
+    * the repair loop — (test_i, fix_i) * ``fix_loops``                   -> 2F
+    * the review loop — (review_i, revise_i) bounded by ``revision_loops``,
+      at most N-1 revisions between N reviews                             -> 2R-1
+    * retest                                                              -> 1
+    * the fixed tail — commit_build 1 + changes 1 + document 1 + commit_docs 1
+                                                                          -> 4
+
+    At the engine's default bounds (F=3, R=2) that is 4 + 6 + 3 + 1 + 4 = 18,
+    which is the number this was a constant for.
+
+    ``agent_retries`` and ``json_fix_attempts`` do NOT appear: they are retries
+    INSIDE one phase (a re-entered agent session, a re-parsed response), so they
+    buy turns and dollars but never open a second ``phase_start``. They are still
+    recorded in the row, because they shape what the phases cost.
+
+    Used as ``step_cap``: more phases than the graph can produce means the graph
+    changed under us, so the row is flagged rather than published against a
+    budget that no longer describes it.
+    """
+    lim = {**_SSSF_LIMITS, **(limits or {})}
+    fix = int(lim.get("fix_loops") or 0)
+    rev = int(lim.get("revision_loops") or 0)
+    return 4 + (2 * fix) + (2 * rev - 1) + 1 + 4
+
+
+# THE NAMED DEFAULT, for the two places that need a STATIC number: ``ArmSpec.
+# max_steps`` (a registry entry is built at import time, before any roster
+# exists) and the spend-guard projection that reads it. Derived through the same
+# one formula, so the default and the per-run value can never disagree about the
+# arithmetic — only about the limits, which is the whole point.
+_SSSF_PHASE_CAP = _sssf_phase_cap()
+
+
+def _sssf_limits_of(document: dict[str, Any]) -> dict[str, int]:
+    """The ``limits:`` block a synthesised roster states, defaulted per key.
+
+    Reads the document the harness itself wrote, so an arm that overrides a bound
+    gets its own cap without anyone having to pass the number twice.
+    """
+    raw = document.get("limits") if isinstance(document, dict) else None
+    out = dict(_SSSF_LIMITS)
+    if isinstance(raw, dict):
+        for key in _SSSF_LIMITS:
+            with contextlib.suppress(TypeError, ValueError):
+                if raw.get(key) is not None:
+                    out[key] = int(raw[key])
+    return out
+
+
+def _sssf_effective_phase_cap(
+    requested: int, limits: dict[str, int]
+) -> tuple[int, str]:
+    """``(cap, source)`` — the phase budget THIS run is measured against.
+
+    ``requested`` arrives from ``_resolve_max_steps``, which returns the
+    operator's ``--max-steps`` when one was given and ``ArmSpec.max_steps``
+    (i.e. ``_SSSF_PHASE_CAP``, the default-limits derivation) otherwise. So
+    ``requested == _SSSF_PHASE_CAP`` means "nobody overrode this", and the
+    per-run derived cap is the better answer; anything else is an explicit
+    operator budget and must win, because a harness that quietly ignored
+    ``--max-steps`` would be enforcing a bound the command line did not ask for.
+
+    The two agree whenever the limits are the defaults, which is why this change
+    moves no existing row.
+    """
+    derived = _sssf_phase_cap(limits)
+    if requested == _SSSF_PHASE_CAP:
+        return derived, f"derived from roster limits {_sssf_limits_brief(limits)}"
+    return requested, f"explicit --max-steps {requested} (derived would be {derived})"
+
+
+def _sssf_limits_brief(limits: dict[str, Any]) -> str:
+    """``fix_loops=3 revision_loops=2 …`` — for a message, in a stable order."""
+    return " ".join(f"{k}={limits.get(k)}" for k in _SSSF_LIMITS)
 
 # THE SPEND GUARD. The sssf engine enforces NOTHING: it has no hourly cap, no
 # daily cap, no per-run cap and no equivalent of ``_BENCH_ROOT_CAPS`` — it counts
@@ -6854,6 +7109,14 @@ def _sssf_roster_document(
     # really reads is recorded in result.json.
     document[_SSSF_SKIP_KEY] = skip
     document["defaults"][_SSSF_SKIP_KEY] = skip
+    # THE LOOP BOUNDS, STATED. Emitted at the engine's own defaults rather than
+    # omitted, because the engine's defaults are the engine's to change: a roster
+    # that says nothing about ``fix_loops`` reproduces whatever the engine happens
+    # to default to on the day it is replayed, which is not the graph this row
+    # measured. Stating them makes the archived roster self-sufficient, and it is
+    # what lets ``_sssf_effective_phase_cap`` derive this run's phase budget from
+    # the row's own configuration instead of from a harness constant.
+    document[_SSSF_LIMITS_KEY] = dict(_SSSF_LIMITS)
     document["_bench_arm"] = arm
     document["_bench_skip_declared_in"] = skip_where
     return document
@@ -7216,6 +7479,286 @@ _SSSF_EMPTY_RESPONSE_ERROR = (
     "Reason(s) the provider gave: {reasons}"
 )
 
+# --------------------------------------------------------------------------- #
+# a crash is not a capability result — and an agent's own abort is
+# --------------------------------------------------------------------------- #
+#
+# TWO FAILURES THAT LOOKED IDENTICAL IN THE ROW AND ARE NOT THE SAME THING. Both
+# reached the chain arm's denominator as ``empty_patch``, i.e. as "the arm was
+# asked and produced nothing":
+#
+#   * ``idaholab__montepy-933_interface`` — ``plan -> fail ERR:'str' object has no
+#     attribute 'get'``. An unhandled ``AttributeError`` inside the engine's own
+#     stream reader (``agent_pi.run``, since fixed upstream). The planner never got
+#     to decide anything; a defect in the machinery was published as the arm's
+#     capability.
+#   * ``keras-team__keras-22316`` — ``plan -> fail ERR:planner is limited to
+#     ['specs/'] but mod...``. The engine's ``permissions.enforce`` refusing the
+#     run because the PLANNER wrote 18 paths outside its declared ``writes``
+#     scope. That is the agent's own behaviour: it did the wrong thing and the
+#     engine caught it.
+#
+# The rule, stated once here and implemented once below:
+#
+#   unhandled engine/infra exception -> NOT a capability result at all. Refused
+#       from numerator AND denominator, exactly as ``provider-empty-response`` is
+#       (see ``_ERROR_TERMINATIONS``, ``_row_engine_crashed``, ``_CRASH_CODE``).
+#       The arm was never asked the question.
+#   agent-behaviour abort -> COUNTED as a failure, because the agent's behaviour
+#       is precisely what is being measured. Recorded under its OWN termination so
+#       it can be re-classified later from the record instead of by re-running.
+#
+# Why both need their own termination value rather than one "the ADW died" bucket:
+# ``result.json`` for those two rows is byte-identical on every field that
+# mattered — ``error: null``, ``termination: "terminal-state"``,
+# ``adw_exit_code: 1``, ``adw_session_status: "fail"``,
+# ``adw_not_accepted_reason: null``, ``steps_used: 2``. Nothing downstream could
+# have told them apart, which is why the classification has to be made HERE, at
+# the point where the artifacts are still on disk, and written into the row.
+_SSSF_ENGINE_CRASH_TERMINATION = "engine-crash"
+_SSSF_ENGINE_CRASH_ERROR = (
+    "engine-crash: the sssf engine raised an unhandled {exception} and died — "
+    "{message} (deepest frame: {frame}). This is a defect in the engine or in "
+    "this harness's integration with it, NOT a decision the agent made: the arm "
+    "was never asked the question, so the row is not a capability result and is "
+    "refused from every rate, numerator and denominator alike. Evidence: {source}."
+)
+_SSSF_WRITES_SCOPE_TERMINATION = "writes-scope-breach"
+
+# The engine's OWN cause labels, as they appear in ``EventRecord.name`` on a
+# ``type: "error"`` event. ``agents.execute`` emits ``permission_breach`` (with
+# ``agent`` / ``writes`` / ``protected_files`` in the payload) and re-raises;
+# ``runner.finish`` emits ``not_accepted``. These are structured, engine-owned and
+# unambiguous, which is why they are consulted BEFORE any text is parsed — the
+# generic ``runner.phase`` error event that follows a breach carries the identical
+# message under the PHASE's name, so keying off message text alone cannot tell an
+# intentional abort from a crash.
+_SSSF_ABORT_EVENT_NAMES: dict[str, str] = {
+    "permission_breach": "writes_scope_breach",
+    "not_accepted": "not_accepted",
+}
+
+# Exception classes the engine raises ON PURPOSE. Each one is a decision — a
+# scope breach, a failed gate, an unreplayable resume, a signal — so a run that
+# ends in one ends because something decided it should.
+_SSSF_DELIBERATE_EXCEPTIONS = frozenset(
+    {
+        "PermissionBreach",
+        "GateFailure",
+        "ResumeError",
+        "SystemExit",
+        "KeyboardInterrupt",
+        # ``agents`` raises these with an authored message when an envelope will
+        # not parse or a coding agent reports failure. Intentional, and the
+        # builder's own doing.
+        "ValueError",
+        "RuntimeError",
+    }
+)
+
+# Exception classes that are ALWAYS a defect in the machinery. Deliberately an
+# allow-list of the "the code is wrong" builtins rather than "anything not
+# deliberate": an exception class this harness has never seen is COUNTED, because
+# ``classify_run``'s posture is that a flagged counted row is safer than a
+# silently dropped one — a dropped row moves a published denominator, and only a
+# named, understood infra class has earned that.
+_SSSF_INFRA_EXCEPTIONS = frozenset(
+    {
+        "AttributeError",
+        "TypeError",
+        "KeyError",
+        "IndexError",
+        "NameError",
+        "UnboundLocalError",
+        "ZeroDivisionError",
+        "RecursionError",
+        "AssertionError",
+        "ImportError",
+        "ModuleNotFoundError",
+        "StopIteration",
+        "JSONDecodeError",
+        "ValidationError",
+    }
+)
+
+_TRACEBACK_HEADER = "Traceback (most recent call last):"
+# ``adw_modules.permissions.PermissionBreach: planner is limited to ...`` or a
+# bare ``AttributeError: 'str' object has no attribute 'get'``. Anchored at
+# column 0 because every FRAME line in a traceback is indented.
+_TRACEBACK_EXC_RE = re.compile(r"^([A-Za-z_][\w.]*)(?::[ ]?(.*))?$")
+_TRACEBACK_FRAME_RE = re.compile(r'^\s+File "([^"]+)", line (\d+), in (.+)$')
+
+
+def _sssf_traceback_exception(log_text: str) -> dict[str, str] | None:
+    """The LAST traceback in an ADW log, as ``{exception, module, message, frame}``.
+
+    ``sssf-adw.log`` is the child's stdout with stderr merged into it
+    (``stderr=subprocess.STDOUT``), which makes it the ONLY artifact carrying an
+    exception's class name: ``runner.phase`` records ``str(error)[:1000]`` into
+    ``events.jsonl`` and into the ``phases.error`` column and nothing else — no
+    class, no module, no traceback. So the class has to be read from here.
+
+    The LAST traceback, because exception chaining ("During handling of the above
+    exception, another exception occurred") emits several and the final one is
+    what actually killed the process.
+    """
+    lines = log_text.splitlines()
+    found: dict[str, str] | None = None
+    for i, line in enumerate(lines):
+        if line.strip() != _TRACEBACK_HEADER:
+            continue
+        frame = ""
+        for candidate in lines[i + 1 :]:
+            if match := _TRACEBACK_FRAME_RE.match(candidate):
+                frame = f"{match.group(1)}:{match.group(2)} in {match.group(3)}"
+                continue
+            if not candidate or candidate[:1].isspace():
+                continue
+            exc = _TRACEBACK_EXC_RE.match(candidate.rstrip())
+            if exc is None:
+                # Not an exception line and not a frame — this traceback was
+                # interleaved with other output. Stop rather than guess.
+                break
+            dotted = exc.group(1)
+            found = {
+                "exception": dotted.rsplit(".", 1)[-1],
+                "module": dotted.rsplit(".", 1)[0] if "." in dotted else "",
+                "message": (exc.group(2) or "").strip(),
+                "frame": frame,
+            }
+            break
+    return found
+
+
+def _sssf_abort_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """This attempt's engine-labelled abort events, in order.
+
+    Scoped to the CURRENT attempt for the same reason ``_sssf_phase_count`` is: a
+    resumed run's file still holds the previous attempt's breach, and classifying
+    THIS row off a dead attempt's abort would attribute one attempt's behaviour to
+    another's.
+    """
+    out: list[dict[str, Any]] = []
+    for ev in _sssf_current_attempt(events):
+        if str(ev.get("type") or "") != "error":
+            continue
+        if str(ev.get("name") or "") in _SSSF_ABORT_EVENT_NAMES:
+            out.append(ev)
+    return out
+
+
+def _sssf_failure_classification(
+    events: list[dict[str, Any]], log_text: str
+) -> dict[str, Any]:
+    """Was this run's failure the MACHINERY's or the AGENT's? From the artifacts.
+
+    Returns ``{"kind", "counted", "reason", "evidence"}``. ``kind`` is one of:
+
+    * ``"writes_scope_breach"`` — the agent wrote outside its declared ``writes``
+      scope and the engine refused the run. ``counted: True``: the agent's
+      behaviour IS the measurement.
+    * ``"engine_crash"``     — an unhandled infra exception. ``counted: False``.
+    * ``"agent_abort"``      — some other deliberate engine refusal (a failed
+      gate, an unparseable envelope, a signal). ``counted: True``, recorded so it
+      is re-classifiable without a re-run.
+    * ``None``               — nothing in the artifacts says the run aborted.
+
+    TWO INDEPENDENT SOURCES, consulted in order of how much they can be trusted:
+
+    1. the engine's own labelled ``error`` events (structured, and the engine
+       chose the label);
+    2. the traceback class in the ADW log (text, but it is the only place a class
+       name exists at all).
+
+    Deliberately NOT a substring match on one message. The two rows this exists
+    for differ in their message text, but so do all the other failure modes, and a
+    harness that recognises today's two strings silently mis-files tomorrow's
+    third. What is matched instead is the engine's label vocabulary and Python's
+    exception class — both of which are interfaces rather than prose.
+    """
+    evidence: dict[str, Any] = {}
+    aborts = _sssf_abort_events(events)
+    if aborts:
+        evidence["abort_events"] = [
+            {
+                "name": str(ev.get("name") or ""),
+                "phase_id": str(ev.get("phase_id") or ""),
+                "payload": {
+                    k: v
+                    for k, v in (ev.get("payload") or {}).items()
+                    if k != "error"
+                },
+                "message": _excerpt(str((ev.get("payload") or {}).get("error") or "")),
+            }
+            for ev in aborts
+        ]
+    tb = _sssf_traceback_exception(log_text)
+    if tb:
+        evidence["traceback"] = tb
+
+    for ev in aborts:
+        label = _SSSF_ABORT_EVENT_NAMES[str(ev.get("name") or "")]
+        if label != "writes_scope_breach":
+            continue
+        payload = ev.get("payload") or {}
+        return {
+            "kind": "writes_scope_breach",
+            "counted": True,
+            "reason": (
+                f"writes-scope-breach: {payload.get('agent') or 'an agent'} wrote "
+                f"outside its declared writes scope {payload.get('writes')!r} and "
+                "the engine refused the run. This is the AGENT'S OWN BEHAVIOUR, so "
+                "it stays counted as a failure of the arm — recorded under its own "
+                "termination so it can be re-classified from this record without a "
+                "re-run."
+            ),
+            "evidence": evidence,
+            "source": f"{_SSSF_EVENTS_NAME} error event name=permission_breach",
+        }
+    if tb is None:
+        return {"kind": None, "counted": True, "reason": None, "evidence": evidence}
+    exc = tb["exception"]
+    if exc in _SSSF_DELIBERATE_EXCEPTIONS:
+        kind = "writes_scope_breach" if exc == "PermissionBreach" else "agent_abort"
+        return {
+            "kind": kind,
+            "counted": True,
+            "reason": (
+                f"{exc}: the engine refused this run on purpose — {tb['message'][:200]}"
+            ),
+            "evidence": evidence,
+            "source": f"{_SSSF_TRAJECTORY_NAME} traceback",
+        }
+    if exc in _SSSF_INFRA_EXCEPTIONS:
+        return {
+            "kind": "engine_crash",
+            "counted": False,
+            "reason": _SSSF_ENGINE_CRASH_ERROR.format(
+                exception=tb["exception"],
+                message=tb["message"][:300] or "(no message)",
+                frame=tb["frame"] or "(unknown)",
+                source=f"{_SSSF_TRAJECTORY_NAME} traceback",
+            ),
+            "evidence": evidence,
+            "source": f"{_SSSF_TRAJECTORY_NAME} traceback",
+        }
+    # An exception class this harness has not classified. COUNTED — see
+    # ``_SSSF_INFRA_EXCEPTIONS`` for why the unknown case must not silently
+    # remove a row from a denominator. Named in the row so the next one like it
+    # can be classified from the record.
+    return {
+        "kind": "unclassified_exception",
+        "counted": True,
+        "reason": (
+            f"{exc} is not in this harness's deliberate or infra exception sets, so "
+            "the row stays COUNTED rather than being silently dropped. Classify it "
+            "and the archived row can be re-read under the new rule."
+        ),
+        "evidence": evidence,
+        "source": f"{_SSSF_TRAJECTORY_NAME} traceback",
+    }
+
+
 # Parts of an assistant message that count as the model having said something.
 # A tool call with no prose beside it is still work; an empty ``content`` list is
 # not, and pi's swallowed failures produce exactly that.
@@ -7530,9 +8073,106 @@ def _sssf_read_turn_digest(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _sssf_event_replayed(ev: dict[str, Any]) -> bool:
+    """Was this ``phase_start`` served from a PRIOR attempt's record?
+
+    ``runner.Run.phase`` writes ``payload.replayed`` on every ``phase_start``
+    (the same boolean it stores in the ``phases.replayed`` column), and a
+    replayed phase calls no model and costs nothing — see ``PhaseHandle._replay``,
+    which marks its envelope row ``attempt=0`` for the identical reason.
+    """
+    payload = ev.get("payload")
+    return bool(isinstance(payload, dict) and payload.get("replayed"))
+
+
+def _sssf_current_attempt(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The trailing slice of ``events`` belonging to THIS attempt.
+
+    A resumed run APPENDS to the previous attempt's ``events.jsonl``: the tracer's
+    path is keyed by ``adw_id`` alone (``session.ensure``), and a resume reuses the
+    id — the keras session's phases are seq 1-8 then 9-16 in one file. So every
+    whole-file count sees dead attempts too.
+
+    The boundary is the ``config`` event. ``session.ensure`` emits exactly one per
+    PROCESS, before any phase opens, so its occurrences are the attempt starts and
+    the last one begins the attempt that is running (or that just finished). This
+    is more reliable than looking for repeated phase NAMES (a graph may legally
+    re-enter ``test_2``) or for a seq reset (there is none — a resumed run
+    continues the numbering on purpose).
+
+    Traces with no ``config`` event at all are read whole, which is the correct
+    answer for them: the engine version that emits ``replayed`` is the same one
+    that emits ``config``, so a trace lacking the boundary marker also cannot
+    contain a resumed attempt.
+    """
+    start = 0
+    for i, ev in enumerate(events):
+        if str(ev.get("type") or "") == "config":
+            start = i
+    return events[start:]
+
+
 def _sssf_phase_count(events: list[dict[str, Any]]) -> int:
-    """How many phases this run has opened. The arm's ``steps_used``."""
-    return sum(1 for ev in events if str(ev.get("type") or "") == "phase_start")
+    """How many phases THIS attempt really opened. The arm's ``steps_used``.
+
+    Two exclusions, and both are needed to keep a good row off the flag:
+
+    1. previous attempts' phases (see ``_sssf_current_attempt``);
+    2. this attempt's REPLAYED phases (see ``_sssf_event_replayed``) — a resumed
+       run records the full graph and marks the prefix it served from the prior
+       attempt, so counting those would charge this attempt for phases it did not
+       run and would overflow the cap on a healthy resume.
+
+    Without either, a resumed run's count exceeded ``step_cap`` and ``run_sssf``
+    killed it — or ``budget_exhausted_reason`` flagged it as having used all its
+    steps — purely because the file was append-only. What is measured here is
+    what this attempt actually bought.
+    """
+    return sum(
+        1
+        for ev in _sssf_current_attempt(events)
+        if str(ev.get("type") or "") == "phase_start" and not _sssf_event_replayed(ev)
+    )
+
+
+def _sssf_replayed_phase_count(events: list[dict[str, Any]]) -> int:
+    """Phases THIS attempt served from a prior attempt's record — recorded, not
+    counted. A non-zero value is how a reader knows the row is a resume."""
+    return sum(
+        1
+        for ev in _sssf_current_attempt(events)
+        if str(ev.get("type") or "") == "phase_start" and _sssf_event_replayed(ev)
+    )
+
+
+def _sssf_attempt_count(events: list[dict[str, Any]]) -> int:
+    """How many attempts this ``events.jsonl`` holds, by ``config`` events.
+
+    Zero means the marker is absent (an older engine, or a probe that never
+    started the engine at all), which is not the same as "one attempt" and is
+    recorded as itself.
+    """
+    return sum(1 for ev in events if str(ev.get("type") or "") == "config")
+
+
+def _sssf_engine_limits(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The loop bounds the ENGINE says this attempt ran under, or ``None``.
+
+    ``SSSFConfig.snapshot`` is written into the last ``config`` event's payload,
+    so this is the engine's own record of the graph shape — an independent
+    cross-check on the ``limits:`` block the harness wrote into the roster. It is
+    recorded beside the harness's copy rather than merged with it: a disagreement
+    means the engine did not honour the roster, which is exactly the kind of fact
+    that must not be averaged away.
+    """
+    snapshot: dict[str, Any] | None = None
+    for ev in events:
+        if str(ev.get("type") or "") != "config":
+            continue
+        payload = ev.get("payload")
+        if isinstance(payload, dict) and isinstance(payload.get("limits"), dict):
+            snapshot = dict(payload["limits"])
+    return snapshot
 
 
 def _sssf_not_accepted(events: list[dict[str, Any]]) -> str | None:
@@ -7774,6 +8414,20 @@ def run_sssf(
     entered = time.monotonic()
     roster = _sssf_roster_for(arm)
     green_state = _sssf_green_state(roster)
+    # The loop bounds this run will DECLARE, and the phase budget derived from
+    # them. Computed here, before any exit path, so the early-exit rows (precheck
+    # failure, roster refusal) record the same derived cap a completed row does —
+    # a row whose ``step_cap`` came from a different rule than its siblings' is not
+    # comparable with them. Re-derived from the synthesised document below, which
+    # is where an arm-specific override would appear.
+    #
+    # ``requested_steps`` is kept UNMODIFIED for the whole function: it is what
+    # distinguishes "the registry default reached us" from "the operator named a
+    # budget", and re-deriving from an already-derived value would turn the first
+    # into the second and mislabel the source.
+    requested_steps = max_steps
+    sssf_limits = dict(_SSSF_LIMITS)
+    max_steps, step_cap_source = _sssf_effective_phase_cap(requested_steps, sssf_limits)
     inst = _instance(instance_id)
     # A run the store cannot grade is a write-off — refuse before any spend.
     _assert_oracle_store_complete([inst])
@@ -7894,6 +8548,13 @@ def run_sssf(
         timeout_s=timeout_s,
         skip_where=skip_where,
     )
+    # RE-READ from the document, so the budget comes from the bytes that were
+    # actually handed to the engine rather than from the constant they were built
+    # out of. Identical today; the difference appears the moment an arm declares
+    # its own ``limits:``, and this is the line that makes such an arm's cap
+    # correct without a second edit.
+    sssf_limits = _sssf_limits_of(document)
+    max_steps, step_cap_source = _sssf_effective_phase_cap(max_steps, sssf_limits)
     roster_error = _sssf_validate_roster(document, roster)
     if roster_error and not probe_plumbing:
         raise SystemExit(f"sssf roster is invalid at $0: {roster_error}")
@@ -8063,6 +8724,13 @@ def run_sssf(
     turns_path = run_dir / _SSSF_TURNS_NAME
     _sssf_write_turn_digest(turns_path, raw_usage["by_role"], adw_id)
     steps_used = _sssf_phase_count(events)
+    # Recorded beside ``steps_used`` so the exclusions it makes are auditable from
+    # the row rather than only from the code: a reader can see that this attempt
+    # opened N phases of which R were replayed off a previous one, and that the
+    # file holds A attempts in total.
+    replayed_phases = _sssf_replayed_phase_count(events)
+    attempts_in_trace = _sssf_attempt_count(events)
+    engine_limits = _sssf_engine_limits(events)
     not_accepted = _sssf_not_accepted(events)
     session_status = _sssf_session_status(db_path, adw_id)
     sqlite_totals = _sssf_sqlite_totals(db_path, adw_id)
@@ -8126,6 +8794,47 @@ def run_sssf(
         or rederived["models_missing_a_rate"]
     )
 
+    # ---- machinery failure vs agent behaviour --------------------------------
+    # See ``_sssf_failure_classification``: an unhandled engine exception is not a
+    # capability result and must leave BOTH sides of every rate; a writes-scope
+    # breach is the agent's own behaviour and stays counted. Read from this row's
+    # own artifacts — the engine's labelled abort events and the ADW log's
+    # traceback class — never from a substring of one message.
+    #
+    # Only for a run the ADW itself failed (``rc != 0``): a green run's log can
+    # legitimately contain a traceback from a test it ran, and that is the task's
+    # output, not the engine dying.
+    failure_class: dict[str, Any] = {
+        "kind": None,
+        "counted": True,
+        "reason": None,
+        "evidence": {},
+    }
+    if rc != 0 and not probe_plumbing:
+        adw_log_text = ""
+        with contextlib.suppress(OSError):
+            adw_log_text = traj_path.read_text(encoding="utf-8", errors="replace")
+        failure_class = _sssf_failure_classification(events, adw_log_text)
+        if failure_class["kind"] == "engine_crash":
+            # An ``error`` is what makes ``classify_run`` bucket this as
+            # ``run_failed``, which is what keeps it out of ``_arm_view``'s
+            # ``valid`` — the same mechanism that refuses a starved row. The
+            # termination value is in ``_ERROR_TERMINATIONS`` so the step-count
+            # fallback cannot re-label it as budget-exhausted and put it back.
+            prior = (
+                f" Prior verdict, carried forward: termination {termination!r}"
+                + (f", error: {error}" if error else ", no error recorded")
+                + "."
+            )
+            error = str(failure_class["reason"]) + prior
+            termination = _SSSF_ENGINE_CRASH_TERMINATION
+        elif failure_class["kind"] == "writes_scope_breach":
+            # NO ``error`` is set, and that is the whole point: the row must stay
+            # in the denominator as a counted failure of the arm. Only the
+            # termination changes, so the reason is on the record and the row can
+            # be re-classified later without re-running it.
+            termination = _SSSF_WRITES_SCOPE_TERMINATION
+
     # ---- a throttled request is NOT a capability failure ---------------------
     # LAST of the error rules, and it OVERRIDES the ones above rather than
     # deferring to them, carrying whatever they found along in the message. A cap
@@ -8177,6 +8886,33 @@ def run_sssf(
         "model": None,
         "sssf_roster": {role: roster.get(role) for role in _SSSF_ROLES},
         "sssf_skip_phases": _sssf_skip_list(roster),
+        # ---- THE GRAPH'S SHAPE, AND THE BUDGET DERIVED FROM IT ------------------
+        # The loop bounds this row's roster STATED (not the engine's implicit
+        # defaults), the cap derived from them, and where the cap came from. A row
+        # that records its own limits can be re-checked against a later engine
+        # whose defaults have moved; a row that records only "step_cap: 18" cannot
+        # say whether 18 was the graph's maximum or a stale constant.
+        "sssf_limits": dict(sssf_limits),
+        "sssf_limits_source": f"{_SSSF_ROSTER_NAME} ({_SSSF_LIMITS_KEY}:)",
+        # The ENGINE's own record of the same thing, from its ``config`` event.
+        # Surfaced, never merged: if these two disagree the engine did not honour
+        # the roster, and that is a finding rather than a number to average.
+        "sssf_limits_engine": engine_limits,
+        "sssf_limits_agree": (
+            None
+            if engine_limits is None
+            else all(
+                engine_limits.get(k) == sssf_limits.get(k) for k in _SSSF_LIMITS
+            )
+        ),
+        "sssf_phase_cap_derived": _sssf_phase_cap(sssf_limits),
+        "step_cap_source": step_cap_source,
+        # ---- WHAT THIS ATTEMPT ACTUALLY OPENED ---------------------------------
+        # ``steps_used`` counts THIS attempt's real phases only. These two say what
+        # was excluded to get there, so the count is checkable from the row.
+        "sssf_phases_replayed": replayed_phases,
+        "sssf_attempts_in_trace": attempts_in_trace,
+        "sssf_resumed": replayed_phases > 0,
         "sssf_roster_sha256": hashlib.sha256(roster_text.encode("utf-8")).hexdigest(),
         "sssf_roster_file": _SSSF_ROSTER_NAME,
         "sssf_adw_id": adw_id,
@@ -8280,6 +9016,15 @@ def run_sssf(
         "empty_response_by_role": raw_usage["empty_response_by_role"],
         "empty_response_reasons": raw_usage["empty_response_reasons"],
         "provider_starved": raw_usage["provider_starved"],
+        # ---- WHOSE failure was it: the machinery's or the agent's? -------------
+        # The classification AND the evidence it was made from, so the verdict is
+        # re-derivable from the archived row instead of only from a live tree. See
+        # ``_sssf_failure_classification``: ``counted: false`` means the row is
+        # refused from every rate because the arm was never asked the question.
+        "sssf_failure_class": failure_class["kind"],
+        "sssf_failure_counted": failure_class["counted"],
+        "sssf_failure_reason": failure_class["reason"],
+        "sssf_failure_evidence": failure_class["evidence"],
         # The rates these dollars were derived from, plus the table's hash, so a
         # price change can be applied to this row arithmetically.
         "price_table": price_table,
@@ -11214,11 +11959,23 @@ _ROW_ARTIFACTS = ("result.json", "audit.json", "prediction.diff")
 # Also here: the acceptance oracle's provenance (what the independent author was
 # shown, and the chain's own authoring events). Tiny, and without them a published
 # row's independence claim rests on a sha256 with nothing to check it against.
+#
+# And the sssf arms' CONFIG evidence, added when their rows were first archived.
+# ``benchmark_store._CONFIG`` already digests ``sssf-roster.yaml``,
+# ``sssf-prompt.md`` and ``attempt.json`` — so before this, the store recorded
+# hashes of three files that no archive contained and the next sweep deleted. A
+# trail that verifies files which will vanish is not a trail. The roster in
+# particular IS the record of which models an arm ran: a row whose roster is gone
+# cannot be re-attributed to a model set, which is the single worst failure this
+# bench can have. All three are small (roster ~2 KB, prompt ~4 KB, attempt ~30 B).
 _ARCHIVED_ROW_EXTRAS = (
     "root/state/events/prompt_bodies.ndjson",
     "root/state/events/response_bodies.ndjson",
     _ACCEPTANCE_SPEC_NAME,
     _ACCEPTANCE_EVENTS_NAME,
+    _SSSF_ROSTER_NAME,
+    "sssf-prompt.md",
+    "attempt.json",
 )
 # DIAGNOSTIC evidence: what the run DID, as opposed to how it SCORED.
 #
@@ -11238,7 +11995,13 @@ _ARCHIVED_ROW_EXTRAS = (
 # run). One 19-instance × 3-arm sweep is ~58 MB raw, ~10 MB stored: every entry
 # is gzipped with a zeroed mtime, so re-archiving identical bytes produces
 # identical bytes and the archive stays diffable-by-digest.
-_ARCHIVED_ROW_DIAGNOSTICS = ("raw.diff", "sweep-run.log")
+#
+# ``sssf-adw.log`` joined them for Fix 3's sake: it is the child's stdout with
+# stderr merged in, which makes it the ONLY artifact carrying an exception's CLASS
+# name (``runner.phase`` records ``str(error)[:1000]`` into events.jsonl and the
+# ``phases.error`` column, and nothing else). Without it in the archive, an
+# engine-crash row's classification could never be re-derived — only believed.
+_ARCHIVED_ROW_DIAGNOSTICS = ("raw.diff", "sweep-run.log", _SSSF_TRAJECTORY_NAME)
 
 # The action trail, per arm. Globs rather than names because the chain arms
 # write ONE trajectory per dev call, and the arm id is not a parameter here —
@@ -11844,6 +12607,23 @@ _STARVED_CODE = (
     "zero usage; excluded from every rate, never counted as an arm failure"
 )
 
+# The engine died of its own bug. Same exclusion as `S` and for the same reason —
+# the arm was never asked the question — but a SEPARATE code, because "the
+# provider would not answer" and "the harness's engine crashed" are different
+# problems with different owners and lumping them hides which one is happening.
+_CRASH_CODE = (
+    " · `C` engine-crash — the sssf engine raised an unhandled exception; "
+    "excluded from every rate, never counted as an arm failure"
+)
+
+# COUNTED, unlike `S` and `C`. Its own code only so the reader can see WHY the
+# arm failed: the agent wrote outside its declared writes scope and the engine
+# refused the run. That is behaviour, and behaviour is what is being measured.
+_WRITES_SCOPE_CODE = (
+    " · `W` writes-scope breach — the agent wrote outside its declared scope and "
+    "the engine refused the run; COUNTED as an arm failure"
+)
+
 
 def _row_provider_starved(r: dict[str, Any]) -> bool:
     """Did the provider swallow turns in this row? ``termination`` is authoritative.
@@ -11858,6 +12638,38 @@ def _row_provider_starved(r: dict[str, Any]) -> bool:
     )
 
 
+def _row_engine_crashed(r: dict[str, Any]) -> bool:
+    """Did the ENGINE crash under this row, rather than the agent failing?
+
+    An unhandled infra exception (``AttributeError`` and friends) means the arm
+    was never asked the question — see ``_sssf_failure_classification``. Not a
+    capability result on either side of a rate, exactly like a starved row.
+
+    ``termination`` first and the recorded classification second, the same
+    derive-don't-trust order ``_row_provider_starved`` uses: a row written before
+    the termination value existed is still recognised from its
+    ``sssf_failure_class``, which is what lets an archived row be re-read under
+    this rule rather than taken on faith.
+    """
+    return bool(
+        str(r.get("termination") or "") == _SSSF_ENGINE_CRASH_TERMINATION
+        or str(r.get("sssf_failure_class") or "") == "engine_crash"
+    )
+
+
+def _row_writes_scope_breach(r: dict[str, Any]) -> bool:
+    """Did the agent write outside its declared scope and get refused for it?
+
+    COUNTED, unlike the two above: the agent's behaviour is the measurement. This
+    predicate exists so the failure can be told apart in a table and re-classified
+    later from the record, not so it can be excluded.
+    """
+    return bool(
+        str(r.get("termination") or "") == _SSSF_WRITES_SCOPE_TERMINATION
+        or str(r.get("sssf_failure_class") or "") == "writes_scope_breach"
+    )
+
+
 def _outcome_codes(rows: list[dict[str, Any]]) -> str:
     codes = _OUTCOME_CODES
     if any(
@@ -11867,6 +12679,10 @@ def _outcome_codes(rows: list[dict[str, Any]]) -> str:
         codes += _PARSE_FAILED_CODE
     if any(_row_provider_starved(r) for r in rows):
         codes += _STARVED_CODE
+    if any(_row_engine_crashed(r) for r in rows):
+        codes += _CRASH_CODE
+    if any(_row_writes_scope_breach(r) for r in rows):
+        codes += _WRITES_SCOPE_CODE
     return codes
 
 
@@ -11885,12 +12701,26 @@ def _outcome_cell(r: dict[str, Any] | None) -> str:
         # what failed was the provider's willingness to answer. `X` reads as the
         # arm's own invalid row.
         code = "S"
+    elif _row_engine_crashed(r):
+        # Third of the before-the-gate codes, same reason again: what failed was
+        # the ENGINE, and `X` would file a harness defect under the arm's own
+        # invalid rows. Ordered after `S` because a starved row that then crashed
+        # is first of all a starved row — the same precedence ``run_sssf`` gives
+        # the two terminations.
+        code = "C"
     elif r["_audit_ok"] is not True or r["_run_failed"]:
         code = "X"
     elif outcome.startswith("task_broken"):
         code = "B"
     elif g.get("oracle_resolved"):
         code = "R"
+    elif _row_writes_scope_breach(r):
+        # AFTER the gate and after `R`, because this is a COUNTED failure and not
+        # an exclusion: the row stays in the denominator either way. The code
+        # replaces the `E` it would otherwise show, and that is the point — "the
+        # patch was empty" is the symptom, "the agent wrote outside its scope and
+        # was refused" is the reason, and only the reason is re-classifiable.
+        code = "W"
     elif outcome == "empty_patch":
         code = "E"
     elif g.get("oracle_resolved") is False:
@@ -12519,6 +13349,105 @@ def _archive_report_artifacts(
 # --------------------------------------------------------------------------- #
 # report
 # --------------------------------------------------------------------------- #
+
+
+def archive_rows(*, arms: tuple[str, ...] = (), note: str = "") -> Path:
+    """Snapshot the live rows' evidence into ``results-archive/`` and NOTHING else.
+
+    WHY THIS EXISTS RATHER THAN JUST RUNNING ``report``. Archiving is normally a
+    side effect of ``report`` in live mode, and in that mode ``report`` also
+    REWRITES ``bench/swebench/results.md`` unconditionally — there is no flag that
+    turns the write off (see ``report``: the live branch is
+    ``out.write_text(text)`` with only the diagnostics re-verification able to
+    abort it). For the job this function does, that write is a hazard rather than a
+    bonus:
+
+    * the committed ``results.md`` is the 2026-08-11 factory-only table, 18 rows
+      over one manifest;
+    * the sssf arms are HALF-MEASURED — 8 ``chain`` rows and 9 ``v32-solo`` rows
+      against 18-25 for every published arm, and ``gpt54-solo`` has none at all.
+
+    Publishing those two sets into one table would put an 8-row denominator beside
+    an 18-row one under the same heading, which is the accounting-basis mixing that
+    forced the 2026-08-03 retraction. The rows' EVIDENCE, though, has to be saved
+    right now for a reason that has nothing to do with publishing: ``runs/`` is
+    gitignored scratch that the next sweep deletes, and the benchmark store has
+    already recorded artifact digests pointing into it. So this is the narrow path
+    — archive the evidence, leave the published table alone, and let a later
+    ``report`` publish when the coverage is there.
+
+    ``arms`` restricts the snapshot to those run keys (empty = every row
+    ``_report_rows`` accepts). Row SELECTION is ``_report_rows``, unchanged and
+    reused, because it is also the fail-closed refusal that guarantees every
+    archived row has all of ``_ROW_ARTIFACTS`` — ``_archive_report_artifacts``
+    copies those three unguarded, so a caller that selected rows any other way
+    would get a half-written archive dir and a traceback.
+    """
+    generated_at = datetime.now(UTC).isoformat()
+    expected_sha = str(_manifest().get("manifest_sha256") or "") or None
+    rows, refused, foreign, superseded = _report_rows(RUNS_DIR, expected_sha)
+    if arms:
+        wanted = set(arms)
+        skipped = sorted({r["_arm"] for r in rows} - wanted)
+        rows = [r for r in rows if r["_arm"] in wanted]
+        if skipped:
+            print(f"  restricted to {sorted(wanted)}; not archived: {skipped}")
+    if not rows:
+        raise SystemExit(
+            f"no rows to archive under {RUNS_DIR}"
+            + (f" for arm(s) {sorted(arms)}" if arms else "")
+        )
+    # The SAME helper ``report`` uses, with no archive meta to prefer — so the
+    # contamination margins are recoverable from this snapshot on exactly the terms
+    # every other archive offers them.
+    created = _instance_created_at(rows, {})
+    # NOT a rendered table. ``table_text`` becomes ``archive_dir/results.md``, and
+    # writing a real one here would create a second, differently-based table in the
+    # repo for someone to mistake for the published one. What goes in instead is a
+    # statement of what this archive is and is not.
+    table_text = (
+        "# evidence snapshot — NOT a report\n\n"
+        f"Archived at {generated_at} by `archive` (not by `report`), so no table "
+        "was rendered and `bench/swebench/results.md` was left untouched.\n\n"
+        f"* rows: {len(rows)}\n"
+        f"* arms: {', '.join(sorted({r['_arm'] for r in rows}))}\n"
+        f"* manifest_sha256: {expected_sha}\n"
+        f"* source: {RUNS_DIR}\n\n"
+        "Reason this is not a report: `runs/` is gitignored scratch that the next "
+        "sweep deletes, and the benchmark store holds artifact digests pointing "
+        "into it, so the evidence had to be captured NOW. The arms in it are not "
+        "all measured to the same coverage, and rendering one table over rows with "
+        "8-row and 18-row denominators would mix accounting bases. Run `report` "
+        "when the coverage supports a published table; `report --from-archive "
+        f"{RESULTS_ARCHIVE_DIR.name}/<stamp>` re-derives a table from this "
+        "snapshot at any time without publishing it.\n"
+        + (f"\nOperator note: {note}\n" if note else "")
+    )
+    archive_dir = _archive_report_artifacts(
+        rows,
+        generated_at=generated_at,
+        table_text=table_text,
+        refused=refused,
+        foreign=foreign,
+        superseded=superseded,
+        created=created,
+    )
+    print(f"archived evidence -> {archive_dir}")
+    summary, problems = verify_archive_diagnostics(archive_dir)
+    print(f"diagnostics: {summary}")
+    if problems:
+        for p in problems[:20]:
+            print(f"  - {p}")
+        raise SystemExit(
+            f"archive at {archive_dir} failed its own diagnostics check "
+            f"({len(problems)} problem(s))"
+        )
+    print(
+        "results.md untouched. To ingest this archive into the record store:\n"
+        f"  uv run python bench/swebench/benchmark_store.py ingest "
+        f"--runs-dir {archive_dir}"
+    )
+    return archive_dir
 
 
 def report(
@@ -13663,6 +14592,12 @@ def _finish_record(
             # so at the end of the sweep, not only when someone reads a row: it is
             # the signal that the concurrency, not the arm, was the variable.
             "provider_starved": _row_provider_starved(result),
+            # Carried for the same reason and through the same shared predicates:
+            # a sweep that lost rows to the ENGINE's own exceptions has to say so
+            # at the end of the sweep, and a writes-scope breach has to be
+            # distinguishable from a plain empty patch without opening the row.
+            "engine_crashed": _row_engine_crashed(result),
+            "writes_scope_breach": _row_writes_scope_breach(result),
             "empty_response_turns": int(result.get("empty_response_turns") or 0),
             "models_used": result.get("models_used") or [],
             "sweep_wall_s": round(time.monotonic() - started, 1),
@@ -14061,6 +14996,15 @@ def _sweep_summary(
         # PROVIDER refused requests on that many rows and the engine swallowed it,
         # so those rows measure this sweep's concurrency rather than the arm.
         "provider_starved": sum(1 for r in records if r.get("provider_starved")),
+        # One wire further in than the provider: rows the ENGINE lost to its own
+        # unhandled exceptions (excluded from every rate) and rows the agent lost
+        # by writing outside its declared scope (COUNTED — see
+        # ``_row_writes_scope_breach``). Separate counters because they have
+        # separate owners.
+        "engine_crashed": sum(1 for r in records if r.get("engine_crashed")),
+        "writes_scope_breach": sum(
+            1 for r in records if r.get("writes_scope_breach")
+        ),
         "empty_response_turns": sum(
             int(r.get("empty_response_turns") or 0) for r in records
         ),
@@ -14097,6 +15041,18 @@ def _render_summary(s: dict[str, Any]) -> str:
             f"{s.get('empty_response_turns', 0)} swallowed turn(s) (the deployment "
             "refused requests; NOT capability results — re-run those rows at lower "
             "concurrency)"
+        )
+    if s.get("engine_crashed"):
+        flagged.append(
+            f"{s['engine_crashed']} ENGINE-CRASH (the sssf engine raised an "
+            "unhandled exception; NOT capability results — excluded from every "
+            "rate, fix the engine and re-run those rows)"
+        )
+    if s.get("writes_scope_breach"):
+        flagged.append(
+            f"{s['writes_scope_breach']} WRITES-SCOPE BREACH (the agent wrote "
+            "outside its declared scope and the engine refused the run; these ARE "
+            "counted as arm failures)"
         )
     lines = [
         "-" * 100,
@@ -14395,6 +15351,29 @@ def main() -> None:
              "verifies.",
     )
 
+    p = sub.add_parser(
+        "archive",
+        help="snapshot the live rows' evidence into results-archive/ WITHOUT "
+             "rendering or publishing a table. `report` archives as a side "
+             "effect but also rewrites results.md unconditionally; use this when "
+             "the evidence has to be saved before the next sweep deletes runs/ "
+             "but the coverage does not yet support a published table.",
+    )
+    p.add_argument(
+        "--arm",
+        action="append",
+        default=[],
+        choices=_ARM_NAMES,
+        help="restrict the snapshot to this arm's rows; repeatable. Default: "
+             "every row the report's own selector accepts.",
+    )
+    p.add_argument(
+        "--note",
+        default="",
+        help="an operator note recorded in the archive's own README, for why "
+             "this snapshot was taken.",
+    )
+
     args = ap.parse_args()
     if args.cmd == "fetch":
         fetch(
@@ -14531,6 +15510,8 @@ def main() -> None:
             check=args.check,
             publish=args.publish,
         )
+    elif args.cmd == "archive":
+        archive_rows(arms=tuple(args.arm), note=args.note)
 
 
 if __name__ == "__main__":

@@ -48,6 +48,10 @@ adapter is imported and its own predicates are called:
 * ``classify_run`` — ok / budget_exhausted / run_failed / no_result;
 * ``_ungradable_kind`` — ``task_broken*`` and ``grade_parse_failed``;
 * ``_row_provider_starved`` — the throttling detector;
+* ``_row_engine_crashed`` — an unhandled engine exception: the arm was never
+  asked the question, so the row leaves numerator AND denominator;
+* ``_row_writes_scope_breach`` — the agent wrote outside its declared scope: the
+  agent's own behaviour, so the row STAYS counted, under its own reason;
 * ``arm_spec`` / ``_ARMS`` — the arm registry (harness, cost source, caps, chain).
 
 A second copy of any of those would be a second answer to "what counts", which
@@ -599,6 +603,7 @@ def classify(adapter: Any, row: dict[str, Any], audit: dict[str, Any] | None) ->
     outcome = str(grade.get("outcome") or "")
     audit_ok = None if audit is None else (audit.get("ok") is True)
     starved = adapter._row_provider_starved(row)
+    crashed = adapter._row_engine_crashed(row)
 
     reasons: list[str] = []
     if resolved is None:
@@ -626,6 +631,23 @@ def classify(adapter: Any, row: dict[str, Any], audit: dict[str, Any] | None) ->
             f"{int(row.get('empty_response_turns') or 0)} turn(s) — throttling, "
             "not capability; re-run at lower concurrency"
         )
+    if crashed:
+        # SAME exclusion as ``starved``, DIFFERENT owner. An unhandled exception
+        # inside the engine means the arm was never asked the question, so the row
+        # is not a capability result on either side of a rate. Delegated to
+        # ``adapter._row_engine_crashed`` for the reason at the top of this file:
+        # a second copy of the rule here would be a second answer to "what counts".
+        reasons.append(
+            "engine-crash: the sssf engine raised an unhandled exception "
+            f"({adapter._excerpt(row.get('sssf_failure_reason'))}) — a defect in "
+            "the machinery, not the arm's result; excluded from every rate"
+        )
+    # NOT a reason, and recorded here so that is on purpose rather than an
+    # oversight: a writes-scope breach is the AGENT writing outside its declared
+    # scope, which is behaviour, and behaviour is what the arm is measured on. It
+    # stays reportable and stays a counted failure. ``sssf_failure_class`` on the
+    # row is what makes it re-classifiable later without a re-run.
+    breach = adapter._row_writes_scope_breach(row)
     spec = adapter._ARMS.get(adapter._split_run_key(str(row.get("arm") or ""))[0])
     if spec is not None and spec.superseded_by:
         reasons.append(
@@ -639,6 +661,14 @@ def classify(adapter: Any, row: dict[str, Any], audit: dict[str, Any] | None) ->
         "status_detail": detail,
         "audit_ok": audit_ok,
         "provider_starved": starved,
+        # No columns of their own: ``_SCHEMA`` is ``CREATE TABLE IF NOT EXISTS``
+        # with no ALTER path, so a new column would make every INSERT fail against
+        # an existing db. Both facts are already durable — ``engine_crashed`` via
+        # its ``invalid_reasons`` entry and ``writes_scope_breach`` via the
+        # verbatim ``result_json`` — and these keys are here so a caller reading
+        # the verdict does not have to re-derive them.
+        "engine_crashed": crashed,
+        "writes_scope_breach": breach,
         "reportable": not reasons,
         "invalid_reasons": reasons,
     }
@@ -1332,8 +1362,23 @@ def ingest(
     row whose disk artifacts were destroyed by a later attempt keeps its record.
     """
     A = adapter or load_adapter()
-    swe = Path(swe_dir or A.SWE_DIR)
     runs = Path(runs_dir or A.RUNS_DIR)
+    # THE ARCHIVE-SOURCED INGEST, which is what makes this db REGENERABLE rather
+    # than the sole copy of the trail. ``runs`` was already overridable and a
+    # ``results-archive/<ts>/`` dir already has the identical ``<instance>/<arm>/
+    # result.json`` layout, so rows came across fine — but ``swe_dir`` defaulted
+    # to the LIVE ``bench/swebench/``, so the campaign roll-ups
+    # (``ingest_campaigns`` reading ``sweep-<arm>.json``) were still read from a
+    # live tree that the archive was supposed to make unnecessary. An archive
+    # carries its own ``sweep-*.json`` — they are in ``_archive_report_artifacts``'
+    # ``sweeps`` list — so when the source IS an archive, that is where they come
+    # from. Detected by the archive's own marker file rather than by a path
+    # pattern, so it works for an archive dir copied anywhere.
+    if swe_dir is None and (runs / A._REPORT_META_NAME).is_file():
+        swe_dir = runs
+        if not quiet:
+            print(f"source is a report archive; reading campaigns from {runs}")
+    swe = Path(swe_dir or A.SWE_DIR)
     harness = Path(harness_repo or A.FACTORY_ROOT)
     # The ENGINE the sssf arms drive. Read off the adapter's own constant rather
     # than hard-coded, so the record follows the harness if the engine moves.
@@ -2098,6 +2143,14 @@ def build_parser() -> argparse.ArgumentParser:
              "layout and can be ingested the same way.",
     )
     p.add_argument("--arm", action="append", default=None, help="restrict to arm(s)")
+    p.add_argument(
+        "--swe-dir",
+        default=None,
+        help="where the sweep-<arm>.json campaign roll-ups are; defaults to "
+             "bench/swebench, EXCEPT when --runs-dir is itself a report archive "
+             "(it carries its own), in which case the archive wins. Pass this "
+             "explicitly only to override that detection.",
+    )
 
     sub.add_parser("rates", help="resolve rate per arm per campaign, over time") \
        .add_argument("--arm", default=None)
@@ -2135,6 +2188,7 @@ def main(argv: list[str] | None = None) -> int:
         out = ingest(
             db_path=db,
             runs_dir=Path(args.runs_dir) if args.runs_dir else None,
+            swe_dir=Path(args.swe_dir) if args.swe_dir else None,
             arms=args.arm,
             quiet=args.json,
         )

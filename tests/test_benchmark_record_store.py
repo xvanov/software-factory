@@ -913,6 +913,12 @@ def test_the_store_delegates_every_verdict_to_the_adapter(S: Any) -> None:
         "adapter.classify_run(",
         "adapter._ungradable_kind(",
         "adapter._row_provider_starved(",
+        # Fix 3's two verdicts. The store must ASK the adapter which failures are
+        # the machinery's and which are the agent's, for exactly the reason the
+        # docstring above gives: a local copy of either rule would be a second
+        # answer to "what counts", and the two would drift.
+        "adapter._row_engine_crashed(",
+        "adapter._row_writes_scope_breach(",
         "adapter._ARMS",
         "adapter._ARCHIVED_ROW_EXTRAS",
         "adapter._ARCHIVED_TRAJECTORY_GLOBS",
@@ -962,3 +968,100 @@ def test_the_documentation_exists_and_separates_bench_from_ordinary_factory_work
         assert phrase in text, f"BENCHMARK-RECORDS.md no longer covers {phrase!r}"
     # The prohibition itself, not just the contrast.
     assert "never" in text.lower() and "factory" in text
+
+
+# --------------------------------------------------------------------------- #
+# 3b. whose failure was it — the machinery's or the agent's?
+# --------------------------------------------------------------------------- #
+
+
+def test_an_engine_crash_is_excluded_and_an_agents_own_abort_is_not(
+    S: Any, A: Any, bench: dict[str, Path]  # noqa: N803
+) -> None:
+    """Two chain rows that reached the SAME denominator as ``empty_patch`` and are
+    not the same kind of thing:
+
+    * ``idaholab__montepy-933_interface`` died of an unhandled ``AttributeError``
+      inside the engine's stream reader. The planner never got to decide anything,
+      so the arm was never asked the question — refused from numerator AND
+      denominator, exactly like a throttled row.
+    * ``keras-team__keras-22316`` was refused by ``permissions.enforce`` because the
+      PLANNER wrote 18 paths outside its declared ``writes`` scope. That is the
+      agent's own behaviour, and behaviour is what the arm is measured on — so it
+      stays COUNTED, under its own reason.
+
+    Every field of ``result.json`` a reader could have told them apart by was
+    identical before this fix (``error: null``, ``termination: "terminal-state"``,
+    ``adw_exit_code: 1``, ``steps_used: 2``), which is why the store has to ask the
+    adapter rather than look at the message.
+    """
+    crash = _row("acme__widget-1", "chain", attempt=1, resolved=False,
+                 outcome="empty_patch",
+                 termination=A._SSSF_ENGINE_CRASH_TERMINATION,
+                 error="engine-crash: the sssf engine raised an unhandled "
+                       "AttributeError and died")
+    crash["sssf_failure_class"] = "engine_crash"
+    crash["sssf_failure_counted"] = False
+    crash["sssf_failure_reason"] = "AttributeError in agent_pi.run"
+    write_row(bench["runs"], "acme__widget-1", "chain", crash)
+
+    breach = _row("acme__widget-2", "chain", attempt=1, resolved=False,
+                  outcome="empty_patch",
+                  termination=A._SSSF_WRITES_SCOPE_TERMINATION)
+    breach["sssf_failure_class"] = "writes_scope_breach"
+    breach["sssf_failure_counted"] = True
+    breach["sssf_failure_reason"] = (
+        "writes-scope-breach: planner wrote outside ['specs/']"
+    )
+    write_row(bench["runs"], "acme__widget-2", "chain", breach)
+
+    _ingest(S, A, bench)
+    con = sqlite3.connect(bench["db"])
+    con.row_factory = sqlite3.Row
+    got = {
+        r["instance_id"]: r
+        for r in con.execute(
+            "SELECT instance_id, reportable, invalid_reasons, status FROM run_attempt"
+        )
+    }
+    con.close()
+
+    crashed = got["acme__widget-1"]
+    assert crashed["reportable"] == 0
+    reasons = json.loads(crashed["invalid_reasons"])
+    assert any("engine-crash" in r for r in reasons), reasons
+    assert any("not the arm's result" in r for r in reasons), reasons
+
+    breached = got["acme__widget-2"]
+    assert breached["reportable"] == 1, (
+        "a writes-scope breach is the AGENT's behaviour and must stay counted; "
+        f"got {json.loads(breached['invalid_reasons'])}"
+    )
+    assert json.loads(breached["invalid_reasons"]) == []
+    assert breached["status"] == "ok"
+    # And the reason survives verbatim in the record, so the row can be
+    # re-classified later without re-running it.
+    stored = json.loads(
+        sqlite3.connect(bench["db"])
+        .execute(
+            "SELECT result_json FROM run_attempt WHERE instance_id='acme__widget-2'"
+        )
+        .fetchone()[0]
+    )
+    assert stored["sssf_failure_class"] == "writes_scope_breach"
+    assert "specs/" in stored["sssf_failure_reason"]
+
+
+def test_the_store_adds_no_column_for_either_verdict(S: Any) -> None:
+    """``_SCHEMA`` is ``CREATE TABLE IF NOT EXISTS`` with no ALTER path, so a new
+    column would make every INSERT fail against the existing benchmarks.db. Both
+    facts are already durable — the crash via its ``invalid_reasons`` entry, the
+    breach via the verbatim ``result_json`` — so no column is needed, and adding
+    one would be a silent break rather than a feature."""
+    src = _STORE.read_text(encoding="utf-8")
+    for column in ("engine_crashed", "writes_scope_breach"):
+        assert f"{column}  " not in src.split("-- the source, verbatim")[0], (
+            f"{column} must not become a schema column while _SCHEMA has no "
+            "ALTER path — see _migrate"
+        )
+    assert "ALTER TABLE" not in src
