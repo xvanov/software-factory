@@ -1,0 +1,20 @@
+{
+  "instance_id": "idaholab__montepy-933_interface",
+  "arm": "chain",
+  "audited_at": "2026-08-13T17:48:29.347067+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.4813,
+  "ledger_tokens_in": 786237,
+  "ledger_tokens_out": 15047,
+  "result_cost_usd": 0.4813,
+  "prediction_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "stripped_test_paths": [],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

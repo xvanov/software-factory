@@ -1,0 +1,80 @@
+diff --git a/server/opensandbox_server/services/validators.py b/server/opensandbox_server/services/validators.py
+index 4b37b57..e3904b4 100644
+--- a/server/opensandbox_server/services/validators.py
++++ b/server/opensandbox_server/services/validators.py
+@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+ 
+ from fastapi import HTTPException, status
+ import re
++import os
+ 
+ from opensandbox_server.services.constants import RESERVED_LABEL_PREFIX, SandboxErrorCodes
+ 
+@@ -68,6 +69,20 @@ def _normalize_prefix_path(path: str) -> str:
+     return normalized
+ 
+ 
++def _contains_symlink(path: str) -> bool:
++    """
++    Return True if any component of the path is a symbolic link.
++    
++    Uses os.path.realpath to detect symlinks. If realpath fails (e.g., missing
++    component, permission error), returns False (cannot determine).
++    """
++    try:
++        return os.path.realpath(path) != os.path.normpath(path)
++    except OSError:
++        # Cannot resolve symlinks; assume no symlinks for security validation.
++        return False
++
++
+ def _is_valid_label_key(key: str) -> bool:
+     if "/" in key:
+         prefix, name = key.split("/", 1)
+@@ -450,11 +465,32 @@ def ensure_valid_host_path(
+             },
+         )
+ 
++    # Resolve symbolic links (best-effort) to prevent symlink escape attacks.
++    # Align with _validate_pvc_volume which uses os.path.realpath(strict=True).
++    canonical_path = None
++    try:
++        canonical_path = os.path.realpath(path)
++        # Reject paths that contain any symbolic links (security)
++        if canonical_path != os.path.normpath(path):
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST,
++                detail={
++                    "code": SandboxErrorCodes.INVALID_HOST_PATH,
++                    "message": f"Host path '{path}' contains symbolic links, which are not allowed.",
++                },
++            )
++    except OSError:
++        # Cannot resolve symlinks (e.g., permission error, missing component).
++        # Lexical validation above still enforced; skip symlink detection.
++        pass
++
+     # Check against allowed prefixes if provided
+     if allowed_prefixes is not None:
++        # Use canonical path if available, otherwise fall back to original path.
++        validated_path = canonical_path if canonical_path is not None else path
+         # Normalize separators for cross-platform prefix checks so Windows-style
+         # paths can be validated consistently even when server runs on Unix.
+-        norm_path = _normalize_prefix_path(path)
++        norm_path = _normalize_prefix_path(validated_path)
+         is_allowed = any(
+             norm_path == _normalize_prefix_path(prefix)
+             or norm_path.startswith(_normalize_prefix_path(prefix) + "/")
+@@ -465,11 +501,10 @@ def ensure_valid_host_path(
+                 status_code=status.HTTP_400_BAD_REQUEST,
+                 detail={
+                     "code": SandboxErrorCodes.HOST_PATH_NOT_ALLOWED,
+-                    "message": f"Host path '{path}' is not under any allowed prefix. Allowed prefixes: {allowed_prefixes}",
++                    "message": f"Host path '{validated_path}' is not under any allowed prefix. Allowed prefixes: {allowed_prefixes}",
+                 },
+             )
+ 
+-
+ def ensure_valid_pvc_name(claim_name: str) -> None:
+     """
+     Validate that a PVC claim name is a valid Kubernetes resource name.

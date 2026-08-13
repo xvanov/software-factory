@@ -616,7 +616,7 @@ def test_probe_plumbing_is_refused_only_for_the_factory_arm(A: Any) -> None:  # 
     src = _ADAPTER.read_text(encoding="utf-8")
     assert "--probe-plumbing" in src
     main_src = src[src.index("def main()") :]
-    assert 'base not in ("bare", "openhands", "claude")' in main_src
+    assert 'base not in ("bare", "openhands", "claude", "sssf")' in main_src
     assert "pm-sync --dry-run" in main_src, "factory's free surface must be named"
 
 

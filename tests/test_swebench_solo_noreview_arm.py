@@ -273,8 +273,15 @@ def test_the_published_arms_are_unchanged(A: Any) -> None:  # noqa: N803
 
 def test_the_new_arm_is_registered_after_factory_and_before_the_rest(A: Any) -> None:
     """Registry order decides ``_ARM_NAMES`` and the argparse ``choices`` order.
-    Pinned only so the new entry cannot be read as having displaced one."""
-    assert A._ARM_NAMES == (
+    Pinned only so the new entry cannot be read as having displaced one.
+
+    Pinned as a PREFIX, not as the whole tuple: this test's job is that
+    ``solo-noreview`` sits where it was put and that no arm published before it
+    moved. A later arm registered AFTER these seven cannot displace any of them,
+    so asserting the full tuple only meant that adding one anywhere in the file
+    failed here — which says nothing about this ablation.
+    """
+    assert A._ARM_NAMES[:7] == (
         "factory",
         "solo-noreview",
         "openhands",

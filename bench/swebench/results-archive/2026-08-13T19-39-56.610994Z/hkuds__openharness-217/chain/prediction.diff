@@ -1,0 +1,59 @@
+diff --git a/src/openharness/auth/flows.py b/src/openharness/auth/flows.py
+index ca895a4..233e7d5 100644
+--- a/src/openharness/auth/flows.py
++++ b/src/openharness/auth/flows.py
+@@ -7,11 +7,13 @@ performs the interactive authentication and returns the obtained credential.
+ from __future__ import annotations
+ 
+ import logging
++import os
+ import platform
+ import subprocess
+ import sys
+ from abc import ABC, abstractmethod
+ from typing import Any
++from urllib.parse import urlparse
+ 
+ log = logging.getLogger(__name__)
+ 
+@@ -73,22 +75,33 @@ class DeviceCodeFlow(AuthFlow):
+         self.github_domain = github_domain if not enterprise_url else enterprise_url
+         self.progress_callback = progress_callback
+ 
++    @staticmethod
++    def _is_safe_url(url: str) -> bool:
++        """Return True if url has an http or https scheme."""
++        try:
++            parsed = urlparse(url)
++            scheme = parsed.scheme.lower()
++            return scheme in ("http", "https")
++        except Exception:
++            return False
++
+     @staticmethod
+     def _try_open_browser(url: str) -> bool:
+         """Attempt to open *url* in the default browser; return True if likely succeeded."""
++        if not DeviceCodeFlow._is_safe_url(url):
++            log.debug("Unsafe URL scheme, not opening browser: %s", url)
++            return False
+         try:
+             plat = platform.system()
+             if plat == "Darwin":
+                 subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                 return True
+             if plat == "Windows":
+-                subprocess.Popen(
+-                    ["start", "", url],
+-                    shell=True,
+-                    stdout=subprocess.DEVNULL,
+-                    stderr=subprocess.DEVNULL,
+-                )
+-                return True
++                try:
++                    os.startfile(url)
++                    return True
++                except OSError:
++                    return False
+             # Linux / WSL
+             proc = subprocess.Popen(
+                 ["xdg-open", url],

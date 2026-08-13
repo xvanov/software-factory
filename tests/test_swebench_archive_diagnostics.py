@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import gzip
 import importlib.util
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -404,15 +405,38 @@ def test_selecting_a_grading_log_for_archiving_is_refused_loudly(
 
 def test_every_arms_trail_shape_is_covered_by_a_glob(A: Any) -> None:  # noqa: N803
     """The trail location differs per arm and the arm id is NOT a parameter of
-    the archiver. Pin the four shapes, so adding an arm without adding its shape
-    is a failing test rather than a silently unarchived trail."""
-    assert A._ARCHIVED_ROW_DIAGNOSTICS == ("raw.diff", "sweep-run.log")
+    the archiver. Pin the six shapes, so adding an arm without adding its shape
+    is a failing test rather than a silently unarchived trail.
+
+    The sssf pair was MISSING until 2026-08-13: those three arms wrote their trail
+    to ``sssf-events.jsonl`` and their cost evidence to ``sssf-turns.jsonl``, and
+    neither was swept into ``results-archive/`` — so an archived sssf row could not
+    be re-cleared of oracle access, and its dollars could not be re-summed at all,
+    from the archive alone."""
+    # ``sssf-adw.log`` joined the pair on 2026-08-13: it is the child's stdout
+    # with stderr merged in, and therefore the ONLY artifact carrying an
+    # exception's CLASS name — ``runner.phase`` records ``str(error)[:1000]`` into
+    # events.jsonl and the ``phases.error`` column and nothing else. Without it,
+    # the engine-crash-vs-agent-abort classification could never be RE-DERIVED
+    # from an archive, only believed.
+    assert A._ARCHIVED_ROW_DIAGNOSTICS == (
+        "raw.diff",
+        "sweep-run.log",
+        "sssf-adw.log",
+    )
+    assert A._SSSF_TRAJECTORY_NAME in A._ARCHIVED_ROW_DIAGNOSTICS
     assert A._ARCHIVED_TRAJECTORY_GLOBS == (
         "root/state/events/trajectories/*.ndjson",
         "state/events/trajectories/*.ndjson",
         "bare-commands.ndjson",
         "claude-transcript.ndjson",
+        "sssf-events.jsonl",
+        "sssf-turns.jsonl",
     )
+    # The trail the oracle-probe scan reads and the digest the audit re-sums are
+    # the two files an sssf row cannot be re-verified without.
+    assert A._SSSF_EVENTS_NAME in A._ARCHIVED_TRAJECTORY_GLOBS
+    assert A._SSSF_TURNS_NAME in A._ARCHIVED_TRAJECTORY_GLOBS
 
 
 def test_each_arms_documented_trajectory_path_matches_a_glob(
@@ -428,6 +452,8 @@ def test_each_arms_documented_trajectory_path_matches_a_glob(
         "openhands": "state/events/trajectories/nostory-1.ndjson",
         "bare": "bare-commands.ndjson",
         "claude-5": A._CLAUDE_TRANSCRIPT_NAME,
+        "v32-solo": A._SSSF_EVENTS_NAME,
+        "chain": A._SSSF_TURNS_NAME,
     }
     for arm, rel in cases.items():
         d = _row(runs, "inst_a", arm, diagnostics=False)
@@ -436,3 +462,159 @@ def test_each_arms_documented_trajectory_path_matches_a_glob(
         p.write_text(_TRAJECTORY, encoding="utf-8")
         found = [f.relative_to(d).as_posix() for f in A._row_diagnostic_files(d)]
         assert rel in found, f"{arm}: {rel} is not archived (found {found})"
+
+
+# --------------------------------------------------------------------------- #
+# 7 — archiving without publishing, and an archive the store can regenerate from
+# --------------------------------------------------------------------------- #
+
+
+def _sssf_row(runs: Path, iid: str, arm: str) -> Path:
+    """An sssf row carrying the config + trail evidence this fix started archiving."""
+    d = _row(runs, iid, arm, diagnostics=False)
+    (d / "raw.diff").write_text(_RAW_DIFF, encoding="utf-8")
+    (d / "sweep-run.log").write_text(_SWEEP_LOG, encoding="utf-8")
+    (d / "sssf-roster.yaml").write_text("agents: []\n", encoding="utf-8")
+    (d / "sssf-prompt.md").write_text("# the task\n", encoding="utf-8")
+    (d / "attempt.json").write_text('{"attempt": 1}', encoding="utf-8")
+    (d / "sssf-adw.log").write_text(
+        "Traceback (most recent call last):\nAttributeError: x\n", encoding="utf-8"
+    )
+    (d / "sssf-events.jsonl").write_text('{"type":"config"}\n', encoding="utf-8")
+    (d / "sssf-turns.jsonl").write_text('{"role":"builder"}\n', encoding="utf-8")
+    return d
+
+
+def test_archive_rows_snapshots_evidence_and_never_writes_results_md(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """WHY THIS PATH EXISTS SEPARATELY FROM ``report``.
+
+    Archiving is normally a side effect of ``report``, and ``report`` in live mode
+    ALSO rewrites ``bench/swebench/results.md`` unconditionally — there is no flag
+    that turns that write off. The rows this had to save are HALF-MEASURED (8
+    ``chain`` rows and 9 ``v32-solo`` against 18-25 for every published arm;
+    ``gpt54-solo`` has none), so publishing them into the committed table would put
+    an 8-row denominator beside an 18-row one under one heading — the
+    accounting-basis mixing that forced the 2026-08-03 retraction.
+
+    Their EVIDENCE still had to be saved now: ``runs/`` is gitignored scratch the
+    next sweep deletes, and the record store holds artifact digests pointing into
+    it, so the trail was verifying files that were about to vanish.
+    """
+    runs = _patch_dirs(A, tmp_path, monkeypatch)
+    _sssf_row(runs, "inst_a", "chain")
+    _row(runs, "inst_a", "factory")  # a row the --arm filter must leave alone
+    published = tmp_path / "results.md"
+    published.write_text("# THE COMMITTED TABLE, which must not move\n", encoding="utf-8")
+    before = published.read_bytes()
+
+    out = A.archive_rows(arms=("chain",), note="why this snapshot was taken")
+
+    assert published.read_bytes() == before, (
+        "archive must NOT touch the published table — that is its entire reason "
+        "for existing separately from `report`"
+    )
+    assert not (out / "inst_a" / "factory").exists(), "--arm must restrict the snapshot"
+
+    dest = out / "inst_a" / "chain"
+    for name in A._ROW_ARTIFACTS:
+        assert (dest / name).is_file(), name
+    # The CONFIG evidence ``benchmark_store._CONFIG`` already digested but no
+    # archive contained. The roster is the load-bearing one: it IS the record of
+    # which models an arm ran, so a row without it cannot be re-attributed.
+    for name in ("sssf-roster.yaml", "sssf-prompt.md", "attempt.json"):
+        assert (dest / name).is_file(), f"{name} must survive the next sweep"
+    # The DIAGNOSTICS, gzipped — including the ADW log, which is the only artifact
+    # carrying an exception's class name and therefore the only thing an
+    # engine-crash classification can be re-derived from.
+    for name in ("raw.diff.gz", "sweep-run.log.gz", "sssf-adw.log.gz",
+                 "sssf-events.jsonl.gz", "sssf-turns.jsonl.gz"):
+        assert (dest / name).is_file(), name
+
+    # The archive SAYS what it is, so nobody mistakes it for a published table.
+    text = (out / "results.md").read_text(encoding="utf-8")
+    assert "NOT a report" in text
+    assert "why this snapshot was taken" in text
+    assert "mix accounting bases" in text
+    meta = json.loads((out / A._REPORT_META_NAME).read_text(encoding="utf-8"))
+    assert meta["arms"] == ["chain"]
+    assert meta["rows"] == 1
+    assert meta["manifest_sha256"] == _SHA
+    # And it verifies its own diagnostics, which is the check `report --check` runs.
+    _summary, problems = A.verify_archive_diagnostics(out)
+    assert problems == []
+
+
+def test_archive_rows_reuses_the_reports_own_fail_closed_selector(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """``_archive_report_artifacts`` copies every ``_ROW_ARTIFACTS`` name with an
+    UNGUARDED ``shutil.copy2``, so a row missing one yields a half-written archive
+    dir and a traceback. ``_report_rows`` is what guarantees that cannot happen —
+    which is why selection is delegated to it rather than re-globbed here."""
+    assert "_report_rows(" in inspect.getsource(A.archive_rows)
+
+    runs = _patch_dirs(A, tmp_path, monkeypatch)
+    broken = runs / "inst_a" / "chain"
+    broken.mkdir(parents=True)
+    (broken / "result.json").write_text(
+        json.dumps({"arm": "chain", "instance_id": "inst_a", "manifest_sha256": _SHA}),
+        encoding="utf-8",
+    )
+    # No audit.json and no prediction.diff -> refused, so there is nothing to
+    # archive and no directory should be created at all.
+    with pytest.raises(SystemExit, match="no rows to archive"):
+        A.archive_rows(arms=("chain",))
+    assert not (tmp_path / "results-archive").exists(), (
+        "a refused row must not leave a half-written archive dir behind"
+    )
+
+
+def test_archive_rows_never_publishes_a_table(A: Any) -> None:
+    """Structural, because the hazard is a future edit adding the convenience of
+    "and publish it while we are here". The whole point is that this path cannot
+    move the committed table."""
+    src = inspect.getsource(A.archive_rows)
+    assert "SWE_DIR / \"results.md\"" not in src
+    assert "_render" not in src, "no table is rendered here"
+    assert "_check_against_committed" not in src
+
+
+def test_the_store_can_be_regenerated_from_an_archive_alone(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """THE HOOK that makes the db regenerable rather than the sole copy of the trail.
+
+    ``ingest --runs-dir`` already accepted an archive dir — same
+    ``<instance>/<arm>/result.json`` layout — but ``swe_dir`` still defaulted to the
+    LIVE ``bench/swebench/``, so the campaign roll-ups (``ingest_campaigns`` reading
+    ``sweep-<arm>.json``) came from the very tree the archive exists to make
+    unnecessary. An archive carries its own ``sweep-*.json``; when the source IS an
+    archive, that is where they must come from.
+
+    Detected by the archive's own marker file rather than by a path pattern, so it
+    holds for an archive dir copied anywhere.
+    """
+    store_path = Path(A.__file__).parent / "swebench" / "benchmark_store.py"
+    src = store_path.read_text(encoding="utf-8")
+    assert "A._REPORT_META_NAME" in src, (
+        "the store must detect an archive by the marker the archiver writes"
+    )
+    assert "swe_dir = runs" in src, "an archive source must supply its own campaigns"
+    assert "--swe-dir" in src, "and an operator must be able to override that"
+    assert 'swe_dir=Path(args.swe_dir) if args.swe_dir else None' in src, (
+        "--swe-dir must actually reach ingest()"
+    )
+    # The marker the detection keys off is the one the archiver really writes.
+    runs = _patch_dirs(A, tmp_path, monkeypatch)
+    _sssf_row(runs, "inst_a", "chain")
+    out = A.archive_rows(arms=("chain",))
+    assert (out / A._REPORT_META_NAME).is_file()
+    # ...and the archive carries the campaign roll-up the store will now read.
+    (tmp_path / "sweep-chain.json").write_text("{}", encoding="utf-8")
+    out2 = A.archive_rows(arms=("chain",))
+    assert (out2 / "sweep-chain.json").is_file(), (
+        "an archive must carry its arms' sweep roll-ups, or an archive-sourced "
+        "ingest has no campaigns to read"
+    )

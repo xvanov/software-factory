@@ -347,7 +347,16 @@ def test_fresh_run_result_drops_stale_keys(
     data = json.loads((tmp_path / "i1" / "factory" / "result.json").read_text())
     # Nothing survives from the previous run: not the context keys, and not the
     # grade — that verdict was for a prediction that no longer exists. The
-    # attempt/budget stamps are added BY this write, not carried over.
+    # attempt/budget/provenance stamps are added BY this write, not carried over.
+    #
+    # ``provenance_stamp`` is compared by SHAPE, not by value: it carries the two
+    # repos' live git shas (see ``_provenance_stamp``), which move with every
+    # commit. Pinning its value would make this test fail on the next commit;
+    # pinning its presence is what the assertion is for — a fresh row that lost
+    # its provenance is a row nothing can reproduce.
+    stamp = data.pop("provenance_stamp")
+    assert set(stamp) >= {"captured_at", "repos", "arm_spec"}
+    assert set(stamp["repos"]) == {"harness", "engine"}
     assert data == {
         "cost_usd": 2.0,
         "attempt": 1,
@@ -3520,7 +3529,16 @@ def test_prepare_failure_is_an_error_and_pro_is_untouched(
 ) -> None:
     """A failing install step must come back as an error string (selftest
     excludes the instance, run fails at $0); the frozen Pro profile never
-    runs a prepare step at all."""
+    runs a prepare CONTAINER at all.
+
+    Pro is frozen with respect to its ENVIRONMENT — no install replay, no docker
+    invocation, the baked topology untouched. It is deliberately NOT frozen with
+    respect to the base-ref pin (``_pin_base_ref``): the ref-shadowing bug is a
+    property of how the clone is checked out, not of which dataset it came from,
+    so a Pro tree that left the agent standing on ``swebench-base`` would carry the
+    same defect. So the assertion below is about docker, which is what "frozen"
+    ever meant, and the pin is asserted to have run for Pro too.
+    """
     from types import SimpleNamespace
 
     inst = dict(_rebench_instance(A), install_cmd="exit 1")
@@ -3537,7 +3555,14 @@ def test_prepare_failure_is_an_error_and_pro_is_untouched(
     calls.clear()
     pro = _pro_manifest()["instances"][0]
     assert A._prepare_cloned_tree(pro, tmp_path / "clone") is None
-    assert calls == [], "Pro is frozen — no prepare container may run"
+    assert not [c for c in calls if "docker" in list(c)], (
+        f"Pro is frozen — no prepare container may run, got {calls}"
+    )
+    # ... and the pin DID run, for both profiles.
+    assert any("tag" in list(c) and A._BASE_TAG in list(c) for c in calls), calls
+    assert any(
+        "checkout" in list(c) and A._WORK_BRANCH in list(c) for c in calls
+    ), calls
 
 
 def test_docker_bash_mounts_the_prepared_tree_as_the_invoking_uid(A: Any, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: N803

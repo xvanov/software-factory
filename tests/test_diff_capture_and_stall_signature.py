@@ -220,13 +220,38 @@ def test_an_unchecked_capture_is_not_treated_as_broken(A: Any, tmp_path: Path) -
 
 
 def test_every_capture_site_passes_the_manifest_base_commit(A: Any) -> None:  # noqa: N803
-    """All four arms, or the fix reaches only the one that was debugged."""
+    """EVERY arm, or the fix reaches only the one that was debugged.
+
+    DERIVED from the runner functions rather than pinned to a count. It was pinned
+    at 4, which had two failure modes pointing opposite ways: adding an arm failed
+    here even when that arm did it right, and — worse — an arm could have been added
+    that captured a diff WITHOUT the expected base commit while the count still read
+    4 because another site had two.
+
+    So the property is asserted per runner: every function that captures a diff must
+    pin it to the manifest's base commit, refuse an untrustworthy empty capture, and
+    record the integrity report in its row.
+    """
     import inspect
 
     src = inspect.getsource(A)
-    assert src.count("expected_base_commit=str(inst.get(\"base_commit\") or \"\")") == 4
-    assert src.count("_refuse_untrustworthy_empty_diff(raw_diff, diff_integrity)") == 4
-    assert src.count('"diff_integrity": diff_integrity,') >= 4
+    runners = [
+        name
+        for name in dir(A)
+        if name.startswith("run_")
+        and inspect.isfunction(getattr(A, name))
+        and "_capture_diff(" in inspect.getsource(getattr(A, name))
+    ]
+    assert len(runners) >= 5, f"expected every arm's runner, found {runners}"
+    for name in runners:
+        body = inspect.getsource(getattr(A, name))
+        assert 'expected_base_commit=str(inst.get("base_commit") or "")' in body, name
+        assert "_refuse_untrustworthy_empty_diff(raw_diff, diff_integrity)" in body, name
+        assert '"diff_integrity": diff_integrity,' in body, name
+    # And no capture site anywhere is left un-pinned.
+    assert src.count("_capture_diff(") == src.count(
+        'expected_base_commit=str(inst.get("base_commit") or "")'
+    ) + 1, "a _capture_diff call site does not pass the manifest base commit"
 
 
 # --------------------------------------------------------------------------- #
@@ -331,3 +356,164 @@ def test_the_attempt_record_stamps_whether_evidence_was_seen() -> None:
     src = inspect.getsource(handlers)
     assert 'attempt_record["test_results_seen"] = _tail_shows_test_results(_tail)' in src
     assert 'if attempt_record["test_results_seen"]' in src
+
+
+# --------------------------------------------------------------------------- #
+# 4 — the base ref cannot be moved by the agent
+# --------------------------------------------------------------------------- #
+#
+# VERIFIED LIVE before this fix: in `hkuds__openharness-217__chain/repo`, the local
+# `swebench-base` was the ADW's own build commit, 2 ahead of the real base
+# (`origin/swebench-base`), and `diff_integrity` recorded `base_ref_matches: false`
+# with `base_ref_ahead_of_expected: 3`. The clone left the tree CHECKED OUT ON
+# `swebench-base` and the ADW committed onto it.
+#
+# The capture survived only because `_capture_diff` tries the manifest's immutable
+# sha BEFORE the branch name — correctness by fallback ORDER, one reordered line
+# from turning every sssf row into an empty patch. That is exactly how
+# `tox-dev__tox-3931` lost a patch byte-identical to the winning one.
+
+
+def _adw_commits(wt: Path) -> None:
+    """What an ADW does to the tree: three commits and a dirty file, the shape
+    ``_sssf_probe_tree`` documents for a real run (plan, build, docs) plus the
+    uncommitted work the capture must also see."""
+    for name, body in [
+        ("specs/plan.md", "# the plan\n"),
+        ("src/fix.py", "def fixed():\n    return 1\n"),
+        ("app_docs/notes.md", "# notes\n"),
+    ]:
+        p = wt / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
+        _git(wt, "add", "-A")
+        _git(wt, "commit", "-q", "-m", f"adw: {name}")
+    (wt / "src" / "fix.py").write_text(
+        "def fixed():\n    return 1\n\n# and one uncommitted line\n", encoding="utf-8"
+    )
+
+
+def test_the_pin_leaves_the_base_ref_where_the_harness_put_it(
+    A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    """After simulated ADW commits the base ref must STILL resolve to the base
+    commit. This is the assertion that fails on the pre-fix topology."""
+    wt, base = _repo(tmp_path)
+    _git(wt, "checkout", "-q", "swebench-base")  # the pre-fix checkout
+    A._pin_base_ref(wt)
+    _adw_commits(wt)
+
+    assert _git(wt, "rev-parse", A._BASE_BRANCH) == base, (
+        "the agent's commits moved swebench-base — the shadowing bug is back"
+    )
+    assert _git(wt, "rev-parse", A._BASE_TAG) == base, "the immutable tag moved"
+    assert _git(wt, "rev-parse", f"refs/remotes/origin/{A._BASE_BRANCH}") == base
+    # HEAD moved, on its own branch, which is the mechanism: commits land on HEAD's
+    # branch, so work belongs anywhere except the base.
+    assert _git(wt, "rev-parse", "HEAD") != base
+    assert _git(wt, "symbolic-ref", "--short", "HEAD") == A._WORK_BRANCH
+
+
+def test_the_pin_makes_the_integrity_report_come_back_clean(
+    A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    """``base_ref_matches: false`` and ``base_ref_ahead_of_expected: 3`` was the
+    live symptom. After the pin the report is honest about a healthy tree, and it
+    SAYS the pin is in place — so a future row where the pin did not take is
+    distinguishable from one where it did."""
+    wt, base = _repo(tmp_path)
+    A._pin_base_ref(wt)
+    _adw_commits(wt)
+
+    report = A.diff_capture_integrity(wt, expected_base_commit=base)
+    assert report["base_ref_matches"] is True
+    assert report["base_ref_ahead_of_expected"] == 0
+    assert report["base_ref_pinned"] is True
+    assert report["base_ref_pinned_sha"] == base
+    assert report["head_branch"] == A._WORK_BRANCH
+    assert report["head_is_base"] is False, "the ADW really did commit"
+    assert report["trustworthy"] is True
+
+
+def test_the_captured_diff_is_unchanged_by_the_pin(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """The pin must not alter what is measured — only what can move. Same tree,
+    same edits, pre-fix topology vs pinned: byte-identical diffs."""
+    def capture(pinned: bool) -> str:
+        root = tmp_path / ("pinned" if pinned else "shadowed")
+        root.mkdir()
+        wt, base = _repo(root)
+        _git(wt, "checkout", "-q", "swebench-base")
+        if pinned:
+            A._pin_base_ref(wt)
+        _adw_commits(wt)
+        return A._capture_diff(wt, expected_base_commit=base)
+
+    shadowed = capture(False)
+    pinned = capture(True)
+    assert "def fixed()" in pinned and "uncommitted line" in pinned
+    assert pinned == shadowed, "the pin changed the measurement, not just the refs"
+
+
+def test_the_pinned_tag_saves_the_capture_when_the_sha_is_not_passed(
+    A: Any, tmp_path: Path  # noqa: N803
+) -> None:
+    """DEFENCE IN DEPTH, and the case that proves the tag earns its place. With no
+    ``expected_base_commit`` the old code fell through to the movable branch NAME —
+    which under the pre-fix topology contained the fix and returned zero bytes.
+    The tag is not movable by ``git commit``, so the patch is still found.
+    """
+    wt, _base = _repo(tmp_path)
+    _git(wt, "checkout", "-q", "swebench-base")
+    A._pin_base_ref(wt)
+    _adw_commits(wt)
+    # Commit the leftover dirty file too, so what follows is about the REFS and
+    # not about an unstaged edit that every ref would show.
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-q", "-m", "adw: the rest")
+    # Simulate the tox-3931 corruption on top: force the base BRANCH forward, as
+    # the docker gitlink tampering did. The tag is untouched.
+    _git(wt, "branch", "-f", A._BASE_BRANCH, "HEAD")
+    assert _git(wt, "diff", A._BASE_BRANCH) == "", "the branch really does hide it"
+
+    raw = A._capture_diff(wt)  # NO expected sha — branch name would be the target
+    assert "def fixed()" in raw, "the pinned tag must recover the patch"
+
+
+def test_the_pin_runs_for_every_prepared_tree_and_is_idempotent(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
+) -> None:
+    """``grade`` re-clones and re-prepares the same instance, so the pin has to
+    converge rather than fail on "tag already exists". And it must be the LAST
+    thing ``_prepare_cloned_tree`` does — everything above it legitimately commits
+    (submodule vendoring, install artifacts), and everything after must not be
+    able to."""
+    wt, base = _repo(tmp_path)
+    A._pin_base_ref(wt)
+    A._pin_base_ref(wt)
+    assert _git(wt, "rev-parse", A._BASE_TAG) == base
+
+    import ast
+
+    src = _ADAPTER.read_text(encoding="utf-8")
+    fn = next(
+        n for n in ast.parse(src).body
+        if isinstance(n, ast.FunctionDef) and n.name == "_prepare_cloned_tree"
+    )
+    calls = [
+        n.func.id for n in ast.walk(fn)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    ]
+    assert calls == ["_run_install_step", "_pin_base_ref"], (
+        "the pin must run after the install commit, for BOTH profiles — the "
+        f"shadowing bug is a property of the checkout, not the dataset; got {calls}"
+    )
+
+
+def test_a_broken_tree_is_reported_not_crashed(A: Any, tmp_path: Path) -> None:  # noqa: N803
+    """A tree whose git plumbing is too broken to accept the pin is one
+    ``diff_capture_integrity`` will refuse anyway. Raising here would turn a
+    reportable capture problem into a crashed run."""
+    not_a_repo = tmp_path / "nope"
+    not_a_repo.mkdir()
+    A._pin_base_ref(not_a_repo)  # must not raise
+    assert A.diff_capture_integrity(not_a_repo)["trustworthy"] is False

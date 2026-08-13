@@ -1,0 +1,22 @@
+{
+  "instance_id": "hkuds__openharness-217",
+  "arm": "v32-solo",
+  "audited_at": "2026-08-13T17:07:53.203103+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.6592,
+  "ledger_tokens_in": 1083943,
+  "ledger_tokens_out": 18166,
+  "result_cost_usd": 0.6592,
+  "prediction_sha256": "300c2a5c54e679a3baeef101c1182118396216391275cb20c81249b6d11e996f",
+  "base_commit": "1bcdc62a50db14c2f0bf5dbee05b2bdc369dffb3",
+  "stripped_test_paths": [
+    "tests/test_auth/test_flows.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

@@ -1,0 +1,8 @@
+diff --git a/swebench_sssf_plumbing_probe.py b/swebench_sssf_plumbing_probe.py
+new file mode 100644
+index 0000000..2a43e50
+--- /dev/null
++++ b/swebench_sssf_plumbing_probe.py
+@@ -0,0 +1,2 @@
++# swebench sssf plumbing probe — committed production change
++# and one uncommitted line, which the capture must also see

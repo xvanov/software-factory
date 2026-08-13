@@ -1,0 +1,275 @@
+{
+  "arm": "v32-solo",
+  "instance_id": "pyinfra-dev__pyinfra-1665",
+  "repo": "pyinfra-dev/pyinfra",
+  "base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+  "problem_statement_sha256": "6db63b001b70674a6cd551c902d802495967cec273296be8357a6e5cf1499493",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-13T17:16:54.036881+00:00",
+  "cost_source": "derived-from-price-table",
+  "preflight": {
+    "skip_phases_supported": true,
+    "skip_phases_declared_in": "SSSFConfig",
+    "skip_phases_problem": null,
+    "credential_problem": null,
+    "engine": "/home/k/sssf/adws/adw_simple_sdlc.py"
+  },
+  "model": null,
+  "sssf_roster": {
+    "planner": null,
+    "builder": "azure/DeepSeek-V3.2",
+    "reviewer": null,
+    "documenter": null
+  },
+  "sssf_skip_phases": [
+    "planner",
+    "reviewer",
+    "documenter"
+  ],
+  "sssf_roster_sha256": "fead89dd7525bb701eeb5ada887dae706e985f6899e6daab4ad744f10647ea29",
+  "sssf_roster_file": "sssf-roster.yaml",
+  "sssf_adw_id": "f82058fa",
+  "sssf_thinking": "medium",
+  "sssf_roles_run": [
+    "builder"
+  ],
+  "sssf_roles_skipped": [
+    "planner",
+    "reviewer",
+    "documenter"
+  ],
+  "sssf_engine": "/home/k/sssf/adws/adw_simple_sdlc.py",
+  "models_used": [
+    "azure/DeepSeek-V3.2"
+  ],
+  "model_calls": 47,
+  "model_escalated_calls": 0,
+  "models_off_roster": [],
+  "wall_clock_s": 189.3,
+  "steps_used": 4,
+  "step_cap": 18,
+  "termination": "terminal-state",
+  "trajectory": "sssf-adw.log",
+  "sssf_events_file": "sssf-events.jsonl",
+  "probe_plumbing": false,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.6,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_connectors/test_util.py"
+    ],
+    "exit_code": 0
+  },
+  "tokens_in": 1358724,
+  "cached_input_tokens": 0,
+  "cache_write_tokens": 0,
+  "tokens_out": 17769,
+  "reasoning_tokens": 0,
+  "total_tokens": 1376493,
+  "cost_usd": 0.8179,
+  "usage_by_role": {
+    "builder": {
+      "input_tokens": 1358724,
+      "output_tokens": 17769,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 1376493,
+      "total_cost": 0.817912,
+      "calls": 47,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V3.2": {
+          "input_tokens": 1358724,
+          "output_tokens": 17769,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 45242
+    }
+  },
+  "persona_calls": 47,
+  "usage_source": "/home/k/.cache/swebench-work/pyinfra-dev__pyinfra-1665__v32-solo/adw_data/sessions/f82058fa/<role>/raw_output.jsonl (47 assistant turn(s) across 1 role stream(s))",
+  "sssf_turn_digest_file": "sssf-turns.jsonl",
+  "sssf_raw_output_streams": {
+    "builder": "/home/k/.cache/swebench-work/pyinfra-dev__pyinfra-1665__v32-solo/adw_data/sessions/f82058fa/builder/raw_output.jsonl"
+  },
+  "sssf_assistant_turns": 47,
+  "peak_turn_input_tokens": 45242,
+  "cost_usd_events": 0.817912,
+  "tokens_in_events": 1358724,
+  "tokens_out_events": 17769,
+  "cached_input_tokens_events": 0,
+  "sssf_roles_run_events": [
+    "builder"
+  ],
+  "usage_by_role_events": {
+    "builder": {
+      "input_tokens": 1358724,
+      "output_tokens": 17769,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 1376493,
+      "total_cost": 0.817912,
+      "calls": 1,
+      "reported_cost": 0.817912,
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ]
+    }
+  },
+  "events_source": "/home/k/.cache/swebench-work/pyinfra-dev__pyinfra-1665__v32-solo/adw_data/sessions/f82058fa/events.jsonl",
+  "cost_missing_from_events_usd": 0.0,
+  "shared_db": "sssf-bench.db",
+  "shared_db_totals": {
+    "cost_usd": 2.828046579999999,
+    "total_tokens": 4778361
+  },
+  "cost_usd_shared_db": 2.828,
+  "cost_mismatch_usd": 2.010135,
+  "cost_usd_rederived": 0.817912,
+  "cost_rederived_by_role": {
+    "builder": 0.817912
+  },
+  "cost_rederivation_drift_usd": 0.0,
+  "cost_rederivation_tolerance_usd": 0.01,
+  "cost_rederivation_disagrees": false,
+  "models_missing_a_rate": [],
+  "empty_response_turns": 0,
+  "empty_response_by_role": {},
+  "empty_response_reasons": [],
+  "provider_starved": false,
+  "price_table": {
+    "path": "/home/k/.pi/agent/models.json",
+    "sha256": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "sha256_pinned": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "matches_pinned": true,
+    "units": "USD per 1,000,000 tokens",
+    "rates": {
+      "azure/DeepSeek-V3.2": {
+        "cost": {
+          "input": 0.58,
+          "output": 1.68,
+          "cacheRead": 0.58,
+          "cacheWrite": 0.0
+        },
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "reasoning": true,
+        "api": "openai-completions"
+      }
+    },
+    "missing": [],
+    "error": null
+  },
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "adw_accepted:tests_green",
+  "sssf_chain_roles": [
+    "builder"
+  ],
+  "adw_exit_code": 0,
+  "adw_session_status": "success",
+  "adw_not_accepted_reason": null,
+  "files_changed": [
+    "src/pyinfra/connectors/util.py",
+    "src/pyinfra/operations/server.py"
+  ],
+  "test_files_stripped": [
+    "tests/test_connectors/test_util.py"
+  ],
+  "sssf_paths_excluded": [],
+  "sssf_excluded_prefixes": [
+    "specs/",
+    "app_docs/",
+    "docs/",
+    "adw_data/",
+    "adws/"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 2741,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "57be27b9921dd0a4532348522950d9784d722d75",
+    "expected_base_commit": "185f7dbec96f8e1d5f7cfefe0f325f99ab73927a",
+    "base_ref_matches": false,
+    "base_ref_ahead_of_expected": 1,
+    "expected_resolves": true,
+    "gitlink": "dir",
+    "head_sha": "57be27b9921dd0a4532348522950d9784d722d75",
+    "head_is_base": true,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 1289,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/test_connectors/test_util.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 0,
+    "refused_samples": [],
+    "scan_truncated": false
+  },
+  "sssf_caps": {
+    "run_cost_cap_usd": 6.0,
+    "wall_clock_cap_s": 5400,
+    "phase_cap": 18,
+    "ledger_poll_s": 5.0,
+    "enforced_by": "harness (the sssf engine has no spend limit)",
+    "spend_signal": "max(this run's events.jsonl, shared db sessions.total_cost); an unreadable shared db never kills a run"
+  },
+  "ledger_cost_at_stop_usd": 2.828047,
+  "attempt": 4,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "v32-solo",
+    "instance_id": "pyinfra-dev__pyinfra-1665",
+    "image": "swerebench/sweb.eval.x86_64.pyinfra-dev_1776_pyinfra-1665@sha256:138a496547f392c77a1d472fd259e3c3fff6dd20bf5cba084335888857f395a3",
+    "graded_at": "2026-08-13T17:16:54.168788+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 33,
+    "pass_to_pass_declared_count": 33,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": false,
+    "node_coverage_reasons": [
+      "tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_swallows_errors_and_clears_state: node(s) FAILED/ERROR: ['tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_swallows_errors_and_clears_state']",
+      "tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_remove_any_sudo_askpass_file_quotes_path: node(s) FAILED/ERROR: ['tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_remove_any_sudo_askpass_file_quotes_path']",
+      "tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_clears_state_and_runs_rm: node(s) FAILED/ERROR: ['tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_clears_state_and_runs_rm']"
+    ],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "gold_files_lookup_ok": true,
+    "gold_files": [
+      "src/pyinfra/connectors/util.py",
+      "src/pyinfra/operations/server.py"
+    ],
+    "touched_files": [
+      "src/pyinfra/connectors/util.py",
+      "src/pyinfra/operations/server.py"
+    ],
+    "gold_files_overlap": [
+      "src/pyinfra/connectors/util.py",
+      "src/pyinfra/operations/server.py"
+    ],
+    "oracle_resolved": false,
+    "outcome": "right_place_wrong_fix",
+    "exit_code": 0,
+    "grade_wall_s": 5.0,
+    "log_tail": "est_custom_shell_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_doas_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_doas_user_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_doas_user_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_dzdo_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_dzdo_user_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_dzdo_user_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_mixed_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_mixed_command_with_injection_attempts\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_preserve_su_env_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_multi_arg_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_password_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_shell_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_su_shell_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_multi_arg_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_password_askpass_path_quoted\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_preserve_env_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_user_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_sudo_user_command_with_injection_attempt\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_use_su_login_command\nPASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_use_sudo_login_command\nPASSED tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_noop_when_no_state\nFAILED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_remove_any_sudo_askpass_file_quotes_path\nFAILED tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_clears_state_and_runs_rm\n2 failed, 31 passed in 0.15s\nSWEBENCH_TALLY_fc59fe8aa69597cb: pass_to_pass 2 failed, 31 passed in 0.15s\n[35 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_fc59fe8aa69597cb: UNRESOLVED\n"
+  }
+}

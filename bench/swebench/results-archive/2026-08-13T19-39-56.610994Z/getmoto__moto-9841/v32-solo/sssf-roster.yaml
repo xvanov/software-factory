@@ -1,0 +1,62 @@
+defaults:
+  coding_agent: pi
+  model: azure/DeepSeek-V3.2
+  thinking: medium
+  harness_engineering: []
+  tools:
+  - read
+  - bash
+  - edit
+  - write
+  - grep
+  - find
+  - ls
+  protected_files: []
+  data_dir: /home/k/.cache/swebench-work/getmoto__moto-9841__v32-solo/adw_data
+  skip_phases: &id001
+  - planner
+  - reviewer
+  - documenter
+observability:
+  db: /home/k/software-factory/bench/swebench/runs/sssf-bench.db
+  poll_ms: 500
+quality:
+  tools: {}
+  checks:
+  - name: swebench_tests
+    area: swebench
+    operation: test
+    argv:
+    - bash
+    - -lc
+    - docker run --rm -v "$PWD":/testbed -w /testbed --user "$(id -u):$(id -g)" -e
+      HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.getmoto_1776_moto-9841@sha256:25cb9ea1e18acfadbf1a8b4a5746153746cd994e138c01f295d83813ab63a171
+      -lc 'source /opt/conda/bin/activate testbed && python -m pytest -p no:cacheprovider
+      '\''tests/test_kms/test_kms.py'\'''
+    timeout_seconds: 5400
+  sets:
+    tests:
+    - swebench_tests
+    quality:
+    - swebench_tests
+agents:
+- name: builder
+  coding_agent: pi
+  model: azure/DeepSeek-V3.2
+  thinking: medium
+  purpose: 'swebench bench arm: the builder role of the sssf ADW.'
+  prompt_engineering:
+    system: /home/k/sssf/adws/adw_data/prompt_engineering/builder/system.md
+    user: /home/k/sssf/adws/adw_data/prompt_engineering/builder/user.md
+  harness_engineering: []
+  tools:
+  - read
+  - grep
+  - find
+  - ls
+  - bash
+  - edit
+  - write
+skip_phases: *id001
+_bench_arm: v32-solo
+_bench_skip_declared_in: SSSFConfig

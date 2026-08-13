@@ -984,7 +984,20 @@ def test_the_reviewer_corpus_is_archived_as_an_optional_extra(A: Any) -> None:  
         "root/state/events/response_bodies.ndjson",
         "spec_prompt.md",
         "acceptance-events.ndjson",
+        # The sssf arms' CONFIG evidence, added 2026-08-13. ``benchmark_store``
+        # already digested all three (its ``_CONFIG`` tuple), so before this the
+        # store recorded hashes of files no archive held and the next sweep
+        # deleted — a trail that verifies bytes which will vanish. The roster is
+        # the load-bearing one: it IS the record of which models an arm ran, so a
+        # row without it cannot be re-attributed to a model set.
+        "sssf-roster.yaml",
+        "sssf-prompt.md",
+        "attempt.json",
     )
+    # And each is genuinely optional, never part of the fail-closed refusal set:
+    # no existing archive holds them, so requiring them would invalidate all nine.
+    for name in ("sssf-roster.yaml", "sssf-prompt.md", "attempt.json"):
+        assert name not in A._ROW_ARTIFACTS
     src = inspect.getsource(A._archive_report_artifacts)
     assert "_ARCHIVED_ROW_EXTRAS" in src
     assert "if src.is_file()" in src, "an absent extra must never fail the archive"

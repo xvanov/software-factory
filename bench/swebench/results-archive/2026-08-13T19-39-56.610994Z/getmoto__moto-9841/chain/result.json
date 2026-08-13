@@ -1,0 +1,359 @@
+{
+  "arm": "chain",
+  "instance_id": "getmoto__moto-9841",
+  "repo": "getmoto/moto",
+  "base_commit": "830a798c567bcdded2447efb7e98ca6d89b6a8c5",
+  "problem_statement_sha256": "15ec984f6cff0c04279f9cdcd95c41174f1d234491f4a5f968ead9e4b8ea565b",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-13T18:24:31.951095+00:00",
+  "cost_source": "derived-from-price-table",
+  "preflight": {
+    "skip_phases_supported": true,
+    "skip_phases_declared_in": "SSSFConfig",
+    "skip_phases_problem": null,
+    "credential_problem": null,
+    "engine": "/home/k/sssf/adws/adw_simple_sdlc.py"
+  },
+  "model": null,
+  "sssf_roster": {
+    "planner": "azure/DeepSeek-V3.2",
+    "builder": "azure/DeepSeek-V3.2",
+    "reviewer": "azure/gpt-5.4",
+    "documenter": null
+  },
+  "sssf_skip_phases": [
+    "documenter"
+  ],
+  "sssf_roster_sha256": "67d99eeb4d9c1f590fff51286c19dd23d427111d77f3633c1279c5650131d12b",
+  "sssf_roster_file": "sssf-roster.yaml",
+  "sssf_adw_id": "cb78a3f1",
+  "sssf_thinking": "medium",
+  "sssf_roles_run": [
+    "builder",
+    "planner",
+    "reviewer"
+  ],
+  "sssf_roles_skipped": [
+    "documenter"
+  ],
+  "sssf_engine": "/home/k/sssf/adws/adw_simple_sdlc.py",
+  "models_used": [
+    "azure/DeepSeek-V3.2",
+    "azure/gpt-5.4"
+  ],
+  "model_calls": 85,
+  "model_escalated_calls": 0,
+  "models_off_roster": [],
+  "wall_clock_s": 435.1,
+  "steps_used": 7,
+  "step_cap": 18,
+  "termination": "terminal-state",
+  "trajectory": "sssf-adw.log",
+  "sssf_events_file": "sssf-events.jsonl",
+  "probe_plumbing": false,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 0.7,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_kms/test_kms.py"
+    ],
+    "exit_code": 0
+  },
+  "tokens_in": 3099820,
+  "cached_input_tokens": 84352,
+  "cache_write_tokens": 0,
+  "tokens_out": 35243,
+  "reasoning_tokens": 0,
+  "total_tokens": 3219415,
+  "cost_usd": 1.9944,
+  "usage_by_role": {
+    "builder": {
+      "input_tokens": 2508779,
+      "output_tokens": 21699,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 2530478,
+      "total_cost": 1.491546,
+      "calls": 52,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V3.2": {
+          "input_tokens": 2508779,
+          "output_tokens": 21699,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 88636
+    },
+    "planner": {
+      "input_tokens": 547555,
+      "output_tokens": 11086,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 558641,
+      "total_cost": 0.336206,
+      "calls": 29,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V3.2": {
+          "input_tokens": 547555,
+          "output_tokens": 11086,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 29477
+    },
+    "reviewer": {
+      "input_tokens": 43486,
+      "output_tokens": 2458,
+      "cache_read_tokens": 84352,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 130296,
+      "total_cost": 0.166673,
+      "calls": 4,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/gpt-5.4"
+      ],
+      "tokens_by_model": {
+        "azure/gpt-5.4": {
+          "input_tokens": 43486,
+          "output_tokens": 2458,
+          "cache_read_tokens": 84352,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 43229
+    }
+  },
+  "persona_calls": 85,
+  "usage_source": "/home/k/.cache/swebench-work/getmoto__moto-9841__chain/adw_data/sessions/cb78a3f1/<role>/raw_output.jsonl (85 assistant turn(s) across 3 role stream(s))",
+  "sssf_turn_digest_file": "sssf-turns.jsonl",
+  "sssf_raw_output_streams": {
+    "builder": "/home/k/.cache/swebench-work/getmoto__moto-9841__chain/adw_data/sessions/cb78a3f1/builder/raw_output.jsonl",
+    "planner": "/home/k/.cache/swebench-work/getmoto__moto-9841__chain/adw_data/sessions/cb78a3f1/planner/raw_output.jsonl",
+    "reviewer": "/home/k/.cache/swebench-work/getmoto__moto-9841__chain/adw_data/sessions/cb78a3f1/reviewer/raw_output.jsonl"
+  },
+  "sssf_assistant_turns": 85,
+  "peak_turn_input_tokens": 88636,
+  "cost_usd_events": 1.994425,
+  "tokens_in_events": 3099820,
+  "tokens_out_events": 35243,
+  "cached_input_tokens_events": 84352,
+  "sssf_roles_run_events": [
+    "builder",
+    "planner",
+    "reviewer"
+  ],
+  "usage_by_role_events": {
+    "planner": {
+      "input_tokens": 547555,
+      "output_tokens": 11086,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 558641,
+      "total_cost": 0.336206,
+      "calls": 1,
+      "reported_cost": 0.336206,
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ]
+    },
+    "builder": {
+      "input_tokens": 2508779,
+      "output_tokens": 21699,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 2530478,
+      "total_cost": 1.491546,
+      "calls": 1,
+      "reported_cost": 1.491546,
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ]
+    },
+    "reviewer": {
+      "input_tokens": 43486,
+      "output_tokens": 2458,
+      "cache_read_tokens": 84352,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 130296,
+      "total_cost": 0.166673,
+      "calls": 1,
+      "reported_cost": 0.166673,
+      "models": [
+        "azure/gpt-5.4"
+      ]
+    }
+  },
+  "events_source": "/home/k/.cache/swebench-work/getmoto__moto-9841__chain/adw_data/sessions/cb78a3f1/events.jsonl",
+  "cost_missing_from_events_usd": 0.0,
+  "shared_db": "sssf-bench.db",
+  "shared_db_totals": {
+    "cost_usd": 8.89077748,
+    "total_tokens": 14528973
+  },
+  "cost_usd_shared_db": 8.8908,
+  "cost_mismatch_usd": 6.896352,
+  "cost_usd_rederived": 1.994426,
+  "cost_rederived_by_role": {
+    "builder": 1.491546,
+    "planner": 0.336206,
+    "reviewer": 0.166673
+  },
+  "cost_rederivation_drift_usd": 1e-06,
+  "cost_rederivation_tolerance_usd": 0.01,
+  "cost_rederivation_disagrees": false,
+  "models_missing_a_rate": [],
+  "empty_response_turns": 0,
+  "empty_response_by_role": {},
+  "empty_response_reasons": [],
+  "provider_starved": false,
+  "price_table": {
+    "path": "/home/k/.pi/agent/models.json",
+    "sha256": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "sha256_pinned": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "matches_pinned": true,
+    "units": "USD per 1,000,000 tokens",
+    "rates": {
+      "azure/gpt-5.4": {
+        "cost": {
+          "input": 2.5,
+          "output": 15.0,
+          "cacheRead": 0.25,
+          "cacheWrite": 0.0
+        },
+        "contextWindow": 272000,
+        "maxTokens": 65536,
+        "reasoning": true,
+        "api": "openai-completions"
+      },
+      "azure/DeepSeek-V3.2": {
+        "cost": {
+          "input": 0.58,
+          "output": 1.68,
+          "cacheRead": 0.58,
+          "cacheWrite": 0.0
+        },
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "reasoning": true,
+        "api": "openai-completions"
+      }
+    },
+    "missing": [],
+    "error": null
+  },
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "adw_accepted:tests_green+review_approved",
+  "sssf_chain_roles": [
+    "builder",
+    "planner",
+    "reviewer"
+  ],
+  "adw_exit_code": 0,
+  "adw_session_status": "success",
+  "adw_not_accepted_reason": null,
+  "files_changed": [
+    "moto/kms/models.py",
+    "moto/kms/responses.py",
+    "result.json"
+  ],
+  "test_files_stripped": [
+    "scripts/dependency_test.sh",
+    "tests/test_kms/test_kms.py",
+    "tests/test_kms/test_kms_cloudformation.py"
+  ],
+  "sssf_paths_excluded": [
+    "specs/cb78a3f1_kms-alias-arn-target-key-id.md"
+  ],
+  "sssf_excluded_prefixes": [
+    "specs/",
+    "app_docs/",
+    "docs/",
+    "adw_data/",
+    "adws/"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 3439,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "fb49a455e5beb9857af801e2875029831bb01885",
+    "expected_base_commit": "830a798c567bcdded2447efb7e98ca6d89b6a8c5",
+    "base_ref_matches": false,
+    "base_ref_ahead_of_expected": 2,
+    "expected_resolves": true,
+    "gitlink": "dir",
+    "head_sha": "fb49a455e5beb9857af801e2875029831bb01885",
+    "head_is_base": true,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 1122,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/test_kms/test_kms.py",
+      "tests/test_kms/test_kms_cloudformation.py"
+    ],
+    "bypassed_count": 2,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 0,
+    "refused_samples": [],
+    "scan_truncated": false
+  },
+  "sssf_caps": {
+    "run_cost_cap_usd": 0.0,
+    "wall_clock_cap_s": 5400,
+    "phase_cap": 18,
+    "ledger_poll_s": 5.0,
+    "enforced_by": "harness (the sssf engine has no spend limit)",
+    "spend_signal": "max(this run's events.jsonl, shared db sessions.total_cost); an unreadable shared db never kills a run"
+  },
+  "ledger_cost_at_stop_usd": 8.724104,
+  "attempt": 4,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "chain",
+    "instance_id": "getmoto__moto-9841",
+    "image": "swerebench/sweb.eval.x86_64.getmoto_1776_moto-9841@sha256:25cb9ea1e18acfadbf1a8b4a5746153746cd994e138c01f295d83813ab63a171",
+    "graded_at": "2026-08-13T18:24:32.099902+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 149,
+    "pass_to_pass_declared_count": 149,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 13.2,
+    "log_tail": "ype_RSA[RSA_4096-RSASSA_PKCS1_V1_5_SHA_512]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_RSA[RSASSA_PSS_SHA_256-RSASSA_PSS_SHA_384]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_RSA[RSASSA_PSS_SHA_256-RSASSA_PSS_SHA_512]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_RSA[RSASSA_PSS_SHA_384-RSASSA_PSS_SHA_512]\nPASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_NIST_P256-ECDSA_SHA_256]\nPASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_SECG_P256K1-ECDSA_SHA_256]\nPASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_NIST_P384-ECDSA_SHA_384]\nPASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_ECDSA[ECC_NIST_P521-ECDSA_SHA_512]\nPASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_NIST_P256-ECDSA_SHA_384-valid_signing_algorithms0]\nPASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_SECG_P256K1-ECDSA_SHA_512-valid_signing_algorithms1]\nPASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_NIST_P384-ECDSA_SHA_256-valid_signing_algorithms2]\nPASSED tests/test_kms/test_kms.py::test_invalid_signing_algorithm_for_key_spec_type_ECDSA[ECC_NIST_P521-ECDSA_SHA_384-valid_signing_algorithms3]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_NIST_P256-ECDSA_SHA_256]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_SECG_P256K1-ECDSA_SHA_256]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_NIST_P384-ECDSA_SHA_384]\nPASSED tests/test_kms/test_kms.py::test_fail_verify_digest_message_type_ECDSA[ECC_NIST_P521-ECDSA_SHA_512]\nPASSED tests/test_kms/test_kms.py::test_sign_invalid_key_usage\nPASSED tests/test_kms/test_kms.py::test_sign_invalid_message\nPASSED tests/test_kms/test_kms.py::test_verify_happy[some encodeable plaintext]\nPASSED tests/test_kms/test_kms.py::test_verify_happy[some unencodeable plaintext \\xec\\x8a\\xcf\\xb6r\\xe9\\xb5\\xeb\\xff\\xa23\\x16]\nPASSED tests/test_kms/test_kms.py::test_verify_happy[some unicode characters \\xf8\\u02da\\u2206\\xf8\\u02c6\\u02c6\\u2206\\xdf\\xe7\\xf8\\u02c6\\u02c6\\xe7\\xdf\\xf8\\u02c6\\xa8\\xa5]\nPASSED tests/test_kms/test_kms.py::test_verify_happy_with_invalid_signature\nPASSED tests/test_kms/test_kms.py::test_verify_invalid_signing_algorithm\nPASSED tests/test_kms/test_kms.py::test_verify_invalid_message\nPASSED tests/test_kms/test_kms.py::test_verify_empty_signature\nPASSED tests/test_kms/test_kms.py::test_get_public_key\nPASSED tests/test_kms/test_kms.py::test_get_public_key_with_alias\nPASSED tests/test_kms/test_kms.py::test_ensure_key_can_be_verified_manually\n153 passed in 4.22s\nSWEBENCH_TALLY_554cffa3f5124fb8: pass_to_pass 153 passed in 4.22s\n[155 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_554cffa3f5124fb8: RESOLVED\n"
+  }
+}

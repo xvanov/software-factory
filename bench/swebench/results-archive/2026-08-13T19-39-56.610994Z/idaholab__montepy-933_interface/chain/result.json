@@ -1,0 +1,241 @@
+{
+  "arm": "chain",
+  "instance_id": "idaholab__montepy-933_interface",
+  "repo": "idaholab/MontePy",
+  "base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+  "problem_statement_sha256": "18f56a6b2c0dd104befdcf7caf0f58fd82cc82d7dc0c96b05a307b064e3b81f1",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-13T17:48:29.117213+00:00",
+  "cost_source": "derived-from-price-table",
+  "preflight": {
+    "skip_phases_supported": true,
+    "skip_phases_declared_in": "SSSFConfig",
+    "skip_phases_problem": null,
+    "credential_problem": null,
+    "engine": "/home/k/sssf/adws/adw_simple_sdlc.py"
+  },
+  "model": null,
+  "sssf_roster": {
+    "planner": "azure/DeepSeek-V3.2",
+    "builder": "azure/DeepSeek-V3.2",
+    "reviewer": "azure/gpt-5.4",
+    "documenter": null
+  },
+  "sssf_skip_phases": [
+    "documenter"
+  ],
+  "sssf_roster_sha256": "2d8e76e1a0774744e55166c5721e67bb9a340b02dfd486849407095221a39120",
+  "sssf_roster_file": "sssf-roster.yaml",
+  "sssf_adw_id": "dbe9e440",
+  "sssf_thinking": "medium",
+  "sssf_roles_run": [
+    "planner"
+  ],
+  "sssf_roles_skipped": [
+    "documenter"
+  ],
+  "sssf_engine": "/home/k/sssf/adws/adw_simple_sdlc.py",
+  "models_used": [
+    "azure/DeepSeek-V3.2"
+  ],
+  "model_calls": 29,
+  "model_escalated_calls": 0,
+  "models_off_roster": [],
+  "wall_clock_s": 154.4,
+  "steps_used": 2,
+  "step_cap": 18,
+  "termination": "terminal-state",
+  "trajectory": "sssf-adw.log",
+  "sssf_events_file": "sssf-events.jsonl",
+  "probe_plumbing": false,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.1,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_universe.py",
+      "tests/test_universe_integration.py"
+    ],
+    "exit_code": 0
+  },
+  "tokens_in": 786237,
+  "cached_input_tokens": 0,
+  "cache_write_tokens": 0,
+  "tokens_out": 15047,
+  "reasoning_tokens": 0,
+  "total_tokens": 801284,
+  "cost_usd": 0.4813,
+  "usage_by_role": {
+    "planner": {
+      "input_tokens": 786237,
+      "output_tokens": 15047,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 801284,
+      "total_cost": 0.481296,
+      "calls": 29,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V3.2": {
+          "input_tokens": 786237,
+          "output_tokens": 15047,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 43815
+    }
+  },
+  "persona_calls": 29,
+  "usage_source": "/home/k/.cache/swebench-work/idaholab__montepy-933_interface__chain/adw_data/sessions/dbe9e440/<role>/raw_output.jsonl (29 assistant turn(s) across 1 role stream(s))",
+  "sssf_turn_digest_file": "sssf-turns.jsonl",
+  "sssf_raw_output_streams": {
+    "planner": "/home/k/.cache/swebench-work/idaholab__montepy-933_interface__chain/adw_data/sessions/dbe9e440/planner/raw_output.jsonl"
+  },
+  "sssf_assistant_turns": 29,
+  "peak_turn_input_tokens": 43815,
+  "cost_usd_events": 0.0,
+  "tokens_in_events": 0,
+  "tokens_out_events": 0,
+  "cached_input_tokens_events": 0,
+  "sssf_roles_run_events": [],
+  "usage_by_role_events": {},
+  "events_source": "/home/k/.cache/swebench-work/idaholab__montepy-933_interface__chain/adw_data/sessions/dbe9e440/events.jsonl",
+  "cost_missing_from_events_usd": 0.481296,
+  "shared_db": "sssf-bench.db",
+  "shared_db_totals": {
+    "cost_usd": 1.1506603199999998,
+    "total_tokens": 1919494
+  },
+  "cost_usd_shared_db": 1.1507,
+  "cost_mismatch_usd": 0.669364,
+  "cost_usd_rederived": 0.481296,
+  "cost_rederived_by_role": {
+    "planner": 0.481296
+  },
+  "cost_rederivation_drift_usd": 0.0,
+  "cost_rederivation_tolerance_usd": 0.01,
+  "cost_rederivation_disagrees": false,
+  "models_missing_a_rate": [],
+  "empty_response_turns": 0,
+  "empty_response_by_role": {},
+  "empty_response_reasons": [],
+  "provider_starved": false,
+  "price_table": {
+    "path": "/home/k/.pi/agent/models.json",
+    "sha256": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "sha256_pinned": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "matches_pinned": true,
+    "units": "USD per 1,000,000 tokens",
+    "rates": {
+      "azure/gpt-5.4": {
+        "cost": {
+          "input": 2.5,
+          "output": 15.0,
+          "cacheRead": 0.25,
+          "cacheWrite": 0.0
+        },
+        "contextWindow": 272000,
+        "maxTokens": 65536,
+        "reasoning": true,
+        "api": "openai-completions"
+      },
+      "azure/DeepSeek-V3.2": {
+        "cost": {
+          "input": 0.58,
+          "output": 1.68,
+          "cacheRead": 0.58,
+          "cacheWrite": 0.0
+        },
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "reasoning": true,
+        "api": "openai-completions"
+      }
+    },
+    "missing": [],
+    "error": null
+  },
+  "error": null,
+  "factory_says_green": false,
+  "green_state": "adw_accepted:tests_green+review_approved",
+  "sssf_chain_roles": [
+    "builder",
+    "planner",
+    "reviewer"
+  ],
+  "adw_exit_code": 1,
+  "adw_session_status": "fail",
+  "adw_not_accepted_reason": null,
+  "files_changed": [],
+  "test_files_stripped": [],
+  "sssf_paths_excluded": [
+    "specs/dbe9e440_allow-nullify-cell-universe.md"
+  ],
+  "sssf_excluded_prefixes": [
+    "specs/",
+    "app_docs/",
+    "docs/",
+    "adw_data/",
+    "adws/"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 0,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+    "expected_base_commit": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+    "base_ref_matches": true,
+    "base_ref_ahead_of_expected": 0,
+    "expected_resolves": true,
+    "gitlink": "dir",
+    "head_sha": "fbc03d10eb552cf82acc788ef70d120adec8130c",
+    "head_is_base": true,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 73,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [],
+    "bypassed_count": 0,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 0,
+    "refused_samples": [],
+    "scan_truncated": false
+  },
+  "sssf_caps": {
+    "run_cost_cap_usd": 6.0,
+    "wall_clock_cap_s": 5400,
+    "phase_cap": 18,
+    "ledger_poll_s": 5.0,
+    "enforced_by": "harness (the sssf engine has no spend limit)",
+    "spend_signal": "max(this run's events.jsonl, shared db sessions.total_cost); an unreadable shared db never kills a run"
+  },
+  "ledger_cost_at_stop_usd": 1.15066,
+  "attempt": 2,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "chain",
+    "instance_id": "idaholab__montepy-933_interface",
+    "image": "swerebench/sweb.eval.x86_64.idaholab_1776_montepy-933_interface@sha256:d79f83f33b0f25749596dd0038adecb80e9b443300200890dca0f6d23488567c",
+    "graded_at": "2026-08-13T17:48:29.235540+00:00",
+    "fail_to_pass_count": 6,
+    "pass_to_pass_count": 40,
+    "pass_to_pass_declared_count": 40,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": true,
+    "oracle_resolved": false,
+    "outcome": "empty_patch",
+    "log_tail": ""
+  }
+}

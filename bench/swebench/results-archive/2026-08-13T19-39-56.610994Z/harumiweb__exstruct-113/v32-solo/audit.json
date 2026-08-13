@@ -1,0 +1,20 @@
+{
+  "instance_id": "harumiweb__exstruct-113",
+  "arm": "v32-solo",
+  "audited_at": "2026-08-13T17:09:20.115921+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [],
+  "persona_calls": [],
+  "ledger_cost_usd": 2.2986,
+  "ledger_tokens_in": 3860156,
+  "ledger_tokens_out": 35524,
+  "result_cost_usd": 2.2986,
+  "prediction_sha256": "6df171069b5018fe95451e5f79713f1007ae4786ed1fd0e574f22859ba56e4ad",
+  "base_commit": "c0c8c52d0a3b507ac13feb4b700e5d858f2a81dc",
+  "stripped_test_paths": [],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 1,
+  "oracle_probe_failures": []
+}

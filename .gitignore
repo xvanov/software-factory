@@ -137,3 +137,21 @@ bench/swebench/runs/
 # selftest per-instance rows are the parallel driver INTERMEDIATE; `selftest.json`
 # is the artifact they merge into and the one source of truth the sweep reads.
 bench/swebench/selftest-rows/
+
+# The benchmark RECORD store's WAL sidecars — transient by definition, recreated
+# on every open, and meaningless without the db. `benchmarks.db` itself is
+# deliberately NOT ignored: it is the ONLY place a superseded attempt's figures
+# survive (`runs/` above is wiped by the next attempt of the same cell), so
+# ignoring it would put the durable record in the one directory git cannot see.
+# See bench/swebench/BENCHMARK-RECORDS.md.
+bench/swebench/benchmarks.db-wal
+bench/swebench/benchmarks.db-shm
+
+# The benchmark record store is REGENERABLE from results-archive/ (proven:
+# `benchmark_store ingest --runs-dir <archive> --swe-dir <archive>` rebuilds it
+# and `verify` reports 176 ok / 0 gone / 0 MISMATCH). Keeping the binary out of
+# git avoids two problems: opaque diffs and merge conflicts on a sqlite file,
+# and a pre-existing hole where `record()`/`_record_sweep()` do not thread
+# db_path, so ANY test run writes campaign/ingest_log rows into the committed
+# copy. The archive is the source of truth; this is the queryable index.
+bench/swebench/benchmarks.db

@@ -1,0 +1,29 @@
+Checking patch tests/test_xterm.py...
+Applied patch tests/test_xterm.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_33a48afc908bbdc1: OK (red as expected)
+Checking patch examples/xterm/main.py...
+Checking patch nicegui/elements/xterm/xterm.py...
+Checking patch nicegui/events.py...
+Checking patch website/documentation/content/xterm_documentation.py...
+Applied patch examples/xterm/main.py cleanly.
+Applied patch nicegui/elements/xterm/xterm.py cleanly.
+Applied patch nicegui/events.py cleanly.
+Applied patch website/documentation/content/xterm_documentation.py cleanly.
+SWEBENCH_APPLY_33a48afc908bbdc1: OK
+..                                                                       [100%]
+=========================== short test summary info ============================
+PASSED tests/test_xterm.py::test_bell_and_data_events
+PASSED tests/test_xterm.py::test_fit_and_resize_event
+2 passed in 10.21s
+SWEBENCH_TALLY_33a48afc908bbdc1: fail_to_pass 2 passed in 10.21s
+[4 node outcomes for fail_to_pass -> grade-nodes.log]
+...                                                                      [100%]
+=========================== short test summary info ============================
+PASSED tests/test_xterm.py::test_init
+PASSED tests/test_xterm.py::test_write
+PASSED tests/test_xterm.py::test_run_terminal_method
+3 passed in 10.82s
+SWEBENCH_TALLY_33a48afc908bbdc1: pass_to_pass 3 passed in 10.82s
+[5 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_33a48afc908bbdc1: RESOLVED

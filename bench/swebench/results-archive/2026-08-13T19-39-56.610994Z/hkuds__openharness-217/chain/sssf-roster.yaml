@@ -1,0 +1,95 @@
+defaults:
+  coding_agent: pi
+  model: azure/DeepSeek-V3.2
+  thinking: medium
+  harness_engineering: []
+  tools:
+  - read
+  - bash
+  - edit
+  - write
+  - grep
+  - find
+  - ls
+  protected_files: []
+  data_dir: /home/k/.cache/swebench-work/hkuds__openharness-217__chain/adw_data
+  skip_phases: &id001
+  - documenter
+observability:
+  db: /home/k/software-factory/bench/swebench/runs/sssf-bench.db
+  poll_ms: 500
+quality:
+  tools: {}
+  checks:
+  - name: swebench_tests
+    area: swebench
+    operation: test
+    argv:
+    - bash
+    - -lc
+    - docker run --rm -v "$PWD":/testbed -w /testbed --user "$(id -u):$(id -g)" -e
+      HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 --entrypoint bash swerebench/sweb.eval.x86_64.hkuds_1776_openharness-217@sha256:ad0997cf2e90f0a31f3e6f8fd5cba18ced7f364ae3a62bd59f4c9e1d88b7678d
+      -lc 'source /opt/conda/bin/activate testbed && python -m pytest -p no:cacheprovider
+      '\''tests/test_auth'\'''
+    timeout_seconds: 5400
+  sets:
+    tests:
+    - swebench_tests
+    quality:
+    - swebench_tests
+agents:
+- name: planner
+  coding_agent: pi
+  model: azure/DeepSeek-V3.2
+  thinking: medium
+  purpose: 'swebench bench arm: the planner role of the sssf ADW.'
+  prompt_engineering:
+    system: /home/k/sssf/adws/adw_data/prompt_engineering/planner/system.md
+    user: /home/k/sssf/adws/adw_data/prompt_engineering/planner/user.md
+  harness_engineering: []
+  tools:
+  - read
+  - grep
+  - find
+  - ls
+  - bash
+  - write
+  writes:
+  - specs/
+- name: builder
+  coding_agent: pi
+  model: azure/DeepSeek-V3.2
+  thinking: medium
+  purpose: 'swebench bench arm: the builder role of the sssf ADW.'
+  prompt_engineering:
+    system: /home/k/sssf/adws/adw_data/prompt_engineering/builder/system.md
+    user: /home/k/sssf/adws/adw_data/prompt_engineering/builder/user.md
+  harness_engineering: []
+  tools:
+  - read
+  - grep
+  - find
+  - ls
+  - bash
+  - edit
+  - write
+- name: reviewer
+  coding_agent: pi
+  model: azure/gpt-5.4
+  thinking: medium
+  purpose: 'swebench bench arm: the reviewer role of the sssf ADW.'
+  prompt_engineering:
+    system: /home/k/sssf/adws/adw_data/prompt_engineering/reviewer/system.md
+    user: /home/k/sssf/adws/adw_data/prompt_engineering/reviewer/user.md
+  harness_engineering: []
+  tools:
+  - read
+  - grep
+  - find
+  - ls
+  - bash
+  - write
+  writes: []
+skip_phases: *id001
+_bench_arm: chain
+_bench_skip_declared_in: SSSFConfig

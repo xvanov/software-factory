@@ -1,0 +1,24 @@
+{
+  "instance_id": "tox-dev__tox-3931",
+  "arm": "v32-solo",
+  "audited_at": "2026-08-13T03:26:21.600704+00:00",
+  "ok": true,
+  "failures": [],
+  "warnings": [
+    "no sssf-events.jsonl \u2014 the ADW never opened a phase or was killed before its tracer wrote a line (the oracle-probe scan fails the run if it made any calls)"
+  ],
+  "persona_calls": [],
+  "ledger_cost_usd": 0.0,
+  "ledger_tokens_in": 0,
+  "ledger_tokens_out": 0,
+  "result_cost_usd": 0.0,
+  "prediction_sha256": "f175880b4b141322ba85e281433acf31e6249ff40080c3ac9db3c0a0b07e6390",
+  "base_commit": "dd305fe8f347c49fcd3bd63d5e56c912e4c428f2",
+  "stripped_test_paths": [
+    "test_swebench_sssf_plumbing_probe.py"
+  ],
+  "refused_paths": [],
+  "trajectories_scanned": 0,
+  "trails_scanned": 0,
+  "oracle_probe_failures": []
+}

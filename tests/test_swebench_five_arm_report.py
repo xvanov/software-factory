@@ -271,7 +271,14 @@ def test_a_non_selectable_arm_is_one_to_one_with_its_run_dir(A: Any) -> None:  #
     assert '_run_dir(instance_id, arm)' in src
     assert '_run_dir(instance_id, "factory")' not in src
     assert '_work_dir(instance_id, arm' in src
-    parameterized_bases = {"factory"}
+    # The `sssf` base is an exception for the SAME reason and is held to the same
+    # standard: three arms share `run_sssf`, which differs between them only by
+    # the roster the arm id selects, so it must key every artifact off the arm.
+    sssf_src = inspect.getsource(A.run_sssf)
+    assert "_run_dir(instance_id, arm)" in sssf_src
+    assert "_work_dir(instance_id, arm" in sssf_src
+    assert '_run_dir(instance_id, "sssf")' not in sssf_src
+    parameterized_bases = {"factory", "sssf"}
 
     bases: dict[str, list[str]] = {}
     for name, spec in A._ARMS.items():

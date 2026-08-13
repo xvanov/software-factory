@@ -1,0 +1,843 @@
+{
+  "generated_at": "2026-08-13T19:39:56.610994+00:00",
+  "max_bytes_per_file": 16777216,
+  "names": [
+    "raw.diff",
+    "sweep-run.log",
+    "sssf-adw.log"
+  ],
+  "trajectory_globs": [
+    "root/state/events/trajectories/*.ndjson",
+    "state/events/trajectories/*.ndjson",
+    "bare-commands.ndjson",
+    "claude-transcript.ndjson",
+    "sssf-events.jsonl",
+    "sssf-turns.jsonl"
+  ],
+  "count": 82,
+  "uncompressed_bytes": 7170034,
+  "truncated": 0,
+  "unreadable": 0,
+  "files": [
+    {
+      "row": "alibaba__opensandbox-816/chain",
+      "path": "raw.diff",
+      "original_bytes": 28346,
+      "original_sha256": "e5673fd12ad582282d4d6d6a7de32d998c5985e5cded23d9dc5bcfd74b85bf3a",
+      "truncated": false,
+      "stored_bytes": 28346,
+      "stored_sha256": "e5673fd12ad582282d4d6d6a7de32d998c5985e5cded23d9dc5bcfd74b85bf3a",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/chain",
+      "path": "sweep-run.log",
+      "original_bytes": 1667,
+      "original_sha256": "88d40d8fe874d30833ec721ce0a8e13299b4f3d99b9c44bfe75d206f34eadd48",
+      "truncated": false,
+      "stored_bytes": 1667,
+      "stored_sha256": "88d40d8fe874d30833ec721ce0a8e13299b4f3d99b9c44bfe75d206f34eadd48",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/chain",
+      "path": "sssf-adw.log",
+      "original_bytes": 6098,
+      "original_sha256": "cd93e1f6ffec6507eb7d339de63ba22afb46760b7bd4fc6d8325f6635e03ef70",
+      "truncated": false,
+      "stored_bytes": 6098,
+      "stored_sha256": "cd93e1f6ffec6507eb7d339de63ba22afb46760b7bd4fc6d8325f6635e03ef70",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/chain",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 960464,
+      "original_sha256": "228b700d2db1e53aee257573c5639773dff12ed3ec275ce7c829bd4905d443e0",
+      "truncated": false,
+      "stored_bytes": 960464,
+      "stored_sha256": "228b700d2db1e53aee257573c5639773dff12ed3ec275ce7c829bd4905d443e0",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/chain",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 1117,
+      "original_sha256": "13dc9b0e1f977cea83e2d35e6ed1d31239c1c3933d3a20666572aca89f88f8b6",
+      "truncated": false,
+      "stored_bytes": 1117,
+      "stored_sha256": "13dc9b0e1f977cea83e2d35e6ed1d31239c1c3933d3a20666572aca89f88f8b6",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/v32-solo",
+      "path": "raw.diff",
+      "original_bytes": 4928,
+      "original_sha256": "3f696e649e5a6c6536a7d373019340a16312de619ff41a55d7a9f34fc8d8996b",
+      "truncated": false,
+      "stored_bytes": 4928,
+      "stored_sha256": "3f696e649e5a6c6536a7d373019340a16312de619ff41a55d7a9f34fc8d8996b",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/v32-solo",
+      "path": "sweep-run.log",
+      "original_bytes": 1395,
+      "original_sha256": "fc1bdb5c932768ee4ceda91cf8c6e2689b410036a3f974af4ca09b4bcb3f2bd6",
+      "truncated": false,
+      "stored_bytes": 1395,
+      "stored_sha256": "fc1bdb5c932768ee4ceda91cf8c6e2689b410036a3f974af4ca09b4bcb3f2bd6",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/v32-solo",
+      "path": "sssf-adw.log",
+      "original_bytes": 2807,
+      "original_sha256": "2f60de6590de9511b7da2763bd8c1c0f39d3b34e82b539da3f859d2a978cfafa",
+      "truncated": false,
+      "stored_bytes": 2807,
+      "stored_sha256": "2f60de6590de9511b7da2763bd8c1c0f39d3b34e82b539da3f859d2a978cfafa",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/v32-solo",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 443126,
+      "original_sha256": "1b0eaed83c95f4fbf1a4a103b6362f7c10d1944b291715d8b84cafe10bd844d3",
+      "truncated": false,
+      "stored_bytes": 443126,
+      "stored_sha256": "1b0eaed83c95f4fbf1a4a103b6362f7c10d1944b291715d8b84cafe10bd844d3",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "alibaba__opensandbox-816/v32-solo",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 374,
+      "original_sha256": "e924c16d60e52801319eaca6ba10f0d67ab6a1514bb3ef71a45e4ec48ecfd075",
+      "truncated": false,
+      "stored_bytes": 374,
+      "stored_sha256": "e924c16d60e52801319eaca6ba10f0d67ab6a1514bb3ef71a45e4ec48ecfd075",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/chain",
+      "path": "raw.diff",
+      "original_bytes": 14265,
+      "original_sha256": "e5815139a044c12cf5bfe64f815f3a95ec999d347b7250d702f3e7c4a126c4dc",
+      "truncated": false,
+      "stored_bytes": 14265,
+      "stored_sha256": "e5815139a044c12cf5bfe64f815f3a95ec999d347b7250d702f3e7c4a126c4dc",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/chain",
+      "path": "sweep-run.log",
+      "original_bytes": 1140,
+      "original_sha256": "06ad9830623a62525cf254f7435225887e145f38edb3004a5dbc450663d8eec8",
+      "truncated": false,
+      "stored_bytes": 1140,
+      "stored_sha256": "06ad9830623a62525cf254f7435225887e145f38edb3004a5dbc450663d8eec8",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/chain",
+      "path": "sssf-adw.log",
+      "original_bytes": 4680,
+      "original_sha256": "1d3077c8bf3484d2e35d2601c0eb03c7f6178a9f29b57e551f05e86c201b8a94",
+      "truncated": false,
+      "stored_bytes": 4680,
+      "stored_sha256": "1d3077c8bf3484d2e35d2601c0eb03c7f6178a9f29b57e551f05e86c201b8a94",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/chain",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 519688,
+      "original_sha256": "39f870fd3c143f4d5a2fa4da60eeb424fc0162cd98e9ce234de125febfd5ca1f",
+      "truncated": false,
+      "stored_bytes": 519688,
+      "stored_sha256": "39f870fd3c143f4d5a2fa4da60eeb424fc0162cd98e9ce234de125febfd5ca1f",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/chain",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 1114,
+      "original_sha256": "a4e823ee6b0457340d6316203bf323f60c36422d1c4bf42830a5e9917c25c2b5",
+      "truncated": false,
+      "stored_bytes": 1114,
+      "stored_sha256": "a4e823ee6b0457340d6316203bf323f60c36422d1c4bf42830a5e9917c25c2b5",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/v32-solo",
+      "path": "raw.diff",
+      "original_bytes": 6953,
+      "original_sha256": "39b82d9dffc18ddee80d5c2536aabe5fc544b4ea2d1696b0cda3143cda25bfed",
+      "truncated": false,
+      "stored_bytes": 6953,
+      "stored_sha256": "39b82d9dffc18ddee80d5c2536aabe5fc544b4ea2d1696b0cda3143cda25bfed",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/v32-solo",
+      "path": "sweep-run.log",
+      "original_bytes": 998,
+      "original_sha256": "0ae9d5d05131981e929779202f70832ff2f89072389d14a9f7d333684a374a45",
+      "truncated": false,
+      "stored_bytes": 998,
+      "stored_sha256": "0ae9d5d05131981e929779202f70832ff2f89072389d14a9f7d333684a374a45",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/v32-solo",
+      "path": "sssf-adw.log",
+      "original_bytes": 2792,
+      "original_sha256": "4291daa17eaaea8f267d386c01cacb9ffc761aaf624203351b4edd5d11faa871",
+      "truncated": false,
+      "stored_bytes": 2792,
+      "stored_sha256": "4291daa17eaaea8f267d386c01cacb9ffc761aaf624203351b4edd5d11faa871",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/v32-solo",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 417143,
+      "original_sha256": "416b9923a63ffade7cd20c73ce033bc99dd5319f107cbbb3835d02dc0e3d6c89",
+      "truncated": false,
+      "stored_bytes": 417143,
+      "stored_sha256": "416b9923a63ffade7cd20c73ce033bc99dd5319f107cbbb3835d02dc0e3d6c89",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "getmoto__moto-9841/v32-solo",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 375,
+      "original_sha256": "2bb9f81d891188a81ff61dd47dc338da1fc4290f4bab08d96b01398d5c908aa9",
+      "truncated": false,
+      "stored_bytes": 375,
+      "stored_sha256": "2bb9f81d891188a81ff61dd47dc338da1fc4290f4bab08d96b01398d5c908aa9",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/chain",
+      "path": "raw.diff",
+      "original_bytes": 65253,
+      "original_sha256": "d761870fde7c7e70c96409986268bf7bed8954c9dd31d86e7b61953137936579",
+      "truncated": false,
+      "stored_bytes": 65253,
+      "stored_sha256": "d761870fde7c7e70c96409986268bf7bed8954c9dd31d86e7b61953137936579",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/chain",
+      "path": "sweep-run.log",
+      "original_bytes": 1104,
+      "original_sha256": "10e5ebc2271d545abc5580f54d8b985f388f98a12939f13a4d6ce6e8798c4b8c",
+      "truncated": false,
+      "stored_bytes": 1104,
+      "stored_sha256": "10e5ebc2271d545abc5580f54d8b985f388f98a12939f13a4d6ce6e8798c4b8c",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/chain",
+      "path": "sssf-adw.log",
+      "original_bytes": 6218,
+      "original_sha256": "8aa300afa5b881e3f7c4f8e736da296013772f684150589809344fe45445e6b1",
+      "truncated": false,
+      "stored_bytes": 6218,
+      "stored_sha256": "8aa300afa5b881e3f7c4f8e736da296013772f684150589809344fe45445e6b1",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/chain",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 876102,
+      "original_sha256": "132c7c44bdae4f7f9e96819625c02156fa0b2eff58c122e0447b34ed34c673c4",
+      "truncated": false,
+      "stored_bytes": 876102,
+      "stored_sha256": "132c7c44bdae4f7f9e96819625c02156fa0b2eff58c122e0447b34ed34c673c4",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/chain",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 1118,
+      "original_sha256": "c4f5007c2e8d4a2f162ec39300f5693f7199d7ca746dfda1195017a5e4bb5bb4",
+      "truncated": false,
+      "stored_bytes": 1118,
+      "stored_sha256": "c4f5007c2e8d4a2f162ec39300f5693f7199d7ca746dfda1195017a5e4bb5bb4",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/v32-solo",
+      "path": "raw.diff",
+      "original_bytes": 30329,
+      "original_sha256": "6df171069b5018fe95451e5f79713f1007ae4786ed1fd0e574f22859ba56e4ad",
+      "truncated": false,
+      "stored_bytes": 30329,
+      "stored_sha256": "6df171069b5018fe95451e5f79713f1007ae4786ed1fd0e574f22859ba56e4ad",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/v32-solo",
+      "path": "sweep-run.log",
+      "original_bytes": 910,
+      "original_sha256": "5dc176f79c58445dd461645f3909e5906ea158bfc7661a5a099a7d36184996db",
+      "truncated": false,
+      "stored_bytes": 910,
+      "stored_sha256": "5dc176f79c58445dd461645f3909e5906ea158bfc7661a5a099a7d36184996db",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/v32-solo",
+      "path": "sssf-adw.log",
+      "original_bytes": 2770,
+      "original_sha256": "167624dd3f47ec06b14c4c200bfee0009657abce334da00a25cf6bf70f8c7304",
+      "truncated": false,
+      "stored_bytes": 2770,
+      "stored_sha256": "167624dd3f47ec06b14c4c200bfee0009657abce334da00a25cf6bf70f8c7304",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/v32-solo",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 303346,
+      "original_sha256": "3a27ee787bb4ad6bcc34d2b9cda5f8439fb112b4382a4b55db3e950fcc9cd52c",
+      "truncated": false,
+      "stored_bytes": 303346,
+      "stored_sha256": "3a27ee787bb4ad6bcc34d2b9cda5f8439fb112b4382a4b55db3e950fcc9cd52c",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "harumiweb__exstruct-113/v32-solo",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 374,
+      "original_sha256": "11cff81c89887bf5e01f7cee0c9b68e2957f17584fe19d1789ec325a0801b4ba",
+      "truncated": false,
+      "stored_bytes": 374,
+      "stored_sha256": "11cff81c89887bf5e01f7cee0c9b68e2957f17584fe19d1789ec325a0801b4ba",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/chain",
+      "path": "raw.diff",
+      "original_bytes": 19676,
+      "original_sha256": "cb97a8e25b97daae41697268df5f57c743ffdcdc5e66c4f50a5e8a610f5442fb",
+      "truncated": false,
+      "stored_bytes": 19676,
+      "stored_sha256": "cb97a8e25b97daae41697268df5f57c743ffdcdc5e66c4f50a5e8a610f5442fb",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/chain",
+      "path": "sweep-run.log",
+      "original_bytes": 1038,
+      "original_sha256": "5662a38bfcfe6eb595b2b4aae900680d64fceacad8f97738cc55052c82e8b88f",
+      "truncated": false,
+      "stored_bytes": 1038,
+      "stored_sha256": "5662a38bfcfe6eb595b2b4aae900680d64fceacad8f97738cc55052c82e8b88f",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/chain",
+      "path": "sssf-adw.log",
+      "original_bytes": 4731,
+      "original_sha256": "3c23c5214d13701f88fb875af420f74aae3bd5a7cb6900c5a34b9e223402604e",
+      "truncated": false,
+      "stored_bytes": 4731,
+      "stored_sha256": "3c23c5214d13701f88fb875af420f74aae3bd5a7cb6900c5a34b9e223402604e",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/chain",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 419405,
+      "original_sha256": "ab05e3724b136cd06a581689ca89ba8951fba25cc98206e5d02151c3b9a84d69",
+      "truncated": false,
+      "stored_bytes": 419405,
+      "stored_sha256": "ab05e3724b136cd06a581689ca89ba8951fba25cc98206e5d02151c3b9a84d69",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/chain",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 1112,
+      "original_sha256": "cb9362d198b7397e16c8bf92a1445846ecb00c539513d549a64f53bab8434476",
+      "truncated": false,
+      "stored_bytes": 1112,
+      "stored_sha256": "cb9362d198b7397e16c8bf92a1445846ecb00c539513d549a64f53bab8434476",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/v32-solo",
+      "path": "raw.diff",
+      "original_bytes": 9088,
+      "original_sha256": "9248aeb3cad54f38c5398fff21792c200161f826a5e47b10a5d1508ac70229ba",
+      "truncated": false,
+      "stored_bytes": 9088,
+      "stored_sha256": "9248aeb3cad54f38c5398fff21792c200161f826a5e47b10a5d1508ac70229ba",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/v32-solo",
+      "path": "sweep-run.log",
+      "original_bytes": 917,
+      "original_sha256": "a30ff2727c6a7625a7c206dab2986595f44ddf6ef472588b58f9053e96ebc9b5",
+      "truncated": false,
+      "stored_bytes": 917,
+      "stored_sha256": "a30ff2727c6a7625a7c206dab2986595f44ddf6ef472588b58f9053e96ebc9b5",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/v32-solo",
+      "path": "sssf-adw.log",
+      "original_bytes": 2684,
+      "original_sha256": "60c47f0beae1bb8e1b33a458d8bab5fddb0484722d056597e2e6d9c64148d53d",
+      "truncated": false,
+      "stored_bytes": 2684,
+      "stored_sha256": "60c47f0beae1bb8e1b33a458d8bab5fddb0484722d056597e2e6d9c64148d53d",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/v32-solo",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 187031,
+      "original_sha256": "ed89b5677b7c06ee8f60f09d33f0386dc2ce8b67f2cfe25ad145234997935120",
+      "truncated": false,
+      "stored_bytes": 187031,
+      "stored_sha256": "ed89b5677b7c06ee8f60f09d33f0386dc2ce8b67f2cfe25ad145234997935120",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "hkuds__openharness-217/v32-solo",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 374,
+      "original_sha256": "1d19ffffb00dfac3f8e0471d586eaa35167f5e476d06a071b5e5e48270dffa38",
+      "truncated": false,
+      "stored_bytes": 374,
+      "stored_sha256": "1d19ffffb00dfac3f8e0471d586eaa35167f5e476d06a071b5e5e48270dffa38",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/chain",
+      "path": "raw.diff",
+      "original_bytes": 6805,
+      "original_sha256": "6e8a105748e6cf04dcbc0e61c247a0470e08d668b9fea7889923785b788ae41d",
+      "truncated": false,
+      "stored_bytes": 6805,
+      "stored_sha256": "6e8a105748e6cf04dcbc0e61c247a0470e08d668b9fea7889923785b788ae41d",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/chain",
+      "path": "sweep-run.log",
+      "original_bytes": 1045,
+      "original_sha256": "d3996cbbedabb5632afa6c12c9e74154e0fbf367b9148de487cbd0a4a8051d77",
+      "truncated": false,
+      "stored_bytes": 1045,
+      "stored_sha256": "d3996cbbedabb5632afa6c12c9e74154e0fbf367b9148de487cbd0a4a8051d77",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/chain",
+      "path": "sssf-adw.log",
+      "original_bytes": 2790,
+      "original_sha256": "a09be3ef64af6d381d3b7d8765020ffed20abe1775f3d5d4e73183b26e09b2a1",
+      "truncated": false,
+      "stored_bytes": 2790,
+      "stored_sha256": "a09be3ef64af6d381d3b7d8765020ffed20abe1775f3d5d4e73183b26e09b2a1",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/chain",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 177300,
+      "original_sha256": "090554661f59c8abe649bb2925f5b2ff6a6d2c53ab3c7754020227556aa458c9",
+      "truncated": false,
+      "stored_bytes": 177300,
+      "stored_sha256": "090554661f59c8abe649bb2925f5b2ff6a6d2c53ab3c7754020227556aa458c9",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/chain",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 372,
+      "original_sha256": "d0dc7ac68f0a62de184b751c8c2aef23794ad202402dbfe441931e07e2079230",
+      "truncated": false,
+      "stored_bytes": 372,
+      "stored_sha256": "d0dc7ac68f0a62de184b751c8c2aef23794ad202402dbfe441931e07e2079230",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/v32-solo",
+      "path": "raw.diff",
+      "original_bytes": 14130,
+      "original_sha256": "c517d9833c2071ebb2f05d608a460ddb8e7c68c54aacdead70b6119ba6121c89",
+      "truncated": false,
+      "stored_bytes": 14130,
+      "stored_sha256": "c517d9833c2071ebb2f05d608a460ddb8e7c68c54aacdead70b6119ba6121c89",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/v32-solo",
+      "path": "sweep-run.log",
+      "original_bytes": 1107,
+      "original_sha256": "230fd2ebf91b7e6c433420050e998997decd23a17d5f2de6c7015c073f7e40ee",
+      "truncated": false,
+      "stored_bytes": 1107,
+      "stored_sha256": "230fd2ebf91b7e6c433420050e998997decd23a17d5f2de6c7015c073f7e40ee",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/v32-solo",
+      "path": "sssf-adw.log",
+      "original_bytes": 2807,
+      "original_sha256": "bae69f62cfe7c4ac95b96b195638c94ce398a93e2946a8f9972e075262c334c5",
+      "truncated": false,
+      "stored_bytes": 2807,
+      "stored_sha256": "bae69f62cfe7c4ac95b96b195638c94ce398a93e2946a8f9972e075262c334c5",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/v32-solo",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 277950,
+      "original_sha256": "009fe0f55cc09ae4a653a1f8913262d4257d06f21156e9bb203604b73a4652bc",
+      "truncated": false,
+      "stored_bytes": 277950,
+      "stored_sha256": "009fe0f55cc09ae4a653a1f8913262d4257d06f21156e9bb203604b73a4652bc",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "idaholab__montepy-933_interface/v32-solo",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 374,
+      "original_sha256": "570543fa2d3ed3b0e11962d77644538fa689f5a48ac0956b9959181c599d45a3",
+      "truncated": false,
+      "stored_bytes": 374,
+      "stored_sha256": "570543fa2d3ed3b0e11962d77644538fa689f5a48ac0956b9959181c599d45a3",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/chain",
+      "path": "raw.diff",
+      "original_bytes": 5125,
+      "original_sha256": "e6b3f4b419e985611b9eaebed6d5e6073fae294909b889aae40d6c3fd58b7911",
+      "truncated": false,
+      "stored_bytes": 5125,
+      "stored_sha256": "e6b3f4b419e985611b9eaebed6d5e6073fae294909b889aae40d6c3fd58b7911",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/chain",
+      "path": "sweep-run.log",
+      "original_bytes": 1037,
+      "original_sha256": "e981fc35dce7aedf2f81e795be86e808a89d1662853957e8f04b6e77067c4383",
+      "truncated": false,
+      "stored_bytes": 1037,
+      "stored_sha256": "e981fc35dce7aedf2f81e795be86e808a89d1662853957e8f04b6e77067c4383",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/chain",
+      "path": "sssf-adw.log",
+      "original_bytes": 3973,
+      "original_sha256": "37c103f60a5475479ed95b6928f52077fdfcfab1ffea01e563dd75938cadac33",
+      "truncated": false,
+      "stored_bytes": 3973,
+      "stored_sha256": "37c103f60a5475479ed95b6928f52077fdfcfab1ffea01e563dd75938cadac33",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/chain",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 318440,
+      "original_sha256": "c125568784e59faef1fb08bb8f18494806f06560b1496d86a190d1e3992e2f2b",
+      "truncated": false,
+      "stored_bytes": 318440,
+      "stored_sha256": "c125568784e59faef1fb08bb8f18494806f06560b1496d86a190d1e3992e2f2b",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/chain",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 374,
+      "original_sha256": "3244369c86d23441c20b81bef1a1543c6c1fde1c84a65beae6e7021d390c9476",
+      "truncated": false,
+      "stored_bytes": 374,
+      "stored_sha256": "3244369c86d23441c20b81bef1a1543c6c1fde1c84a65beae6e7021d390c9476",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/v32-solo",
+      "path": "raw.diff",
+      "original_bytes": 3571,
+      "original_sha256": "60fc6e5ae1618c90cbb79699a5455ddc818cad1251efa8667688dda2018e5662",
+      "truncated": false,
+      "stored_bytes": 3571,
+      "stored_sha256": "60fc6e5ae1618c90cbb79699a5455ddc818cad1251efa8667688dda2018e5662",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/v32-solo",
+      "path": "sweep-run.log",
+      "original_bytes": 914,
+      "original_sha256": "bafd09bc185a89bd95232df1a350bf6245d4ce20ffadb57e222a987bb14409cc",
+      "truncated": false,
+      "stored_bytes": 914,
+      "stored_sha256": "bafd09bc185a89bd95232df1a350bf6245d4ce20ffadb57e222a987bb14409cc",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/v32-solo",
+      "path": "sssf-adw.log",
+      "original_bytes": 2736,
+      "original_sha256": "c4377d4dc5a811d6fda1474a32dfd1a4b246af6697bdadceb82527bbb1a531d1",
+      "truncated": false,
+      "stored_bytes": 2736,
+      "stored_sha256": "c4377d4dc5a811d6fda1474a32dfd1a4b246af6697bdadceb82527bbb1a531d1",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/v32-solo",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 285368,
+      "original_sha256": "833ec3b7ede0d31a8aa96ebad248400d00d817a05c35a3090cb815c68435229b",
+      "truncated": false,
+      "stored_bytes": 285368,
+      "stored_sha256": "833ec3b7ede0d31a8aa96ebad248400d00d817a05c35a3090cb815c68435229b",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "keras-team__keras-22316/v32-solo",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 374,
+      "original_sha256": "7eb2f208a6f58e87154cc42dd055d643411ddf95a5800a32dc5ab24b9f5cdea0",
+      "truncated": false,
+      "stored_bytes": 374,
+      "stored_sha256": "7eb2f208a6f58e87154cc42dd055d643411ddf95a5800a32dc5ab24b9f5cdea0",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/chain",
+      "path": "raw.diff",
+      "original_bytes": 23276,
+      "original_sha256": "7adfe144a7d4775b23b7882a4ac3c0ed9be1760478887cbfdd1799d292572093",
+      "truncated": false,
+      "stored_bytes": 23276,
+      "stored_sha256": "7adfe144a7d4775b23b7882a4ac3c0ed9be1760478887cbfdd1799d292572093",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/chain",
+      "path": "sweep-run.log",
+      "original_bytes": 1112,
+      "original_sha256": "38085cb48a993eb0b34d9770f37500f0f5099cd12ecfebf40f1e9d8806dbadd8",
+      "truncated": false,
+      "stored_bytes": 1112,
+      "stored_sha256": "38085cb48a993eb0b34d9770f37500f0f5099cd12ecfebf40f1e9d8806dbadd8",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/chain",
+      "path": "sssf-adw.log",
+      "original_bytes": 6511,
+      "original_sha256": "f99d26a07c527e975d3b82de56875fb27ab9449818f72f4f7473a080a49d54ed",
+      "truncated": false,
+      "stored_bytes": 6511,
+      "stored_sha256": "f99d26a07c527e975d3b82de56875fb27ab9449818f72f4f7473a080a49d54ed",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/chain",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 489851,
+      "original_sha256": "3e3148d8edbd69369f66ed0d2837d7858eb906851029c938e7b11ab0b6068903",
+      "truncated": false,
+      "stored_bytes": 489851,
+      "stored_sha256": "3e3148d8edbd69369f66ed0d2837d7858eb906851029c938e7b11ab0b6068903",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/chain",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 1114,
+      "original_sha256": "bb88e2b0d41a8d6ae0cbf485be8b7538fa7a5537b020af2b8023a3c6a00cfca7",
+      "truncated": false,
+      "stored_bytes": 1114,
+      "stored_sha256": "bb88e2b0d41a8d6ae0cbf485be8b7538fa7a5537b020af2b8023a3c6a00cfca7",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/v32-solo",
+      "path": "raw.diff",
+      "original_bytes": 4726,
+      "original_sha256": "eac73542f0227b387ca2cb6beec4e8c040366c8cd522ab339c13140919824fe2",
+      "truncated": false,
+      "stored_bytes": 4726,
+      "stored_sha256": "eac73542f0227b387ca2cb6beec4e8c040366c8cd522ab339c13140919824fe2",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/v32-solo",
+      "path": "sweep-run.log",
+      "original_bytes": 967,
+      "original_sha256": "da66ef04eb57e2a283d412f81b6d096537cacd022e671a7a82bb1fcd30aea76d",
+      "truncated": false,
+      "stored_bytes": 967,
+      "stored_sha256": "da66ef04eb57e2a283d412f81b6d096537cacd022e671a7a82bb1fcd30aea76d",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/v32-solo",
+      "path": "sssf-adw.log",
+      "original_bytes": 2818,
+      "original_sha256": "6f2d5c3045f2a9f8734cbaf9c9c19e34b1c248987e5c17064424ece375e4f022",
+      "truncated": false,
+      "stored_bytes": 2818,
+      "stored_sha256": "6f2d5c3045f2a9f8734cbaf9c9c19e34b1c248987e5c17064424ece375e4f022",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/v32-solo",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 204218,
+      "original_sha256": "706d3e5e90ced3cb05f4457931bfad07aacbdb7105fc4446c33d556ace3a0981",
+      "truncated": false,
+      "stored_bytes": 204218,
+      "stored_sha256": "706d3e5e90ced3cb05f4457931bfad07aacbdb7105fc4446c33d556ace3a0981",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "pyinfra-dev__pyinfra-1665/v32-solo",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 374,
+      "original_sha256": "b61f7cbf53f8ac74b471c396ea9cdfe727dea3d598ecf63179d66d152056c70f",
+      "truncated": false,
+      "stored_bytes": 374,
+      "stored_sha256": "b61f7cbf53f8ac74b471c396ea9cdfe727dea3d598ecf63179d66d152056c70f",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "tox-dev__tox-3931/v32-solo",
+      "path": "raw.diff",
+      "original_bytes": 955,
+      "original_sha256": "1c658f89c0a1b0f617640b1d833ec7ce19b32e4d98707f551ef4e452a59de880",
+      "truncated": false,
+      "stored_bytes": 955,
+      "stored_sha256": "1c658f89c0a1b0f617640b1d833ec7ce19b32e4d98707f551ef4e452a59de880",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "tox-dev__tox-3931/v32-solo",
+      "path": "sssf-adw.log",
+      "original_bytes": 510,
+      "original_sha256": "ef3a4fb7d4c16f79720435cb0bf7232e2cb827700b9506a14c533a7119e7de18",
+      "truncated": false,
+      "stored_bytes": 510,
+      "stored_sha256": "ef3a4fb7d4c16f79720435cb0bf7232e2cb827700b9506a14c533a7119e7de18",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/chain",
+      "path": "raw.diff",
+      "original_bytes": 12815,
+      "original_sha256": "2431b5e21001faeb106cbac85a0495bc6d349d0a8af0416189916c7844edaf2d",
+      "truncated": false,
+      "stored_bytes": 12815,
+      "stored_sha256": "2431b5e21001faeb106cbac85a0495bc6d349d0a8af0416189916c7844edaf2d",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/chain",
+      "path": "sweep-run.log",
+      "original_bytes": 1181,
+      "original_sha256": "218f97bb6f428163be95a846a9d7a5daa98b4c38cdc4b583193b83983109c0b4",
+      "truncated": false,
+      "stored_bytes": 1181,
+      "stored_sha256": "218f97bb6f428163be95a846a9d7a5daa98b4c38cdc4b583193b83983109c0b4",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/chain",
+      "path": "sssf-adw.log",
+      "original_bytes": 6009,
+      "original_sha256": "d09d652a3a6ce22df977ffbe07fbeba4b9fa872b40d40108da7d4df812a46747",
+      "truncated": false,
+      "stored_bytes": 6009,
+      "stored_sha256": "d09d652a3a6ce22df977ffbe07fbeba4b9fa872b40d40108da7d4df812a46747",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/chain",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 734067,
+      "original_sha256": "8824edda2aa89dbd99bbb50c7854df9bbcb962714a641a86f24fdaa30d78561d",
+      "truncated": false,
+      "stored_bytes": 734067,
+      "stored_sha256": "8824edda2aa89dbd99bbb50c7854df9bbcb962714a641a86f24fdaa30d78561d",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/chain",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 1116,
+      "original_sha256": "a9e10a1fb4bcd55a11f3ee87053dfe8dd538b30dc0d01a69e905c2cec41bd337",
+      "truncated": false,
+      "stored_bytes": 1116,
+      "stored_sha256": "a9e10a1fb4bcd55a11f3ee87053dfe8dd538b30dc0d01a69e905c2cec41bd337",
+      "stored_as": "sssf-turns.jsonl.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/v32-solo",
+      "path": "raw.diff",
+      "original_bytes": 4196,
+      "original_sha256": "591456d9ae5cce7c2b6151e78848a1d515eb3374f6c703df310f7c77222f1367",
+      "truncated": false,
+      "stored_bytes": 4196,
+      "stored_sha256": "591456d9ae5cce7c2b6151e78848a1d515eb3374f6c703df310f7c77222f1367",
+      "stored_as": "raw.diff.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/v32-solo",
+      "path": "sweep-run.log",
+      "original_bytes": 1008,
+      "original_sha256": "7fa79a115684d95fd8422ffbf3ff86d305ce71fbecde98719afa878e899226ad",
+      "truncated": false,
+      "stored_bytes": 1008,
+      "stored_sha256": "7fa79a115684d95fd8422ffbf3ff86d305ce71fbecde98719afa878e899226ad",
+      "stored_as": "sweep-run.log.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/v32-solo",
+      "path": "sssf-adw.log",
+      "original_bytes": 2725,
+      "original_sha256": "0c7305581612cb1e47b2131d8bd99c0d69feb9886ef9f7d2a8408226ed6006bb",
+      "truncated": false,
+      "stored_bytes": 2725,
+      "stored_sha256": "0c7305581612cb1e47b2131d8bd99c0d69feb9886ef9f7d2a8408226ed6006bb",
+      "stored_as": "sssf-adw.log.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/v32-solo",
+      "path": "sssf-events.jsonl",
+      "original_bytes": 210469,
+      "original_sha256": "718d54b786b9f93bda5d4d3f69802c1dec2893574d97184f440fa1023b47f7ba",
+      "truncated": false,
+      "stored_bytes": 210469,
+      "stored_sha256": "718d54b786b9f93bda5d4d3f69802c1dec2893574d97184f440fa1023b47f7ba",
+      "stored_as": "sssf-events.jsonl.gz"
+    },
+    {
+      "row": "zauberzeug__nicegui-5858/v32-solo",
+      "path": "sssf-turns.jsonl",
+      "original_bytes": 374,
+      "original_sha256": "bea2a17a9e62dca50a4b89d0dac3f38e2d224a31e30568f2e7c4232d048c0a47",
+      "truncated": false,
+      "stored_bytes": 374,
+      "stored_sha256": "bea2a17a9e62dca50a4b89d0dac3f38e2d224a31e30568f2e7c4232d048c0a47",
+      "stored_as": "sssf-turns.jsonl.gz"
+    }
+  ]
+}

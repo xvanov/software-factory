@@ -1,0 +1,261 @@
+{
+  "arm": "v32-solo",
+  "instance_id": "zauberzeug__nicegui-5858",
+  "repo": "zauberzeug/nicegui",
+  "base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+  "problem_statement_sha256": "7037ab70402ac64e588642695f9bf3a52c1ed002b4de2bb884d4b96cc69263d7",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-13T17:20:15.928277+00:00",
+  "cost_source": "derived-from-price-table",
+  "preflight": {
+    "skip_phases_supported": true,
+    "skip_phases_declared_in": "SSSFConfig",
+    "skip_phases_problem": null,
+    "credential_problem": null,
+    "engine": "/home/k/sssf/adws/adw_simple_sdlc.py"
+  },
+  "model": null,
+  "sssf_roster": {
+    "planner": null,
+    "builder": "azure/DeepSeek-V3.2",
+    "reviewer": null,
+    "documenter": null
+  },
+  "sssf_skip_phases": [
+    "planner",
+    "reviewer",
+    "documenter"
+  ],
+  "sssf_roster_sha256": "8cce6d765fb44acb3a9d27c0a21a2c7e176aa0a948149570367a129166d014fd",
+  "sssf_roster_file": "sssf-roster.yaml",
+  "sssf_adw_id": "5c391ad2",
+  "sssf_thinking": "medium",
+  "sssf_roles_run": [
+    "builder"
+  ],
+  "sssf_roles_skipped": [
+    "planner",
+    "reviewer",
+    "documenter"
+  ],
+  "sssf_engine": "/home/k/sssf/adws/adw_simple_sdlc.py",
+  "models_used": [
+    "azure/DeepSeek-V3.2"
+  ],
+  "model_calls": 62,
+  "model_escalated_calls": 0,
+  "models_off_roster": [],
+  "wall_clock_s": 258.1,
+  "steps_used": 4,
+  "step_cap": 18,
+  "termination": "terminal-state",
+  "trajectory": "sssf-adw.log",
+  "sssf_events_file": "sssf-events.jsonl",
+  "probe_plumbing": false,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.2,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/test_xterm.py"
+    ],
+    "exit_code": 0
+  },
+  "tokens_in": 1526633,
+  "cached_input_tokens": 0,
+  "cache_write_tokens": 0,
+  "tokens_out": 22111,
+  "reasoning_tokens": 0,
+  "total_tokens": 1548744,
+  "cost_usd": 0.9226,
+  "usage_by_role": {
+    "builder": {
+      "input_tokens": 1526633,
+      "output_tokens": 22111,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 1548744,
+      "total_cost": 0.922594,
+      "calls": 62,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V3.2": {
+          "input_tokens": 1526633,
+          "output_tokens": 22111,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 43349
+    }
+  },
+  "persona_calls": 62,
+  "usage_source": "/home/k/.cache/swebench-work/zauberzeug__nicegui-5858__v32-solo/adw_data/sessions/5c391ad2/<role>/raw_output.jsonl (62 assistant turn(s) across 1 role stream(s))",
+  "sssf_turn_digest_file": "sssf-turns.jsonl",
+  "sssf_raw_output_streams": {
+    "builder": "/home/k/.cache/swebench-work/zauberzeug__nicegui-5858__v32-solo/adw_data/sessions/5c391ad2/builder/raw_output.jsonl"
+  },
+  "sssf_assistant_turns": 62,
+  "peak_turn_input_tokens": 43349,
+  "cost_usd_events": 0.922594,
+  "tokens_in_events": 1526633,
+  "tokens_out_events": 22111,
+  "cached_input_tokens_events": 0,
+  "sssf_roles_run_events": [
+    "builder"
+  ],
+  "usage_by_role_events": {
+    "builder": {
+      "input_tokens": 1526633,
+      "output_tokens": 22111,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 1548744,
+      "total_cost": 0.922594,
+      "calls": 1,
+      "reported_cost": 0.922594,
+      "models": [
+        "azure/DeepSeek-V3.2"
+      ]
+    }
+  },
+  "events_source": "/home/k/.cache/swebench-work/zauberzeug__nicegui-5858__v32-solo/adw_data/sessions/5c391ad2/events.jsonl",
+  "cost_missing_from_events_usd": 0.0,
+  "shared_db": "sssf-bench.db",
+  "shared_db_totals": {
+    "cost_usd": 1.84482838,
+    "total_tokens": 3095701
+  },
+  "cost_usd_shared_db": 1.8448,
+  "cost_mismatch_usd": 0.922234,
+  "cost_usd_rederived": 0.922594,
+  "cost_rederived_by_role": {
+    "builder": 0.922594
+  },
+  "cost_rederivation_drift_usd": 0.0,
+  "cost_rederivation_tolerance_usd": 0.01,
+  "cost_rederivation_disagrees": false,
+  "models_missing_a_rate": [],
+  "empty_response_turns": 0,
+  "empty_response_by_role": {},
+  "empty_response_reasons": [],
+  "provider_starved": false,
+  "price_table": {
+    "path": "/home/k/.pi/agent/models.json",
+    "sha256": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "sha256_pinned": "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4",
+    "matches_pinned": true,
+    "units": "USD per 1,000,000 tokens",
+    "rates": {
+      "azure/DeepSeek-V3.2": {
+        "cost": {
+          "input": 0.58,
+          "output": 1.68,
+          "cacheRead": 0.58,
+          "cacheWrite": 0.0
+        },
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "reasoning": true,
+        "api": "openai-completions"
+      }
+    },
+    "missing": [],
+    "error": null
+  },
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "adw_accepted:tests_green",
+  "sssf_chain_roles": [
+    "builder"
+  ],
+  "adw_exit_code": 0,
+  "adw_session_status": "success",
+  "adw_not_accepted_reason": null,
+  "files_changed": [
+    ".swe_artifacts/report.json",
+    "nicegui/elements/xterm/xterm.py",
+    "nicegui/events.py"
+  ],
+  "test_files_stripped": [
+    "test_startup.sh",
+    "tests/dummy.txt",
+    "tests/test_xterm.py"
+  ],
+  "sssf_paths_excluded": [],
+  "sssf_excluded_prefixes": [
+    "specs/",
+    "app_docs/",
+    "docs/",
+    "adw_data/",
+    "adws/"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 2785,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "14ca90159534a573a4fa6a6ee9c29743d9f6ec69",
+    "expected_base_commit": "315c1d15eff52464c2391e8418095992f4e7a673",
+    "base_ref_matches": false,
+    "base_ref_ahead_of_expected": 1,
+    "expected_resolves": true,
+    "gitlink": "dir",
+    "head_sha": "14ca90159534a573a4fa6a6ee9c29743d9f6ec69",
+    "head_is_base": true,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 145,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/test_xterm.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 0,
+    "refused_samples": [],
+    "scan_truncated": false
+  },
+  "sssf_caps": {
+    "run_cost_cap_usd": 6.0,
+    "wall_clock_cap_s": 5400,
+    "phase_cap": 18,
+    "ledger_poll_s": 5.0,
+    "enforced_by": "harness (the sssf engine has no spend limit)",
+    "spend_signal": "max(this run's events.jsonl, shared db sessions.total_cost); an unreadable shared db never kills a run"
+  },
+  "ledger_cost_at_stop_usd": 1.844828,
+  "attempt": 2,
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "v32-solo",
+    "instance_id": "zauberzeug__nicegui-5858",
+    "image": "swerebench/sweb.eval.x86_64.zauberzeug_1776_nicegui-5858@sha256:0774c1c1d9caf26fc590c840482c262c82a76ccc5150c9dd58501114371bc2d2",
+    "graded_at": "2026-08-13T17:20:16.050391+00:00",
+    "fail_to_pass_count": 2,
+    "pass_to_pass_count": 3,
+    "pass_to_pass_declared_count": 3,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 54.4,
+    "log_tail": "Checking patch tests/test_xterm.py...\nApplied patch tests/test_xterm.py cleanly.\nSWEBENCH_SETUP: test_patch applied\nSWEBENCH_BASELINE_f5cc9b1ca493b224: OK (red as expected)\nChecking patch .swe_artifacts/report.json...\nChecking patch nicegui/elements/xterm/xterm.py...\nChecking patch nicegui/events.py...\nApplied patch .swe_artifacts/report.json cleanly.\nApplied patch nicegui/elements/xterm/xterm.py cleanly.\nApplied patch nicegui/events.py cleanly.\nSWEBENCH_APPLY_f5cc9b1ca493b224: OK\n..                                                                       [100%]\n=========================== short test summary info ============================\nPASSED tests/test_xterm.py::test_bell_and_data_events\nPASSED tests/test_xterm.py::test_fit_and_resize_event\n2 passed in 7.65s\nSWEBENCH_TALLY_f5cc9b1ca493b224: fail_to_pass 2 passed in 7.65s\n[4 node outcomes for fail_to_pass -> grade-nodes.log]\n...                                                                      [100%]\n=========================== short test summary info ============================\nPASSED tests/test_xterm.py::test_init\nPASSED tests/test_xterm.py::test_write\nPASSED tests/test_xterm.py::test_run_terminal_method\n3 passed in 7.60s\nSWEBENCH_TALLY_f5cc9b1ca493b224: pass_to_pass 3 passed in 7.60s\n[5 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_f5cc9b1ca493b224: RESOLVED\n"
+  }
+}

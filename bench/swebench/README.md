@@ -334,12 +334,23 @@ uv run python bench/swebench_adapter.py selftest          # validate the ORACLE
 uv run python bench/swebench_adapter.py run   --instance <id> --arm bare
 uv run python bench/swebench_adapter.py grade --instance <id> --arm bare
 uv run python bench/swebench_adapter.py audit --instance <id> --arm bare
+uv run python bench/swebench_adapter.py record         # snapshot into benchmarks.db
 uv run python bench/swebench_adapter.py report
 ```
 
 `selftest` is not optional. It grades each instance's **gold patch**, which
 must come back `RESOLVED`. Any instance where it does not is excluded — a score
 computed over broken instances measures the harness, not the arm.
+
+`record` is not optional either, for a different reason. A run directory and an
+`adw_id` are both pure functions of `(instance, arm)`, so **the next attempt of a
+cell destroys the previous attempt's artifacts** — and `sweep-<arm>.json` is
+overwritten by the next sweep of the same arm. `record` snapshots each attempt
+into the benchmark record store keyed `(instance, arm, attempt)`, which is the
+only place that history survives. `run-all` calls it automatically at the end of
+every sweep. See [`BENCHMARK-RECORDS.md`](BENCHMARK-RECORDS.md) for the schema,
+the query and replay verbs, and — importantly — why benchmark rows and ordinary
+factory telemetry must never share a table.
 
 ## The five arms
 

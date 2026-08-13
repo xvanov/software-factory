@@ -1,0 +1,38 @@
+Checking patch tests/api/test_issue_stateless_channel_token.py...
+Applied patch tests/api/test_issue_stateless_channel_token.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_b8ba39dba9c97524: OK (red as expected)
+Checking patch generate-code.py...
+Checking patch linebot/v3/oauth/api/async_channel_access_token.py...
+Checking patch linebot/v3/oauth/api/channel_access_token.py...
+Applied patch generate-code.py cleanly.
+Applied patch linebot/v3/oauth/api/async_channel_access_token.py cleanly.
+Applied patch linebot/v3/oauth/api/channel_access_token.py cleanly.
+SWEBENCH_APPLY_b8ba39dba9c97524: OK
+/opt/conda/envs/testbed/lib/python3.13/site-packages/pytest_pep8.py:91: SyntaxWarning: invalid escape sequence '\d'
+  def __init__(self, ignorelines, coderex=re.compile("[EW]\d\d\d")):
+/opt/conda/envs/testbed/lib/python3.13/site-packages/pep8.py:110: FutureWarning: Possible nested set at position 1
+  EXTRANEOUS_WHITESPACE_REGEX = re.compile(r'[[({] | []}),;:]')
+....                                                                     [100%]
+=========================== short test summary info ============================
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_client_secret
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_jwt_assertion
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_client_secret
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_jwt_assertion
+4 passed in 1.42s
+SWEBENCH_TALLY_b8ba39dba9c97524: fail_to_pass 4 passed in 1.42s
+[6 node outcomes for fail_to_pass -> grade-nodes.log]
+/opt/conda/envs/testbed/lib/python3.13/site-packages/pytest_pep8.py:91: SyntaxWarning: invalid escape sequence '\d'
+  def __init__(self, ignorelines, coderex=re.compile("[EW]\d\d\d")):
+/opt/conda/envs/testbed/lib/python3.13/site-packages/pep8.py:110: FutureWarning: Possible nested set at position 1
+  EXTRANEOUS_WHITESPACE_REGEX = re.compile(r'[[({] | []}),;:]')
+....                                                                     [100%]
+=========================== short test summary info ============================
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_client_secret
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_by_jwt_assertion
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_client_secret
+PASSED tests/api/test_issue_stateless_channel_token.py::TestIssueStatelessChannelToken::test_issue_stateless_channel_token_with_http_info_by_jwt_assertion
+4 passed in 1.42s
+SWEBENCH_TALLY_b8ba39dba9c97524: pass_to_pass 4 passed in 1.42s
+[6 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_b8ba39dba9c97524: RESOLVED
