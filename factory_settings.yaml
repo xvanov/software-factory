@@ -11,6 +11,28 @@ caps:
   # Set to 10 so non-active in-flight states (deploy_pending, dev_retry
   # waiting on next tick, etc.) don't accidentally throttle dispatch.
   per_repo_concurrent_agents: 10
+  # PILOT 2026-08-12: 300 -> 40 -> 75. This file is what ``load_spend_caps()``
+  # reads to feed ``bench/swebench_adapter.py:spend_guard`` — the ONLY thing
+  # that bounds a whole sweep, and it is a different setting from
+  # ``_BENCH_ROOT_CAPS`` in that file (which bounds one bench root). Lowering
+  # only the constant leaves the sweep bounded at 300.
+  #
+  # 75 is operator-authorised (2026-08-13) for a 16-run pilot: 8 instances x 2
+  # arms (``chain``, ``v32-solo``). The pessimistic projection is $50.97, from
+  # the prior sweep's measured token profile — 75 clears it with headroom and
+  # still STOPS, which an unbounded guard would not. Restore to 300 afterwards.
+  #
+  # RESTORED to the repo's documented ceiling (300) on operator instruction
+  # 2026-08-13: "dont worry about any caps for now, make sure that we complete
+  # all the runs ... dont stop any runs because of caps". The staged 40 -> 75 ->
+  # 34 sequence existed to keep a wrong $/instance projection survivable; that
+  # projection is now MEASURED (v32-solo $1.64/inst, chain $1.8-4.5/inst), so the
+  # guard is no longer the thing protecting us — the measurement is.
+  #
+  # Still not unbounded, deliberately: 300 is this repo's own long-standing
+  # ceiling, and the mid-sweep enforcement on ACTUAL accumulated cost still runs.
+  # Cumulative campaign spend is tracked outside the harness (the guard is
+  # per-sweep) and reported at the $50/$75/$100 thresholds.
   daily_spend_usd: 300
   # Operator-approved 2026-05-30: raised 15 -> 40 to let the ~29 re-dispatched
   # stories reprocess in parallel without constant hourly-cap throttling.
@@ -26,7 +48,12 @@ caps:
   # $86.48/h for its 19-instance sweep. 120 clears the measured worst arm with
   # headroom and leaves ``daily_spend_usd: 300`` — the real ceiling — untouched.
   # The hourly cap is a burst limiter, not the budget.
-  hourly_spend_usd: 120
+  #
+  # PILOT 2026-08-12: 120 -> 40 -> 75 -> 34 -> 300, tracking daily_spend_usd.
+  # Held EQUAL to the daily figure so the hourly limiter can never be the thing
+  # that stops a run: a sweep should end on total spend, not be throttled into a
+  # longer run that costs the same.
+  hourly_spend_usd: 300
   # Operator-declared 2026-08-08 (pre-sim hygiene, S5). Previously ABSENT
   # here, which meant this cap silently defaulted to 5.0
   # (``factory/settings/loader.py`` CapsConfig.per_story_spend_usd) while
