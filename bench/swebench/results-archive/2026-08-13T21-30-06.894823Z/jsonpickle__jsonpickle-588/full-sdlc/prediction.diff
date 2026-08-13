@@ -1,0 +1,60 @@
+diff --git a/jsonpickle/pickler.py b/jsonpickle/pickler.py
+index 26dcb95..e7e2dcf 100644
+--- a/jsonpickle/pickler.py
++++ b/jsonpickle/pickler.py
+@@ -837,9 +837,11 @@ class Pickler:
+                 flatten(k, v, data)
+ 
+         # the collections.defaultdict protocol
+-        if hasattr(obj, "default_factory") and callable(obj.default_factory):
++        if hasattr(obj, "default_factory"):
+             factory = obj.default_factory
+-            if util._is_type(factory):
++            if factory is None:
++                value = None
++            elif util._is_type(factory):
+                 # Reference the class/type
+                 # in this case it's Dict[str, str]
+                 value: Dict[str, str] = _mktyperef(factory)
+@@ -856,7 +858,12 @@ class Pickler:
+                     # Break the cycle by emitting a reference.
+                     # in this case it's Dict[str, int]
+                     value: Dict[str, int] = self._getref(factory)  # type: ignore[no-redef]
+-            data["default_factory"] = value
++            # Store the default_factory attribute under "py/default_factory"
++            # to avoid overwriting a dict key named "default_factory".
++            if "default_factory" in data:
++                data["py/default_factory"] = value
++            else:
++                data["default_factory"] = value
+ 
+         # Sub-classes of dict
+         if hasattr(obj, "__dict__") and self.unpicklable and obj != obj.__dict__:
+diff --git a/jsonpickle/unpickler.py b/jsonpickle/unpickler.py
+index 7a6f2ba..e8d07e0 100644
+--- a/jsonpickle/unpickler.py
++++ b/jsonpickle/unpickler.py
+@@ -612,11 +612,20 @@ class Unpickler:
+         return self._mkref(obj)
+ 
+     def _loadfactory(self, obj: Dict[str, Any]) -> Optional[Any]:
++        # New format: attribute stored under "py/default_factory" to avoid
++        # overwriting a dict key named "default_factory".
+         try:
+-            default_factory = obj["default_factory"]
++            default_factory = obj["py/default_factory"]
+         except KeyError:
+-            return None
+-        del obj["default_factory"]
++            # Fall back to the old format where the attribute was stored
++            # directly under "default_factory".
++            try:
++                default_factory = obj["default_factory"]
++            except KeyError:
++                return None
++            del obj["default_factory"]
++            return self._restore(default_factory)
++        del obj["py/default_factory"]
+         return self._restore(default_factory)
+ 
+     def _process_missing(self, class_name: str) -> None:

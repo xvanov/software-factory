@@ -1,0 +1,28 @@
+Checking patch tests/cli/test_cli_lazy_imports.py...
+Applied patch tests/cli/test_cli_lazy_imports.py cleanly.
+SWEBENCH_SETUP: test_patch applied
+SWEBENCH_BASELINE_c38431836f031b79: OK (red as expected)
+Checking patch dev-docs/architecture/overview.md...
+Checking patch src/exstruct/engine.py...
+Applied patch dev-docs/architecture/overview.md cleanly.
+Applied patch src/exstruct/engine.py cleanly.
+SWEBENCH_APPLY_c38431836f031b79: OK
+..                                                                       [100%]
+=========================== short test summary info ============================
+PASSED tests/cli/test_cli_lazy_imports.py::test_import_engine_module_stays_lightweight
+PASSED tests/cli/test_cli_lazy_imports.py::test_import_public_engine_export_stays_lightweight
+2 passed in 0.57s
+SWEBENCH_TALLY_c38431836f031b79: fail_to_pass 2 passed in 0.57s
+[4 node outcomes for fail_to_pass -> grade-nodes.log]
+......                                                                   [100%]
+=========================== short test summary info ============================
+PASSED tests/cli/test_cli_lazy_imports.py::test_import_exstruct_stays_lightweight
+PASSED tests/cli/test_cli_lazy_imports.py::test_import_cli_main_does_not_load_edit_or_extraction_modules
+PASSED tests/cli/test_cli_lazy_imports.py::test_import_cli_edit_does_not_load_mcp_or_edit_execution_modules
+PASSED tests/cli/test_cli_lazy_imports.py::test_public_type_hints_resolve_lazy_exports_at_runtime
+PASSED tests/cli/test_cli_lazy_imports.py::test_help_path_keeps_lightweight_import_boundaries
+PASSED tests/cli/test_cli_lazy_imports.py::test_ops_list_keeps_mcp_and_extraction_lightweight
+6 passed in 1.09s
+SWEBENCH_TALLY_c38431836f031b79: pass_to_pass 6 passed in 1.09s
+[8 node outcomes for pass_to_pass -> grade-nodes.log]
+SWEBENCH_RESULT_c38431836f031b79: RESOLVED

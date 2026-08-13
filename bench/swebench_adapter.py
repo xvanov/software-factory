@@ -144,6 +144,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
@@ -1194,10 +1195,11 @@ def parse_diff_header(line: str) -> tuple[str, str] | None:
 # ADW's non-code phases plus that engine's own run state.
 #
 #   specs/     the planner's plan.md, committed by ``commit_plan`` before any code
-#              exists. Load-bearing for ``chain`` SPECIFICALLY, because that is
-#              the only arm whose planner runs: leave it in and ``chain`` carries
-#              diff bytes that the two solo arms structurally cannot produce, and
-#              the arm would be credited or penalised for its planning STYLE.
+#              exists. Load-bearing for ``chain`` and ``full-sdlc`` SPECIFICALLY,
+#              because those are the arms whose planner runs: leave it in and they
+#              carry diff bytes that the two solo arms structurally cannot
+#              produce, and the arm would be credited or penalised for its
+#              planning STYLE.
 #   app_docs/  the documenter's write-up, committed by ``commit_docs``.
 #   docs/      the documenter's other declared destination.
 #   adw_data/  the engine's session runtime (events, envelopes, prompts, raw pi
@@ -1205,21 +1207,29 @@ def parse_diff_header(line: str) -> tuple[str, str] | None:
 #              the backstop for a roster or engine change that ever put it back.
 #   adws/      the vendored engine itself, for the same reason.
 #
-# WHY THIS NARROW PATH RULE IS ENOUGH, AND THE THING TO GET RIGHT WHEN IT STOPS
-# BEING ENOUGH: the sssf documenter's declared ``writes`` is not just these two
-# directories — it is ``app_docs/``, ``docs/``, ``**/*.md`` and ``*.md``, i.e.
-# markdown ANYWHERE, and ``factory/diff_paths.is_production_path`` counts markdown
-# as production. A path rule therefore cannot catch every file that role could
-# legitimately produce. It does not have to, for one reason only: NO ARM RUNS THE
-# DOCUMENTER — all three rosters skip it (see ``_SSSF_ROSTERS``), so the only
-# markdown a run can emit is the planner's under ``specs/``.
+# THIS IS A NARROW PATH RULE AND THE DOCUMENTER NOW RUNS. Until ``full-sdlc``
+# was registered, every roster skipped the documenter, and this list was therefore
+# only ever exercised by the planner's ``specs/``: defensive configuration whose
+# app_docs/docs entries nothing had ever hit. ``full-sdlc`` runs all four roles, so
+# ``commit_docs`` lands real files under ``app_docs/`` and ``docs/`` and this bucket
+# is now load-bearing — the first arm that proves the two entries work rather than
+# merely declaring them.
 #
-# So if the documenter is ever re-enabled, DO NOT close the gap by adding
-# ``**/*.md`` here. Markdown is production code in this repo's own grading rules,
-# and a blanket markdown exclusion would silently discard the legitimate
-# documentation edits a gold patch may contain — grading the arm as having matched
-# a patch it only partly produced, biased in the arm's favour. Constrain the
-# documenter's ``writes`` to a directory instead, and add that directory here.
+# THE PART THAT IS DELIBERATELY NOT CLOSED. The documenter's declared ``writes`` is
+# not just those two directories — it is ``app_docs/``, ``docs/``, ``**/*.md`` and
+# ``*.md``, i.e. markdown ANYWHERE — and ``factory/diff_paths.is_production_path``
+# counts markdown as production. So a documenter that edits ``README.md`` produces a
+# path this rule does not remove, and that file reaches the graded diff.
+#
+# That is the correct behaviour and it must stay: DO NOT add ``**/*.md`` here.
+# Markdown is production code in this repo's own grading rules, and a blanket
+# markdown exclusion would silently discard the legitimate documentation edits a
+# gold patch may contain — grading the arm as having matched a patch it only partly
+# produced, biased in the arm's favour. A root ``README.md`` edit that costs the arm
+# a resolve is the arm's own doing, judged the same way every other arm's production
+# edit is; a graded diff that quietly dropped it would be the harness inventing a
+# result. If a future arm needs the documenter fenced more tightly, constrain that
+# role's ``writes`` to a directory and add the DIRECTORY here — never a glob.
 #
 # Deliberately a SEPARATE bucket from ``stripped``: that list feeds the report's
 # "test files stripped" column, and folding scaffold paths into it would report
@@ -5213,7 +5223,7 @@ _TRAJECTORIES_SSSF_EVENTS = "sssf-events"
 
 
 # --------------------------------------------------------------------------- #
-# sssf arms — a DIFFERENT engine: /home/k/sssf's ADW, three rosters, one graph
+# sssf arms — a DIFFERENT engine: /home/k/sssf's ADW, four rosters, one graph
 # --------------------------------------------------------------------------- #
 #
 # These arms do NOT drive ``factory/``. They drive a separate software factory at
@@ -5224,12 +5234,19 @@ _TRAJECTORIES_SSSF_EVENTS = "sssf-events"
 # harness plumbing around it — and nothing more than that; the program it invokes
 # shares no code with this one.
 #
-# THE ONE VARIABLE. All three arms run the SAME file, the same phase graph, the
-# same prompts, the same tools, the same test command and the same pinned
-# ``thinking`` level. They differ in exactly one thing: which model each ROLE is
-# routed to. That is what makes the three columns comparable, and it is why the
-# roster is synthesised here rather than read from a file in that repo — a roster
-# on disk is a file somebody can edit between two arms of one comparison.
+# THE ONE VARIABLE. Every arm runs the SAME file, the same phase graph, the same
+# prompts, the same tools, the same test command and the same pinned ``thinking``
+# level. They differ in exactly one thing: the ROSTER — which model each role is
+# routed to, and hence (via ``skip_phases``, derived from the roster) which of that
+# one graph's phases open at all. That is what makes the columns comparable, and it
+# is why the roster is synthesised here rather than read from a file in that repo —
+# a roster on disk is a file somebody can edit between two arms of one comparison.
+#
+# ``full-sdlc`` is the arm at the far end of that single variable: nothing skipped,
+# all four roles, all 13 phases. It is registered because every other arm skips
+# something, so without it whole stretches of the engine and of this harness — the
+# documenter's writes, the ``changes`` phase, the third commit, the phase cap at its
+# full derivation — were configuration nothing had ever executed.
 _SSSF_ROOT = Path("/home/k/sssf")
 _SSSF_ADW = _SSSF_ROOT / "adws" / "adw_simple_sdlc.py"
 _SSSF_PROMPT_ROOT = _SSSF_ROOT / "adws" / "adw_data" / "prompt_engineering"
@@ -5238,6 +5255,20 @@ _SSSF_PROMPT_ROOT = _SSSF_ROOT / "adws" / "adw_data" / "prompt_engineering"
 # then a FLAT deployment name (one slash, unlike an OpenRouter id's two).
 _SSSF_STRONG = "azure/gpt-5.4"
 _SSSF_CHEAP = "azure/DeepSeek-V3.2"
+
+# THE CHEAPEST DEPLOYMENT ON THE FOUNDRY, and the only DeepSeek with a real cached
+# tier. Rates (``models.json``, 2026-08-13): 0.21 in / 0.56 out / 0.031 cache-read
+# per 1M tokens, against V3.2's 0.58 / 1.68 / 0.58 — note V3.2 bills a cache read at
+# the FULL input rate, i.e. it has a cache tier in name only, while Flash reads at
+# 5.4% of its own input rate. Over a 13-phase graph that re-sends a growing context
+# to four roles, that difference is most of the bill.
+#
+# It exists so the ONE arm that runs the COMPLETE graph can afford to: ``full-sdlc``
+# opens every phase the engine has, and the point of that arm is to exercise the
+# whole pipeline (the documenter, the ``changes`` phase, the third commit) rather
+# than to win a capability comparison. Putting the most expensive graph on the
+# cheapest weights is what makes it runnable at all.
+_SSSF_FLASH = "azure/DeepSeek-V4-Flash"
 
 # Pinned IDENTICALLY for every role of every arm. The engine lets a roster set
 # this per agent, and the shipped Azure roster does (``high`` for planner and
@@ -5268,6 +5299,31 @@ _SSSF_ROSTERS: dict[str, dict[str, str | None]] = {
         "builder": _SSSF_CHEAP,
         "reviewer": None,
         "documenter": None,
+    },
+    # THE COMPLETE GRAPH. Every other arm skips phases; this one skips NOTHING —
+    # ``_sssf_skip_list`` returns ``[]`` for it, so ``adw_simple_sdlc.py`` runs all
+    # 13 of its phases. It is the only arm that exercises:
+    #
+    #   * the DOCUMENTER, hence ``app_docs/``, ``docs/`` and markdown-anywhere
+    #     writes — which is what turns ``_SSSF_EXCLUDED_PREFIXES`` from defensive
+    #     configuration into a rule something actually hits;
+    #   * the ``changes`` phase, which captures the run's whole diff against the
+    #     pinned baseline and raises ``RuntimeError`` on an empty one;
+    #   * ``commit_docs``, a THIRD commit — so the diff capture has to span three
+    #     commits plus a dirty tree, which is the shape ``_sssf_probe_tree``
+    #     reproduces for $0;
+    #   * the phase cap at its full derivation: with nothing skipped the graph can
+    #     really emit all ``_sssf_phase_cap()`` phases, which is the case that
+    #     formula was written for and which no other arm can reach.
+    #
+    # ONE MODEL FOR ALL FOUR ROLES, and the cheapest one (see ``_SSSF_FLASH``): this
+    # arm's purpose is coverage of the machinery, so holding the model constant
+    # across roles keeps it from also being a routing experiment.
+    "full-sdlc": {
+        "planner": _SSSF_FLASH,
+        "builder": _SSSF_FLASH,
+        "reviewer": _SSSF_FLASH,
+        "documenter": _SSSF_FLASH,
     },
 }
 
@@ -5333,6 +5389,13 @@ def _sssf_phase_cap(limits: dict[str, Any] | None = None) -> int:
 
     At the engine's default bounds (F=3, R=2) that is 4 + 6 + 3 + 1 + 4 = 18,
     which is the number this was a constant for.
+
+    IT IS THE FULL GRAPH'S MAXIMUM, and only ``full-sdlc`` can approach it. Every
+    other roster skips roles, and a skipped role's phases never open: a solo-builder
+    arm cannot emit ``plan``, ``commit_plan``, any ``review_i``/``revise_i``,
+    ``changes``, ``document`` or ``commit_docs`` at all. For those arms this is a
+    loose upper bound that happens never to bind; for the four-role roster it is the
+    real ceiling, which is the case the derivation above was written against.
 
     ``agent_retries`` and ``json_fix_attempts`` do NOT appear: they are retries
     INSIDE one phase (a re-entered agent session, a re-parsed response), so they
@@ -5503,8 +5566,19 @@ _PI_PRICE_TABLE = Path.home() / ".pi" / "agent" / "models.json"
 # burned three silent retries and reported $0.00 rather than failing. The same
 # flag was already present on ``Kimi-K2.7-Code`` for the identical reason; V3.2
 # was added for this benchmark and inherited the bug.
+#
+# Bumped AGAIN 2026-08-13 (9ab64f2e…15e4 -> the value below) for the SAME defect one
+# deployment further on. ``DeepSeek-V4-Flash`` — which ``full-sdlc`` routes all four
+# of its roles to — and ``deepseek-v4-pro`` carried no ``compat`` block at all, so
+# both were one run away from the identical silent 422: pi would have sent
+# ``developer``, Azure's DeepSeek serving would have refused every request, and the
+# arm would have published $0.00 and an empty patch as if the model had answered.
+# Both now declare ``supportsDeveloperRole: false``. Rates untouched again, so every
+# archived dollar figure stands. ``tests/test_benchmark_regressions.py`` now asserts
+# the flag for EVERY DeepSeek deployment in the table, because this is the second
+# time a new deployment inherited the bug by omission.
 _PI_PRICE_TABLE_SHA256 = (
-    "9ab64f2e439c600d80545bd725356ce4ce8599b969b9f8c8ca8d984dbc2515e4"
+    "15f60fcf9fbb9a9429ab25e65507334cc602cd424490d03dfb9d0659d6976aea"
 )
 
 # ``pi`` reads its Azure credential from this env var (models.json declares
@@ -5715,10 +5789,10 @@ _ARMS: dict[str, ArmSpec] = {
         cost_source=_COST_CLI_SUBSCRIPTION,
         has_chain=False,
     ),
-    # The three sssf arms. Registered LAST so that no published arm's position in
+    # The sssf arms. Registered LAST so that no published arm's position in
     # ``_ARM_NAMES`` (hence in three argparse ``choices=`` orderings) moves.
     #
-    # ``model=None`` for all three: an arm whose roles run DIFFERENT models has no
+    # ``model=None`` for all of them: an arm whose roles run DIFFERENT models has no
     # single nominal model to claim, and inventing one would be the exact failure
     # ``_row_models`` exists to prevent. The roster is recorded in result.json and
     # ``models_used`` is measured from the run's own trace, per role.
@@ -5784,6 +5858,39 @@ _ARMS: dict[str, ArmSpec] = {
         default_hours=0.25,
         trajectories=_TRAJECTORIES_SSSF_EVENTS,
         cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+    ),
+    # THE WHOLE GRAPH, on the cheapest deployment. See ``_SSSF_ROSTERS`` for what
+    # only this arm reaches; the roster is four roles on ``_SSSF_FLASH`` with
+    # ``skip_phases: []``.
+    #
+    # Its OWN ``harness_id``, and not for bookkeeping: against ``chain`` it runs two
+    # extra roles (the documenter and everything ``commit_docs`` implies) and against
+    # the solo arms three, so sharing either id would make Table 3 print "harness
+    # varies? no" for a pair whose harness is precisely what varies. The full graph
+    # IS a different harness.
+    #
+    # ``default_hours`` is the same 0.25 as its siblings even though it opens the
+    # most phases of any arm, because the shared 5400 s wall clock binds first for
+    # all of them and a projection input that varied per arm would make the sweep
+    # guard's refusal depend on which arm happened to be queued.
+    "full-sdlc": _arm(
+        name="full-sdlc",
+        base="sssf",
+        harness="sssf ADW, ALL FOUR roles (complete 13-phase graph), on DeepSeek-V4-Flash",
+        harness_id="sssf-full-sdlc",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        # The STRONGEST green claim in the set: the ADW gates on its deterministic
+        # test phase AND its reviewer's approval, exactly as ``chain`` does — see
+        # ``_sssf_green_state``, which derives that from the roster rather than from
+        # this flag.
         has_chain=True,
     ),
 }
@@ -7203,6 +7310,13 @@ def _sssf_price_table(models: list[str]) -> dict[str, Any]:
                 "maxTokens": entry.get("maxTokens"),
                 "reasoning": entry.get("reasoning"),
                 "api": config.get("api"),
+                # NOT a rate, and recorded anyway. ``compat.supportsDeveloperRole``
+                # decides which role name pi puts on the system message, and a
+                # serving that rejects ``developer`` answers a whole run with empty
+                # messages and zero usage (see ``_PI_PRICE_TABLE_SHA256``). It is the
+                # one non-price field in this file that can silently zero a row's
+                # measured cost, so the row carries the flag it ran under.
+                "compat": entry.get("compat"),
             }
     out["missing"] = sorted(wanted - set(out["rates"]))
     return out
@@ -7240,6 +7354,399 @@ def _sssf_child_env() -> tuple[dict[str, str], str | None]:
         )
     )
     return env, problem
+
+
+# --------------------------------------------------------------------------- #
+# preflight, part 2 — IS THE MODEL ACTUALLY THERE? (one real request per model)
+# --------------------------------------------------------------------------- #
+#
+# THE BUG THIS EXISTS FOR. ``result.json.preflight`` recorded
+# ``credential_problem: null`` for every row of a sweep in which DeepSeek-V3.2
+# returned 422 on EVERY SINGLE REQUEST — "Input should be 'system', 'user',
+# 'assistant' or 'tool'", input ``"developer"``, i.e. the missing
+# ``compat.supportsDeveloperRole: false`` documented at ``_PI_PRICE_TABLE_SHA256``.
+# ``pi`` swallowed each 422 into an empty assistant message with all-zero usage, so
+# the arm ran its whole graph against a model that never answered and published
+# $0.00 and an empty patch.
+#
+# The old check was ``AZURE_API_KEY in os.environ``, under the name
+# ``credential_problem``. That is worse than having no check at all: a green
+# ``credential_problem`` is affirmative evidence for a conclusion ("the credentials
+# are fine, so the model was reachable, so the arm just failed") that was false.
+# Every row of that sweep carried the reassurance.
+#
+# So the check now ISSUES A REQUEST — one per distinct deployment in the arm's
+# roster, a handful of tokens each — and requires a real, non-empty answer back.
+# Four properties are deliberate:
+#
+# * IT SENDS THE ROLE PI WILL SEND. The system message's role name is derived from
+#   the SAME ``compat.supportsDeveloperRole`` flag pi reads (``_sssf_system_role``),
+#   so a deployment whose serving rejects ``developer`` fails HERE, at ~$0.000001,
+#   instead of after a full run of swallowed 422s. A probe that always sent
+#   ``system`` would have passed happily through the exact incident above.
+# * AN EMPTY 200 IS A FAILURE. The starvation tripwire's rule, applied one layer
+#   earlier: content-free reply plus zero usage is what a swallowed refusal looks
+#   like, and calling that "reachable" would reintroduce the same false green.
+# * THE PROBE'S OWN COST IS RECORDED SEPARATELY. It is real spend and it is
+#   disclosed (``reachability.probe_cost_usd``, and ``preflight_probe_cost_usd`` on
+#   the row), but it is never added to ``cost_usd`` — a measured figure that quietly
+#   included the harness's own overhead would be unusable for comparison.
+# * IT IS SKIPPED, NOT FAKED, UNDER ``--probe-plumbing``. That path must stay $0 and
+#   call no model; the report records WHY it was skipped rather than an invented
+#   pass.
+#
+# On failure the run is REFUSED before the clone (see ``run_sssf``'s ``fatal``
+# list), which is the whole point: the alternative is an arm burning a full run to
+# produce empty responses.
+
+# One request's own wall clock. Short on purpose: this runs once per model at the
+# head of every run of a sweep, so a hung endpoint must cost seconds, not stall
+# every worker behind it. A deployment that cannot answer "ping" in this long is
+# not one a 13-phase graph should be started against either.
+_SSSF_REACHABILITY_TIMEOUT_S = 20.0
+
+# The whole probe, in tokens. ``max_completion_tokens`` bounds the reply; the prompt
+# is two short strings. At Flash's rates (0.21/0.56 per 1M) that is ~$0.000001.
+_SSSF_REACHABILITY_MAX_TOKENS = 16
+_SSSF_REACHABILITY_SYSTEM_TEXT = "Reply with the single word: ok"
+_SSSF_REACHABILITY_USER_TEXT = "ping"
+
+# The reply-length parameter, in the order tried. Azure's ``/openai/v1`` surface
+# takes ``max_completion_tokens``; some Foundry-hosted third-party deployments still
+# only accept the older ``max_tokens`` and answer 400 for the new spelling. Trying
+# both, in this order, stops a parameter-name difference from being reported as an
+# unreachable model — which would refuse a run that would have worked. Each attempt
+# is recorded, so the row shows exactly what was sent.
+_SSSF_REACHABILITY_TOKEN_KEYS: tuple[str, ...] = (
+    "max_completion_tokens",
+    "max_tokens",
+)
+
+# pi's two spellings for the system message's role. ``developer`` is OpenAI's
+# newer name and is what pi sends by default; ``supportsDeveloperRole: false`` in
+# the price table switches it back to ``system``. Named here because the probe's
+# entire value depends on it sending whichever one the real run will send.
+_SSSF_ROLE_DEVELOPER = "developer"
+_SSSF_ROLE_SYSTEM = "system"
+
+_SSSF_UNREACHABLE_ERROR = (
+    "PREFLIGHT: {n} of the {total} deployment(s) this arm's roster names did not "
+    "answer a {tokens}-token probe request: {detail}. The run is refused BEFORE the "
+    "clone. This check exists because a sweep once recorded "
+    "'credential_problem: null' on every row while the model 422'd on 100% of "
+    "requests and pi swallowed each failure into an empty message with zero usage — "
+    "so the arm burned a full run producing nothing and reported $0.00 as if that "
+    "were a measurement. If the status is 422 and the role sent was 'developer', the "
+    "fix is compat.supportsDeveloperRole: false on that deployment in "
+    "{price_table}."
+)
+
+
+def _pi_model_entry(model: str) -> tuple[dict[str, Any], dict[str, Any], str | None]:
+    """``(provider_block, model_entry, error)`` for a ``provider/deployment`` id.
+
+    Reads the same file, keyed the same way, as ``_sssf_price_table`` and as pi
+    itself: the id splits on the FIRST slash into provider and deployment name.
+    Missing pieces come back as an error string rather than an exception — the
+    caller's job is to record why a model could not even be addressed.
+    """
+    provider, _, deployment = str(model).partition("/")
+    if not provider or not deployment:
+        return {}, {}, f"{model!r} is not a 'provider/deployment' id"
+    try:
+        table = json.loads(_PI_PRICE_TABLE.read_bytes())
+    except OSError as exc:
+        return {}, {}, f"{_PI_PRICE_TABLE} is unreadable: {exc}"
+    except json.JSONDecodeError as exc:
+        return {}, {}, f"{_PI_PRICE_TABLE} is not valid JSON: {exc}"
+    block = (table.get("providers") or {}).get(provider)
+    if not isinstance(block, dict):
+        return {}, {}, f"{_PI_PRICE_TABLE} declares no provider {provider!r}"
+    for entry in block.get("models") or []:
+        if isinstance(entry, dict) and str(entry.get("id")) == deployment:
+            return block, entry, None
+    return block, {}, f"provider {provider!r} declares no deployment {deployment!r}"
+
+
+def _sssf_system_role(entry: dict[str, Any]) -> str:
+    """Which role name pi will put on the system message for this deployment.
+
+    Mirrors pi's own rule: ``developer`` unless the entry's
+    ``compat.supportsDeveloperRole`` is explicitly false. Derived from the table
+    rather than hard-coded so the probe's request shape cannot drift away from the
+    request the run will actually make — the drift IS the bug this guards.
+    """
+    compat = entry.get("compat") if isinstance(entry.get("compat"), dict) else {}
+    if compat.get("supportsDeveloperRole") is False:
+        return _SSSF_ROLE_SYSTEM
+    return _SSSF_ROLE_DEVELOPER
+
+
+def _sssf_post_json(
+    url: str, payload: dict[str, Any], headers: dict[str, str], timeout_s: float
+) -> dict[str, Any]:
+    """One HTTP POST of JSON. ``{status, body, error}``. NEVER raises.
+
+    The single network seam in this file's sssf path, and the only thing a test has
+    to replace to drive the whole reachability check offline. It returns the status
+    and the raw body — including for a 4xx, whose body carries the provider's own
+    explanation ("input: developer") and is therefore the most valuable part of a
+    failure.
+    """
+    request = urllib.request.Request(  # noqa: S310 — a fixed https endpoint
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", **headers},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:  # noqa: S310
+            return {
+                "status": int(getattr(response, "status", 0) or 0),
+                "body": response.read().decode("utf-8", errors="replace"),
+                "error": None,
+            }
+    except urllib.error.HTTPError as exc:  # the body is the diagnosis
+        body = ""
+        with contextlib.suppress(Exception):
+            body = exc.read().decode("utf-8", errors="replace")
+        return {"status": int(exc.code), "body": body, "error": None}
+    except Exception as exc:  # noqa: BLE001 — DNS, TLS, timeout, reset: all the same answer
+        return {"status": None, "body": "", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _sssf_probe_usage(payload: dict[str, Any]) -> dict[str, int]:
+    """The probe response's own token counts, in this harness's field names.
+
+    ``input_tokens`` EXCLUDES cache reads, exactly as ``_sssf_usage_by_role``
+    reports them, so the probe's cost is derived by the same multiply as the run's.
+    """
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    details = (
+        usage.get("prompt_tokens_details")
+        if isinstance(usage.get("prompt_tokens_details"), dict)
+        else {}
+    )
+    cached = _sssf_int(details.get("cached_tokens"))
+    prompt = _sssf_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+    return {
+        "input_tokens": max(prompt - cached, 0),
+        "cache_read_tokens": cached,
+        "cache_write_tokens": 0,
+        "output_tokens": _sssf_int(
+            usage.get("completion_tokens") or usage.get("output_tokens")
+        ),
+    }
+
+
+def _sssf_reply_text(payload: dict[str, Any]) -> str:
+    """The assistant text out of an openai-completions response, or ``""``."""
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            str(part.get("text") or "")
+            for part in content
+            if isinstance(part, dict)
+        )
+    return ""
+
+
+def _sssf_probe_model(
+    model: str,
+    *,
+    env: dict[str, str],
+    price_table: dict[str, Any],
+    timeout_s: float = _SSSF_REACHABILITY_TIMEOUT_S,
+    post: Any = None,
+) -> dict[str, Any]:
+    """Issue ONE minimal request to one deployment. Never raises.
+
+    Returns what the row needs to defend the conclusion either way: reachable
+    yes/no, the HTTP status or transport error text on failure, the role name that
+    was sent, the tokens the probe itself consumed and the dollars they cost.
+
+    ``post`` is the injection point (defaults to ``_sssf_post_json``), which is what
+    lets the whole check be driven in a test with no network and no spend.
+    """
+    sender = post or _sssf_post_json
+    out: dict[str, Any] = {
+        "model": model,
+        "reachable": False,
+        "status": None,
+        "error": None,
+        "system_role_sent": None,
+        "url": None,
+        "attempts": [],
+        "usage": {
+            "input_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "output_tokens": 0,
+        },
+        "cost_usd": 0.0,
+        "reply_excerpt": "",
+        "latency_s": None,
+    }
+    block, entry, error = _pi_model_entry(model)
+    if error:
+        out["error"] = error
+        return out
+    base = str(block.get("baseUrl") or "").rstrip("/")
+    if not base:
+        out["error"] = f"provider block for {model} declares no baseUrl"
+        return out
+    key_var = str(block.get("apiKey") or _SSSF_API_KEY_VAR)
+    api_key = str(env.get(key_var) or "").strip()
+    if not api_key:
+        out["error"] = f"{key_var} is empty in the child environment"
+        return out
+    role = _sssf_system_role(entry)
+    url = f"{base}/chat/completions"
+    out["system_role_sent"] = role
+    out["url"] = url
+    deployment = str(model).partition("/")[2]
+    headers = {"Authorization": f"Bearer {api_key}", "api-key": api_key}
+    started = time.monotonic()
+    for token_key in _SSSF_REACHABILITY_TOKEN_KEYS:
+        payload = {
+            "model": deployment,
+            "messages": [
+                {"role": role, "content": _SSSF_REACHABILITY_SYSTEM_TEXT},
+                {"role": "user", "content": _SSSF_REACHABILITY_USER_TEXT},
+            ],
+            token_key: _SSSF_REACHABILITY_MAX_TOKENS,
+        }
+        answer = sender(url, payload, headers, timeout_s)
+        status = answer.get("status")
+        body = str(answer.get("body") or "")
+        out["attempts"].append(
+            {
+                "token_key": token_key,
+                "status": status,
+                "error": answer.get("error"),
+                # Enough of the provider's own words to name the cause. The 422
+                # body is where "input: developer" appears, and a failure whose
+                # reason is not recorded cannot be acted on from the archive.
+                "body_excerpt": _excerpt(body)[:300],
+            }
+        )
+        out["status"] = status
+        out["error"] = answer.get("error")
+        if status is None:
+            # A transport failure is not a parameter-name problem; a second
+            # attempt would only wait out the same timeout again.
+            break
+        if status == 400 and token_key != _SSSF_REACHABILITY_TOKEN_KEYS[-1]:
+            # The one retryable case, and only for the reply-length parameter.
+            continue
+        if status != 200:
+            out["error"] = f"HTTP {status}: {_excerpt(body)[:300]}"
+            break
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError as exc:
+            out["error"] = f"HTTP 200 with a body that is not JSON: {exc}"
+            break
+        parsed = parsed if isinstance(parsed, dict) else {}
+        out["usage"] = _sssf_probe_usage(parsed)
+        # THE SAME MULTIPLY the run's own dollars go through, at finer rounding
+        # because a probe costs micro-dollars (see ``_sssf_rederive_cost``'s
+        # ``ndigits``). Sharing the arithmetic is what makes "the probe cost this,
+        # the run cost that" two figures in one currency.
+        out["cost_usd"] = _sssf_rederive_cost(
+            {"preflight": {"tokens_by_model": {model: out["usage"]}}},
+            price_table,
+            ndigits=9,
+        )["cost_usd"]
+        text = _sssf_reply_text(parsed)
+        out["reply_excerpt"] = _excerpt(text)[:120]
+        if not text.strip():
+            # THE INCIDENT'S OWN SHAPE. A 200 carrying no content is what pi
+            # swallows into a silent zero-usage turn, so it must not be recorded
+            # here as a model that answered.
+            out["error"] = (
+                "HTTP 200 with an EMPTY assistant message — the same content-free, "
+                "zero-usage shape pi swallows silently mid-run (see "
+                "_SSSF_EMPTY_RESPONSE_TERMINATION). Treated as unreachable: a model "
+                "that returns nothing to 'ping' will return nothing to a task."
+            )
+            break
+        out["reachable"] = True
+        break
+    out["latency_s"] = round(time.monotonic() - started, 3)
+    return out
+
+
+def _sssf_reachability_report(
+    models: list[str],
+    *,
+    env: dict[str, str],
+    price_table: dict[str, Any],
+    timeout_s: float = _SSSF_REACHABILITY_TIMEOUT_S,
+    skip_reason: str | None = None,
+    post: Any = None,
+) -> dict[str, Any]:
+    """Probe every distinct deployment in a roster. ``{checked, models, problem, …}``.
+
+    ``skip_reason`` short-circuits the whole thing WITHOUT calling anything and
+    records why — used for ``--probe-plumbing`` (which must stay $0 and call no
+    model) and for a missing credential (whose own preflight message is already
+    fatal, and where every probe would only produce the same 401).
+
+    ``problem`` is the loud, single message the caller refuses the run with, or
+    ``None``. It is what ``preflight['credential_problem']`` is set from, so that
+    field can no longer read ``null`` while the model is unreachable.
+    """
+    report: dict[str, Any] = {
+        "checked": not skip_reason,
+        "skipped_reason": skip_reason,
+        "timeout_s": timeout_s,
+        "max_tokens": _SSSF_REACHABILITY_MAX_TOKENS,
+        "models": {},
+        "unreachable": [],
+        "probe_tokens_in": 0,
+        "probe_cached_tokens": 0,
+        "probe_tokens_out": 0,
+        "probe_cost_usd": 0.0,
+        "problem": None,
+    }
+    wanted = sorted({m for m in models if m})
+    if skip_reason:
+        return report
+    for model in wanted:
+        result = _sssf_probe_model(
+            model, env=env, price_table=price_table, timeout_s=timeout_s, post=post
+        )
+        report["models"][model] = result
+        report["probe_tokens_in"] += int(result["usage"]["input_tokens"])
+        report["probe_cached_tokens"] += int(result["usage"]["cache_read_tokens"])
+        report["probe_tokens_out"] += int(result["usage"]["output_tokens"])
+        report["probe_cost_usd"] = round(
+            float(report["probe_cost_usd"]) + float(result["cost_usd"]), 9
+        )
+        if not result["reachable"]:
+            report["unreachable"].append(model)
+    if report["unreachable"]:
+        detail = "; ".join(
+            f"{m} (role sent: {report['models'][m]['system_role_sent']}, "
+            f"{report['models'][m]['error'] or 'no answer'})"
+            for m in report["unreachable"]
+        )
+        report["problem"] = _SSSF_UNREACHABLE_ERROR.format(
+            n=len(report["unreachable"]),
+            total=len(wanted),
+            tokens=_SSSF_REACHABILITY_MAX_TOKENS,
+            detail=detail,
+            price_table=_PI_PRICE_TABLE,
+        )
+    return report
 
 
 def _sssf_events_path(data_dir: Path, adw_id: str) -> Path:
@@ -7966,7 +8473,7 @@ def _sssf_raw_usage_by_role(data_dir: Path, adw_id: str) -> dict[str, Any]:
 
 
 def _sssf_rederive_cost(
-    by_role: dict[str, Any], price_table: dict[str, Any]
+    by_role: dict[str, Any], price_table: dict[str, Any], *, ndigits: int = 6
 ) -> dict[str, Any]:
     """Dollars re-derived from the RATE TABLE, independently of pi's own figure.
 
@@ -7980,6 +8487,14 @@ def _sssf_rederive_cost(
     A deployment with no rate block is reported in ``models_missing_a_rate``
     rather than priced at zero — an unpriceable model is a disclosure, never a
     discount.
+
+    ``ndigits`` exists for ONE caller and is documented so it stays that way: the
+    reachability probe (``_sssf_probe_model``) spends single-digit MICRO-dollars, and
+    at the row's 6-decimal rounding a $0.00000588 probe would be recorded as
+    $0.000006 — a 2% overstatement of a figure whose whole purpose is to be reported
+    honestly and separately. It is a rounding knob, never a second arithmetic: the
+    multiply itself is shared, which is the property that lets the probe's cost and
+    the run's cost be added up by the same rules.
     """
     rates = price_table.get("rates") if isinstance(price_table, dict) else None
     rates = rates if isinstance(rates, dict) else {}
@@ -8001,10 +8516,10 @@ def _sssf_rederive_cost(
                 except (TypeError, ValueError):
                     continue
                 role_total += _sssf_int(tokens.get(name)) / 1e6 * rate
-        per_role[role] = round(role_total, 6)
+        per_role[role] = round(role_total, ndigits)
         grand += role_total
     return {
-        "cost_usd": round(grand, 6),
+        "cost_usd": round(grand, ndigits),
         "by_role": per_role,
         "models_missing_a_rate": sorted(missing),
     }
@@ -8390,8 +8905,8 @@ def run_sssf(
     prompt is rendered from ``_STORY_TEMPLATE`` in exactly one place with no
     arm-dependent expression anywhere near it; ``thinking`` is pinned; the tool
     lists, the ``writes`` fences, the phase graph, the test command and the
-    timeout are identical across the three arms. The arm id reaches only the
-    roster table and the run directory.
+    timeout are identical across every arm. The arm id reaches only the roster
+    table and the run directory.
 
     THE SPEND GUARD IS THIS FUNCTION. The sssf engine enforces no cost limit of
     any kind — no per-run, hourly or daily cap, no equivalent of the factory
@@ -8401,10 +8916,18 @@ def run_sssf(
     and the row records ``termination: "cost-cap"`` — a counted, flagged attempt
     under the same one rule as every other arm's cap hit.
 
+    THE PRE-FLIGHT ISSUES ONE REAL REQUEST PER DEPLOYMENT. See
+    ``_sssf_reachability_report``: a roster model that does not answer a 16-token
+    probe fails the run HERE, before the clone, instead of after a full graph of
+    silently swallowed refusals. It costs ~$0.000001 per model, and that spend is
+    recorded in its own field (``preflight_probe_cost_usd``) and never added to the
+    measured ``cost_usd``.
+
     ``probe_plumbing=True`` spends NOTHING and calls no model: the ADW is never
-    invoked at all. Everything else runs for real — clone, prepare, collect
-    precheck, roster synthesis and validation against the engine's own config
-    model, the three-commit tree shape a real ADW leaves behind, the diff
+    invoked at all, and the reachability probe is SKIPPED (with its reason
+    recorded) rather than faked. Everything else runs for real — clone, prepare,
+    collect precheck, roster synthesis and validation against the engine's own
+    config model, the three-commit tree shape a real ADW leaves behind, the diff
     capture, both diff buckets, and the ``result.json`` write. The row carries a
     recorded ``error`` (``_SSSF_PROBE_ERROR``) so ``classify_run`` buckets it as
     a failed run and no table can ever absorb it as a measurement.
@@ -8437,14 +8960,53 @@ def run_sssf(
     # let a reader attribute this run's dollars to another run's model set.
     _reset_run_artifacts(run_dir)
 
-    # ---- $0 pre-flight, in milliseconds, before the clone or the image pull ---
+    # ---- pre-flight, in seconds, before the clone or the image pull ------------
+    # Everything here except the reachability probe is $0; the probe costs ~$0.000001
+    # per deployment and is disclosed separately (see ``_sssf_reachability_report``).
     child_env, credential_problem = _sssf_child_env()
     skip_ok, skip_reason, skip_where = _sssf_skip_support()
+    # The roster's DECLARED deployments, and their rates — needed here (rather than
+    # only after the run) because the probe prices its own spend off the same table
+    # the run's dollars are derived from, and because the table is where the
+    # ``supportsDeveloperRole`` flag that shapes the probe's request lives.
+    declared_models_preflight = sorted({m for m in roster.values() if m})
+    preflight_prices = _sssf_price_table(declared_models_preflight)
+    # WHY THE PROBE IS SKIPPED, when it is. ``--probe-plumbing`` must call no model
+    # at all; a missing credential already refuses the run with a better message and
+    # every probe would only repeat it as a 401.
+    reachability_skip: str | None = None
+    if probe_plumbing:
+        reachability_skip = (
+            "--probe-plumbing: this path calls no model and spends nothing, so "
+            "reachability is not probed"
+        )
+    elif credential_problem:
+        reachability_skip = (
+            f"not probed: {_SSSF_API_KEY_VAR} is absent, which is already fatal"
+        )
+    reachability = _sssf_reachability_report(
+        declared_models_preflight,
+        env=child_env,
+        price_table=preflight_prices,
+        skip_reason=reachability_skip,
+    )
+    # THE FIX FOR THE FIELD THAT LIED. ``credential_problem`` used to be an env-var
+    # presence test, and it reported ``null`` through a sweep in which the model
+    # answered 422 to every request. It is now backed by a real request per
+    # deployment, so it CANNOT read clean while a roster model is unreachable.
+    if reachability["problem"] and not credential_problem:
+        credential_problem = reachability["problem"]
     preflight: dict[str, Any] = {
         "skip_phases_supported": skip_ok,
         "skip_phases_declared_in": skip_where,
         "skip_phases_problem": skip_reason or None,
         "credential_problem": credential_problem,
+        # The evidence behind the line above: per model, reachable yes/no, the HTTP
+        # status or transport error, the role name sent, and what the probe spent.
+        "reachability": reachability,
+        # Recorded on its own so it can never be confused with the arm's measured
+        # cost — which is also why it is NOT added into ``cost_usd`` anywhere below.
+        "probe_cost_usd": reachability["probe_cost_usd"],
         "engine": str(_SSSF_ADW),
     }
     # A real run refuses; a probe records and warns. The probe's whole job is to
@@ -8458,8 +9020,13 @@ def run_sssf(
             f"key: {skip_reason}"
         )
     if fatal and not probe_plumbing:
+        # LOUD, and BEFORE the graph starts. The alternative — which is what
+        # happened — is an arm running its whole graph against a model that answers
+        # nothing, then publishing $0.00 and an empty patch as a capability result.
         raise SystemExit(
-            "sssf pre-flight refused this run at $0:\n- " + "\n- ".join(fatal)
+            "sssf pre-flight refused this run before the clone (spent "
+            f"${reachability['probe_cost_usd']:.6f} on reachability probes):\n- "
+            + "\n- ".join(fatal)
         )
     for problem in fatal:
         print(f"  PREFLIGHT WARN : {problem}", flush=True)
@@ -8497,6 +9064,12 @@ def run_sssf(
         "ts": datetime.now(UTC).isoformat(),
         "cost_source": "derived-from-price-table",
         "preflight": preflight,
+        # THE HARNESS'S OWN SPEND, top-level so a sweep can sum it without walking
+        # into ``preflight``. Deliberately a SEPARATE field from ``cost_usd``: the
+        # reachability probe is real money charged to this run honestly, and folding
+        # it into the measured figure would contaminate every comparison with an
+        # overhead that has nothing to do with the arm.
+        "preflight_probe_cost_usd": reachability["probe_cost_usd"],
     }
     if not precheck["collect_ok"]:
         error = f"precheck: test command does not collect: {collect_tail[-400:]}"
@@ -8571,7 +9144,7 @@ def run_sssf(
     (run_dir / _SSSF_ROSTER_NAME).write_text(roster_text, encoding="utf-8")
 
     # ONE assembly of the task text, from the shared template, with no
-    # arm-dependent expression in it. Byte-identical across the three arms by
+    # arm-dependent expression in it. Byte-identical across all four sssf arms by
     # construction, which is the property ``tests/test_swebench_sssf_arms.py``
     # proves structurally.
     story = _STORY_TEMPLATE.format(
@@ -9072,6 +9645,25 @@ def run_sssf(
     _print_run_summary(result, out)
     print(f"  roster           : {result['sssf_roster']}")
     print(f"  skip_phases      : {result['sssf_skip_phases']}")
+    # WHETHER THE MODELS ANSWERED, printed beside the roster that names them. The
+    # field this replaces reported "credential_problem: null" through a sweep in
+    # which every request 422'd, so the evidence belongs in the operator's face and
+    # not only in the row.
+    reach = preflight["reachability"]
+    if reach["checked"]:
+        print(
+            "  reachability     : "
+            + ", ".join(
+                f"{m}={'ok' if r['reachable'] else 'UNREACHABLE'} "
+                f"(role={r['system_role_sent']}, status={r['status']})"
+                for m, r in sorted(reach["models"].items())
+            )
+            + f" — probe cost ${reach['probe_cost_usd']:.6f}, "
+            f"{reach['probe_tokens_in']}+{reach['probe_tokens_out']} tokens, "
+            "NOT included in cost_usd"
+        )
+    else:
+        print(f"  reachability     : not probed — {reach['skipped_reason']}")
     print(f"  roles that ran   : {result['sssf_roles_run']}")
     print(f"  adw says green   : {result['factory_says_green']} ({green_state})")
     print(
@@ -11273,8 +11865,8 @@ def _audit_claude_run(
 def _is_sssf_arm(arm: str) -> bool:
     """Is this run key one of the sssf-engine arms? Registry-driven.
 
-    By ``base``, never by an id prefix: the three sssf arm ids (``chain``,
-    ``gpt54-solo``, ``v32-solo``) share no common prefix, so the
+    By ``base``, never by an id prefix: the sssf arm ids (``chain``,
+    ``gpt54-solo``, ``v32-solo``, ``full-sdlc``) share no common prefix, so the
     ``_is_claude_arm`` style of name test could not work here even if it were a
     good idea.
     """
@@ -15195,7 +15787,12 @@ def main() -> None:
              "the two pre-registered models (the older cutoff is the "
              "contamination probe). 'openhands' is ONE OpenHands agent on the "
              "factory's own dev deployment with no chain around it — it isolates "
-             "the chain, which is what the product claim asserts.",
+             "the chain, which is what the product claim asserts. "
+             "'gpt54-solo'/'chain'/'v32-solo'/'full-sdlc' drive the SEPARATE sssf "
+             "engine at /home/k/sssf over one phase graph, differing only in the "
+             "roster: 'full-sdlc' is the only arm that skips NOTHING (all four "
+             "roles — planner, builder, reviewer, documenter — on "
+             "DeepSeek-V4-Flash, i.e. the complete 13-phase graph).",
     )
     _add_model_arg(p)
     p.add_argument(
@@ -15206,13 +15803,15 @@ def main() -> None:
              f"{_FACTORY_STEP_DEFAULT} orchestrator ticks for factory, "
              f"{_BARE_STEP_CAP} shell turns for bare, "
              f"{_CLAUDE_TURN_CAP} claude CLI turns, "
-             f"{_OPENHANDS_ITERATION_CAP} openhands agent iterations",
+             f"{_OPENHANDS_ITERATION_CAP} openhands agent iterations, "
+             f"{_SSSF_PHASE_CAP} ADW phases for the sssf arms (derived from the "
+             "roster's own limits, not a constant)",
     )
     p.add_argument("--timeout-s", type=int, default=5400)
     p.add_argument(
         "--probe-plumbing",
         action="store_true",
-        help="bare/openhands/claude-* (not factory): run the WHOLE pipeline (clone, install "
+        help="bare/openhands/claude-*/sssf arms (not factory): run the WHOLE pipeline (clone, install "
              "replay, collect precheck, prompt assembly, command parse, tool "
              "loop, diff capture, split_diff, assert_no_test_edits, ledger "
              "read-back, result.json, summary) with the model REPLACED by a "
@@ -15257,7 +15856,9 @@ def main() -> None:
              f"{_FACTORY_STEP_DEFAULT} orchestrator ticks for factory, "
              f"{_BARE_STEP_CAP} shell turns for bare, "
              f"{_CLAUDE_TURN_CAP} claude CLI turns, "
-             f"{_OPENHANDS_ITERATION_CAP} openhands agent iterations",
+             f"{_OPENHANDS_ITERATION_CAP} openhands agent iterations, "
+             f"{_SSSF_PHASE_CAP} ADW phases for the sssf arms (derived from the "
+             "roster's own limits, not a constant)",
     )
     p.add_argument("--timeout-s", type=int, default=5400, help="per-instance run cap")
     p.add_argument("--grade-timeout-s", type=int, default=3600)

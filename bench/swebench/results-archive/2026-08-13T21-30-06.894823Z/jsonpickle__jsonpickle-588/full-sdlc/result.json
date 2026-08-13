@@ -1,0 +1,488 @@
+{
+  "arm": "full-sdlc",
+  "instance_id": "jsonpickle__jsonpickle-588",
+  "repo": "jsonpickle/jsonpickle",
+  "base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+  "problem_statement_sha256": "e7d6a3edc32ba6f4ef4ebc10a28b9b9118eda5058b8cc3450bb5e4940970d124",
+  "manifest_sha256": "923aef05add32124",
+  "ts": "2026-08-13T21:25:20.985479+00:00",
+  "cost_source": "derived-from-price-table",
+  "preflight": {
+    "skip_phases_supported": true,
+    "skip_phases_declared_in": "SSSFConfig",
+    "skip_phases_problem": null,
+    "credential_problem": null,
+    "reachability": {
+      "checked": true,
+      "skipped_reason": null,
+      "timeout_s": 20.0,
+      "max_tokens": 16,
+      "models": {
+        "azure/DeepSeek-V4-Flash": {
+          "model": "azure/DeepSeek-V4-Flash",
+          "reachable": true,
+          "status": 200,
+          "error": null,
+          "system_role_sent": "system",
+          "url": "https://mv-coding-agent-foundry.cognitiveservices.azure.com/openai/v1/chat/completions",
+          "attempts": [
+            {
+              "token_key": "max_completion_tokens",
+              "status": 200,
+              "error": null,
+              "body_excerpt": "{\"id\":\"f9fd39d8d2a24334ada1259344450ee9\",\"model\":\"DeepSeek-V4-Flash\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_\u2026"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "output_tokens": 2
+          },
+          "cost_usd": 3.64e-06,
+          "reply_excerpt": "ok",
+          "latency_s": 7.422
+        }
+      },
+      "unreachable": [],
+      "probe_tokens_in": 12,
+      "probe_cached_tokens": 0,
+      "probe_tokens_out": 2,
+      "probe_cost_usd": 3.64e-06,
+      "problem": null
+    },
+    "probe_cost_usd": 3.64e-06,
+    "engine": "/home/k/sssf/adws/adw_simple_sdlc.py"
+  },
+  "preflight_probe_cost_usd": 3.64e-06,
+  "model": null,
+  "sssf_roster": {
+    "planner": "azure/DeepSeek-V4-Flash",
+    "builder": "azure/DeepSeek-V4-Flash",
+    "reviewer": "azure/DeepSeek-V4-Flash",
+    "documenter": "azure/DeepSeek-V4-Flash"
+  },
+  "sssf_skip_phases": [],
+  "sssf_limits": {
+    "fix_loops": 3,
+    "revision_loops": 2,
+    "agent_retries": 1,
+    "json_fix_attempts": 2
+  },
+  "sssf_limits_source": "sssf-roster.yaml (limits:)",
+  "sssf_limits_engine": {
+    "fix_loops": 3,
+    "revision_loops": 2,
+    "agent_retries": 1,
+    "json_fix_attempts": 2
+  },
+  "sssf_limits_agree": true,
+  "sssf_phase_cap_derived": 18,
+  "step_cap_source": "derived from roster limits fix_loops=3 revision_loops=2 agent_retries=1 json_fix_attempts=2",
+  "sssf_phases_replayed": 0,
+  "sssf_attempts_in_trace": 1,
+  "sssf_resumed": false,
+  "sssf_roster_sha256": "1e60c1214e617fb43c17ac1f76a137f55557185161ed95fabc7ca669d7aaeea8",
+  "sssf_roster_file": "sssf-roster.yaml",
+  "sssf_adw_id": "109aadf6",
+  "sssf_thinking": "medium",
+  "sssf_roles_run": [
+    "builder",
+    "documenter",
+    "planner",
+    "reviewer"
+  ],
+  "sssf_roles_skipped": [],
+  "sssf_engine": "/home/k/sssf/adws/adw_simple_sdlc.py",
+  "models_used": [
+    "azure/DeepSeek-V4-Flash"
+  ],
+  "model_calls": 122,
+  "model_escalated_calls": 0,
+  "models_off_roster": [],
+  "wall_clock_s": 1999.8,
+  "steps_used": 13,
+  "step_cap": 18,
+  "termination": "terminal-state",
+  "trajectory": "sssf-adw.log",
+  "sssf_events_file": "sssf-events.jsonl",
+  "probe_plumbing": false,
+  "precheck": {
+    "collect_ok": true,
+    "duration_s": 1.0,
+    "mode": "existing-targets",
+    "collected_targets": [
+      "tests/object_test.py"
+    ],
+    "exit_code": 0
+  },
+  "tokens_in": 1195969,
+  "cached_input_tokens": 3802624,
+  "cache_write_tokens": 0,
+  "tokens_out": 77410,
+  "reasoning_tokens": 0,
+  "total_tokens": 5076003,
+  "cost_usd": 0.4124,
+  "usage_by_role": {
+    "builder": {
+      "input_tokens": 886073,
+      "output_tokens": 46248,
+      "cache_read_tokens": 3010560,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 3942881,
+      "total_cost": 0.305302,
+      "calls": 77,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V4-Flash"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V4-Flash": {
+          "input_tokens": 886073,
+          "output_tokens": 46248,
+          "cache_read_tokens": 3010560,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 90835
+    },
+    "documenter": {
+      "input_tokens": 27102,
+      "output_tokens": 2805,
+      "cache_read_tokens": 53248,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 83155,
+      "total_cost": 0.008913,
+      "calls": 8,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V4-Flash"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V4-Flash": {
+          "input_tokens": 27102,
+          "output_tokens": 2805,
+          "cache_read_tokens": 53248,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 12204
+    },
+    "planner": {
+      "input_tokens": 93967,
+      "output_tokens": 13273,
+      "cache_read_tokens": 305152,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 412392,
+      "total_cost": 0.036626,
+      "calls": 18,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V4-Flash"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V4-Flash": {
+          "input_tokens": 93967,
+          "output_tokens": 13273,
+          "cache_read_tokens": 305152,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 38066
+    },
+    "reviewer": {
+      "input_tokens": 188827,
+      "output_tokens": 15084,
+      "cache_read_tokens": 433664,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 637575,
+      "total_cost": 0.061544,
+      "calls": 19,
+      "empty_response_turns": 0,
+      "empty_response_reasons": [],
+      "models": [
+        "azure/DeepSeek-V4-Flash"
+      ],
+      "tokens_by_model": {
+        "azure/DeepSeek-V4-Flash": {
+          "input_tokens": 188827,
+          "output_tokens": 15084,
+          "cache_read_tokens": 433664,
+          "cache_write_tokens": 0
+        }
+      },
+      "peak_turn_input_tokens": 49822
+    }
+  },
+  "persona_calls": 122,
+  "usage_source": "/home/k/.cache/swebench-work/jsonpickle__jsonpickle-588__full-sdlc/adw_data/sessions/109aadf6/<role>/raw_output.jsonl (122 assistant turn(s) across 4 role stream(s))",
+  "sssf_turn_digest_file": "sssf-turns.jsonl",
+  "sssf_raw_output_streams": {
+    "builder": "/home/k/.cache/swebench-work/jsonpickle__jsonpickle-588__full-sdlc/adw_data/sessions/109aadf6/builder/raw_output.jsonl",
+    "documenter": "/home/k/.cache/swebench-work/jsonpickle__jsonpickle-588__full-sdlc/adw_data/sessions/109aadf6/documenter/raw_output.jsonl",
+    "planner": "/home/k/.cache/swebench-work/jsonpickle__jsonpickle-588__full-sdlc/adw_data/sessions/109aadf6/planner/raw_output.jsonl",
+    "reviewer": "/home/k/.cache/swebench-work/jsonpickle__jsonpickle-588__full-sdlc/adw_data/sessions/109aadf6/reviewer/raw_output.jsonl"
+  },
+  "sssf_assistant_turns": 122,
+  "peak_turn_input_tokens": 90835,
+  "cost_usd_events": 0.412385,
+  "tokens_in_events": 1195969,
+  "tokens_out_events": 77410,
+  "cached_input_tokens_events": 3802624,
+  "sssf_roles_run_events": [
+    "builder",
+    "documenter",
+    "planner",
+    "reviewer"
+  ],
+  "usage_by_role_events": {
+    "planner": {
+      "input_tokens": 93967,
+      "output_tokens": 13273,
+      "cache_read_tokens": 305152,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 412392,
+      "total_cost": 0.036626,
+      "calls": 1,
+      "reported_cost": 0.036626,
+      "models": [
+        "azure/DeepSeek-V4-Flash"
+      ]
+    },
+    "builder": {
+      "input_tokens": 886073,
+      "output_tokens": 46248,
+      "cache_read_tokens": 3010560,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 3942881,
+      "total_cost": 0.305302,
+      "calls": 2,
+      "reported_cost": 0.305302,
+      "models": [
+        "azure/DeepSeek-V4-Flash"
+      ]
+    },
+    "reviewer": {
+      "input_tokens": 188827,
+      "output_tokens": 15084,
+      "cache_read_tokens": 433664,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 637575,
+      "total_cost": 0.061544,
+      "calls": 2,
+      "reported_cost": 0.061545,
+      "models": [
+        "azure/DeepSeek-V4-Flash"
+      ]
+    },
+    "documenter": {
+      "input_tokens": 27102,
+      "output_tokens": 2805,
+      "cache_read_tokens": 53248,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0,
+      "total_tokens": 83155,
+      "total_cost": 0.008913,
+      "calls": 1,
+      "reported_cost": 0.008913,
+      "models": [
+        "azure/DeepSeek-V4-Flash"
+      ]
+    }
+  },
+  "events_source": "/home/k/.cache/swebench-work/jsonpickle__jsonpickle-588__full-sdlc/adw_data/sessions/109aadf6/events.jsonl",
+  "cost_missing_from_events_usd": 0.0,
+  "shared_db": "sssf-bench.db",
+  "shared_db_totals": {
+    "cost_usd": 0.4123844340000001,
+    "total_tokens": 5076003
+  },
+  "cost_usd_shared_db": 0.4124,
+  "cost_mismatch_usd": -1e-06,
+  "cost_usd_rederived": 0.412384,
+  "cost_rederived_by_role": {
+    "builder": 0.305302,
+    "documenter": 0.008913,
+    "planner": 0.036626,
+    "reviewer": 0.061544
+  },
+  "cost_rederivation_drift_usd": -1e-06,
+  "cost_rederivation_tolerance_usd": 0.01,
+  "cost_rederivation_disagrees": false,
+  "models_missing_a_rate": [],
+  "empty_response_turns": 0,
+  "empty_response_by_role": {},
+  "empty_response_reasons": [],
+  "provider_starved": false,
+  "sssf_failure_class": null,
+  "sssf_failure_counted": true,
+  "sssf_failure_reason": null,
+  "sssf_failure_evidence": {},
+  "price_table": {
+    "path": "/home/k/.pi/agent/models.json",
+    "sha256": "15f60fcf9fbb9a9429ab25e65507334cc602cd424490d03dfb9d0659d6976aea",
+    "sha256_pinned": "15f60fcf9fbb9a9429ab25e65507334cc602cd424490d03dfb9d0659d6976aea",
+    "matches_pinned": true,
+    "units": "USD per 1,000,000 tokens",
+    "rates": {
+      "azure/DeepSeek-V4-Flash": {
+        "cost": {
+          "input": 0.21,
+          "output": 0.56,
+          "cacheRead": 0.031,
+          "cacheWrite": 0.0
+        },
+        "contextWindow": 128000,
+        "maxTokens": 16384,
+        "reasoning": true,
+        "api": "openai-completions",
+        "compat": {
+          "supportsDeveloperRole": false
+        }
+      }
+    },
+    "missing": [],
+    "error": null
+  },
+  "error": null,
+  "factory_says_green": true,
+  "green_state": "adw_accepted:tests_green+review_approved",
+  "sssf_chain_roles": [
+    "builder",
+    "documenter",
+    "planner",
+    "reviewer"
+  ],
+  "adw_exit_code": 0,
+  "adw_session_status": "success",
+  "adw_not_accepted_reason": null,
+  "files_changed": [
+    "jsonpickle/pickler.py",
+    "jsonpickle/unpickler.py"
+  ],
+  "test_files_stripped": [
+    "tests/benchmark.py",
+    "tests/object_test.py"
+  ],
+  "sssf_paths_excluded": [
+    "app_docs/109aadf6_defaultdict-factory-key-fix.md",
+    "specs/109aadf6_defaultdict-factory-key-fix.md"
+  ],
+  "sssf_excluded_prefixes": [
+    "specs/",
+    "app_docs/",
+    "docs/",
+    "adw_data/",
+    "adws/"
+  ],
+  "refused_paths": [],
+  "diff_bytes": 2596,
+  "diff_integrity": {
+    "base_ref": "swebench-base",
+    "base_ref_sha": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+    "expected_base_commit": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+    "base_ref_matches": true,
+    "base_ref_ahead_of_expected": 0,
+    "base_ref_pinned_sha": "8fcc1a7a0d22943d8343453b6532aaed45d445d3",
+    "base_ref_pinned": true,
+    "head_branch": "swebench-work",
+    "expected_resolves": true,
+    "gitlink": "dir",
+    "head_sha": "5cb93a7d149ec8b17b3d082bf8e167c296f6cd7f",
+    "head_is_base": false,
+    "trustworthy": true
+  },
+  "test_readonly": {
+    "mode": "0444",
+    "files": 21,
+    "lock_errors": [],
+    "git_ok": true,
+    "bypassed": [
+      "tests/object_test.py"
+    ],
+    "bypassed_count": 1,
+    "unlocked_mode": [],
+    "missing": [],
+    "lock_lapsed_count": 0,
+    "refused": 0,
+    "refused_samples": [],
+    "scan_truncated": false
+  },
+  "sssf_caps": {
+    "run_cost_cap_usd": 0.0,
+    "wall_clock_cap_s": 3600,
+    "phase_cap": 18,
+    "ledger_poll_s": 5.0,
+    "enforced_by": "harness (the sssf engine has no spend limit)",
+    "spend_signal": "max(this run's events.jsonl, shared db sessions.total_cost); an unreadable shared db never kills a run"
+  },
+  "ledger_cost_at_stop_usd": 0.403472,
+  "attempt": 1,
+  "provenance_stamp": {
+    "captured_at": "2026-08-13T21:25:21.007399+00:00",
+    "repos": {
+      "harness": {
+        "path": "/home/k/software-factory",
+        "sha": "f79a3443c619a0fda84d7eef4d89da7bc95ab492",
+        "dirty": true,
+        "error": null,
+        "dirty_files": 4
+      },
+      "engine": {
+        "path": "/home/k/sssf",
+        "sha": "d187067bf363066315cf21f3cfda6a5710661e62",
+        "dirty": false,
+        "error": null,
+        "dirty_files": 0
+      }
+    },
+    "arm_spec": {
+      "name": "full-sdlc",
+      "base": "sssf",
+      "harness": "sssf ADW, ALL FOUR roles (complete 13-phase graph), on DeepSeek-V4-Flash",
+      "harness_id": "sssf-full-sdlc",
+      "model": null,
+      "model_selectable": false,
+      "max_steps": 18,
+      "step_unit": "ADW phases",
+      "default_cost_usd": 6.0,
+      "default_hours": 0.25,
+      "trajectories": "sssf-events",
+      "cost_source": "price-table estimate",
+      "has_chain": true,
+      "superseded_by": null
+    }
+  },
+  "budget_exhausted": false,
+  "budget_exhausted_reason": null,
+  "grade": {
+    "arm": "full-sdlc",
+    "instance_id": "jsonpickle__jsonpickle-588",
+    "image": "swerebench/sweb.eval.x86_64.jsonpickle_1776_jsonpickle-588@sha256:0eae843824198c5cfb0b6bb25b5c9b50c1b415ea7295867a314a3a8ce65c7fb4",
+    "graded_at": "2026-08-13T21:29:21.947238+00:00",
+    "fail_to_pass_count": 1,
+    "pass_to_pass_count": 82,
+    "pass_to_pass_declared_count": 82,
+    "pass_to_pass_source": "dataset",
+    "empty_patch": false,
+    "node_coverage_ok": true,
+    "node_coverage_reasons": [],
+    "node_parse_failures": [],
+    "post_patch_ids_collect": true,
+    "oracle_resolved": true,
+    "outcome": "resolved",
+    "exit_code": 0,
+    "grade_wall_s": 8.2,
+    "log_tail": " OK (red as expected)\nChecking patch jsonpickle/pickler.py...\nChecking patch jsonpickle/unpickler.py...\nApplied patch jsonpickle/pickler.py cleanly.\nApplied patch jsonpickle/unpickler.py cleanly.\nSWEBENCH_APPLY_acd456c6814abbd2: OK\n.                                                                        [100%]\n=========================== short test summary info ============================\nPASSED tests/object_test.py::test_defaultdict_preserves_default_factory_key\n1 passed in 0.03s\nSWEBENCH_TALLY_acd456c6814abbd2: fail_to_pass 1 passed in 0.03s\n[3 node outcomes for fail_to_pass -> grade-nodes.log]\nPASSED tests/object_test.py::test_defaultdict_subclass_with_class_as_default_factory\nPASSED tests/object_test.py::test_posix_stat_result\nPASSED tests/object_test.py::test_repr_using_jsonpickle\nPASSED tests/object_test.py::test_broken_repr_dict_key\nPASSED tests/object_test.py::test_ordered_dict_python3\nPASSED tests/object_test.py::test_ordered_dict\nPASSED tests/object_test.py::test_ordered_dict_unpicklable\nPASSED tests/object_test.py::test_ordered_dict_reduces\nPASSED tests/object_test.py::test_int_keys_in_object_with_getstate_only\nPASSED tests/object_test.py::test_ordered_dict_int_keys\nPASSED tests/object_test.py::test_ordered_dict_nested\nPASSED tests/object_test.py::test_deque_roundtrip\nPASSED tests/object_test.py::test_namedtuple_roundtrip\nPASSED tests/object_test.py::test_counter_roundtrip\nPASSED tests/object_test.py::test_counter_roundtrip_with_keys\nPASSED tests/object_test.py::test_list_with_fd\nPASSED tests/object_test.py::test_thing_with_fd\nPASSED tests/object_test.py::test_dict_with_fd\nPASSED tests/object_test.py::test_thing_with_lamda\nPASSED tests/object_test.py::test_newstyleslots\nPASSED tests/object_test.py::test_newstyleslots_inherited\nPASSED tests/object_test.py::test_newstyleslots_inherited_deleted_attr\nPASSED tests/object_test.py::test_newstyleslots_with_children\nPASSED tests/object_test.py::test_newstyleslots_with_children_inherited\nPASSED tests/object_test.py::test_newstyleslots_iterable\nPASSED tests/object_test.py::test_newstyleslots_string_slot\nPASSED tests/object_test.py::test_enum34_nested\nPASSED tests/object_test.py::test_enum_references\nPASSED tests/object_test.py::test_enum_unpicklable\nPASSED tests/object_test.py::test_enum_int_key_and_value\nPASSED tests/object_test.py::test_enum_string_key_and_value\nPASSED tests/object_test.py::test_int_enum_with_auto_value\nPASSED tests/object_test.py::test_multiple_string_enums_when_make_refs_is_false\nPASSED tests/object_test.py::test_unicode_mixin\nPASSED tests/object_test.py::test_datetime_with_tz_copies_refs\nPASSED tests/object_test.py::test_with_exclude\nPASSED tests/object_test.py::test_contained_exclusion\nPASSED tests/object_test.py::test_exclude_slots\nPASSED tests/object_test.py::test_exclude_getstate_from_slots\n82 passed in 0.09s\nSWEBENCH_TALLY_acd456c6814abbd2: pass_to_pass 82 passed in 0.09s\n[84 node outcomes for pass_to_pass -> grade-nodes.log]\nSWEBENCH_RESULT_acd456c6814abbd2: RESOLVED\n"
+  }
+}
