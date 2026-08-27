@@ -50,7 +50,7 @@ _ADAPTER = _REPO_ROOT / "bench" / "swebench_adapter.py"
 _ARMS_UNDER_TEST = ("gpt54-solo", "chain", "v32-solo", "flash-solo", "full-sdlc",
                     "nano-solo", "codexmini-solo", "kimi-solo", "flash-chain",
                     "flash-kimichain", "flash-selfchain",
-                    # The Sail A/B (PRE-REGISTRATION-SAIL-AB-DRAFT.md), appended
+                    # The Sail A/B (frozen/PRE-REGISTRATION-SAIL-AB.md), appended
                     # last so no published arm's registry position moves.
                     "flash-solo-az-r2", "flash-solo-sail-p1",
                     "flash-solo-sail-wprobe", "flash-solo-sail")
@@ -577,7 +577,7 @@ def test_the_registrys_cost_default_is_independent_of_the_kill_threshold(
     """
     # The Sail A/B's four arms declare their OWN literal 0.50 (see their registry
     # comment): a fail-safe-upward guess for a provider with zero measured rows,
-    # pre-declared in PRE-REGISTRATION-SAIL-AB-DRAFT.md rather than derived from
+    # pre-declared in frozen/PRE-REGISTRATION-SAIL-AB.md rather than derived from
     # `_SSSF_DEFAULT_COST_USD` — that constant is the whole-graph fallback and
     # these arms are all builder-only. This does not weaken the invariant this
     # test protects: their `default_cost_usd` is still independent of the kill

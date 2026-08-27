@@ -1,10 +1,26 @@
-# Pre-registration — DRAFT — Sail Research vs Azure AI Foundry, provider A/B on the flash-solo shape
+# Pre-registration — Sail Research vs Azure AI Foundry, provider A/B on the flash-solo shape
 
-**Status: DRAFT, reworked after adversarial review (findings applied are listed
-in the CHANGELOG at the bottom). Not yet frozen. Apart from the one disclosed
-pre-freeze exception in P-2 (a ≤$0.01 compat reachability probe), no paid call
-may be made against this document until it is committed under `frozen/` with
-every TBD resolved.** Same discipline as `frozen/PRE-REGISTRATION-1.6.md` and
+**Status: FROZEN 2026-08-27 (P-1). Never edited after this commit; supersede in
+a living document and link back if anything here proves wrong.** Every TBD is
+resolved; the one disclosed pre-freeze paid call (P-2c, $0.000009) is recorded
+in the pre-freeze sequence below and in `../SAIL-DISCOVERY.md`. This document
+was drafted, adversarially reviewed, reworked (CHANGELOG at the bottom), and
+implemented over three dev/reviewer cycles before freezing.
+
+**The frozen commit pair every campaign row must stamp
+(`provenance_stamp`):**
+
+- `sssf` engine repo: `eb9dcffd661c5228369cbab236a4ff13fe5fedff`
+  (clean at freeze time).
+- `software-factory` bench repo: **the commit that introduces this file at
+  this path** (`git log --diff-filter=A --follow -1
+  bench/swebench/frozen/PRE-REGISTRATION-SAIL-AB.md`); its first parent is
+  `b5c49dd1e58b2ea178d7982ea95b1fc833c7c946`. Recorded as a rule rather than a
+  hash because a commit cannot contain its own id; rows stamp the freeze
+  commit itself, and `RESULTS-SAIL-AB.md` names it verbatim as its first line
+  of evidence.
+- `models.json` sha (final, post-P-2c):
+  `eec3fa6889d33d5288b7ec8bcfc3c6ec3e2c4e2884a9f41cbfec30ab77a3ff6f`. Same discipline as `frozen/PRE-REGISTRATION-1.6.md` and
 `frozen/PRE-REGISTRATION-B1.md` (paths as of this draft — both now live under
 `frozen/`, not the bare `bench/swebench/` root): decision rules before data,
 predictions falsifiable, every number carrying the query that re-derives it.

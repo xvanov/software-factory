@@ -5353,7 +5353,7 @@ _SSSF_CODEX_MINI = "azure-responses/gpt-5.1-codex-mini"
 
 _SSSF_KIMI = "azure/Kimi-K2.7-Code"
 
-# THE SAIL A/B (``PRE-REGISTRATION-SAIL-AB-DRAFT.md``, added 2026-08-27). Same
+# THE SAIL A/B (``frozen/PRE-REGISTRATION-SAIL-AB.md``, added 2026-08-27). Same
 # family as ``_SSSF_FLASH`` — DeepSeek V4 Flash — served by a DIFFERENT provider,
 # so the roster value's provider half changes and its model half does not name
 # the same deployment: ``pi`` splits on the FIRST slash only, so
@@ -5580,7 +5580,7 @@ _SSSF_ROSTERS: dict[str, dict[str, str | None]] = {
         "reviewer": _SSSF_FLASH,
         "documenter": _SSSF_FLASH,
     },
-    # ── the Sail A/B (PRE-REGISTRATION-SAIL-AB-DRAFT.md) ─────────────────────
+    # ── the Sail A/B (frozen/PRE-REGISTRATION-SAIL-AB.md) ─────────────────────
     # All four rosters below are STRUCTURALLY IDENTICAL to ``flash-solo`` —
     # builder only, every other role ``None`` — because the treatment under test
     # is the PROVIDER, and the harness/roster shape must be the one thing that
@@ -5873,7 +5873,7 @@ _PI_PRICE_TABLE = Path.home() / ".pi" / "agent" / "models.json"
 # it while changing no existing rate. Verified before re-pinning: gpt-5.4 still
 # 2.50/15.00/0.25, V3.2 still 0.58/1.68, Flash still 0.21/0.56/0.031 — every
 # archived dollar figure stands.
-# MOVED AGAIN 2026-08-27 (P-2b, ``PRE-REGISTRATION-SAIL-AB-DRAFT.md``) by ADDING a
+# MOVED AGAIN 2026-08-27 (P-2b, ``frozen/PRE-REGISTRATION-SAIL-AB.md``) by ADDING a
 # third provider, `sail`, carrying one model (`deepseek/deepseek-v4-flash-0731`,
 # rates 0.09/0.18/0.02, confirmed by two FREE metadata/docs calls — see
 # ``bench/swebench/SAIL-DISCOVERY.md``). Re-verified before this re-pin, every
@@ -6366,7 +6366,7 @@ _ARMS: dict[str, ArmSpec] = {
         has_chain=True,
         max_workers=1,
     ),
-    # ── the Sail A/B (PRE-REGISTRATION-SAIL-AB-DRAFT.md, P-2d) — APPENDED, so no
+    # ── the Sail A/B (frozen/PRE-REGISTRATION-SAIL-AB.md, P-2d) — APPENDED, so no
     # published arm's position in ``_ARM_NAMES`` moves. ──────────────────────
     #
     # FOUR entries, not two, and the reasons are in the pre-registration's

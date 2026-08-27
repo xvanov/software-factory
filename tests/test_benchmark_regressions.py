@@ -72,7 +72,7 @@ _SSSF_ARMS = ("gpt54-solo", "chain", "v32-solo",
                # green.
                "flash-solo", "full-sdlc", "nano-solo", "codexmini-solo",
                "kimi-solo", "flash-chain", "flash-kimichain", "flash-selfchain",
-               # The Sail A/B (PRE-REGISTRATION-SAIL-AB-DRAFT.md): four more
+               # The Sail A/B (frozen/PRE-REGISTRATION-SAIL-AB.md): four more
                # builder-only arms, one on a new Azure registry entry and three
                # on the new `sail` provider — same "one variable" guarantee.
                "flash-solo-az-r2", "flash-solo-sail-p1", "flash-solo-sail-wprobe",
@@ -465,7 +465,7 @@ def test_every_deepseek_deployment_declares_supportsdeveloperrole_false(A: Any) 
             # ``sail`` is a DIFFERENT serving stack from Azure's, and this guard is
             # about the ONE measured bug: Azure's DeepSeek deployments 422 on the
             # `developer` role. Whether Sail's does too is an open question the
-            # pre-registration (PRE-REGISTRATION-SAIL-AB-DRAFT.md, P-2c) resolves
+            # pre-registration (frozen/PRE-REGISTRATION-SAIL-AB.md, P-2c) resolves
             # with a live ≤$0.01 probe BEFORE the freeze — not by copying Azure's
             # answer onto a different vendor's serving. Asserted here as the
             # deliberate pre-P-2c state (``compat`` absent) rather than silently
@@ -904,7 +904,7 @@ def test_the_kill_threshold_and_the_projection_default_are_separate_constants(
     assert A._SSSF_RUN_COST_CAP_USD <= 0, "the operator disabled the kill threshold"
     assert A._SSSF_DEFAULT_COST_USD != A._SSSF_RUN_COST_CAP_USD
     # The Sail A/B's four arms declare their own literal 0.50 (see their
-    # registry comment: pre-declared in PRE-REGISTRATION-SAIL-AB-DRAFT.md as a
+    # registry comment: pre-declared in frozen/PRE-REGISTRATION-SAIL-AB.md as a
     # fail-safe-upward projection input for a provider with zero measured
     # rows) rather than `_SSSF_DEFAULT_COST_USD` — still independent of the
     # kill threshold, just pinned to a different, equally deliberate constant.

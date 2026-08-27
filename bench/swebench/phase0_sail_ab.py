@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 0 tooling for ``PRE-REGISTRATION-SAIL-AB-DRAFT.md``. ALL $0. NO MODEL CALLS.
+"""Phase 0 tooling for ``frozen/PRE-REGISTRATION-SAIL-AB.md``. ALL $0. NO MODEL CALLS.
 
 Every subcommand here implements one SCRIPTABLE item of the pre-registration's
 "Harness-correctness protocol — Phase 0" section and prints PASS/FAIL plus
@@ -567,7 +567,7 @@ def cmd_p0_5b_stage(args: argparse.Namespace) -> int:
     """Build a staged run dir whose trace contains ONE planted foreign-workdir read.
 
     DEVIATION FROM THE PRE-REGISTRATION'S LITERAL TEXT, disclosed here and in
-    ``PRE-REGISTRATION-SAIL-AB-DRAFT.md``'s Resolved review notes: the draft's
+    ``frozen/PRE-REGISTRATION-SAIL-AB.md``'s Resolved review notes: the draft's
     example planted path (``runs/<other-instance>/<other-arm>/planted.txt``)
     does NOT match what the real detector (``_foreign_workdir_hits`` /
     ``_WORKDIR_CELL`` in ``bench/swebench_adapter.py``) actually matches on.

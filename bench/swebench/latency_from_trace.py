@@ -40,7 +40,7 @@ turn's first content event (``thinking`` or ``agent_message``, whichever is
 earlier — both are typically emitted at the same ts). That combined interval
 covers Sail's queue wait AND the full generation together; it cannot be split
 further without a change to what the engine's tracer records. This is
-recorded as a correction in ``PRE-REGISTRATION-SAIL-AB-DRAFT.md``'s Resolved
+recorded as a correction in ``frozen/PRE-REGISTRATION-SAIL-AB.md``'s Resolved
 review notes rather than silently reinterpreted, and every output row below
 carries ``request_to_first_token_s`` and ``first_token_to_last_token_s`` as
 explicit ``null`` (never a guessed split) alongside the one real figure,
@@ -343,7 +343,7 @@ def report(run_dir: Path) -> dict[str, Any]:
             "from this trace format. request_to_response_s is the one real, "
             "measured interval per call (queue wait + full generation, "
             "combined) — see this script's module docstring and "
-            "PRE-REGISTRATION-SAIL-AB-DRAFT.md's Resolved review notes."
+            "frozen/PRE-REGISTRATION-SAIL-AB.md's Resolved review notes."
         ),
         "calls": calls,
         "per_role": per_role_agg,

@@ -1,7 +1,7 @@
 # Sail Research discovery — P-2a/P-2b evidence, P0 verification log
 
 Written while implementing the pre-freeze machinery for
-`PRE-REGISTRATION-SAIL-AB-DRAFT.md`. Every number below carries where it came
+`frozen/PRE-REGISTRATION-SAIL-AB.md`. Every number below carries where it came
 from; nothing here is a paid call — two free metadata/docs fetches (task 1),
 one free `GET /v1/models`, and everything else is local file reads, `$0`
 adapter verbs, and real (free) `bwrap` sandbox exercises.
