@@ -261,6 +261,16 @@ CREATE TABLE IF NOT EXISTS run_attempt (
     status_detail            TEXT,
     audit_ok                 INTEGER,   -- NULL => not audited
     audit_failures           TEXT,
+    -- ── environment leak, its own queryable label ────────────────────────────
+    -- `invalid_reasons` already carries the prose, but a reason buried in a JSON
+    -- list is not something you can GROUP BY. These two make the quarantine a
+    -- first-class fact: `WHERE env_leak = 1` is the whole population, and
+    -- `env_leak_package` says WHICH import was redirected, which is the difference
+    -- between "this instance was affected" and "everything after the first run was
+    -- affected" — the leak is per-package, so only instances whose own package was
+    -- editable-installed by an earlier arm are in scope.
+    env_leak                 INTEGER,   -- NULL => predates the label, 0 => clean
+    env_leak_package         TEXT,      -- the import that resolved into another arm's tree
     budget_exhausted         INTEGER,
     budget_exhausted_reason  TEXT,
     provider_starved         INTEGER,
@@ -445,6 +455,15 @@ def _migrate(con: sqlite3.Connection) -> None:
         )
         con.commit()
         return
+    # ADDITIVE columns for a db written before the env-leak label existed. This
+    # file never drops a column (a dropped column is deleted evidence), so a
+    # migration is only ever an ALTER ... ADD, guarded by the current column set.
+    have = {r["name"] for r in con.execute("PRAGMA table_info(run_attempt)")}
+    for col, decl in (("env_leak", "INTEGER"), ("env_leak_package", "TEXT")):
+        if col not in have:
+            con.execute(f"ALTER TABLE run_attempt ADD COLUMN {col} {decl}")
+            con.commit()
+
     found = int(row["value"])
     if found > SCHEMA_VERSION:
         raise SystemExit(
@@ -604,6 +623,7 @@ def classify(adapter: Any, row: dict[str, Any], audit: dict[str, Any] | None) ->
     audit_ok = None if audit is None else (audit.get("ok") is True)
     starved = adapter._row_provider_starved(row)
     crashed = adapter._row_engine_crashed(row)
+    env_dirty = adapter._row_env_contaminated(row)
 
     reasons: list[str] = []
     if resolved is None:
@@ -630,6 +650,16 @@ def classify(adapter: Any, row: dict[str, Any], audit: dict[str, Any] | None) ->
             "provider-empty-response: the deployment swallowed "
             f"{int(row.get('empty_response_turns') or 0)} turn(s) — throttling, "
             "not capability; re-run at lower concurrency"
+        )
+    if env_dirty:
+        # SAME shape as ``starved`` and ``crashed``: the arm was asked the question
+        # under conditions that were not its own. See
+        # ``adapter._row_env_contaminated`` for the leak and the evidence.
+        reasons.append(
+            "env-contaminated: a leaked editable install redirected this "
+            "instance's package import into ANOTHER ARM's working tree, so the "
+            "agent's local verification was not independent — re-run under the "
+            "cleaned environment"
         )
     if crashed:
         # SAME exclusion as ``starved``, DIFFERENT owner. An unhandled exception
@@ -659,6 +689,10 @@ def classify(adapter: Any, row: dict[str, Any], audit: dict[str, Any] | None) ->
     return {
         "status": status,
         "status_detail": detail,
+        "env_leak": int(env_dirty),
+        "env_leak_package": (
+            adapter._env_leak_package(row.get("instance_id")) if env_dirty else None
+        ),
         "audit_ok": audit_ok,
         "provider_starved": starved,
         # No columns of their own: ``_SCHEMA`` is ``CREATE TABLE IF NOT EXISTS``
@@ -935,20 +969,40 @@ def ingest_row(
         return "skipped:plumbing probe (attempt 0) — no model ran"
 
     result_sha = _sha256_bytes(raw)
+    # SELECT * on purpose: the staleness check below compares every DERIVED field,
+    # so any column it does not fetch is a column that can silently drift. A
+    # five-column projection here is what made the first version of that check
+    # blind to `reportable` — the very field it was added to protect.
     existing = con.execute(
-        "SELECT attempt_uid, result_sha256, revision FROM run_attempt "
-        "WHERE instance_id=? AND arm=? AND attempt=?",
+        "SELECT * FROM run_attempt WHERE instance_id=? AND arm=? AND attempt=?",
         (instance_id, key, attempt),
     ).fetchone()
-    if existing is not None and existing["result_sha256"] == result_sha:
-        return "unchanged"
 
+    # READ THE AUDIT BEFORE the unchanged check, because the audit is a SCORING
+    # input (`_SCORING` lists it beside result.json) and `audit` is its own
+    # subcommand — re-auditing an archived run without re-running it is a
+    # supported, and deliberately cheap, operation.
     try:
         audit_raw = (run_dir / "audit.json").read_text(encoding="utf-8")
         audit_obj = json.loads(audit_raw)
         audit: dict[str, Any] | None = audit_obj if isinstance(audit_obj, dict) else None
     except (OSError, json.JSONDecodeError):
         audit = None
+
+    # SILENT DATA LOSS this closes. The skip used to key on result.json's hash
+    # ALONE, so a re-audit that flipped a verdict could never reach the db: the
+    # row kept its stale `audit_ok` and stale `invalid_reasons` while audit.json
+    # on disk said the opposite, and `record` cheerfully printed "unchanged".
+    #
+    # Measured 2026-08-14: fixing a false positive in the oracle-probe scan (a
+    # fetch verb quoted inside a tool RESULT — see `_ACTION_CONTENT_FIELDS`)
+    # re-audited `harumiweb__exstruct-113` on `flash-chain` and `flash-solo` from
+    # FAIL to OK, and both rows stayed `reportable=0` through two `record` runs.
+    # Three recovered runs would have stayed excluded from every table.
+    # NOTE: the skip now lives BELOW, after ``fields`` is derived — see the
+    # comment there. Comparing only the on-disk bytes was not enough, because
+    # ``reportable`` and ``invalid_reasons`` are derived by ``classify()`` from the
+    # ADAPTER's code as well as from the artifacts.
 
     verdict = classify(adapter, row, audit)
     spec = adapter._ARMS.get(adapter._split_run_key(key)[0])
@@ -1023,6 +1077,14 @@ def ingest_row(
         "budget_exhausted_reason": row.get("budget_exhausted_reason"),
         "provider_starved": _b(verdict["provider_starved"]),
         "empty_response_turns": _i(row.get("empty_response_turns")),
+        # The env-leak label as its own columns, so the quarantine is queryable
+        # (`WHERE env_leak = 1`) instead of only greppable inside a JSON reason
+        # list. `env_leak_package` names WHICH import was redirected, which is the
+        # fact that bounds the blast radius: the leak is per package, so an
+        # instance whose own package was never editable-installed by an earlier arm
+        # cannot be affected by another instance's leak.
+        "env_leak": int(verdict["env_leak"]),
+        "env_leak_package": verdict["env_leak_package"],
         "reportable": int(verdict["reportable"]),
         "invalid_reasons": _jl(verdict["invalid_reasons"]),
         "result_sha256": result_sha,
@@ -1030,6 +1092,38 @@ def ingest_row(
         "source_dir": str(run_dir),
         "last_ingested_at": now,
     }
+
+    # ── the staleness check, over EVERYTHING the row is derived from ─────────
+    #
+    # It used to compare only ``result.json``'s sha, then (fixed earlier today)
+    # audit.json's verdict too. Both are on-disk INPUTS; ``reportable`` and
+    # ``invalid_reasons`` are OUTPUTS of ``classify()``, which also reads
+    # ``adapter._ARMS`` (``superseded_by``, ``harness_id``, ``has_chain``,
+    # ``cost_source``), ``_row_engine_crashed``, ``_row_provider_starved`` and
+    # ``_ungradable_kind``. So a pure CODE change — marking an arm superseded,
+    # adding an exclusion the way ``engine-crash`` was added, correcting a
+    # ``harness_id`` — applied to new rows only, while ``record`` printed
+    # "unchanged" for every existing one. The store would then publish a rate over
+    # a mix of rows judged by two different rules.
+    #
+    # Proven on a copy of the live db: setting ``superseded_by`` on an ArmSpec made
+    # a fresh ``classify()`` say ``reportable = False`` while ``ingest_row``
+    # returned "unchanged" and the arm stayed in ``q_cost``. 0 of 193 rows
+    # disagreed at the time this was written, so no published figure was wrong —
+    # the bug was armed, and it fires on the next validity-logic commit.
+    #
+    # Comparing the derived ``fields`` covers the artifacts too, since every value
+    # read off disk flows into one of them; ``last_ingested_at`` is excluded
+    # because it changes on every pass by construction. Artifacts are only
+    # re-digested on a real change, so the digest-snapshot behaviour is preserved.
+    if existing is not None:
+        volatile = {"last_ingested_at"}
+        stale = [
+            c for c in fields
+            if c not in volatile and c in existing.keys() and existing[c] != fields[c]
+        ]
+        if not stale:
+            return "unchanged"
 
     if existing is None:
         cols = [*fields, "revision", "first_ingested_at"]
@@ -1385,6 +1479,30 @@ def ingest(
     engine = Path(engine_repo or A._SSSF_ROOT)
     wanted = {str(a) for a in arms} if arms else None
     started = _now()
+    # ── THE STORE LIVES BESIDE THE RUNS IT DESCRIBES ─────────────────────────
+    #
+    # Production-identical: `DEFAULT_DB` is `bench/swebench/benchmarks.db` and
+    # `RUNS_DIR` is `bench/swebench/runs`, so `runs.parent / "benchmarks.db"` is the
+    # same file. What changes is what happens when a caller REDIRECTS `runs_dir`:
+    # the db follows it instead of staying pinned to the real one.
+    #
+    # MEASURED 2026-08-14. `tests/test_swebench_adapter.py`'s sweep fixture patches
+    # `RUNS_DIR` to `tmp_path/runs` — correctly — but `run_all` ends in
+    # `_record_sweep()`, which called `ingest()` with a runs_dir and NO db_path. So
+    # every run of the test suite ingested six synthetic `instance_repo__x-*` rows
+    # into the PRODUCTION store: found at `revision` 39-77, i.e. rewritten on every
+    # pytest invocation, along with fixture `campaign` rows carrying shapes like
+    # `instances: 6, resolved: 6, cost_usd: 180.0`. They inflated real arm totals —
+    # the `factory` arm read $222.13 against $45.13 of actual artifact-backed cost.
+    #
+    # This is the failure class the sibling factory's postmortem lists as costing it
+    # a week: "bench runs wrote synthetic failures into production telemetry, which
+    # the FMS escalated as real". Deriving the db from the runs dir makes an isolated
+    # runs_dir imply an isolated store, so a fixture cannot reach the real one by
+    # forgetting one patch — the same fail-closed shape the adapter's own autouse
+    # fixture already uses for the manifest and the oracle.
+    if db_path is None and runs_dir is not None:
+        db_path = Path(runs_dir).parent / DEFAULT_DB.name
     con = connect(db_path)
     counts = {"inserted": 0, "updated": 0, "unchanged": 0, "skipped": 0}
     skips: list[str] = []

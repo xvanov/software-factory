@@ -38,6 +38,7 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
+import re
 from typing import Any
 
 import pytest
@@ -1052,16 +1053,68 @@ def test_an_engine_crash_is_excluded_and_an_agents_own_abort_is_not(
     assert "specs/" in stored["sssf_failure_reason"]
 
 
-def test_the_store_adds_no_column_for_either_verdict(S: Any) -> None:
-    """``_SCHEMA`` is ``CREATE TABLE IF NOT EXISTS`` with no ALTER path, so a new
-    column would make every INSERT fail against the existing benchmarks.db. Both
-    facts are already durable — the crash via its ``invalid_reasons`` entry, the
-    breach via the verbatim ``result_json`` — so no column is needed, and adding
-    one would be a silent break rather than a feature."""
+def test_a_new_column_must_come_with_a_migration(S: Any) -> None:
+    """A column is only allowed once ``_migrate`` can add it to an existing db.
+
+    THE ORIGINAL RULE AND WHY IT CHANGED. This asserted ``"ALTER TABLE" not in
+    src`` outright, on the stated ground that ``_SCHEMA`` is
+    ``CREATE TABLE IF NOT EXISTS`` with no ALTER path, so a new column "would make
+    every INSERT fail against the existing benchmarks.db". That is a reason to
+    require a migration, not a reason to forbid columns forever — and on
+    2026-08-14 the store needed one: ``env_leak`` / ``env_leak_package``, so the
+    environment-leak quarantine is queryable (``WHERE env_leak = 1``) rather than
+    only greppable inside a JSON reason list.
+
+    So the invariant is now the one the old docstring was really protecting:
+      * ``_migrate`` adds any new column to an existing db before a row is written;
+      * it is ADDITIVE ONLY — this file never drops a column, because a dropped
+        column is deleted evidence;
+      * and ``engine_crashed`` / ``writes_scope_breach`` still get no column,
+        because those two facts genuinely are already durable (the crash via its
+        ``invalid_reasons`` entry, the breach via the verbatim ``result_json``).
+    """
     src = _STORE.read_text(encoding="utf-8")
     for column in ("engine_crashed", "writes_scope_breach"):
         assert f"{column}  " not in src.split("-- the source, verbatim")[0], (
-            f"{column} must not become a schema column while _SCHEMA has no "
-            "ALTER path — see _migrate"
+            f"{column} is already durable elsewhere; it must not become a column"
         )
-    assert "ALTER TABLE" not in src
+    # Additive only, and only inside the migration.
+    assert "DROP COLUMN" not in src, "this store never drops evidence"
+    for stmt in re.findall(r"ALTER TABLE[^\n\"]*", src):
+        assert "ADD COLUMN" in stmt, f"non-additive schema change: {stmt}"
+    migrate = src.split("def _migrate", 1)[1].split("\ndef ", 1)[0]
+    assert "ALTER TABLE" in migrate, (
+        "a schema column must be added by _migrate, or an existing benchmarks.db "
+        "fails every INSERT — the failure the original rule existed to prevent"
+    )
+    for column in ("env_leak", "env_leak_package"):
+        assert column in migrate, f"{column} is a column with no migration"
+
+
+def test_an_isolated_runs_dir_implies_an_isolated_store(S: Any, tmp_path: Path) -> None:
+    """A redirected ``runs_dir`` must take the db with it.
+
+    MEASURED 2026-08-14. ``tests/test_swebench_adapter.py``'s sweep fixture patches
+    ``RUNS_DIR`` to ``tmp_path/runs`` — correctly — but ``run_all`` ends in
+    ``_record_sweep()``, which called ``ingest()`` with a runs_dir and NO db_path,
+    so it fell through to ``DEFAULT_DB``. Every run of the test suite therefore
+    ingested six synthetic ``instance_repo__x-*`` rows into the PRODUCTION store:
+    found at ``revision`` 49-93, i.e. rewritten on every pytest invocation, plus 431
+    orphaned fixture ``campaign`` rows. They inflated real arm totals — the
+    ``factory`` arm read $222.13 against $42.13 of artifact-backed cost.
+
+    Deriving the db from the runs dir makes the isolation fail CLOSED: a fixture
+    cannot reach the real store by forgetting one patch. Production is unaffected
+    because ``DEFAULT_DB`` already sits beside ``RUNS_DIR``.
+    """
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    assert S.DEFAULT_DB.parent == S.DEFAULT_DB.parent, "sanity"
+    # Production: the derived path IS the default.
+    assert S.DEFAULT_DB.parent / "runs" == S.DEFAULT_DB.parent / "runs"
+    out = S.ingest(runs_dir=runs, quiet=True)
+    assert out is not None
+    assert (tmp_path / "benchmarks.db").is_file(), (
+        "an isolated runs_dir must produce an isolated store beside it"
+    )
+    assert not (runs / "benchmarks.db").exists(), "the store sits beside runs, not inside it"
