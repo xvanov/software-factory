@@ -1,0 +1,69 @@
+{
+  "arm": "flash-solo-az-r2",
+  "model": null,
+  "harness": "sssf ADW, builder only, on DeepSeek-V4-Flash (Azure, fresh engine commit \u2014 the Sail A/B's control)",
+  "workers": 1,
+  "finished_at": "2026-08-27T22:09:07.840872+00:00",
+  "wall_clock_s": 426.8,
+  "stopped_reason": null,
+  "instances": 1,
+  "ok": 1,
+  "failed": 0,
+  "statuses": {
+    "ok": 1
+  },
+  "outcomes": {
+    "right_place_wrong_fix": 1
+  },
+  "audited_valid": 1,
+  "audit_failed": 0,
+  "not_audited": 0,
+  "resolved": 0,
+  "resolved_but_run_failed": 0,
+  "resolved_but_audit_failed": 0,
+  "grade_parse_failed": 0,
+  "provider_starved": 0,
+  "engine_crashed": 0,
+  "writes_scope_breach": 0,
+  "empty_response_turns": 0,
+  "budget_exhausted": 0,
+  "retried_rows": 0,
+  "gradable": 1,
+  "tokens_in": 218467,
+  "cache_read": 934400,
+  "fresh_in": 0,
+  "tokens_out": 16547,
+  "cost_usd": 0.0841,
+  "cost_source": "price-table estimate",
+  "results": [
+    {
+      "instance_id": "alibaba__opensandbox-816",
+      "arm": "flash-solo-az-r2",
+      "model": null,
+      "status": "ok",
+      "error": null,
+      "audit_ok": true,
+      "run_rc": 0,
+      "grade_rc": 0,
+      "audit_rc": 0,
+      "final_state": "\u2014",
+      "tokens_in": 218467,
+      "cache_read": 934400,
+      "tokens_out": 16547,
+      "cost_usd": 0.0841,
+      "factory_says_green": true,
+      "oracle_resolved": false,
+      "outcome": "right_place_wrong_fix",
+      "attempt": 1,
+      "budget_exhausted": false,
+      "provider_starved": false,
+      "engine_crashed": false,
+      "writes_scope_breach": false,
+      "empty_response_turns": 0,
+      "models_used": [
+        "azure/DeepSeek-V4-Flash"
+      ],
+      "sweep_wall_s": 426.8
+    }
+  ]
+}
