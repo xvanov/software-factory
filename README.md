@@ -156,7 +156,7 @@ Reading it:
 thing removed: the reviewer round-trip (dev-only, green = dev's tests pass; the
 acceptance oracle, sandbox, budgets and gates are identical). It exists to
 price the reviewer. An earlier, confounded version of this ablation
-(2026-08-05, [B.1 Phase 1a](bench/swebench/RESULTS-B1-PHASE1A.md)) measured
+(2026-08-05, [B.1 Phase 1a](bench/swebench/frozen/RESULTS-B1-PHASE1A.md)) measured
 9/18 = 50% at $2.83/solved on the *old* chain config; the clean same-sweep
 re-run above (9/19 = 47%, $5.54/solved) **replicates the rate finding and
 retracts the cost finding** — without the reviewer, the dev burned the
@@ -164,12 +164,12 @@ savings in extra retries.
 
 **Every re-run is disclosed, none silently.** Sweep 1's three OpenHands rows
 lost to Azure 429s were repaired once each under
-[pre-registration Rule 5](bench/swebench/PRE-REGISTRATION-1.6.md) (one flipped
+[pre-registration Rule 5](bench/swebench/frozen/PRE-REGISTRATION-1.6.md) (one flipped
 wrong-fix → resolved on the reseed — the clearest evidence that single-seed
 n=19 results are unstable; conservative reading 9/19 = 47%). Sweep 2's Claude
 losses to the subscription rate window, the operator's mid-sweep cancellation
 of the `openhands` re-run, and one destroyed cell are all recorded in
-[the sweep-2 pre-registration's outcome section](bench/swebench/PRE-REGISTRATION-2026-08-10.md).
+[the sweep-2 pre-registration's outcome section](bench/swebench/frozen/PRE-REGISTRATION-2026-08-10.md).
 
 **What the ± ranges in [`results.md`](bench/swebench/results.md) mean.**
 10 solved of 19 is 53%, but 19 samples cannot pin down true skill: the 95%

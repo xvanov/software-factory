@@ -125,7 +125,7 @@ Cost per resolved went the WRONG way, $5.02 → $8.10, because removing the $2/h
 truncation let long rows run to the 5,400 s wall-clock cap. Chain-verdict
 precision **did not replicate**: 58% (7/12) against sweep 2's 71%.
 Full evidence and the pre-registered criteria, evaluated as written:
-`bench/swebench/PRE-REGISTRATION-2026-08-11-REPLAY.md` (outcome section).
+`bench/swebench/frozen/PRE-REGISTRATION-2026-08-11-REPLAY.md` (outcome section).
 
 **Two machinery defects the replay found, both still OPEN:**
 
@@ -187,7 +187,7 @@ mid-sweep by operator decision** (harness unchanged since sweep 1), so
 chain-vs-single-agent is cross-sweep and DESCRIPTIVE, and the cost gap stands
 ($5.02 vs $1.82 per resolved). Chain-verdict precision moved 40% → 71%, recall
 86% → 100%, reviewer parks were 3/3 correct. See
-`bench/swebench/PRE-REGISTRATION-2026-08-10.md` (outcome section) and
+`bench/swebench/frozen/PRE-REGISTRATION-2026-08-10.md` (outcome section) and
 `bench/swebench/results.md`. Nothing here supports "the chain is proven";
 k ≥ 3 remains the bar for quoting deltas.
 
@@ -240,7 +240,7 @@ were re-fixed and merged as **sacrifice PR #378** (2026-08-07).
 
 Suite: SWE-rebench (Nebius), pinned manifest `923aef05add32124` — 19
 working-oracle instances, one sweep, k=1, no re-rolls, tables pre-registered in
-`bench/swebench/PRE-REGISTRATION-1.6.md` before the data existed.
+`bench/swebench/frozen/PRE-REGISTRATION-1.6.md` before the data existed.
 
 > **Provenance.** Two `report` runs exist for this sweep; this file uses the
 > later archive (`results-archive/2026-08-04T23-19-24.998844Z/`), which re-ran
@@ -275,7 +275,7 @@ tokens were only 1.8% of spend); the quality delta is inside the ±38 pp MDE
 (p=0.688) and the ablation is confounded three ways. Clean re-run (both arms,
 one sweep, one commit, ~$62) is still queued — 019 scoped it out (`bench/**`
 is operator-PR-only) and no direction has picked it up yet.
-Evidence: `bench/swebench/RESULTS-B1-PHASE1A.md`.
+Evidence: `bench/swebench/frozen/RESULTS-B1-PHASE1A.md`.
 
 ## Exteroception v1 — closed 2026-08-07
 
@@ -483,7 +483,7 @@ Note (audit): **"deployed" is a state name, not a deploy.** All 102
 | Scanner personas manufacture noise | `bug_hunter` 705 runs, 0 findings; `ralph` 7,024 runs, 95.8% rate-limited; 70% of the sacrifice backlog was machine-filed, one direction re-filed 33× | **Done** — `bug_hunter`, `ralph`, `architect`, `release_manager`, `ux_designer` and their schedules/rate-limits/routes deleted, PR #249 |
 | Merge-gate precision is unknown | Every published precision number is chain-verdict precision; `gate_enforced: false` in all six bench arms | Still open. No direction filed yet |
 | A sweep silently loses runs to provider 429s; sweep aggregates contradict their rows | See archive notes | Still open — paired with 019's out-of-scope operator queue, not yet actioned |
-| Clean reviewer-ablation re-run (~$62) not yet run | **DONE 2026-08-10** — sweep 2 ran factory + solo-noreview in one sweep, one commit: 10/19 vs 9/19, p=1.000; the B.1 cost saving did NOT replicate ($50.18 vs $49.89); reviewer bought verdict precision (71% vs 53%), not resolves | Closed. Evidence: `bench/swebench/PRE-REGISTRATION-2026-08-10.md` outcome |
+| Clean reviewer-ablation re-run (~$62) not yet run | **DONE 2026-08-10** — sweep 2 ran factory + solo-noreview in one sweep, one commit: 10/19 vs 9/19, p=1.000; the B.1 cost saving did NOT replicate ($50.18 vs $49.89); reviewer bought verdict precision (71% vs 53%), not resolves | Closed. Evidence: `bench/swebench/frozen/PRE-REGISTRATION-2026-08-10.md` outcome |
 | C1 recovery bluntness: `blocked_review_nonconvergent` auto-recovery re-enters at `SM_DONE`, re-running SM+dev+review to retry a later step | Story 177 burned $5.96 over two recoveries | **DEFERRED with reason (2026-08-10):** the signal-changed guard already escalates an identical failure instead of burning a second cycle, and C2's tech_writer parser fix (`cd750e7e`) removed the known cause. Re-entry-at-predecessor is state-machine surgery on shared control flow that the benchmark does not need |
 | C5 `detector_watch` disabled | Ships `detector_watch.enabled: false`; liveness scoping added but never run in production | **DEFERRED with reason (2026-08-10):** stays disabled through the benchmark window — an untested detector filing directions mid-run would contaminate the measurement. Soak read-only after the re-proof |
 | State has no backup | The twin guards source only | Still open (E.1 carried over; not scoped into 019) |
