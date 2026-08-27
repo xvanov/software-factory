@@ -254,3 +254,24 @@ after that reconciliation is recorded here.
    (after 2026-08-28T21:00Z) and attaches a screenshot; R2's dollar leg is
    evaluated then, with the investigate branch triggered if the divergence
    holds outside the 10% band.
+
+### Diagnostic probes between Phases 1 and 2 (2026-08-27, disclosed)
+
+Three direct-HTTP micro-probes (upper-bound $0.0026 total) resolved the
+$0.0113-vs-$0.0302 divergence: **Sail's streaming usage omits
+`prompt_tokens_details`, so cached tokens are billed (at $0.02/M) but
+invisible to pi's usage accounting.** Computed cost is henceforth read as an
+upper bound for streamed Sail runs; R2's dollar leg is evaluated as a
+bounds check (billed ∈ [all-cached, all-fresh]) plus the exact non-streaming
+rate check. Full mechanism, arithmetic, and the R2 re-reading:
+`../SAIL-DISCOVERY.md` § "Sail's streaming usage omits cache detail".
+Implied Phase-1 cache share ≈85%. Also observed: one immediate 429 on the
+first probe call of the day (recovered in ~1 min) — noted for Phase 2.
+
+## Campaign ledger — after the diagnostic probes
+
+| entry | amount |
+|---|---:|
+| running total after Phase 1 | $0.030209 |
+| diagnostic probes (upper bound) | $0.0026 |
+| **Running total** | **$0.032809** of the **$5.00** cap (operator-tightened) |

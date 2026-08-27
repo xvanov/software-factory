@@ -491,3 +491,48 @@ Two findings beyond the fix:
    ZDR by default. Whatever the resolution, code sent to Sail during this
    campaign should be assumed retained. Worth raising with the vendor before
    the evolution campaign ships anything sensitive there.
+
+## Sail's streaming usage omits cache detail — the $0.0113 mystery, resolved (2026-08-27)
+
+Three disclosed diagnostic micro-probes (direct HTTP, P-2c style, upper-bound
+cost $0.0026 total, under the $0.01 per-probe cap):
+
+1. **Cache probe, non-streaming ×3** (identical ~7k-token prompt): call 1
+   `cached_tokens: 0`; calls 2–3 `cached_tokens: 6144` of 7018 (block-aligned,
+   6×1024), latency 1.75s → 1.12s. Sail's prompt cache is real, reported in
+   `prompt_tokens_details.cached_tokens`, and warms on the second call.
+2. **The same request, streaming with `stream_options: {include_usage: true}`**
+   (pi's mode): the single usage chunk carries ONLY
+   `prompt_tokens/completion_tokens/total_tokens` — **`prompt_tokens_details`
+   is absent**, on a prefix the previous probe had just proven cached.
+3. Incidental: the first probe attempt of the day got an immediate **HTTP
+   429** (no RateLimit headers exposed); a retry ~1 min later sailed through.
+   The documented token-bucket is real and can fire on the FIRST call of a
+   burst — Phase 2's width probe should expect it.
+
+**Consequence, now explained rather than suspicious:** pi maps
+`prompt_tokens_details.cached_tokens` → `cacheRead` correctly and
+unconditionally (`pi-ai/dist/providers/openai-completions.js:765`); Sail's
+streaming path simply never sends it. So for every streamed Sail run:
+
+- usage-derived `cacheRead` is structurally 0, and computed-at-pinned-rates
+  cost prices ALL input at the fresh $0.09/M — a systematic **UPPER BOUND**
+  (the mirror of the rate table's Azure-V3.2 phantom-cache treatment, and the
+  same safe direction: it can only overstate Sail's cost, never flatter it);
+- the dashboard's billed figure is the true cost; the gap decomposes as
+  cached_share = (computed − billed_input) / (input × $0.07/M). For Phase 1:
+  computed $0.0302 vs early-read billed $0.0113 → implied **≈85% cache-warm**
+  (49k fresh / 269k cached of 318,492), consistent with Azure Flash's
+  measured ~78% on comparable agentic runs;
+- R2's dollar leg will systematically exceed the 10% band for cache-warm
+  streamed runs. Per R2's own investigate branch, this section is the
+  published explanation: the divergence is a REPORTING gap on Sail's
+  streaming usage, not a wrong rate card — the rate card reproduced the
+  non-streaming probe's billing exactly ($0.000009, 0.0% divergence).
+  R2 at the Phase-2/3 boundaries is therefore evaluated as:
+  billed must fall **between the all-cached lower bound and the all-fresh
+  upper bound** computed from usage tokens, and the non-streaming rate check
+  must stay exact. `compat.supportsUsageInStreaming: false` was considered
+  and rejected: it would strip usage from runs entirely to fix a field pi
+  already handles; the vendor-side fix (report the details in streaming) is
+  the right one — raised as a question for Sail.
