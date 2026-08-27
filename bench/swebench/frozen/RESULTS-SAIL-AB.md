@@ -299,3 +299,39 @@ anything width 2 does not. It is skipped as vacuous rather than run as
 theater; the probe's ceiling claim is therefore **"clean width ≥ 2" at
 most**, and the evolution campaign must re-probe at its real fan-out before
 exceeding 2. (Per the no-silent-caps rule: width > 2 is NOT measured here.)
+
+---
+
+## Phase 2 — width probe, 2026-08-27, COMPLETE
+
+Arm `flash-solo-sail-wprobe`, instances `hkuds__openharness-217` +
+`zauberzeug__nicegui-5858`, `SWEBENCH_SANDBOX=1`. Store rows (query: the
+wprobe SELECT in the Phase-1 section, arm swapped):
+
+| width | rows | empty turns | starved | outcome | computed cost (upper bound) |
+|---:|---:|---:|---:|---|---:|
+| 1 | 2 | 0 | 0 | both resolved, audits valid | $0.0424 + $0.0781 |
+| 2 (concurrent) | 2 | 0 | 0 | both resolved, audits valid | $0.0293 + $0.1255 |
+
+**Clean width ≥ 2.** Width 2 — the width at which Azure's Flash deployment
+429s and pi swallows the refusal — ran with zero empty turns and zero
+starvation on Sail, 437 s wall for the concurrent pair. **R5: adopt for
+parallel evolution use**, with the pre-recorded ceiling caveat: width > 2
+was NOT measured (two instances bound effective concurrency at 2; the
+width-4 step was recorded as vacuous before the probe ran), so any fan-out
+beyond 2 requires its own probe. The one first-call-of-day 429 seen during
+the diagnostic probes did not recur in either pass. Probe rows are width
+evidence only — never verdict or cost-ratio evidence.
+
+## Campaign ledger — after Phase 2
+
+| entry | amount |
+|---|---:|
+| running total after diagnostics | $0.032809 |
+| Phase 2, width 1 (2 rows, upper bound) | $0.1205 |
+| Phase 2, width 2 (2 rows, upper bound) | $0.1548 |
+| **Running total (computed upper bound)** | **$0.3081** of the $5.00 cap |
+
+Boundary action per R2(b): operator hover reading at this boundary, recorded
+below when supplied; expected billed ∈ [all-cached ≈ $0.09, this upper
+bound $0.31], plus the P0.0 screenshot still outstanding.
