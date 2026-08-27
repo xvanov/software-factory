@@ -3,7 +3,7 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail Research, asap tier) \u2014 the Sail A/B's paired-sweep treatment",
   "workers": 1,
-  "finished_at": "2026-08-27T22:09:49.073985+00:00",
+  "finished_at": "2026-08-27T22:10:25.852252+00:00",
   "wall_clock_s": 0.3,
   "stopped_reason": null,
   "instances": 1,
@@ -37,7 +37,7 @@
   "cost_source": "price-table estimate",
   "results": [
     {
-      "instance_id": "alibaba__opensandbox-816",
+      "instance_id": "getmoto__moto-9841",
       "arm": "flash-solo-sail",
       "model": null,
       "status": "run_failed",
@@ -46,7 +46,7 @@
       "run_rc": 1,
       "audit_rc": 1,
       "audit_failures": [
-        "missing artifact: /home/k/software-factory/bench/swebench/runs/alibaba__opensandbox-816/flash-solo-sail/result.json"
+        "missing artifact: /home/k/software-factory/bench/swebench/runs/getmoto__moto-9841/flash-solo-sail/result.json"
       ],
       "final_state": "\u2014",
       "tokens_in": 0,
