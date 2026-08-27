@@ -275,3 +275,27 @@ first probe call of the day (recovered in ~1 min) — noted for Phase 2.
 | running total after Phase 1 | $0.030209 |
 | diagnostic probes (upper bound) | $0.0026 |
 | **Running total** | **$0.032809** of the **$5.00** cap (operator-tightened) |
+
+### Phase-1 → Phase-2 boundary: reconciliation recorded, T+24h floor superseded (2026-08-27)
+
+Operator's dashboard reading: **$0.0125** total spent, taken minutes after the
+diagnostic probes. Two independent instant-update observations now exist
+(the P-2c probe registered within hours; the diagnostics' +$0.0012 increment
+appeared within minutes and matches their mostly-cached actual cost), so the
+spec's ≥T+24h floor — a guard against billing lag written before the
+surface's latency was known — is superseded: readings are treated as current
+as of their timestamp. **R2 bounds check at this boundary: PASS** —
+$0.0125 ∈ [$0.0091 all-cached, $0.0328 all-fresh] computed from usage
+tokens; implied Phase-1 cache share ≈85% (≈48k fresh / ≈270k cached of
+318,492), consistent with the streaming-omission mechanism. The exact
+non-streaming rate check stands at 0.0% divergence (P-2c). Outstanding, not
+blocking: the P0.0 screenshot, still wanted before final adoption claims.
+Phase 2 is unblocked.
+
+**Width-probe construction note, recorded before running it:** the frozen
+table probes widths 1 → 2 → 4 over TWO instances, but effective concurrency
+is min(workers, instances) = 2, so the "width 4" step cannot measure
+anything width 2 does not. It is skipped as vacuous rather than run as
+theater; the probe's ceiling claim is therefore **"clean width ≥ 2" at
+most**, and the evolution campaign must re-probe at its real fan-out before
+exceeding 2. (Per the no-silent-caps rule: width > 2 is NOT measured here.)
