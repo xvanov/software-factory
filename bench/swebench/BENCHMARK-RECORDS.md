@@ -212,8 +212,8 @@ between ingests shows `revision > 1`; this says which ingest did it.
   attempt cannot orphan its role/artifact rows.
 * **The db is tracked; its `-wal`/`-shm` sidecars are gitignored.** It is the only
   place a superseded attempt's figures survive, so ignoring it would put the
-  durable record in the one directory git cannot see. It is ~2.5 MB for 141
-  attempts and grows ~15 KB per row. If binary churn ever becomes unacceptable,
+  durable record in the one directory git cannot see. It is ~6.2 MB for 241
+  attempts and grows ~27 KB per row. If binary churn ever becomes unacceptable,
   `export` writes a deterministic, text-diffable JSONL mirror of the same content
   — commit that instead, and keep the db local.
 * **Schema version** is recorded in `schema_meta`. A db written by a *newer*
@@ -336,7 +336,7 @@ reader:
 
 ```
 $ uv run python bench/swebench/benchmark_store.py verify
-artifacts verified: 1586 ok, 0 gone (expected for superseded attempts), 0 MISMATCH
+artifacts verified: 3077 ok, 0 gone (expected for superseded attempts), 0 MISMATCH
 ```
 
 Three outcomes, and the middle one is the point. `ok` — bytes unchanged. `gone` —
@@ -374,14 +374,21 @@ FROM role_usage WHERE skipped = 0 GROUP BY roster_model;
 
 | roster_model | calls | fresh input | cached input | spend |
 |---|---:|---:|---:|---:|
-| `azure/DeepSeek-V3.2` | 1,364 | 51,724,304 | **0** | $30.98 |
-| `azure/gpt-5.4` | 61 | 385,156 | 1,588,224 | $2.23 |
-| `azure/DeepSeek-V4-Flash` | 122 | 1,195,969 | 3,802,624 | **$0.41** |
+| `azure/DeepSeek-V3.2` | 2,243 | 87,133,488 | **0** | $52.12 |
+| `azure/gpt-5.4` | 237 | 1,528,046 | 5,579,008 | $8.32 |
+| `azure/DeepSeek-V4-Flash` | 2,639 | 23,177,874 | 83,098,112 | $8.27 |
+| `azure/Kimi-K2.7-Code` | 630 | 1,289,003 | 21,435,648 | $7.25 |
+| `azure-responses/gpt-5.1-codex-mini` | 735 | 1,284,944 | 19,507,456 | $1.78 |
+| `azure/gpt-5.4-nano` | 595 | 634,425 | 16,644,352 | $0.99 |
+
+*(re-derived 2026-08-15 over 241 attempts; the three-model version of this table
+was the 2026-08-13 store and is superseded.)*
 
 **V3.2's cache tier does not exist.** `models.json` prices its `cacheRead` at the
 full input rate (0.580 per 1M) because that meter family publishes no cached tier —
-and over 1,364 calls the provider reported **not one cached token**, so the pricing
-was never even the binding fact. Every re-sent token of a 51.7 M-token pilot was
+and over **2,243 calls against 87.1 M of fresh input** the provider reported **not
+one cached token**, so the pricing
+was never even the binding fact. Every re-sent token of an 87.1 M-token campaign was
 billed fresh, on a graph whose whole shape is re-sending a growing context to
 several roles.
 
@@ -406,16 +413,121 @@ the engine can run (13 phases, four personas, three commits) came to 40 cents.
 
 What it means when the next run has to pick a model:
 
+* **THE NINE-ARM CAMPAIGN — 2026-08-14/15, n=8, k=1, $26.47.** Nine arms, eight
+  pinned instances, one publishable row per cell (first valid attempt by `ran_at`).
+  Store after it: **241 rows, 160 valid, 81 excluded, 0 unlabelled.**
+
+  > **The results are NOT reproduced here.** They live in
+  > `/home/k/sssf/ai_docs/research/EXPERIMENTS.md`, which owns every number we
+  > measured — including the queries that re-derive them. This file owns the
+  > store's *schema and verbs*, not its findings.
+  >
+  > That separation exists because of this campaign: the same store aggregate was
+  > found wrong in four documents at once, purely from having been copied.
+
+  The one-line result, so a reader here knows whether to go look: **builder
+  DeepSeek-V4-Flash + reviewer gpt-5.4 reaches 6/8 at $0.472/task — the same
+  resolve rate as the bare DeepSeek-V3.2 builder, at 4.0× less.**
+
+  Store-level facts the campaign established, which *do* belong here because they
+  are properties of the store rather than of an experiment, are in the bullets
+  below and in the `roster_model` table above.
+
+* **SUPERSEDED 2026-08-15 — the three-arm pilot entry below.** Its arm totals were
+  computed before 25 rows were quarantined as `env-contaminated` (a leaked editable
+  install redirected imports) and before the missing cells were re-run. Both the
+  headline table and the `4/7` correction under it are **historical**: the same
+  three arms now read: builder DeepSeek-V4-Flash 4/8, builder DeepSeek-V3.2 6/8,
+  planner-V3.2/builder-V3.2/reviewer-gpt-5.4 5/8. Kept as
+  written because the reasoning about McNemar power, the engine-crash
+  reclassification and the `roles_run`-prefix audit rule are all still correct and
+  are why the newer numbers are trustworthy.
+
+* **THE THREE-ARM PILOT, COMPLETE — 2026-08-14, n=8, k=1.** All three arms now
+  hold 8 clean rows on the same pinned instances. **Every arm resolved the same
+  five.**
+
+  | arm | resolved | total $ | $/resolved | fresh in | cached in | out | wall |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | `flash-solo` | **5/8** | **0.643** | **0.129** | 1,869,519 | 5,615,360 | 135,450 | 61.4 m (serial) |
+  | `v32-solo` | 5/8 | 13.093 | 2.619 | 21,863,286 | **0** | 245,208 | 47.6 m |
+  | `chain` | 5/8 | 21.407 | 4.281 | 32,214,274 | 1,672,448 | 417,168 | 78.7 m |
+
+  **Resolve rate is identical and every pairwise comparison is null** — each pair
+  is 1–1 on discordant instances, McNemar exact **p = 1.000**. At n=8 a paired
+  test needs 6 discordant pairs all one way to clear p<0.05, so this design could
+  never have detected a realistic capability difference; read the equality as
+  "no evidence of a difference", never as "proven equivalent".
+
+  **Cost is the axis where n=8 IS decisive.** `flash-solo` is cheaper on **8 of 8
+  instances** (sign test **p = 0.0078**), per-instance ratios spanning 12×–42×,
+  and **20.3× cheaper than `v32-solo` / 33.2× cheaper than `chain` on totals**.
+  The mechanism is in the token columns, not the rate card: V3.2 reported **0
+  cached tokens against 21.9 M of fresh input**, while Flash ran **75% cache-warm**
+  (5.6 M read against 1.9 M fresh). List rate accounts for ~2.8× of the gap; the
+  cache tier accounts for the rest.
+
+  The one caveat carried on the record: `chain`'s `montepy` row is attempt 3, run
+  on a **later engine build** than its seven siblings (see the correction below).
+  Its three fixes are machinery-only and change nothing the model is asked, but
+  the arm is not built from one homogeneous engine and the row says so.
+
+* **CORRECTION 2026-08-14: the `chain` pilot's headline was 4/8 and is 4/7.**
+  Two of its four failures were not capability failures, and nothing in the row
+  said so — both read `outcome: empty_patch`, `status: ok`, `reportable: 1`,
+  `audit_ok: 1`, `termination: terminal-state`, and both had `roles_run:
+  ["planner"]` with `steps_used: 2` of 18, i.e. the builder never ran. They
+  predate `_sssf_failure_classification`, so the classifier that exists for
+  exactly this never saw them. Re-classified **from the archived
+  `sssf-adw.log`, without re-running anything** — which is the reason those
+  artifacts are kept:
+
+  | row | classifier verdict | effect |
+  |---|---|---|
+  | `idaholab__montepy-933_interface` | `engine_crash` — unhandled `AttributeError` at `agent_pi.py:315` (a malformed stream line; fixed in the engine by `3a3779a`) | **refused from numerator AND denominator** — the arm was never asked the question |
+  | `keras-team__keras-22316` | `writes_scope_breach` — the planner wrote 18 paths outside `['specs/']` | **stays a counted failure**; only the reason is now on the record |
+
+  Each row carries a `reclassified_from_archive` block naming what it was, who
+  changed it and why. **The corrected paired reading is `chain` 4/7 vs
+  `v32-solo` 4/7 — level, where the published figures read 4/8 vs 5/8 and made
+  the chain look behind.** Discordant pairs 1–1 (`keras` solo-only,
+  `pyinfra` chain-only), McNemar exact **p = 1.000**: no signal either way, which
+  was also true before — only the point estimate moved.
+
+  **The general lesson, which is worth more than the correction.** The harness's
+  validity detectors were all aimed at the *provider* (`provider_starved`,
+  `budget_exhausted`, `empty_response_turns`) and none at the *engine*. A crash
+  that exits after writing a well-formed `result.json` looked exactly like a
+  model that could not solve the task. The audit for it is cheap and should be
+  standing: **any sssf row whose `roles_run` is a strict prefix of the roster's
+  non-skipped roles has not answered the question**, whatever its outcome says.
+
 * **A machinery-coverage run belongs on Flash, and belongs serially.** Its quota
   pools are both at 0 free, so it cannot be widened — but width was never what
   that kind of run needed, and at width 1 it completed the full graph with no 429
   and no empty-response turn (`empty_response_turns = 0` on all four roles).
+* **"Cannot be widened" was upgraded from inference to measurement on
+  2026-08-14, and the true ceiling is lower than anyone assumed: it is 1, not 4.**
+  A `flash-solo` sweep at `--workers 2` lost `alibaba__opensandbox-816` to
+  `429 … DeepSeek-V4-Flash in eastus2 … exceeded rate limit`. The row still
+  produced a 5,122-byte patch and a green self-verdict, and was refused only
+  because `pi`'s swallowed refusal left a fingerprint — one assistant turn with
+  empty content and all-zero usage (`empty_response_turns: 1`,
+  `provider_starved: true`). Re-run at `--workers 1`: clean, 360.2 s,
+  same `right_place_wrong_fix` outcome. **Two lessons.** (1) A rate-limited Flash
+  row is not a slow row — it is a row that measured the provider's queue and
+  looks exactly like a real result. (2) The guard that caught it is the
+  empty-turn detector, not the 429; anything driving `pi` that does not count
+  empty assistant turns will publish these silently. The ceiling is now declared
+  as `ArmSpec.max_workers=1` and clamped in `run_all` *after* the explicit
+  `--workers`, because the default is 4 and a README cannot bound a sweep.
 * **A cost comparison against it is not a capability comparison.** This is
   **one instance, one attempt**. It is a measurement of the price of the graph, not
   of the model's resolve rate, and `reportable = 1` on a single row licenses
   neither. Read it as the cost axis only.
 * **Cheap per token is not cheap per run.** V3.2 is 2.8× Flash's input rate and
-  cost **75× more in total** across this store, because the pilot re-sent every
+  cost **6.3× more in total** across this store ($52.12 vs $8.27 — it was 75× on
+  the 2026-08-13 store, before Flash hosted six arms), because the pilot re-sent every
   token at V3.2's full 0.580 while Flash re-read three quarters of its context at
   0.031. When a candidate deployment's cached rate is absent or equal to
   its input rate, price the run as if every re-send is fresh — for these graphs
@@ -432,15 +544,18 @@ What it means when the next run has to pick a model:
 
 ## See also
 
-* `bench/swebench/PRE-REGISTRATION-1.6.md` — the five arms, the five tables and
+* `bench/swebench/frozen/PRE-REGISTRATION-1.6.md` — the five arms, the five tables and
   the decision rules, fixed before the data existed. `report` emits exactly those
   tables; this store is the queryable substrate underneath them, not a substitute.
 * `bench/swebench/README.md` — the harness, the arms and the sweep history.
 * `/home/k/sssf/ai_docs/research/BENCHMARK-DECISION.md` — the thesis the sssf arms
   exist to test ("a cheap builder under a strong reviewer reaches the strong
   model's quality at a lower total cost than running the strong model alone") and
-  why the instrument is SWE-rebench. The `chain` vs `v32-solo` vs `gpt54-solo`
-  comparison this store holds is that experiment.
+  why the instrument is SWE-rebench. **NOTE: `gpt54-solo` was never run — it holds
+  zero rows.** The comparison the store actually realised is builder
+  DeepSeek-V4-Flash + reviewer gpt-5.4 against the bare DeepSeek-V3.2 builder —
+  **and it confirms the thesis: 6/8 each, at 4.0× lower $/task.** The planned
+  `chain` vs `v32-solo` vs `gpt54-solo` design was never the one that ran.
 * `/home/k/sssf/ai_docs/research/BENCHMARK-IMPLEMENTATION-BRIEF.md` — the
   execution plan for building and running it.
 * `POSTMORTEM-2026-08-11.md` — why the chain lost to one agent, and the four

@@ -6,14 +6,14 @@ works. That measures convergence, not correctness. This harness swaps in a
 hidden oracle the factory never sees.
 
 **Before running or reading a sweep, read
-[`PRE-REGISTRATION-1.6.md`](PRE-REGISTRATION-1.6.md).** It fixes the five arms,
+[`frozen/PRE-REGISTRATION-1.6.md`](frozen/PRE-REGISTRATION-1.6.md).** It fixes the five arms,
 the five tables and the decision rules *before* the data exists, so a run cannot
 be reported in whatever framing happens to flatter the result. `report` emits
 exactly those tables.
 
 ## Sweep 2 — 2026-08-10, the re-measured chain (current `results.md`)
 
-Pre-registered in [`PRE-REGISTRATION-2026-08-10.md`](PRE-REGISTRATION-2026-08-10.md)
+Pre-registered in [`frozen/PRE-REGISTRATION-2026-08-10.md`](frozen/PRE-REGISTRATION-2026-08-10.md)
 (read its Outcome section — the arm set changed mid-sweep by operator
 decision). Evidence: `results-archive/2026-08-10T21-53-14.959258Z/` — the
 directory named at the top of `results.md`, which `report --check`
@@ -62,6 +62,23 @@ The five readings, within the pre-committed rules:
 4. **claude-5 is flat at 79%** across both sweeps (CLI 2.1.220 → 2.1.226).
 5. **k=2 now exists on these cells.** Still short of the k ≥ 3 the suite
    demands before any delta is quoted as a result.
+
+> **NOT THE CURRENT CAMPAIGN.** A nine-arm sssf campaign ran 2026-08-14/15 (n=8,
+> k=1) and is recorded in [`BENCHMARK-RECORDS.md`](BENCHMARK-RECORDS.md), not here.
+> Headline: **builder DeepSeek-V4-Flash · reviewer gpt-5.4 → 6/8 at $0.472/task**,
+> matching the bare DeepSeek-V3.2 builder's 6/8 at 4.0× lower cost. That figure is
+> **owned by `/home/k/sssf/ai_docs/research/EXPERIMENTS.md`** — if it disagrees with
+> this line, that file wins. Full tables and the queries that re-derive them are
+> there, not here.
+>
+> **The verdict-precision figures in this file are CROSS-PREDICATE and must not be
+> quoted forward.** They compare `reviewer_done` against `tests_green` — two
+> different tests — so a reviewer-bearing arm is held to a strictly stronger
+> condition and its precision rises mechanically. The clean measurement is the
+> reviewer ladder in `BENCHMARK-RECORDS.md`, where all four arms share one
+> predicate: **50% / 50% / 63% / 83%** as the reviewer goes none → Flash → Kimi →
+> gpt-5.4. Read that way the reviewer *does* buy precision, and it scales with
+> reviewer strength.
 
 ## Sweep 3 — the factory replay, 2026-08-11 (CURRENT)
 
@@ -121,7 +138,7 @@ Criteria as pre-registered: primary 12/18 **missed** (10/18); empty-patch
 criterion **passes but is too narrow** to catch the oversized-diff loss;
 containment **fails**; the one-re-run allowance was **exceeded** (third launch,
 disclosed). Full evaluation:
-`PRE-REGISTRATION-2026-08-11-REPLAY.md`.
+`frozen/PRE-REGISTRATION-2026-08-11-REPLAY.md`.
 
 ### Sweep 2 — root causes of the 9 factory misses (evidence-read 2026-08-10)
 
@@ -223,7 +240,7 @@ uv run python bench/swebench_adapter.py report \
 > `cost_usd: 0.0` and was excluded as invalid, which is why its denominator is 16.
 > The later run re-ran exactly those three as `attempt: 2`. **Both archives are
 > committed to `origin/main`** as of `664bcd7d` (PR #232), which also amended
-> `PRE-REGISTRATION-1.6.md` to close the `attempt > 1` protocol question.
+> `frozen/PRE-REGISTRATION-1.6.md` to close the `attempt > 1` protocol question.
 >
 > **The tables below use the later report**, matching `STATUS.md`,
 > `README.md` and the committed `results.md` — which re-derives from the later
@@ -263,7 +280,7 @@ Paired McNemar exact, over instances where both arms are audited-valid:
 | **claude-4.8 vs claude-5** | **contamination** | 19 | 1 / 2 | **1.000** |
 
 1. **The chain shows no measurable lift.** 37% vs 44% on identical weights, prompt
-   and tools, p=0.625. `PRE-REGISTRATION-1.6.md` Rule 1 pre-committed the wording:
+   and tools, p=0.625. `frozen/PRE-REGISTRATION-1.6.md` Rule 1 pre-committed the wording:
    **our lift comes from using a competent agent loop, not from the chain.**
 2. **What produces the lift is TOOLING, not orchestration** — `openhands` 44% vs
    `bare` 6%, p=0.031, the only significant result among the three DeepSeek arms.
@@ -373,7 +390,7 @@ report's headline labels all read.
 
 A **sixth** arm, `solo-noreview`, was added later for one ablation and is **not
 part of the five-arm result above** — see "The solo-noreview arm" below and
-[`PRE-REGISTRATION-B1.md`](PRE-REGISTRATION-B1.md). It never appears in
+[`frozen/PRE-REGISTRATION-B1.md`](frozen/PRE-REGISTRATION-B1.md). It never appears in
 `results.md`.
 
 Each adjacent pair subtracts one thing, and only that thing:
@@ -546,6 +563,63 @@ uv run python bench/swebench_adapter.py report
 
 Run the two Claude arms sequentially, not in one sweep: they are the same
 subscription and the same rate limit.
+
+### Width is a property of the DEPLOYMENT, not of the sweep
+
+`--workers 4` is the provider-safe default for every arm, and it is wrong in both
+directions for the two live Azure DeepSeek deployments:
+
+| deployment | arms that touch it (by role) | measured safe width | evidence |
+|---|---|---:|---|
+| `DeepSeek-V3.2` | `v32-solo` (builder) · `chain` (planner + builder) | **≥ 24**, capped at 4 | burst test 2026-08-12: 8/16/24 concurrent, **0 rate-limited**, 7.8 M tok/min sustained against a nominal 1 M TPM |
+| `DeepSeek-V4-Flash` | `flash-solo` (builder) · `flash-chain` (builder) · `flash-kimichain` (builder) · `flash-selfchain` (builder **and** reviewer) · `full-sdlc` (all four roles) | **1** | 429 at width 2, clean at width 1 — 2026-08-14, below |
+| `Kimi-K2.7-Code` | `kimi-solo` (builder) · `flash-kimichain` (reviewer) | **1** | smallest deployment on the resource, capacity 100 — 2.5× tighter than Flash's 250, and Flash already 429s at width 2 |
+| `gpt-5.4` | `chain` (reviewer) · `flash-chain` (reviewer) | inherits the arm's cap | reviewer-only role; never the binding constraint |
+
+**SIX arms are serial-only, and the harness enforces it** — `flash-solo`,
+`flash-chain`, `flash-kimichain`, `flash-selfchain`, `full-sdlc` and `kimi-solo`.
+Each declares `max_workers=1`; `run_all` clamps an explicit `--workers` *down* to it
+and prints the change, so `--workers 4` silently becoming 1 is visible rather than
+surprising. You do not need to pass `--workers 1` — but passing anything else will
+not widen them.
+
+Two of those entries are easy to miss and were both wrong in an earlier version of
+this table:
+
+* **`flash-selfchain` puts TWO roles on Flash inside one run.** Even at width 1 the
+  arm is already two lanes against that deployment.
+* **`full-sdlc` routes all four roles to Flash**, making it the heaviest single
+  consumer in the set — and it carried **no cap at all** until 2026-08-15, so
+  `default_workers_for_arm` would have handed it the provider-safe 4. Fixed;
+  `tests/test_swebench_sssf_arms.py` now pins the full constrained set so a new arm
+  on a capped deployment cannot be registered without declaring its ceiling.
+
+The ceiling is per DEPLOYMENT, so the rule for a new arm is: **if any role routes to
+a capped deployment, the arm is capped**, regardless of which role it is.
+
+Why it is a hard ceiling and not a cautious guess: both Flash quota pools are at
+**100% used subscription-wide** (`GlobalStandard` 575/575,
+`DataZoneStandard` 250/250 — `az cognitiveservices usage list -l eastus2`), so
+there is no capacity to request. It moves only if quota is freed or a second
+region is deployed.
+
+Why width 2 is not merely slower but *invalid*: the 429 does not surface as an
+error. `pi` swallows the refusal and returns an **empty assistant turn with
+all-zero usage**, so the arm silently loses model calls and still produces a
+patch and a verdict. On 2026-08-14 `alibaba__opensandbox-816` came back
+`empty_response_turns: 1`, `provider_starved: true`, and the adapter refused it:
+
+> This row measures the provider's queue, not the arm: it is NOT reportable as a
+> capability result and must be re-run at lower concurrency.
+
+The same instance at `--workers 1` finished clean in 360.2 s. **A rate-limited
+Flash row is not a slow row, it is a row that quietly measured the wrong thing** —
+which is the whole reason the ceiling lives in the registry instead of in this
+paragraph. Budget ~8× the wall clock for an 8-instance Flash sweep.
+
+Note the asymmetry the table records: **V3.2 measured clean at 24-wide and is
+still capped at 4** by the global `_PROVIDER_SAFE_WORKERS`. `max_workers` can only
+lower an arm's width, never raise it, so that headroom is still unused.
 
 - **`--dry-run` is a pure preview.** It prints the work list and the projected
   spend, spawns nothing, writes nothing, costs nothing. Use it every time.
@@ -1167,8 +1241,8 @@ incrementally rather than at the end.
 
 `solo-noreview` is the `factory` arm with the **reviewer round-trip removed and
 nothing else**. Pre-registered in
-[`PRE-REGISTRATION-B1.md`](PRE-REGISTRATION-B1.md); result in
-[`RESULTS-B1-PHASE1A.md`](RESULTS-B1-PHASE1A.md). It is **not** part of the
+[`frozen/PRE-REGISTRATION-B1.md`](frozen/PRE-REGISTRATION-B1.md); result in
+[`frozen/RESULTS-B1-PHASE1A.md`](frozen/RESULTS-B1-PHASE1A.md). It is **not** part of the
 five-arm result at the top of this file and never enters `results.md`.
 
 It is `base="factory"` in `_ARMS`: the same `run_factory` driver, the same code
@@ -1394,7 +1468,7 @@ cheaper models ship, so an absolute score measures the model.
 ## The report: five tables, and what each column exists to prevent
 
 `report` emits Tables 1-5 in the shape fixed by
-`bench/swebench/PRE-REGISTRATION-1.6.md` **before** the run. Every cell comes
+`bench/swebench/frozen/PRE-REGISTRATION-1.6.md` **before** the run. Every cell comes
 from an archived artifact or prints `n/a` with a reason; no cell is filled by
 hand.
 
