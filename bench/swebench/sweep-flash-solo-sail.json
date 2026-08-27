@@ -1,0 +1,69 @@
+{
+  "arm": "flash-solo-sail",
+  "model": null,
+  "harness": "sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail Research, asap tier) \u2014 the Sail A/B's paired-sweep treatment",
+  "workers": 1,
+  "finished_at": "2026-08-27T22:09:37.964196+00:00",
+  "wall_clock_s": 18.8,
+  "stopped_reason": null,
+  "instances": 1,
+  "ok": 0,
+  "failed": 1,
+  "statuses": {
+    "run_failed": 1
+  },
+  "outcomes": {
+    "empty_patch": 1
+  },
+  "audited_valid": 1,
+  "audit_failed": 0,
+  "not_audited": 0,
+  "resolved": 0,
+  "resolved_but_run_failed": 0,
+  "resolved_but_audit_failed": 0,
+  "grade_parse_failed": 0,
+  "provider_starved": 1,
+  "engine_crashed": 0,
+  "writes_scope_breach": 0,
+  "empty_response_turns": 3,
+  "budget_exhausted": 0,
+  "retried_rows": 0,
+  "gradable": 1,
+  "tokens_in": 0,
+  "cache_read": 0,
+  "fresh_in": 0,
+  "tokens_out": 0,
+  "cost_usd": 0.0,
+  "cost_source": "price-table estimate",
+  "results": [
+    {
+      "instance_id": "alibaba__opensandbox-816",
+      "arm": "flash-solo-sail",
+      "model": null,
+      "status": "run_failed",
+      "error": "provider-empty-response: 3 assistant turn(s) came back with EMPTY content and all-zero usage from {'builder': 3}. The deployment refused those requests and pi swallowed the failure, so the arm silently lost that many model calls. This row measures the provider's queue, not the arm: it is NOT reportable as a capability result and must be re-run at lower concurrency. Reason(s) the provider gave: 401: {\"message\":\"Invalid API key\",\"type\":\"authentication_error\",\"param\":null,\"code\":\"invalid_api_key\"} Prior verdict, carried forward: termination 'terminal-state', no error recorded.",
+      "audit_ok": true,
+      "run_rc": 0,
+      "grade_rc": 0,
+      "audit_rc": 0,
+      "final_state": "\u2014",
+      "tokens_in": 0,
+      "cache_read": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0,
+      "factory_says_green": false,
+      "oracle_resolved": false,
+      "outcome": "empty_patch",
+      "attempt": 1,
+      "budget_exhausted": false,
+      "provider_starved": true,
+      "engine_crashed": false,
+      "writes_scope_breach": false,
+      "empty_response_turns": 3,
+      "models_used": [
+        "sail/deepseek/deepseek-v4-flash-0731"
+      ],
+      "sweep_wall_s": 18.8
+    }
+  ]
+}
