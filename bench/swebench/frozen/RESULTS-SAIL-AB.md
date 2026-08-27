@@ -343,3 +343,129 @@ all-cached, $0.3081 all-fresh] → **PASS**. Billed ≈ 35% of the computed
 upper bound — the workload is deeply cache-warm on Sail, and computed
 figures remain a safe upper bound throughout. Non-streaming rate check
 unchanged at 0.0%. P0.0 screenshot still outstanding. Phase 3 is a go.
+
+---
+
+## Phase 3 — 2026-08-27, STOPPED at row 3/24 (paired pass) — HARNESS BUG FOUND, not a Sail fault
+
+Environment for every row: `set -a; source /home/k/sssf/.env; source
+/home/k/software-factory/.env; set +a; export SWEBENCH_SANDBOX=1`, each row its
+own `run-all --arm <one> --instances <one> --workers 1` invocation, both repos
+clean and at the pinned commit pair before the first row.
+
+### Rows executed
+
+Store query: `SELECT instance_id, arm, attempt, reportable, oracle_resolved,
+cost_usd, empty_response_turns, provider_starved, termination, wall_clock_s
+FROM run_attempt WHERE arm IN ('flash-solo-az-r2','flash-solo-sail') ORDER BY
+ran_at`
+
+| # | instance | arm | attempt | reportable | oracle | cost | empty turns | provider_starved | termination | wall |
+|---:|---|---|---:|---:|---|---:|---:|---:|---|---:|
+| 1 | alibaba__opensandbox-816 | flash-solo-az-r2 | 1 | 1 | FAIL (right_place_wrong_fix) | $0.0841 | 0 | 0 | terminal-state | 412.1s |
+| 2a | alibaba__opensandbox-816 | flash-solo-sail | 1 | 0 (excluded) | provider-starved | $0.00 | 3 | 1 | provider-empty-response | 18.4s |
+| 2b | alibaba__opensandbox-816 | flash-solo-sail | repair (not ingested) | — | — | $0.00 | — | — | PREFLIGHT refusal, audit FAIL (missing artifact) | 0.3s |
+| 3 | getmoto__moto-9841 | flash-solo-sail | (not ingested) | — | — | $0.00 | — | — | PREFLIGHT refusal, audit FAIL (missing artifact) | 0.3s |
+
+Row 1 (Azure, floor-cell prior confirmed — `alibaba__opensandbox-816` was
+never solved by any prior arm either) is a clean, valid, reportable row.
+Row 2's first Sail attempt genuinely reached the provider and came back with 3
+empty-content, all-zero-usage turns — a real provider-empty-response event,
+correctly detected and excluded. Its one allowed repair, and the next row
+(a different cell, `getmoto__moto-9841`), both refused at PREFLIGHT before any
+clone or spend, with the message `PREFLIGHT: 1 of the 1 deployment(s) this
+arm's roster names did not answer a 512-token probe request: … (env:
+SAIL_RESEARCH_KEY is empty in the child environment)`.
+
+**This looked, at first, like the frozen stop condition "≥2 provider-starved
+rows in one pass → stop the pass" — two Sail rows in a row failed to reach the
+model. It is NOT that.** Diagnosis below.
+
+### Root cause: `pi` rewrote `~/.pi/agent/models.json` into a format the adapter's own preflight probe cannot parse
+
+Comparing the on-disk file against the backup `pi` itself wrote
+(`~/.pi/agent/models.json.bak-2026-08-27T180929`, sha256
+`f8ddda8b19046245fd35eb82fad378850ae3dd86f3438dfd1a0d29272e38c651` — the exact
+value `_PI_PRICE_TABLE_SHA256` still pins, and the sha row 1's own
+`price_table.sha256` recorded with `matches_pinned: true`) against the current
+file (sha256 `3b3d708d95f4fea20526f80775b828f7a7984efe2fde34ae68af6b6eb75fe5ba`
+— matches NEITHER any previously recorded pin) shows exactly three lines
+changed, all three `apiKey` fields:
+
+```
+-  "apiKey": "AZURE_API_KEY",      (×2, azure + azure-responses)
+-  "apiKey": "SAIL_RESEARCH_KEY",
++  "apiKey": "env:AZURE_API_KEY",  (×2)
++  "apiKey": "env:SAIL_RESEARCH_KEY",
+```
+
+`pi` itself resolves the `env:` prefix correctly when it authenticates for a
+real run — that's why row 1 (before the rewrite) and row 2's first Sail
+attempt (whichever of the two happened to run before or straddled the rewrite)
+still made real, correctly-authenticated network calls. But the bench
+adapter's OWN preflight reachability probe
+(`_sssf_probe_model`/`_pi_model_entry` in `bench/swebench_adapter.py`) does
+not strip that prefix: it takes `block.get("apiKey")` verbatim as the env var
+NAME and does `env.get(key_var)`. Once the file carries `"env:SAIL_RESEARCH_KEY"`,
+that becomes a literal (wrong) lookup key — `env.get("env:SAIL_RESEARCH_KEY")`
+— which is always `None`, regardless of whether the real credential is present
+and correct (verified present, 23 chars, immediately before each failing
+invocation). Reproduced directly, deterministically, twice, outside any
+run-all sweep, for both the sail AND azure model ids (see the diagnostic
+commit); a plain re-run of the identical failing invocation reproduces the
+identical failure (committed as its own record-file diff), ruling out a
+transient network blip or rate limit.
+
+**Consequence: this is not a Sail-specific or provider-side fault at all — it
+is a latent bug in the adapter's own preflight probe, newly triggered by `pi`'s
+own config-rewrite behavior mid-campaign, and it now blocks EVERY future row of
+BOTH arms** (Azure would fail identically the next time `run-all` is invoked,
+since its `apiKey` field carries the same `env:` prefix now). It also means the
+on-disk `models.json` sha (`3b3d708d…`) no longer matches the pinned
+`f8ddda8b…` that row 1 and Phases 1–2 validated against — a provenance
+mismatch (R8/P0.1 territory) that the preflight bug is currently masking
+(rows are refused before they'd reach the sha-pin check).
+
+**Not fixed by this task.** Fixing it means either restoring
+`~/.pi/agent/models.json` from the backup (outside git, but `pi` may rewrite it
+again on the next real invocation, in which case the bug recurs) or patching
+`bench/swebench_adapter.py`'s key-lookup to strip an `env:` prefix (a non-record
+code file — the campaign's own row-validity supersession rule voids pairing
+for every following row unless this is disclosed and sequenced correctly, the
+same way Phase 1's `compat.supportsStore` fix was). Both are judgment calls
+for the operator, not something this task improvised past the stop condition
+that fired.
+
+### Why the pass was stopped
+
+Two consecutive Sail-arm rows failed to reach the model in this pass (row 2's
+repair, row 3's fresh attempt) — the frozen stop condition ("≥2
+provider-starved rows in one pass → stop the pass and report") fired on its
+face, even though the underlying mechanism turned out to be a harness bug
+rather than provider throttling. Per instructions, stopped and reporting
+rather than improvising a fix or continuing past it.
+
+### Campaign ledger at stop
+
+Query: `SELECT ROUND(SUM(cost_usd),4) FROM run_attempt WHERE arm IN
+('flash-solo-sail','flash-solo-sail-p1','flash-solo-sail-wprobe','flash-solo-az-r2')`
+→ **$0.3896**, plus the $0.0328 pre-Phase-3 probe/diagnostic overhead already
+folded into that same sum via the `-p1`/`-wprobe` arm rows (Phases 1–2 are
+inside this query's arm list) → total spend to date is **$0.3896 of the $5.00
+operator-tightened cap**. Far from the cap; the stop is about validity, not
+budget.
+
+### Incidents this pass
+
+1. One genuine provider-empty-response event (`alibaba__opensandbox-816`,
+   `flash-solo-sail`, attempt 1): 3 swallowed turns, $0.00, correctly excluded
+   — disclosed, one repair attempted per policy.
+2. Two preflight refusals (the repair attempt and `getmoto__moto-9841`'s row),
+   root-caused to the adapter/`models.json` bug above, not ingested (no
+   `result.json` written), audit FAIL (missing artifact) is the expected shape
+   for an unauditable run.
+3. `models.json`'s sha no longer matches any recorded pin as of this stop —
+   flagged for the operator, not yet remediated.
+
+Nothing beyond row 3 of the paired pass has run. Rows 4–16 (paired pass) and
+the 8-row second Sail pass are entirely outstanding.
