@@ -3,18 +3,18 @@ Checking patch tests/test_kms/test_kms_cloudformation.py...
 Applied patch tests/test_kms/test_kms.py cleanly.
 Applied patch tests/test_kms/test_kms_cloudformation.py cleanly.
 SWEBENCH_SETUP: test_patch applied
-SWEBENCH_BASELINE_d3d13e67ee9b1802: OK (red as expected)
+SWEBENCH_BASELINE_647c661fcfee7587: OK (red as expected)
 Checking patch moto/kms/models.py...
 Checking patch moto/kms/responses.py...
 Applied patch moto/kms/models.py cleanly.
 Applied patch moto/kms/responses.py cleanly.
-SWEBENCH_APPLY_d3d13e67ee9b1802: OK
+SWEBENCH_APPLY_647c661fcfee7587: OK
 ..                                                                       [100%]
 =========================== short test summary info ============================
 PASSED tests/test_kms/test_kms.py::test_update_alias_using_arn_as_target_key_id
 PASSED tests/test_kms/test_kms.py::test_update_alias_same_target_key
-2 passed in 0.55s
-SWEBENCH_TALLY_d3d13e67ee9b1802: fail_to_pass 2 passed in 0.55s
+2 passed in 0.21s
+SWEBENCH_TALLY_647c661fcfee7587: fail_to_pass 2 passed in 0.21s
 [4 node outcomes for fail_to_pass -> grade-nodes.log]
 PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_3072-RSASSA_PSS_SHA_256]
 PASSED tests/test_kms/test_kms.py::test_sign_and_verify_digest_message_type_RSA[RSA_3072-RSASSA_PSS_SHA_384]
@@ -55,7 +55,7 @@ PASSED tests/test_kms/test_kms.py::test_verify_empty_signature
 PASSED tests/test_kms/test_kms.py::test_get_public_key
 PASSED tests/test_kms/test_kms.py::test_get_public_key_with_alias
 PASSED tests/test_kms/test_kms.py::test_ensure_key_can_be_verified_manually
-153 passed in 14.55s
-SWEBENCH_TALLY_d3d13e67ee9b1802: pass_to_pass 153 passed in 14.55s
+153 passed in 4.85s
+SWEBENCH_TALLY_647c661fcfee7587: pass_to_pass 153 passed in 4.85s
 [155 node outcomes for pass_to_pass -> grade-nodes.log]
-SWEBENCH_RESULT_d3d13e67ee9b1802: RESOLVED
+SWEBENCH_RESULT_647c661fcfee7587: RESOLVED

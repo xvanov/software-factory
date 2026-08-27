@@ -420,3 +420,39 @@ this value). Re-verified post-edit: the delete-sail-and-rehash recipe above
 still reproduces `fbab9ac0…c45a`, so no azure byte moved. Test suite green,
 including `test_the_sail_rate_card_is_the_one_discovered_pre_freeze` and the
 compat-boolean branch of the DeepSeek compat test.
+
+## Campaign row validity — supersession of the frozen P-1 sha rule (2026-08-27)
+
+The frozen pre-registration requires every campaign row to stamp the freeze
+commit (`71668e04…`) with a clean tree. Phase 0 proved that rule
+unsatisfiable as written, for three mechanical reasons:
+
+1. `_repo_state` counts ANY `git status --porcelain` line as dirty —
+   including untracked files — so the results artifact
+   (`frozen/RESULTS-SAIL-AB.md`), which must exist during the campaign,
+   would mark every row dirty.
+2. P0.2's selftest rewrites tracked artifacts (`selftest.json`,
+   `selftest-logs/*.log`) as a normal side effect.
+3. Every `run-all` invocation writes `sweep-<arm>.json` at sweep end, so a
+   multi-invocation campaign cannot hold one sha with a clean tree between
+   invocations.
+
+Frozen records are never edited; per the standing rule the frozen text is
+superseded HERE and linked back. **The superseding validity rule:** a campaign
+row is provenance-valid iff
+
+- its stamped `sssf` sha is exactly `eb9dcffd661c5228369cbab236a4ff13fe5fedff`, and
+- its stamped bench sha is `71668e04…` **or a descendant** whose cumulative
+  diff from `71668e04…` touches ONLY campaign-record files —
+  `bench/swebench/frozen/RESULTS-SAIL-AB.md`, `bench/swebench/selftest.json`,
+  `bench/swebench/selftest-logs/*`, `bench/swebench/sweep-flash-solo-az-r2.json`,
+  `bench/swebench/sweep-flash-solo-sail*.json`, and this file — and no code,
+  config, prompt, or registry file, and
+- the tree was CLEAN at stamp time (`dirty: false` in the row's provenance).
+
+Operationally: campaign-record files are committed after every `run-all`
+invocation, before the next one launches. Any commit touching any non-record
+file voids pairing for all rows that follow it, per the frozen spec's own
+engine-drift threat. The audit query that re-checks this:
+`git diff --name-only 71668e04..<row sha>` must be a subset of the record
+list above, for every distinct sha the campaign's rows carry.

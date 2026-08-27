@@ -1,10 +1,10 @@
 Checking patch keras/src/ops/function_test.py...
 Applied patch keras/src/ops/function_test.py cleanly.
 SWEBENCH_SETUP: test_patch applied
-SWEBENCH_BASELINE_f4240c122111b395: OK (red as expected)
+SWEBENCH_BASELINE_5ac63ed5b716ef0b: OK (red as expected)
 Checking patch keras/src/ops/function.py...
 Applied patch keras/src/ops/function.py cleanly.
-SWEBENCH_APPLY_f4240c122111b395: OK
+SWEBENCH_APPLY_5ac63ed5b716ef0b: OK
 ============================= test session starts ==============================
 platform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- /opt/conda/envs/testbed/bin/python
 cachedir: .pytest_cache
@@ -19,8 +19,8 @@ keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_te
 =========================== short test summary info ============================
 PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input
 PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_intermediate_tensor_input_chain
-============================== 2 passed in 0.10s ===============================
-SWEBENCH_TALLY_f4240c122111b395: fail_to_pass ============================== 2 passed in 0.10s ===============================
+============================== 2 passed in 0.03s ===============================
+SWEBENCH_TALLY_5ac63ed5b716ef0b: fail_to_pass ============================== 2 passed in 0.03s ===============================
 [4 node outcomes for fail_to_pass -> grade-nodes.log]
 ============================= test session starts ==============================
 platform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- /opt/conda/envs/testbed/bin/python
@@ -48,7 +48,7 @@ PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_empty_ou
 PASSED keras/src/ops/function_test.py::FunctionTest::test_function_with_unconnected_inputs
 PASSED keras/src/ops/function_test.py::FunctionTest::test_invalid_inputs_error
 PASSED keras/src/ops/function_test.py::FunctionTest::test_serialization
-============================== 8 passed in 0.21s ===============================
-SWEBENCH_TALLY_f4240c122111b395: pass_to_pass ============================== 8 passed in 0.21s ===============================
+============================== 8 passed in 0.09s ===============================
+SWEBENCH_TALLY_5ac63ed5b716ef0b: pass_to_pass ============================== 8 passed in 0.09s ===============================
 [10 node outcomes for pass_to_pass -> grade-nodes.log]
-SWEBENCH_RESULT_f4240c122111b395: RESOLVED
+SWEBENCH_RESULT_5ac63ed5b716ef0b: RESOLVED
