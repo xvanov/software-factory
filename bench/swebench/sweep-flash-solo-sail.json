@@ -3,7 +3,7 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail Research, asap tier) \u2014 the Sail A/B's paired-sweep treatment",
   "workers": 1,
-  "finished_at": "2026-08-27T22:10:25.852252+00:00",
+  "finished_at": "2026-08-27T22:12:32.386075+00:00",
   "wall_clock_s": 0.3,
   "stopped_reason": null,
   "instances": 1,
