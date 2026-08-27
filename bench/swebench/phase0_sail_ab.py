@@ -176,7 +176,14 @@ def cmd_p0_6_isolation(_args: argparse.Namespace) -> int:
         if wanted is None:
             print(f"  (skip) provider {name!r}: no routing rule declared for it here")
             continue
+        # pi's normalizer respells apiKey when it rewrites models.json —
+        # "VAR", "env:VAR" and "$VAR" all observed on 2026-08-27, all naming
+        # the same env var (see _env_var_of_api_key in the adapter). The
+        # routing check accepts any spelling.
         got = str(cfg.get("apiKey") or "")
+        if got.startswith("env:"):
+            got = got[len("env:"):]
+        got = got.lstrip("$")
         if got == wanted:
             ok = _pass(f"models.json routes {name!r} -> {wanted}") and ok
         else:

@@ -536,3 +536,35 @@ streaming path simply never sends it. So for every streamed Sail run:
   and rejected: it would strip usage from runs entirely to fix a field pi
   already handles; the vendor-side fix (report the details in streaming) is
   the right one — raised as a question for Sail.
+
+## Phase 3 stop at row 3/24 — pi's models.json normalizer vs the preflight (2026-08-27)
+
+Phase 3 stopped when two consecutive Sail rows failed BEFORE any model call.
+Root cause, verified twice at the byte level: **pi rewrites
+`~/.pi/agent/models.json` in place at startup** (the sandbox binds this one
+file into an otherwise blank $HOME, so sandboxed rows rewrite it too), and it
+respelled the three `apiKey` fields twice in ten minutes — `VAR` →
+`env:VAR` (18:09, backup left by pi, byte-sha exactly the pinned f8ddda8b) →
+`$VAR` (18:19). pi resolves both spellings internally (rows that reached the
+model were correctly authenticated), but the adapter preflight read the
+spelling as a literal env-var name, found nothing, and refused every row of
+BOTH arms with a false "key is empty".
+
+Fixes, all preflight/measurement-plumbing only — no byte any model sees is
+touched, so the one banked paired row (row 1, Azure, opensandbox) remains
+paired:
+
+1. `_env_var_of_api_key`: every apiKey read (adapter preflight, phase0 p0_6)
+   accepts all three observed spellings.
+2. `_canonical_price_table_sha256`: the price-table pin is now a hash of the
+   canonical content (apiKey spellings normalized before hashing), so pi's
+   respellings no longer move it while any rate/id/compat/baseUrl change
+   still does. Under the canonical hash the current file, pi's 18:09 backup,
+   and the Phase-1/2 pin are all **the same value, f8ddda8b…** — the pin
+   returns there and no recorded row's provenance shifts.
+3. The row-2b "repair" that hit this bug was a harness refusal, not a
+   provider event: cell (opensandbox, flash-solo-sail) keeps its one
+   disclosed repair, since its only genuine infrastructure loss is the
+   attempt-2a empty-turn event.
+
+Phase 3 resumes from row 2 (Sail, opensandbox) after this commit.

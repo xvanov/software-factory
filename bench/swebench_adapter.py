@@ -5901,6 +5901,25 @@ _PI_PRICE_TABLE = Path.home() / ".pi" / "agent" / "models.json"
 # Disclosed in SAIL-DISCOVERY.md and RESULTS-SAIL-AB.md; changed BEFORE any
 # paired Phase-3 row existed, so no pairing is voided. Recipe still reproduces
 # fbab9ac0…c45a — no azure byte moved.
+# MOVED BY PI ITSELF 2026-08-27T18:09, mid-Phase-3 of the Sail A/B: pi
+# rewrote the file in place, normalizing the three apiKey fields to
+# "env:"-prefixed spellings and nothing else — verified by a full semantic
+# diff against pi's own timestamped backup (models.json.bak-2026-08-27T180929),
+# whose sha equals the previous pin exactly, so the provenance chain is
+# unbroken: pinned f8ddda8b… == the backup, and the current file differs from
+# it in exactly {azure, azure-responses, sail}.apiKey. No rate, id, or compat
+# moved; every archived dollar figure stands. The pin caught an unauthorized
+# rewrite, which is the pin's whole job — but it also means THE PIN IS
+# FRAGILE against pi's normalizer: any future pi run may rewrite the file
+# again, and the sha must then be re-verified semantically, never blindly
+# re-pinned.
+# RESOLVED the same day by making the hash CANONICAL rather than byte-exact
+# (``_canonical_price_table_sha256``): apiKey spellings are normalized before
+# hashing, so pi's respellings no longer move the pin while any change to a
+# rate, id, compat flag, baseUrl or comment still does. Under the canonical
+# hash, the current file, pi's 18:09 backup, and the value Phases 1–2 ran
+# under are all the SAME hash — f8ddda8b… — so the pin returns to that value
+# and every recorded row stays consistent without a single re-pin.
 _PI_PRICE_TABLE_SHA256 = (
     # was fbab9ac067086c6a6d89925302a3e4c9e87b780100a82e59684a40c98687c45a,
     # then dd22d0f5270386daed59d7afde1269c3e02357e8608ff7752ddc44337643cf8a,
@@ -7862,6 +7881,52 @@ def _sssf_validate_roster(
     return None
 
 
+def _env_var_of_api_key(raw: Any) -> str:
+    """The env-var NAME an apiKey field denotes, whatever pi's spelling du jour.
+
+    pi's normalizer rewrites ``~/.pi/agent/models.json`` IN PLACE at startup,
+    and on 2026-08-27 it did so twice inside one campaign with two different
+    spellings — ``AZURE_API_KEY`` → ``env:AZURE_API_KEY`` at 18:09, then
+    ``$AZURE_API_KEY`` at 18:19 (different pi builds; the sandbox binds this one
+    file into an otherwise blank $HOME, so sandboxed rows rewrite it too). All
+    three spellings name the same environment variable; every reader in this
+    file must treat them as equal or a false "key is empty" refusal blocks
+    every arm at preflight — which is exactly how the Sail A/B's Phase 3
+    stopped at row 3/24.
+    """
+    name = str(raw or "")
+    if name.startswith("env:"):
+        name = name[len("env:"):]
+    return name.lstrip("$")
+
+
+def _canonical_price_table_sha256(raw: bytes) -> str:
+    """The price table's CONTENT hash, insensitive to pi's apiKey respellings.
+
+    A byte-hash of this file is a moving target: pi rewrites it at every
+    startup and is not consistent about the apiKey spelling (see
+    ``_env_var_of_api_key``), so a byte pin broke twice in one afternoon while
+    guarding nothing that had actually changed. The hash is therefore taken
+    over a canonical form — the parsed document with every provider's
+    ``apiKey`` normalized to the bare env-var name, re-serialized with
+    ``json.dumps(indent=2)`` — which still moves on ANY change to a rate, a
+    model id, a compat flag, a baseUrl, or a comment (everything that prices a
+    dollar or shapes a request), and holds still across spelling churn. Falls
+    back to the byte hash if the file is not JSON, so a corrupt table is still
+    loudly not-pinned.
+    """
+    try:
+        table = json.loads(raw)
+    except json.JSONDecodeError:
+        return hashlib.sha256(raw).hexdigest()
+    providers = table.get("providers")
+    if isinstance(providers, dict):
+        for config in providers.values():
+            if isinstance(config, dict) and "apiKey" in config:
+                config["apiKey"] = _env_var_of_api_key(config.get("apiKey"))
+    return hashlib.sha256(json.dumps(table, indent=2).encode()).hexdigest()
+
+
 def _sssf_price_table(models: list[str]) -> dict[str, Any]:
     """The rate block for every deployment named, PLUS the table's content hash.
 
@@ -7887,7 +7952,7 @@ def _sssf_price_table(models: list[str]) -> dict[str, Any]:
     except OSError as exc:
         out["error"] = f"unreadable: {exc}"
         return out
-    out["sha256"] = hashlib.sha256(raw).hexdigest()
+    out["sha256"] = _canonical_price_table_sha256(raw)
     out["matches_pinned"] = out["sha256"] == _PI_PRICE_TABLE_SHA256
     try:
         table = json.loads(raw)
@@ -9159,7 +9224,11 @@ def _sssf_probe_model(
     if not base:
         out["error"] = f"provider block for {model} declares no baseUrl"
         return out
-    key_var = str(block.get("apiKey") or _SSSF_API_KEY_VAR)
+    # The false "key is empty" this once produced refused every row of BOTH
+    # arms at preflight and stopped the Sail A/B's Phase 3 at row 3/24 — see
+    # _env_var_of_api_key for pi's spelling churn. Preflight-only code: it
+    # runs before any model call and cannot touch a byte a model sees.
+    key_var = _env_var_of_api_key(block.get("apiKey")) or _SSSF_API_KEY_VAR
     api_key = str(env.get(key_var) or "").strip()
     if not api_key:
         out["error"] = f"{key_var} is empty in the child environment"
