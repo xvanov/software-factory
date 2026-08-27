@@ -335,3 +335,11 @@ evidence only — never verdict or cost-ratio evidence.
 Boundary action per R2(b): operator hover reading at this boundary, recorded
 below when supplied; expected billed ∈ [all-cached ≈ $0.09, this upper
 bound $0.31], plus the P0.0 screenshot still outstanding.
+
+### Phase-2 boundary R2 reading (operator, 2026-08-27): PASS
+
+Dashboard hover: **$0.1079** total. Bounds check: $0.1079 ∈ [≈$0.09
+all-cached, $0.3081 all-fresh] → **PASS**. Billed ≈ 35% of the computed
+upper bound — the workload is deeply cache-warm on Sail, and computed
+figures remain a safe upper bound throughout. Non-streaming rate check
+unchanged at 0.0%. P0.0 screenshot still outstanding. Phase 3 is a go.
