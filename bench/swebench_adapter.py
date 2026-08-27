@@ -5882,9 +5882,18 @@ _PI_PRICE_TABLE = Path.home() / ".pi" / "agent" / "models.json"
 # deepseek-v4-pro 1.74/3.48/0.145, DeepSeek-V3.2 0.58/1.68/0.58, gpt-5.4-nano
 # 0.2/1.25/0.02, both codex Responses-API ids untouched. ``compat`` left UNSET on
 # the sail entry — P-2c's disclosed pre-freeze probe sets it, not this commit.
+# MOVED A FINAL TIME 2026-08-27 (P-2c → P-2d, same pre-registration): the sail
+# entry gained ``compat.supportsDeveloperRole: true`` — MEASURED, not assumed:
+# the P-2c reachability probe got HTTP 200 with the ``developer`` role sent
+# (12 in / 44 out, $0.000009 at the pinned rates, recorded as
+# ``preflight_probe_cost_usd`` in the campaign ledger). No rate moved; the
+# delete-sail-and-rehash recipe in SAIL-DISCOVERY.md still reproduces
+# fbab9ac0…c45a, so every archived dollar figure stands. This is the pin the
+# P-1 freeze binds to.
 _PI_PRICE_TABLE_SHA256 = (
-    # was fbab9ac067086c6a6d89925302a3e4c9e87b780100a82e59684a40c98687c45a
-    "dd22d0f5270386daed59d7afde1269c3e02357e8608ff7752ddc44337643cf8a"
+    # was fbab9ac067086c6a6d89925302a3e4c9e87b780100a82e59684a40c98687c45a,
+    # then dd22d0f5270386daed59d7afde1269c3e02357e8608ff7752ddc44337643cf8a
+    "eec3fa6889d33d5288b7ec8bcfc3c6ec3e2c4e2884a9f41cbfec30ab77a3ff6f"
 )
 
 # ``pi`` reads its Azure credential from this env var (models.json declares

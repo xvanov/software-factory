@@ -386,3 +386,37 @@ All four applied; re-verified below.
 
 All staging artifacts, the `.phase0-backups/` probe directory, and scratch
 files removed after verification.
+
+## P-2c — compat reachability probe (2026-08-27, the one disclosed pre-freeze paid call)
+
+Run via `_sssf_reachability_report(['sail/deepseek/deepseek-v4-flash-0731'], …)`
+with the live price table, `SAIL_RESEARCH_KEY` from `/home/k/sssf/.env`.
+
+- **Result: reachable, HTTP 200, `system_role_sent: "developer"`, non-empty
+  reply** — Sail's serving accepts the `developer` role, so
+  `compat.supportsDeveloperRole: true` was written to the sail entry in
+  `~/.pi/agent/models.json`. MEASURED, not assumed.
+- Usage: 12 input / 44 output / 0 cached tokens.
+  **`preflight_probe_cost_usd = $0.000009`** (12×0.09 + 44×0.18 per M),
+  re-derived through `_sssf_rederive_cost` with the roster-built rate table —
+  under the $0.01 cap. This constant enters the campaign ledger and R2's
+  computed side.
+- **Disclosed misfire, $0.00:** a first invocation used
+  `sail/deepseek-v4-flash-0731` (dropping the model id's own slash) and was
+  refused at the catalog layer (`provider 'sail' declares no deployment …`)
+  before any network call. The ledger counts attempts; this one cost nothing.
+- **Instrument note:** calling `_sssf_rederive_cost` with the RAW models.json
+  instead of the flattened `_sssf_price_table(models)` output returns $0.0 with
+  the model listed in `models_missing_a_rate` — disclosure, not discount,
+  working as designed. The run path builds the flattened table itself; only
+  standalone invocations can make this mistake.
+
+### P-2d — final sha re-pin (2026-08-27)
+
+The compat write moved the whole-file hash `dd22d0f5…3cf8a` →
+`eec3fa6889d33d5288b7ec8bcfc3c6ec3e2c4e2884a9f41cbfec30ab77a3ff6f`;
+`_PI_PRICE_TABLE_SHA256` re-pinned to it (the FINAL pin — P-1 freezes against
+this value). Re-verified post-edit: the delete-sail-and-rehash recipe above
+still reproduces `fbab9ac0…c45a`, so no azure byte moved. Test suite green,
+including `test_the_sail_rate_card_is_the_one_discovered_pre_freeze` and the
+compat-boolean branch of the DeepSeek compat test.

@@ -189,8 +189,26 @@ compat is resolved **before** the freeze, in this order:
    the Sail endpoint. Cost ~$0.000001, hard cap **$0.01**, recorded as
    `preflight_probe_cost_usd` and added to the campaign ledger and to R2's
    computed side. Set `compat.supportsDeveloperRole` from the result.
-4. **P-2d Re-pin `_PI_PRICE_TABLE_SHA256`. PENDING — interim pin only, FINAL
-   re-pin happens after P-2c** (note 17). This ordering is the one C2 set —
+   **RUN 2026-08-27 via `_sssf_reachability_report` on
+   `sail/deepseek/deepseek-v4-flash-0731`: HTTP 200, `system_role_sent:
+   developer`, reachable, non-empty reply — so `compat.supportsDeveloperRole:
+   true`, MEASURED. Usage 12 in / 44 out / 0 cached;
+   `preflight_probe_cost_usd = $0.000009` at the pinned rates (under the $0.01
+   cap). One earlier invocation misspelled the id (`sail/deepseek-v4-flash…`,
+   missing the model id's own slash) and was refused at the catalog layer for
+   $0.00 — disclosed here because the ledger counts attempts, not successes.
+   Full record: `SAIL-DISCOVERY.md` § P-2c.**
+4. **P-2d Re-pin `_PI_PRICE_TABLE_SHA256`. DONE 2026-08-27 — the FINAL pin.**
+   After P-2c wrote the measured `compat.supportsDeveloperRole: true`, the
+   whole-file hash moved to
+   `eec3fa6889d33d5288b7ec8bcfc3c6ec3e2c4e2884a9f41cbfec30ab77a3ff6f` and the
+   adapter constant was re-pinned to it. Re-verified after the compat edit:
+   the delete-sail-and-rehash recipe (SAIL-DISCOVERY.md) still reproduces the
+   original `fbab9ac0…c45a`, so the edit touched only the sail entry and every
+   archived dollar figure stands. **This is the pin P-1's freeze binds to.**
+   The interim history below is kept as the record of the ordering:
+   (was) PENDING — interim pin only, FINAL
+   re-pin happens after P-2c (note 17). This ordering is the one C2 set —
    rate card → models.json (rates + compat) → sha re-pin → registry →
    commit → freeze — and pinning before P-2c set compat would invert it:
    `compat` is still unset on the `sail` entry, so the hash below covers a
