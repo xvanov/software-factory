@@ -3,8 +3,8 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek-V4-Flash (Azure, fresh engine commit \u2014 the Sail A/B's control)",
   "workers": 1,
-  "finished_at": "2026-08-27T22:09:07.840872+00:00",
-  "wall_clock_s": 426.8,
+  "finished_at": "2026-08-27T22:34:28.742086+00:00",
+  "wall_clock_s": 236.5,
   "stopped_reason": null,
   "instances": 1,
   "ok": 1,
@@ -13,12 +13,12 @@
     "ok": 1
   },
   "outcomes": {
-    "right_place_wrong_fix": 1
+    "resolved": 1
   },
   "audited_valid": 1,
   "audit_failed": 0,
   "not_audited": 0,
-  "resolved": 0,
+  "resolved": 1,
   "resolved_but_run_failed": 0,
   "resolved_but_audit_failed": 0,
   "grade_parse_failed": 0,
@@ -29,15 +29,15 @@
   "budget_exhausted": 0,
   "retried_rows": 0,
   "gradable": 1,
-  "tokens_in": 218467,
-  "cache_read": 934400,
+  "tokens_in": 81312,
+  "cache_read": 559360,
   "fresh_in": 0,
-  "tokens_out": 16547,
-  "cost_usd": 0.0841,
+  "tokens_out": 13864,
+  "cost_usd": 0.0422,
   "cost_source": "price-table estimate",
   "results": [
     {
-      "instance_id": "alibaba__opensandbox-816",
+      "instance_id": "getmoto__moto-9841",
       "arm": "flash-solo-az-r2",
       "model": null,
       "status": "ok",
@@ -47,13 +47,13 @@
       "grade_rc": 0,
       "audit_rc": 0,
       "final_state": "\u2014",
-      "tokens_in": 218467,
-      "cache_read": 934400,
-      "tokens_out": 16547,
-      "cost_usd": 0.0841,
+      "tokens_in": 81312,
+      "cache_read": 559360,
+      "tokens_out": 13864,
+      "cost_usd": 0.0422,
       "factory_says_green": true,
-      "oracle_resolved": false,
-      "outcome": "right_place_wrong_fix",
+      "oracle_resolved": true,
+      "outcome": "resolved",
       "attempt": 1,
       "budget_exhausted": false,
       "provider_starved": false,
@@ -63,7 +63,7 @@
       "models_used": [
         "azure/DeepSeek-V4-Flash"
       ],
-      "sweep_wall_s": 426.8
+      "sweep_wall_s": 236.5
     }
   ]
 }
