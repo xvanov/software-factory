@@ -169,3 +169,55 @@ because the spec's bar is an attached screenshot/export, and a relayed reading
 — however honest — is not one. The operator has been asked to attach a
 screenshot of the hover tooltip; R2's reconciliation reports no
 billed-vs-computed number until it lands.
+
+---
+
+## Phase 1 — 2026-08-27, COMPLETE (two attempts, one disclosed repair)
+
+Arm `flash-solo-sail-p1`, instance `hkuds__openharness-217`, width 1,
+`SWEBENCH_SANDBOX=1`, docker mode broker. Store rows (query:
+`SELECT attempt, reportable, oracle_resolved, cost_usd, empty_response_turns,
+provider_starved, termination FROM run_attempt WHERE arm='flash-solo-sail-p1'`):
+
+| attempt | reportable | outcome | cost | empty turns | termination |
+|---:|---:|---|---:|---:|---|
+| 1 | 0 (excluded) | provider-starved | $0.00 | 3 | provider-empty-response — Sail 400s `store=false`; root cause, fix (`compat.supportsStore: false`), sha re-pin `eec3fa68…`→`f8ddda8b…`, and the disclosed pre-pairing baseline advance are recorded in `../SAIL-DISCOVERY.md` § "Phase 1, attempt 1" and commit `bc463f6b` |
+| 2 | 1 | **oracle RESOLVED, audit ok** | **$0.0302** | 0 | terminal-state |
+
+Phase-1 checks, all green on attempt 2:
+
+- **Synchronous streaming on the pinned tier works**: 14 model calls,
+  115.4 s wall (110.5 s in-run), no timeouts.
+- **R4 (transport)**: `empty_response_turns = 0` at width 1.
+- **R8 (model-id fidelity)**: trace-observed `sail/deepseek/deepseek-v4-flash-0731`
+  == pinned catalog id, builder-only roster (`role_usage` join, query above).
+- **Cost**: $0.0302 computed at pinned rates (318,492 fresh in / 8,292 out /
+  **0 cached**) — inside the $0.50 phase cap, at the top edge of the Azure
+  prior for this cell ($0.0154–0.0329). NOTE: Sail reported zero cached
+  tokens on this run; if that persists across Phase 3, Sail's effective
+  price advantage narrows for cache-heavy workloads and belongs in R6's
+  reading.
+- **Latency (M11 record, `latency_from_trace.py` on the attempt-2 run dir)**:
+  n=14 request→response intervals, mean 5.384 s, median 5.685 s, p90 8.520 s,
+  max 8.990 s. The queue-vs-generation split is not recoverable (known,
+  disclosed); this is the coarse per-call figure the tier confound note
+  allows.
+- The oracle result is an instrument-sanity point only: `hkuds` is a CEILING
+  cell (9/9 arms solve it) and `-p1` rows are never verdict evidence.
+
+**STOP, per the frozen phase table.** Next actions, in order: (1) the
+operator reads the dashboard hover for total usage no earlier than
+2026-08-28T21:00Z and attaches a screenshot — expected computed total
+$0.030209 ($0.000009 probe + $0.0302 row); R2's dollar leg is evaluated
+against it at the Phase-2 boundary. (2) Phase 2 (width probe) launches only
+after that reconciliation is recorded here.
+
+## Campaign ledger — after Phase 1
+
+| entry | amount |
+|---|---:|
+| P-2c probe | $0.000009 |
+| Phase 0 | $0.00 |
+| Phase 1 attempt 1 (excluded row, still money) | $0.00 |
+| Phase 1 attempt 2 | $0.0302 |
+| **Running total** | **$0.030209** of the $15.00 cap |
