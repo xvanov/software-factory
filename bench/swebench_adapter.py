@@ -136,8 +136,10 @@ import os
 import random
 import re
 import secrets
+import shlex
 import shutil
 import signal
+import socket
 import statistics
 import subprocess
 import sys
@@ -257,6 +259,19 @@ def _work_dir(instance_id: str, arm: str, *, fresh: bool = False) -> Path:
     return d
 
 
+def _oracle_tree_root() -> Path:
+    """Where trees holding the ANSWER live. A sibling of the scratch root, never a
+    child of it, so no agent's ``..`` walk can reach it.
+
+    ``SWEBENCH_ORACLE_ROOT`` overrides it for the same reasons
+    ``SWEBENCH_WORK_ROOT`` exists.
+    """
+    override = os.environ.get("SWEBENCH_ORACLE_ROOT")
+    if override:
+        return Path(override).expanduser()
+    return _work_root().parent / "swebench-oracle-trees"
+
+
 def _prepared_tree_dir(prefix: str) -> Path:
     """A fresh, UNGUESSABLE directory for a tree that will hold oracle material.
 
@@ -268,7 +283,30 @@ def _prepared_tree_dir(prefix: str) -> Path:
     ``mkdtemp`` suffix under the scratch root (so an arm cannot guess a sibling
     even if it goes looking), deleted by the caller the moment grading ends.
     """
-    base = _work_root() / "_prepared"
+    # NOT under ``_work_root()``. It used to be ``<work_root>/_prepared``, which is
+    # the SAME PARENT as every agent's working tree — so an unguessable suffix was
+    # the only thing between an agent and the answer, and `ls ../..` defeats an
+    # unguessable name. `0700` is no barrier either: every agent runs as the same
+    # uid as the harness.
+    #
+    # MEASURED 2026-08-14: a grading tree for `getmoto__moto-9841` — one of the live
+    # campaign's own instances — was found stranded at
+    # `<work_root>/_prepared/grade-getmoto__moto-9841-claude-5-zstru7yi`, 134 MB,
+    # with the oracle patch applied: `tests/test_kms/test_kms.py` +43 and
+    # `tests/test_kms/test_kms_cloudformation.py` +30, i.e. the hidden test bodies
+    # in plaintext. Reachable from a running agent's cwd with two `..`. It survived
+    # because the cleanup at the end of `grade` is straight-line code, so any
+    # exception, timeout or SIGTERM between mkdtemp and that line strands the tree
+    # (fixed below, with try/finally). No trail shows any agent reading it — 0
+    # occurrences of `_prepared` across every event log — so nothing is known to be
+    # exploited, and 669 stale entries were purged.
+    #
+    # Three detectors ALSO missed it, which is why the fix is structural rather than
+    # another pattern: `_ORACLE_BEARING_NAMES` lists file basenames, not this
+    # directory; `_probe_line_hits` looks for `oracle.json`/`manifest.json`/
+    # `bench/swebench`; and `_foreign_workdir_hits` requires the segment after
+    # `swebench-work/` to contain `__`, which `_prepared` does not.
+    base = _oracle_tree_root()
     base.mkdir(parents=True, exist_ok=True)
     return Path(tempfile.mkdtemp(prefix=prefix, dir=str(base)))
 
@@ -2961,8 +2999,32 @@ def default_workers_for_arm(arm: str) -> int:
     function takes the arm anyway so a future no-model arm (a replay, a fixture
     sweep) can opt into host width by name rather than by an operator remembering
     to pass ``--workers``.
+
+    An arm whose deployment cannot serve even the provider-safe default declares
+    its own ``max_workers`` and is clamped to it here (and again in ``run_all``,
+    which is what makes an explicit ``--workers`` unable to raise it).
     """
-    return min(_default_sweep_workers(), _PROVIDER_SAFE_WORKERS)
+    width = min(_default_sweep_workers(), _PROVIDER_SAFE_WORKERS)
+    return clamp_workers_for_arm(arm, width)
+
+
+def clamp_workers_for_arm(arm: str, workers: int) -> int:
+    """Lower ``workers`` to this arm's own ceiling, if it declares one.
+
+    MEASURED EVIDENCE for the one arm that declares it. ``flash-solo`` at
+    ``--workers 2`` on 2026-08-14 lost ``alibaba__opensandbox-816`` to
+    ``429 Your requests to DeepSeek-V4-Flash for DeepSeek-V4-Flash in eastus2
+    have exceeded rate limit``. ``pi`` swallows the refusal and returns an empty
+    assistant turn with all-zero usage, so the arm silently loses model calls and
+    the row measures the provider's queue rather than the arm — the adapter marks
+    it ``provider_starved`` and NOT reportable. Re-run of the same instance at
+    ``--workers 1`` completed clean in 360.2 s. Both Flash quota pools
+    (``GlobalStandard`` 575/575, ``DataZoneStandard`` 250/250) are at 100%
+    subscription-wide, so the ceiling cannot be lifted by asking for more; it
+    moves only when quota is freed or a second region is deployed.
+    """
+    ceiling = arm_spec(arm).max_workers
+    return workers if ceiling is None else max(1, min(workers, ceiling))
 
 
 def _build_bench_root(inst: dict[str, Any], repo: Path, root: Path) -> Path:
@@ -3553,7 +3615,7 @@ def _acceptance_author_ledger_rows(runs: list[Any]) -> int:
 # the `factory` arm and the `solo-noreview` ablation. Nothing else differs — same
 # driver, same story bytes, same dev persona, same routes, same sandbox, same
 # gates, same acceptance authoring, same grading. See
-# ``bench/swebench/PRE-REGISTRATION-B1.md``.
+# ``bench/swebench/frozen/PRE-REGISTRATION-B1.md``.
 #
 # Kept as a TABLE, and resolved through a FAIL-LOUD lookup, for the reason every
 # other per-arm lookup in this file is: the three that used to fall back silently
@@ -5270,6 +5332,39 @@ _SSSF_CHEAP = "azure/DeepSeek-V3.2"
 # cheapest weights is what makes it runnable at all.
 _SSSF_FLASH = "azure/DeepSeek-V4-Flash"
 
+# ── the 2026-08-14 model sweep ──────────────────────────────────────────────
+#
+# Four more weights, chosen by projecting each candidate's Azure retail rates onto
+# the MEASURED flash-solo token profile (1.87 M fresh in / 5.62 M cached / 135 K
+# out over 8 instances) rather than by comparing headline $/1M. On that profile:
+# Flash $0.58, nano $0.66, codex-mini $0.88, Kimi-K2.7 $3.39, V3.2 $4.57,
+# gpt-5.4 $8.11. The cached rate dominates, which is why grok-4-1-fast — cheapest
+# on paper at 0.20/0.50 — lands at 2.7x Flash: it publishes no cached meter.
+_SSSF_NANO = "azure/gpt-5.4-nano"
+
+# THE CODEX DEPLOYMENTS ANSWER ONLY THE RESPONSES API. `/openai/v1/chat/completions`
+# returns "The requested operation is unsupported." for gpt-5.1-codex-mini,
+# gpt-5.1-codex and gpt-5.3-codex alike — the same wall `sssf.azure.config.yaml`
+# records against gpt-5.3-codex. The fix is a SECOND pi provider over the same host
+# and key with `"api": "openai-responses"` (registered in ~/.pi/agent/models.json as
+# `azure-responses`), so the id carries the provider that can actually reach it.
+# Verified live 2026-08-14 through `pi -p` before this arm was registered.
+_SSSF_CODEX_MINI = "azure-responses/gpt-5.1-codex-mini"
+
+_SSSF_KIMI = "azure/Kimi-K2.7-Code"
+
+# THE SAIL A/B (``PRE-REGISTRATION-SAIL-AB-DRAFT.md``, added 2026-08-27). Same
+# family as ``_SSSF_FLASH`` — DeepSeek V4 Flash — served by a DIFFERENT provider,
+# so the roster value's provider half changes and its model half does not name
+# the same deployment: ``pi`` splits on the FIRST slash only, so
+# ``sail/deepseek/deepseek-v4-flash-0731`` is provider `sail`, model
+# `deepseek/deepseek-v4-flash-0731` (the catalog id itself contains a slash).
+# Rates 0.09 in / 0.18 out / 0.02 cache-read per 1M tokens, `asap` tier — the
+# ONLY tier this model publishes (see ``models.json``'s `sail` comment block and
+# ``SAIL-DISCOVERY.md``). NOT interchangeable with ``_SSSF_FLASH`` for cost or
+# verdict comparisons; that non-interchangeability is the entire experiment.
+_SSSF_FLASH_SAIL = "sail/deepseek/deepseek-v4-flash-0731"
+
 # Pinned IDENTICALLY for every role of every arm. The engine lets a roster set
 # this per agent, and the shipped Azure roster does (``high`` for planner and
 # reviewer, the default elsewhere) — which would mean the ``chain`` arm's
@@ -5369,6 +5464,97 @@ _SSSF_ROSTERS: dict[str, dict[str, str | None]] = {
         "reviewer": None,
         "documenter": None,
     },
+    # THE COST FLOOR. Structurally identical to ``v32-solo`` — builder only, every
+    # other role ``None`` — so the pair varies ONE thing, the weights, exactly as
+    # ``v32-solo``/``gpt54-solo`` already do. It exists because ``v32-solo`` is the
+    # arm the factory has to beat on dollars, and beating it by routing the same
+    # graph to a cheaper deployment is the first thing to rule in or out before any
+    # graph change is worth measuring. Flash's cached tier is real (see
+    # ``_SSSF_FLASH``), so the saving is expected to exceed the 2.8x/3x list-rate
+    # ratio; whether the weights hold the resolve rate is the open question and the
+    # only reason to spend on this arm.
+    "flash-solo": {
+        "planner": None,
+        "builder": _SSSF_FLASH,
+        "reviewer": None,
+        "documenter": None,
+    },
+    # ── the model sweep: same builder-only graph, four more weights ──────────
+    # Each is structurally identical to the three solo arms above, so the whole
+    # family varies in exactly one field and Table 3 prints "harness varies? no"
+    # across all of them.
+    "nano-solo": {
+        "planner": None,
+        "builder": _SSSF_NANO,
+        "reviewer": None,
+        "documenter": None,
+    },
+    "codexmini-solo": {
+        "planner": None,
+        "builder": _SSSF_CODEX_MINI,
+        "reviewer": None,
+        "documenter": None,
+    },
+    "kimi-solo": {
+        "planner": None,
+        "builder": _SSSF_KIMI,
+        "reviewer": None,
+        "documenter": None,
+    },
+    # THE ONE REVIEW CONFIGURATION NOBODY HAS RUN. The published literature's
+    # strongest review result is asymmetric — a STRONGER model reviewing a WEAKER
+    # model's draft gained +18.1 pp, the reverse LOST 8.6 pp, and self-review moved
+    # 0.0. Every reviewer this project has measured was same-tier or weaker than its
+    # writer, which is the arm on the wrong side of that asymmetry.
+    #
+    # NO PLANNER, deliberately. The `chain` arm varies planner AND reviewer against
+    # a solo arm, so its null result cannot attribute. This one differs from
+    # `flash-solo` in exactly one lane: the reviewer.
+    "flash-chain": {
+        "planner": None,
+        "builder": _SSSF_FLASH,
+        "reviewer": _SSSF_STRONG,
+        "documenter": None,
+    },
+    # THE REVIEWER LADDER. `flash-chain` bought +2 solves and took the green
+    # signal from 50% to 83% precision, for 5.9x `flash-solo`'s cost. Two things
+    # could explain that, and they have opposite consequences:
+    #
+    #   STRENGTH — only a frontier reviewer can find the bug, so the price is
+    #     the point and there is nothing to optimise.
+    #   INDEPENDENCE — any second pair of eyes that does not share the writer's
+    #     blind spots would do, and the price is mostly waste.
+    #
+    # These two arms separate them. Both are `flash-chain` with ONE lane moved,
+    # so the reviewer model is the only variable across all three:
+    #
+    #   flash-chain      reviewer gpt-5.4          2.50/15.00 per Mtok
+    #   flash-kimichain  reviewer Kimi-K2.7-Code   1.05/ 4.40   2.4x/3.4x cheaper
+    #   flash-selfchain  reviewer DeepSeek-V4-Flash 0.21/ 0.56  11.9x/26.8x cheaper
+    #
+    # SELF-REVIEW IS THE ONE EXPECTED TO FAIL, and it is worth running anyway
+    # because it is the null: the model that made the error is the least likely
+    # to catch it, since it holds the blind spot that caused it. The published
+    # asymmetry puts self-review at 0.0pp. If it nonetheless recovers most of
+    # the precision gain, the reviewer's value is procedural (a second pass at
+    # all) rather than a capability the arm is paying for.
+    #
+    # KIMI IS THE INTERESTING MIDDLE, not merely the cheaper one. It reaches 6/8
+    # SOLO — demonstrably capable enough to judge this work — while costing less
+    # than half of `_SSSF_STRONG`. It is also a different family from the
+    # builder, so unlike self-review it is genuinely independent.
+    "flash-kimichain": {
+        "planner": None,
+        "builder": _SSSF_FLASH,
+        "reviewer": _SSSF_KIMI,
+        "documenter": None,
+    },
+    "flash-selfchain": {
+        "planner": None,
+        "builder": _SSSF_FLASH,
+        "reviewer": _SSSF_FLASH,
+        "documenter": None,
+    },
     # THE COMPLETE GRAPH. Every other arm skips phases; this one skips NOTHING —
     # ``_sssf_skip_list`` returns ``[]`` for it, so ``adw_simple_sdlc.py`` runs all
     # 13 of its phases. It is the only arm that exercises:
@@ -5393,6 +5579,38 @@ _SSSF_ROSTERS: dict[str, dict[str, str | None]] = {
         "builder": _SSSF_FLASH,
         "reviewer": _SSSF_FLASH,
         "documenter": _SSSF_FLASH,
+    },
+    # ── the Sail A/B (PRE-REGISTRATION-SAIL-AB-DRAFT.md) ─────────────────────
+    # All four rosters below are STRUCTURALLY IDENTICAL to ``flash-solo`` —
+    # builder only, every other role ``None`` — because the treatment under test
+    # is the PROVIDER, and the harness/roster shape must be the one thing that
+    # does NOT vary between the Azure control and the three Sail arm ids. See
+    # ``_ARMS`` for why there are three Sail ids and one new Azure id rather than
+    # one shared id per provider: the store's first-valid-attempt selection rule
+    # would otherwise let a probe row win a cell over a real paired-sweep row.
+    "flash-solo-az-r2": {
+        "planner": None,
+        "builder": _SSSF_FLASH,
+        "reviewer": None,
+        "documenter": None,
+    },
+    "flash-solo-sail-p1": {
+        "planner": None,
+        "builder": _SSSF_FLASH_SAIL,
+        "reviewer": None,
+        "documenter": None,
+    },
+    "flash-solo-sail-wprobe": {
+        "planner": None,
+        "builder": _SSSF_FLASH_SAIL,
+        "reviewer": None,
+        "documenter": None,
+    },
+    "flash-solo-sail": {
+        "planner": None,
+        "builder": _SSSF_FLASH_SAIL,
+        "reviewer": None,
+        "documenter": None,
     },
 }
 
@@ -5646,8 +5864,27 @@ _PI_PRICE_TABLE = Path.home() / ".pi" / "agent" / "models.json"
 # archived dollar figure stands. ``tests/test_benchmark_regressions.py`` now asserts
 # the flag for EVERY DeepSeek deployment in the table, because this is the second
 # time a new deployment inherited the bug by omission.
+# MOVED 2026-08-14 by ADDING deployments, not by repricing one. `models.json`
+# gained `gpt-5.4-nano` on the existing `azure` provider and a second provider,
+# `azure-responses`, carrying `gpt-5.1-codex-mini` and `gpt-5.1-codex` — the codex
+# deployments answer ONLY `/responses`, so a chat-completions provider cannot reach
+# them at all (verified live: `/chat/completions` returns "The requested operation
+# is unsupported."). The hash is taken over the whole file, so adding an entry moves
+# it while changing no existing rate. Verified before re-pinning: gpt-5.4 still
+# 2.50/15.00/0.25, V3.2 still 0.58/1.68, Flash still 0.21/0.56/0.031 — every
+# archived dollar figure stands.
+# MOVED AGAIN 2026-08-27 (P-2b, ``PRE-REGISTRATION-SAIL-AB-DRAFT.md``) by ADDING a
+# third provider, `sail`, carrying one model (`deepseek/deepseek-v4-flash-0731`,
+# rates 0.09/0.18/0.02, confirmed by two FREE metadata/docs calls — see
+# ``bench/swebench/SAIL-DISCOVERY.md``). Re-verified before this re-pin, every
+# existing azure/azure-responses id and rate byte-for-byte unchanged: gpt-5.4
+# 2.50/15.00/0.25, DeepSeek-V4-Flash 0.21/0.56/0.031, Kimi-K2.7-Code 1.05/4.4/0.21,
+# deepseek-v4-pro 1.74/3.48/0.145, DeepSeek-V3.2 0.58/1.68/0.58, gpt-5.4-nano
+# 0.2/1.25/0.02, both codex Responses-API ids untouched. ``compat`` left UNSET on
+# the sail entry — P-2c's disclosed pre-freeze probe sets it, not this commit.
 _PI_PRICE_TABLE_SHA256 = (
-    "15f60fcf9fbb9a9429ab25e65507334cc602cd424490d03dfb9d0659d6976aea"
+    # was fbab9ac067086c6a6d89925302a3e4c9e87b780100a82e59684a40c98687c45a
+    "dd22d0f5270386daed59d7afde1269c3e02357e8608ff7752ddc44337643cf8a"
 )
 
 # ``pi`` reads its Azure credential from this env var (models.json declares
@@ -5690,7 +5927,7 @@ class ArmSpec(NamedTuple):
 
     ``harness`` and ``model`` are BOTH load-bearing: an arm is a (harness,
     model set) pair, and no number from this bench may be quoted with either
-    half omitted (see ``bench/swebench/PRE-REGISTRATION-1.6.md``). The report
+    half omitted (see ``bench/swebench/frozen/PRE-REGISTRATION-1.6.md``). The report
     prints both inline on every headline row for exactly that reason.
     """
 
@@ -5712,6 +5949,18 @@ class ArmSpec(NamedTuple):
     # rows stay on disk as the "before" evidence, but the report segregates
     # them — see ``_report_rows``. A superseded key is not a peer arm.
     superseded_by: str | None = None
+    # A HARD width ceiling for this arm, when its deployment cannot serve the
+    # provider-safe default. ``None`` => bounded by ``_PROVIDER_SAFE_WORKERS``
+    # like every other arm.
+    #
+    # This exists because ``_PROVIDER_SAFE_WORKERS`` is GLOBAL and a quota is
+    # PER-DEPLOYMENT. A doc saying "run this arm serially" is not a bound: the
+    # default is 4, so the next operator to type ``run-all --arm flash-solo``
+    # without ``--workers 1`` repeats the same wasted run. The ceiling is
+    # applied to the explicit ``--workers`` too — an override cannot raise it,
+    # because the number it would be overriding is a fact about the deployment
+    # rather than a conservative guess about the host.
+    max_workers: int | None = None
 
 
 def _arm(**kw: Any) -> ArmSpec:
@@ -5735,7 +5984,7 @@ _ARMS: dict[str, ArmSpec] = {
         has_chain=True,
     ),
     # PLAN.md B.1 Phase 1a — the reviewer ablation, pre-registered in
-    # ``bench/swebench/PRE-REGISTRATION-B1.md``. The SAME chain driver
+    # ``bench/swebench/frozen/PRE-REGISTRATION-B1.md``. The SAME chain driver
     # (``base="factory"``) with the reviewer round-trip removed and nothing else:
     # ``_FACTORY_DRIVER_MODES`` gives it ``{dev}`` instead of ``{dev, review}``
     # and ``tests_green`` instead of ``reviewer_done``. Same story bytes, same
@@ -5929,6 +6178,39 @@ _ARMS: dict[str, ArmSpec] = {
         cost_source=_COST_PRICE_TABLE,
         has_chain=True,
     ),
+    # The cost floor. Registered AFTER ``v32-solo`` so no published arm's position
+    # in ``_ARM_NAMES`` moves.
+    #
+    # ``harness_id`` is SHARED with ``v32-solo`` and ``gpt54-solo``, and that is the
+    # whole point: all three are the same graph — builder only, everything else
+    # skipped — so Table 3's "harness varies?" must print "no" across the trio and
+    # the only variable left is the weights.
+    #
+    # ``default_hours`` is the shared 0.25 for the same reason its siblings carry it
+    # (the 5400 s wall clock binds first). Note the sweep guard reads it to PROJECT
+    # spend, so a per-arm value here would make the guard's refusal depend on queue
+    # order rather than on the money.
+    "flash-solo": _arm(
+        name="flash-solo",
+        base="sssf",
+        harness="sssf ADW, builder only, on DeepSeek-V4-Flash",
+        harness_id="sssf-solo-builder",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        # SERIAL ONLY, and measured — not inferred from the quota header.
+        # See ``clamp_workers_for_arm`` for the 429 that established it. This is
+        # the only arm in the table that cannot run at the provider-safe 4, so it
+        # is also the only one that declares a ceiling; the sweep is ~8x longer in
+        # wall clock and that is the price of a reportable row.
+        max_workers=1,
+    ),
     # THE WHOLE GRAPH, on the cheapest deployment. See ``_SSSF_ROSTERS`` for what
     # only this arm reaches; the roster is four roles on ``_SSSF_FLASH`` with
     # ``skip_phases: []``.
@@ -5961,6 +6243,232 @@ _ARMS: dict[str, ArmSpec] = {
         # ``_sssf_green_state``, which derives that from the roster rather than from
         # this flag.
         has_chain=True,
+        # SERIAL, like every other arm on this deployment. This was missing until
+        # 2026-08-15 and it is the worst place for the omission: all FOUR roles
+        # route to `_SSSF_FLASH`, so this arm puts more load on the 250-unit Flash
+        # deployment per run than any other, while `default_workers_for_arm` would
+        # have handed it the provider-safe default of 4. `flash-solo` measured a
+        # hard 429 at width 2 on that same deployment, and the resulting row is not
+        # a slow row — it carries a real patch and a green self-verdict and is
+        # refused only by the empty-turn detector.
+        max_workers=1,
+    ),
+    # ── the 2026-08-14 model sweep ──────────────────────────────────────────
+    # All four share the solo arms' harness_id where the graph is the same, so the
+    # only variable across the family is the weights. `flash-chain` gets its own,
+    # because a reviewer IS a different harness.
+    "nano-solo": _arm(
+        name="nano-solo",
+        base="sssf",
+        harness="sssf ADW, builder only, on gpt-5.4-nano",
+        harness_id="sssf-solo-builder",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+    ),
+    "codexmini-solo": _arm(
+        name="codexmini-solo",
+        base="sssf",
+        harness="sssf ADW, builder only, on gpt-5.1-codex-mini (Responses API)",
+        harness_id="sssf-solo-builder",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+    ),
+    # Capacity 100 on GlobalStandard — the SMALLEST deployment on the resource,
+    # 2.5x tighter than Flash's 250, and Flash already 429s at width 2. Serial by
+    # declaration rather than by an operator remembering.
+    "kimi-solo": _arm(
+        name="kimi-solo",
+        base="sssf",
+        harness="sssf ADW, builder only, on Kimi-K2.7-Code",
+        harness_id="sssf-solo-builder",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        max_workers=1,
+    ),
+    "flash-chain": _arm(
+        name="flash-chain",
+        base="sssf",
+        harness="sssf ADW, builder on DeepSeek-V4-Flash, reviewer on gpt-5.4",
+        harness_id="sssf-build-review",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        max_workers=1,
+    ),
+    # Registered AFTER `flash-chain` so no existing arm's index moves. Both are
+    # serial: `flash-selfchain` drives Flash from two roles at once and Flash
+    # already 429s at width 2, and `flash-kimichain` inherits Kimi's tighter TPM.
+    "flash-kimichain": _arm(
+        name="flash-kimichain",
+        base="sssf",
+        harness="sssf ADW, builder on DeepSeek-V4-Flash, reviewer on Kimi-K2.7-Code",
+        harness_id="sssf-build-review",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        max_workers=1,
+    ),
+    "flash-selfchain": _arm(
+        name="flash-selfchain",
+        base="sssf",
+        harness="sssf ADW, builder and reviewer both on DeepSeek-V4-Flash",
+        harness_id="sssf-build-review",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        max_workers=1,
+    ),
+    # ── the Sail A/B (PRE-REGISTRATION-SAIL-AB-DRAFT.md, P-2d) — APPENDED, so no
+    # published arm's position in ``_ARM_NAMES`` moves. ──────────────────────
+    #
+    # FOUR entries, not two, and the reasons are in the pre-registration's
+    # "Why THREE Sail arm ids and a NEW Azure id" note: the benchmark store
+    # selects the FIRST VALID ATTEMPT BY ``ran_at`` per (instance, arm), so one
+    # shared Sail id would let the Phase-1 compat probe and the Phase-2 width
+    # probe's rows become the SELECTED rows for R3/R6 in every later query.
+    # ``flash-solo-sail-p1`` and ``flash-solo-sail-wprobe`` are probe arms whose
+    # rows are never verdict or cost-ratio evidence; the first rows ever written
+    # under ``flash-solo-sail`` are Phase 3's. And fresh Azure rows under the OLD
+    # ``flash-solo`` id would lose first-valid selection to the 2026-08-14 rows
+    # and mix two engine builds inside one arm, so ``flash-solo-az-r2`` is its
+    # own registry entry — ``flash-solo``'s rows stay untouched as the prior.
+    #
+    # ALL FOUR declare ``default_cost_usd=0.50`` LITERALLY — not
+    # ``_SSSF_DEFAULT_COST_USD`` (6.00) — because that constant is the whole-
+    # graph fallback and these are all builder-only, and not
+    # ``_SSSF_DEFAULT_COST_USD``'s sibling either: 0.50 is ~3x the most
+    # expensive measured ``flash-solo`` cell, a fail-safe-upward guess for a
+    # provider with zero measured rows on this harness, chosen and pre-declared
+    # in the pre-registration itself rather than derived here.
+    "flash-solo-az-r2": _arm(
+        name="flash-solo-az-r2",
+        base="sssf",
+        harness="sssf ADW, builder only, on DeepSeek-V4-Flash (Azure, fresh "
+                "engine commit — the Sail A/B's control)",
+        harness_id="sssf-solo-builder",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=0.50,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        # SAME ceiling as ``flash-solo``, same deployment, same measured 429 at
+        # width 2 — this is not a new finding, it is the same fact restated for
+        # a new registry entry so the guard cannot be bypassed by arm id.
+        max_workers=1,
+    ),
+    "flash-solo-sail-p1": _arm(
+        name="flash-solo-sail-p1",
+        base="sssf",
+        harness="sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail "
+                "Research, asap tier) — Phase 1 compat/tier probe, ONE row, "
+                "never verdict or cost-ratio evidence",
+        harness_id="sssf-solo-builder",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=0.50,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        # Width 1, same as the paired sweep — Phase 1 exists to confirm the tier
+        # accepts plain synchronous streaming at all, not to measure width.
+        max_workers=1,
+    ),
+    "flash-solo-sail-wprobe": _arm(
+        name="flash-solo-sail-wprobe",
+        base="sssf",
+        harness="sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail "
+                "Research, asap tier) — Phase 2 WIDTH probe, never verdict or "
+                "cost-ratio evidence",
+        harness_id="sssf-solo-builder",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=0.50,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        # ═══ max_workers=4, DELIBERATELY, AND ONLY HERE ═══════════════════════
+        # Every other arm in this table — including this one's own paired-sweep
+        # sibling ``flash-solo-sail`` — is capped at the provider-safe or a
+        # measured serial ceiling. This one is the SOLE exception because
+        # MEASURING WIDTH IS ITS WHOLE JOB: Phase 2 walks 1 -> 2 -> 4 watching
+        # ``empty_response_turns``/``provider_starved``/429 (and Sail's
+        # documented 529, per ``docs.sailresearch.com/rate-limits.md`` — see
+        # SAIL-DISCOVERY.md) signatures, and cannot do that capped at 1. A row
+        # from this arm id is WIDTH EVIDENCE ONLY — R5, never R3 or R6 — and the
+        # arm id (not a ``--workers`` flag an operator could forget) is what
+        # keeps a wide, possibly-starved row from ever being read as a verdict
+        # or a cost figure. Do not raise this on any OTHER arm by analogy.
+        max_workers=4,
+    ),
+    "flash-solo-sail": _arm(
+        name="flash-solo-sail",
+        base="sssf",
+        harness="sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail "
+                "Research, asap tier) — the Sail A/B's paired-sweep treatment",
+        harness_id="sssf-solo-builder",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=0.50,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        # Width 1, matching the Azure control's hard ceiling — Phase 3 compares
+        # at equal width regardless of what Phase 2 found clean, per the
+        # pre-registration's Phase 3 row ("both at width 1 regardless of Phase
+        # 2 (comparability with the Azure control, which is hard-capped at 1)").
+        max_workers=1,
     ),
 }
 
@@ -7417,6 +7925,44 @@ def _sssf_child_env() -> tuple[dict[str, str], str | None]:
     # ``uv run`` builds the script's own ephemeral venv; a VIRTUAL_ENV inherited
     # from this harness's venv makes it warn and can shadow the child's deps.
     env.pop("VIRTUAL_ENV", None)
+    # ── AN UNRELATED PROJECT'S VIRTUALENV IS NOT A CLEAN INTERPRETER ──────────
+    #
+    # MEASURED, 2026-08-14, and it is a cross-arm contamination channel, not a
+    # tidiness point. ``.bashrc`` puts ``/home/k/sacrifice/backend/.venv/bin``
+    # FIRST on PATH, so every agent shell command that ran a bare ``python3`` got
+    # that venv's interpreter and its site-packages. Three benchmark-derived
+    # editable installs had accumulated there from the Aug-2/3 sweeps —
+    # ``exstruct.pth`` -> ``…__exstruct-113__bare/repo/src``, a keras finder ->
+    # ``…__keras-22316__factory``, and a pyinfra copy installed from
+    # ``…__pyinfra-1665__bare`` — so on those three instances an agent's
+    # ``import`` resolved into ANOTHER ARM'S TREE.
+    #
+    # Observed end to end: ``harumiweb__exstruct-113 | flash-chain`` ran
+    # ``python3 -c "import exstruct; print(exstruct.__file__)"`` and got
+    # ``…__exstruct-113__bare/repo/src/exstruct/__init__.py``, then grepped that
+    # tree. Its local verification was reading the ``bare`` arm's code.
+    #
+    # The GRADE was never at risk — the oracle runs in docker against the mounted
+    # tree — but the agent's own feedback loop was not independent of another arm,
+    # which is enough to disqualify a row as a measurement.
+    #
+    # So the child's PATH drops every ``…/.venv/bin`` entry. The ADW does not need
+    # one: it is launched through ``uv run`` with PEP-723 dependencies and builds
+    # its own ephemeral environment, ``pi`` lives under the node prefix, and the
+    # quality tools resolve off the ordinary PATH. What the agent gets instead is
+    # the system interpreter, which no benchmark run has ever installed into.
+    path_entries = env.get("PATH", "").split(os.pathsep)
+    kept = [e for e in path_entries if e and not e.rstrip("/").endswith("/.venv/bin")]
+    stripped = [e for e in path_entries if e and e not in kept]
+    if stripped:
+        env["PATH"] = os.pathsep.join(kept)
+        # Recorded, not silent: an environment difference between two rows is
+        # exactly the kind of thing that must be in the provenance rather than in
+        # somebody's memory of which day they ran it.
+        env["SWEBENCH_PATH_STRIPPED"] = os.pathsep.join(stripped)
+    # Belt-and-braces for the same channel: never let a user site-packages
+    # directory re-introduce what PATH no longer points at.
+    env["PYTHONNOUSERSITE"] = "1"
     problem = (
         None
         if env.get(_SSSF_API_KEY_VAR, "").strip()
@@ -7427,6 +7973,873 @@ def _sssf_child_env() -> tuple[dict[str, str], str | None]:
         )
     )
     return env, problem
+
+
+# --------------------------------------------------------------------------- #
+# PHYSICAL ISOLATION — one mount+pid namespace per run (opt-in, OFF by default)
+# --------------------------------------------------------------------------- #
+#
+# WHAT IS STILL OPEN WITHOUT THIS. Three contamination channels have been closed
+# by construction already — the venv-on-PATH leak (``_sssf_child_env``), the
+# oracle trees moved out of ``_work_root()`` (``_oracle_tree_root``), and the
+# shared ``/tmp`` (``TMPDIR`` per run, ``run_sssf``). All three were closed by
+# arranging the FILESYSTEM more carefully. None of them stops the agent's bash
+# tool, which is unconfined and runs as the same uid as this harness, from simply
+# naming a path:
+#
+#   * ``cat ~/.cache/swebench-work/<other-instance>__<other-arm>/repo/…`` — another
+#     arm's working tree, i.e. another arm's solution;
+#   * ``cat bench/swebench/oracle.json.z`` and ``bench/swebench/manifest.json`` —
+#     THE ANSWER KEY. ``_ORACLE_FIELDS`` (fail_to_pass, pass_to_pass, patch,
+#     test_patch) is exactly what the hidden suite grades on;
+#   * ``sqlite3 bench/swebench/benchmarks.db`` — every published row;
+#   * ``cat bench/swebench_adapter.py`` — this file, which describes every guard
+#     including the audit predicates, so a reader can arrange not to trip them;
+#   * writes anywhere uid 1000 can write, including ``/home/k/sssf/adws`` (the
+#     engine that is measuring it) and other arms' trees.
+#
+# MEASURED, and this is why a namespace and not another audit rule: ``ps -eo args``
+# on this host, taken while writing this, printed the FULL problem statement and the
+# work-dir path of the ``harumiweb__exstruct-113 | kimi-solo`` run to any process on
+# the machine. An agent does not have to guess a sibling path — the process table
+# hands it over, and no path-naming audit predicate sees a ``ps``.
+#
+# Detection is already in place (a row that NAMED a foreign work dir is refused)
+# and it is not prevention: it only sees what appeared on the command side of a
+# recorded event, so a read done inside a heredoc, a python one-liner, or via ``ps``
+# is invisible to it.
+#
+# WHAT THIS MACHINE CAN ACTUALLY ENFORCE, measured 2026-08-14 (all tests run as
+# uid 1000, no root):
+#
+#   * ``bwrap`` 0.9.0 at /usr/bin/bwrap, NOT setuid — so it depends entirely on
+#     unprivileged user namespaces. Those work here: ``/proc/sys/user/
+#     max_user_namespaces`` = 126451, no ``kernel.unprivileged_userns_clone``
+#     restriction (that sysctl does not exist on this 6.12 kernel) and no
+#     ``apparmor_restrict_unprivileged_userns``. ``bwrap --unshare-user`` returns 0.
+#     WORKS.
+#   * ``unshare -Urm`` + ``mount -t tmpfs`` inside: WORKS (same userns capability,
+#     but bwrap is the maintained wrapper for exactly this, so it is what is used).
+#   * ``systemd-run --user`` with ``ProtectHome=yes`` (``ls /home/k`` → Permission
+#     denied), ``ReadOnlyPaths=`` (write → EROFS), ``InaccessiblePaths=`` (read →
+#     Permission denied) and ``PrivateTmp=yes``: ALL WORK unprivileged. Rejected
+#     only because the mount set has to be an ALLOW-list — the deny-list shape of
+#     ``InaccessiblePaths`` means every new secret has to be remembered and added,
+#     and the thing being defended against is precisely the path nobody thought of.
+#   * ``docker``: available, and grading already uses it. Rejected as the isolation
+#     mechanism for the ENGINE because membership of the ``docker`` group is
+#     equivalent to root on this host (see the broker below), so putting the agent
+#     on the other side of a socket it can already reach buys nothing.
+#   * ``sudo``: NOT available for this. ``sudo -n true`` → "a password is required";
+#     the passwordless entries are four ``systemctl`` verbs and one disk-clean
+#     script. So "run each arm as a different uid" is NOT implementable here.
+#   * POSIX ACLs (``setfacl`` present): USELESS for this threat. Every run is uid
+#     1000 and so is the harness; a file's owner can reset its own ACL, and these
+#     files are all owned by uid 1000.
+#   * ``nsjail``, ``firejail``: NOT INSTALLED. ``chroot``: present but needs root.
+#
+# So: BUBBLEWRAP, with an allow-list mount set. What it gives, in one sentence: the
+# child gets a fresh, empty root filesystem, and the ONLY paths that exist in it are
+# the ones named below — a path that is not mounted does not fail with EACCES, it
+# does not exist at all, so there is nothing to escalate to and nothing for a
+# ``..`` walk to land on.
+#
+# WHAT MUST STAY REACHABLE OR THE RUN CANNOT WORK AT ALL. Enumerated, because a
+# sandbox that is missing one of these does not fail loudly, it fails as a mystery
+# arm that scores 0:
+#
+#   1. THE NETWORK, unrestricted. ``pi`` calls the Azure model endpoint over TLS and
+#      ``uv run`` resolves PEP-723 dependencies from PyPI on a cold cache. So NO
+#      ``--unshare-net``: DNS, ``/etc/resolv.conf`` and ``/etc/ssl`` all stay.
+#   2. ``uv`` (/home/k/.local/bin), its python toolchain
+#      (/home/k/.local/share/uv) and its cache (/home/k/.cache/uv, READ-WRITE —
+#      ``uv run`` builds the ADW's ephemeral venv in there).
+#   3. ``pi`` (/home/k/.npm-global) and ``node`` (/usr/bin, part of ``/usr``), plus
+#      ``~/.pi/agent/models.json``, which ``adw_modules/agent_pi.py:23`` reads.
+#   4. THE ENGINE: ``/home/k/sssf/adws`` (the ADW and its prompt library) and
+#      ``/home/k/sssf/.env`` (``adw_modules/utils.py:13`` calls ``load_dotenv()``,
+#      which resolves upward from that file, i.e. to the engine repo's own .env).
+#      Both READ-ONLY.
+#   5. THE RUN'S OWN TREE, read-write, AT ITS REAL PATH. Not a rewritten path: the
+#      test command every arm is handed is literally ``docker run --rm -v "$PWD":…``
+#      (``instance_test_command``), so ``$PWD`` inside the sandbox has to be a path
+#      dockerd can resolve on the host.
+#   6. DOCKER, for that graded test command. This is the hard one — see the broker.
+#   7. A git identity. Satisfied already: ``_clone`` writes ``user.email``/
+#      ``user.name`` into the clone's LOCAL config (see ``_clone``), so an empty
+#      tmpfs ``$HOME`` with no ``~/.gitconfig`` still commits.
+#
+# WHAT IT DOES NOT ISOLATE, stated so nobody reads more into a green test than is
+# there:
+#
+#   * THE ENGINE SOURCE IS STILL READABLE. ``/home/k/sssf/adws`` has to be mounted
+#     because the engine executes out of it in the same namespace as the agent it
+#     supervises. Read-only, so the engine can no longer be TAMPERED WITH mid-run
+#     (it could be before), but an agent that wants to read the ADW still can. It is
+#     not oracle material; the answer key is not in there.
+#   * ``~/.cache/uv`` IS SHARED AND WRITABLE across concurrent runs, because that is
+#     where ``uv`` builds environments. An arm that poisons a wheel in that cache
+#     reaches its siblings. Unchanged from today, and now the ONLY writable path
+#     shared between two live runs apart from the ledger db.
+#   * THE MODEL ENDPOINT IS REACHABLE, so a determined agent can exfiltrate to it.
+#     Nothing short of ``--unshare-net`` plus an allow-listing proxy touches that,
+#     and the run cannot work without the endpoint.
+#   * IT IS NOT A SECURITY BOUNDARY AGAINST A KERNEL EXPLOIT. It is a boundary
+#     against a coding agent following a plausible-looking shortcut, which is the
+#     thing that actually contaminates measurements.
+
+_SANDBOX_ENV = "SWEBENCH_SANDBOX"
+_SANDBOX_BWRAP = "/usr/bin/bwrap"
+# The one knob that turns the docker broker off again, for an operator debugging the
+# sandbox itself. ``raw`` binds the real socket, which re-opens the escape the broker
+# exists to close; it is spelled out rather than boolean so it cannot be set by
+# accident and so it shows up in the provenance as the word ``raw``.
+_SANDBOX_DOCKER_ENV = "SWEBENCH_SANDBOX_DOCKER"
+_SANDBOX_DOCKER_MODES = ("broker", "raw", "none")
+# WHERE THE BROKER SOCKET APPEARS INSIDE THE NAMESPACE. A constant, and short: an
+# AF_UNIX address is capped at 108 bytes and a work-dir path plus a file name already
+# reaches 99 on one of the pinned instances (see ``_SandboxDockerBroker.start``).
+# ``/run`` is a private tmpfs in the sandbox, so this name collides with nothing.
+_SANDBOX_BROKER_SOCK_IN_SANDBOX = "/run/swebench-docker-broker.sock"
+_SANDBOX_BROKER_LOG_NAME = "docker-broker.log"
+_SANDBOX_BIN_NAME = "sandbox-bin"
+# One request's line, capped. The graded command is ~600 bytes; 256 KiB is room for
+# any plausible ``bash -lc`` payload and a bound on a client that never sends a
+# newline.
+_SANDBOX_BROKER_MAX_REQUEST = 256 * 1024
+
+
+def _sandbox_requested() -> bool:
+    """Is per-run physical isolation switched on?
+
+    OFF unless ``SWEBENCH_SANDBOX`` is one of ``1/true/yes/on``. Deliberately an
+    environment variable and not a CLI flag: ``run-all`` spawns each ``run`` as a
+    child process (``_bench_subprocess``) and a child inherits the environment, so
+    one export covers a whole sweep with no argument forwarding to get wrong. And
+    OFF BY DEFAULT because a campaign is normally in flight when this file changes:
+    an unset variable has to reproduce today's behaviour byte for byte.
+    """
+    return os.environ.get(_SANDBOX_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sandbox_docker_mode() -> str:
+    """How the sandboxed child reaches dockerd. ``broker`` (default), ``raw``, ``none``."""
+    mode = os.environ.get(_SANDBOX_DOCKER_ENV, "").strip().lower() or "broker"
+    return mode if mode in _SANDBOX_DOCKER_MODES else "broker"
+
+
+_SANDBOX_PROBE: tuple[bool, str | None] | None = None
+
+
+def _sandbox_probe() -> tuple[bool, str | None]:
+    """Does bwrap actually work here? ``(ok, problem)``. Cached for the process.
+
+    PROBED, not assumed from ``os.path.exists``. bwrap on this host is not setuid
+    (``-rwxr-xr-x``), so it can only build a namespace if unprivileged user
+    namespaces are permitted — and whether they are is a kernel/AppArmor policy
+    question with at least three separate switches, two of which do not exist as
+    files on this kernel. The only honest test is to make one.
+    """
+    global _SANDBOX_PROBE
+    if _SANDBOX_PROBE is not None:
+        return _SANDBOX_PROBE
+    if not Path(_SANDBOX_BWRAP).exists():
+        _SANDBOX_PROBE = (False, f"{_SANDBOX_BWRAP} is not installed")
+        return _SANDBOX_PROBE
+    try:
+        proc = subprocess.run(
+            [_SANDBOX_BWRAP, "--unshare-user", "--ro-bind", "/", "/", "/bin/true"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _SANDBOX_PROBE = (False, f"bwrap probe failed to run: {type(exc).__name__}: {exc}")
+        return _SANDBOX_PROBE
+    if proc.returncode != 0:
+        _SANDBOX_PROBE = (
+            False,
+            "bwrap cannot create a user namespace here (rc "
+            f"{proc.returncode}): {(proc.stderr or proc.stdout).strip()[:300]}",
+        )
+        return _SANDBOX_PROBE
+    _SANDBOX_PROBE = (True, None)
+    return _SANDBOX_PROBE
+
+
+def _sandbox_ledger_dir() -> Path:
+    """Where the engine's shared ledger db goes when the sandbox is on.
+
+    ``_SSSF_SHARED_DB`` normally lives at ``bench/swebench/runs/sssf-bench.db`` —
+    i.e. in the SAME DIRECTORY as ``manifest.json`` and ``oracle.json.z``, and
+    beside every other arm's run dir. The child has to write that db (it is the
+    fallback source for the spend guard, ``_sssf_live_cost``), and a sandbox that
+    mounted ``bench/swebench/runs`` to make that possible would be handing back the
+    directory it is trying to withhold.
+
+    Binding the single db FILE is not an option either: sqlite in WAL mode creates
+    ``-wal``/``-shm`` beside it, those would land on the sandbox's private tmpfs,
+    and two concurrent runs each with a private WAL over one shared db file is
+    corruption, not isolation.
+
+    So under the sandbox the ledger moves to a sibling of the scratch root — same
+    reasoning as ``_oracle_tree_root``, one directory that holds nothing secret and
+    can be mounted read-write by every run at once. NOTE FOR OPERATORS: the engine's
+    live UI reads the db by path, so with the sandbox on it must be pointed here.
+    """
+    return _work_root().parent / "swebench-sssf-ledger"
+
+
+# ── the docker channel, which is the whole difficulty ────────────────────────────
+#
+# THE PROBLEM, stated bluntly: uid 1000 is in the ``docker`` group (``id`` shows
+# ``999(docker)``), and a process that can reach ``/var/run/docker.sock`` can run
+# ``docker run -v /:/host alpine cat /host/home/k/software-factory/bench/swebench/
+# oracle.json.z``. That is root-equivalent, it reads the answer key, and it defeats
+# every mount in the list above in one line. A sandbox that binds the raw docker
+# socket is not isolation; it is a sandbox with a documented hole in the floor.
+#
+# But the run cannot work without docker, because the test command handed to every
+# arm IS a ``docker run`` (``instance_test_command``): the clone has no dependencies
+# installed, so the agent's only way to execute a test is inside the instance's
+# image with its tree mounted.
+#
+# So the socket is NOT bound, and what the sandbox gets instead is a ``docker``
+# executable on its PATH that forwards an ARGV to a broker running in this process,
+# outside the namespace, which validates it against an allow-list before running the
+# real client. Two properties make this hold rather than merely look like it holds:
+#
+#   * THE ENFORCEMENT IS THE ABSENCE OF THE SOCKET, not the PATH order. An agent
+#     that ignores the shim and runs ``/usr/bin/docker`` directly gets "cannot
+#     connect to the Docker daemon", because there is no socket anywhere in its
+#     mount namespace. The shim is the way to get work done, not the fence.
+#   * THE ALLOW-LIST IS TOTAL. Every flag has to be declared in
+#     ``_SANDBOX_DOCKER_FLAGS`` as boolean or value-taking; an undeclared flag is
+#     refused. This is what stops the classic bypass where a mis-parsed flag value
+#     is mistaken for the image name — an unknown token can never reach that
+#     decision, because the parse refuses first.
+#
+# WHAT THE BROKER STILL DOES NOT COVER, recorded honestly:
+#   * stdin is not forwarded to the container. Nothing in the graded path pipes into
+#     ``docker run`` (no ``-i``), but an agent that tries will see EOF.
+#   * a container the agent starts is owned by dockerd, so ``_kill_tree`` cannot
+#     reach it — unchanged from today, where the agent runs docker directly.
+#   * the bind-source check resolves symlinks and then hands the RESOLVED path to
+#     dockerd, which removes the obvious race; an agent that can replace a
+#     directory component between the check and dockerd's own resolution has a
+#     narrow TOCTOU left. Racing dockerd is a different class of effort from
+#     ``cat``.
+
+# Every ``docker run`` flag the graded command needs, plus the handful an agent
+# plausibly reaches for, and NOTHING ELSE. ``True`` means the flag takes a value.
+#
+# The refusals are the point, so the notable absences are named here rather than
+# left to inference: ``--privileged``, ``--cap-add``, ``--device``,
+# ``--security-opt``, ``--pid``, ``--ipc``, ``--uts``, ``--userns``, ``--cgroupns``,
+# ``--sysctl``, ``--gpus``, ``--group-add``, ``-d/--detach``, ``--restart``,
+# ``--volumes-from`` and ``--mount`` are all UNDECLARED and therefore refused.
+# ``--mount`` specifically: it is a comma-separated key=value grammar rich enough
+# that validating it is its own bug surface, and ``-v`` already covers the graded
+# command. ``--env-file`` is refused because the file would be read by the real
+# client in THIS process, on the host, outside the namespace — a one-flag arbitrary
+# host-file read.
+_SANDBOX_DOCKER_FLAGS: dict[str, bool] = {
+    "--rm": False,
+    "--init": False,
+    "--read-only": False,
+    "-t": False,
+    "--tty": False,
+    "-i": False,
+    "--interactive": False,
+    "-q": False,
+    "--quiet": False,
+    "-v": True,
+    "--volume": True,
+    "-w": True,
+    "--workdir": True,
+    "-e": True,
+    "--env": True,
+    "-u": True,
+    "--user": True,
+    "--entrypoint": True,
+    # ``--name`` is ABSENT on purpose even though it is harmless-looking. Container
+    # names are a single global namespace owned by dockerd, so one arm naming a
+    # container is one arm able to make a SIBLING arm's ``docker run`` fail with
+    # "name is already in use" — a cross-run interference channel with no filesystem
+    # path for any audit to notice, and the graded command never uses it.
+    "--network": True,
+    "--net": True,
+    "--platform": True,
+    "--tmpfs": True,
+    "--label": True,
+    "-l": True,
+    "-m": True,
+    "--memory": True,
+    "--cpus": True,
+    "--pull": True,
+}
+# Clustered short booleans (``-it``) are expanded against this set; a cluster
+# containing anything else is refused rather than guessed at.
+_SANDBOX_DOCKER_SHORT_BOOLS = frozenset("tiq")
+# ``host`` is absent on purpose: a container in the host network namespace can reach
+# every service bound to loopback on this machine, including anything a sibling run
+# happens to be serving.
+_SANDBOX_DOCKER_NETWORKS = frozenset({"none", "bridge", "default"})
+_SANDBOX_DOCKER_MOUNT_OPTS = frozenset({"ro", "rw"})
+
+
+def _sandbox_docker_verdict(
+    argv: list[str],
+    *,
+    tree: Path,
+    images: frozenset[str],
+) -> tuple[list[str] | None, str | None]:
+    """Validate one brokered docker argv. ``(rewritten_argv, refusal)``.
+
+    Exactly one of the two is ``None``. Pure — no filesystem writes, no subprocess —
+    so the whole policy is testable at $0, which is the only way this is worth
+    having: an isolation rule that is only exercised by a live campaign is a rule
+    nobody has checked.
+
+    ``tree`` is the run's own work dir; every bind source has to resolve inside it.
+    ``images`` is the instance's own image (``_image_for``) and nothing else — an
+    arm has no reason to run any other image, and pinning it means a brokered
+    ``docker run`` cannot become a general-purpose container escape even if the flag
+    table above is later loosened by mistake.
+    """
+    if not argv:
+        return None, "empty argv"
+    root = str(tree.resolve())
+
+    def _inside(raw: str) -> str | None:
+        """The resolved bind source, or None when it escapes ``tree``."""
+        if not raw.startswith("/"):
+            # A relative path or a NAMED VOLUME. Named volumes live in dockerd's own
+            # storage, shared by every container on the host, i.e. a cross-run bus
+            # with no filesystem path for any audit to notice.
+            return None
+        resolved = os.path.realpath(raw)
+        if resolved == root or resolved.startswith(root + os.sep):
+            return resolved
+        return None
+
+    sub = argv[0]
+    rest = argv[1:]
+    if sub == "version":
+        return ["docker", "version", *rest], None
+    if sub == "pull":
+        if len(rest) != 1 or rest[0] not in images:
+            return None, (
+                f"pull is limited to this instance's own image {sorted(images)}; "
+                f"got {rest}"
+            )
+        return ["docker", "pull", rest[0]], None
+    if sub == "image":
+        if not rest or rest[0] != "inspect":
+            return None, "only `docker image inspect` is brokered"
+        bad = [ref for ref in rest[1:] if ref not in images]
+        if bad or len(rest) < 2:
+            return None, (
+                f"image inspect is limited to {sorted(images)}; got {rest[1:]}"
+            )
+        return ["docker", "image", "inspect", *rest[1:]], None
+    if sub != "run":
+        return None, (
+            f"subcommand {sub!r} is not brokered; the sandbox allows run, pull, "
+            "image inspect, version"
+        )
+
+    out: list[str] = ["docker", "run"]
+    i = 0
+    image: str | None = None
+    while i < len(rest):
+        tok = rest[i]
+        i += 1
+        if image is not None:
+            out.append(tok)  # the container's own command — not our business
+            continue
+        if not tok.startswith("-") or tok == "-":
+            if tok not in images:
+                return None, (
+                    f"image {tok!r} is not this instance's image; the sandbox "
+                    f"brokers only {sorted(images)}"
+                )
+            image = tok
+            out.append(tok)
+            continue
+        name, sep, inline = tok.partition("=")
+        if name not in _SANDBOX_DOCKER_FLAGS:
+            if (
+                not sep
+                and name.startswith("-")
+                and not name.startswith("--")
+                and len(name) > 2
+                and all(ch in _SANDBOX_DOCKER_SHORT_BOOLS for ch in name[1:])
+            ):
+                out.extend(f"-{ch}" for ch in name[1:])
+                continue
+            return None, (
+                f"flag {name!r} is not on the sandbox's docker allow-list (see "
+                "_SANDBOX_DOCKER_FLAGS); refused rather than guessed at"
+            )
+        takes_value = _SANDBOX_DOCKER_FLAGS[name]
+        if not takes_value:
+            if sep:
+                return None, f"flag {name!r} takes no value, got {tok!r}"
+            out.append(name)
+            continue
+        if sep:
+            value = inline
+        else:
+            if i >= len(rest):
+                return None, f"flag {name!r} is missing its value"
+            value = rest[i]
+            i += 1
+        if name in {"-v", "--volume"}:
+            parts = value.split(":")
+            if len(parts) not in (2, 3):
+                return None, f"unparseable bind {value!r}"
+            src, dst = parts[0], parts[1]
+            opts = parts[2] if len(parts) == 3 else ""
+            if opts and opts not in _SANDBOX_DOCKER_MOUNT_OPTS:
+                return None, f"bind option {opts!r} is not allowed"
+            resolved = _inside(src)
+            if resolved is None:
+                return None, (
+                    f"bind source {src!r} is outside this run's own tree {root}. "
+                    "This is the refusal that stops `-v /:/host` reading the oracle "
+                    "store through dockerd."
+                )
+            if not dst.startswith("/"):
+                return None, f"bind target {dst!r} must be absolute"
+            value = ":".join([resolved, dst, *([opts] if opts else [])])
+        elif name in {"-u", "--user"}:
+            allowed = {str(os.getuid()), f"{os.getuid()}:{os.getgid()}"}
+            if value not in allowed:
+                return None, (
+                    f"--user {value!r} is refused; the sandbox allows only "
+                    f"{sorted(allowed)}, so a container cannot write root-owned "
+                    "files into the mounted tree"
+                )
+        elif name in {"--network", "--net"}:
+            if value not in _SANDBOX_DOCKER_NETWORKS:
+                return None, (
+                    f"--network {value!r} is refused; allowed: "
+                    f"{sorted(_SANDBOX_DOCKER_NETWORKS)}"
+                )
+        elif name == "--tmpfs":
+            if not value.split(":")[0].startswith("/"):
+                return None, f"--tmpfs {value!r} must name an absolute path"
+        out.extend([name, value])
+    if image is None:
+        return None, "no image in `docker run`"
+    return out, None
+
+
+class _SandboxDockerBroker:
+    """A unix socket outside the namespace that runs allow-listed docker argvs.
+
+    One per run. The socket does NOT live in the work dir, even though that is the
+    one tree the sandbox has mounted — see ``_SANDBOX_BROKER_SOCK_IN_SANDBOX`` for
+    the 108-byte reason. It lives in a private ``mkdtemp`` on the host and is
+    bind-mounted to a short fixed path inside the namespace, so it is reachable from
+    this run's sandbox and from nowhere else.
+
+    Every request and every verdict is appended to ``docker-broker.log`` in the work
+    dir. That file is the provenance for "this row's container activity", which a
+    ``ps``-based or shell-history-based reconstruction never was.
+    """
+
+    def __init__(
+        self,
+        *,
+        tree: Path,
+        images: frozenset[str],
+        timeout_s: int,
+    ) -> None:
+        self.tree = tree
+        self.images = images
+        self.timeout_s = timeout_s
+        self.sock_dir: Path | None = None
+        self.sock_path: Path | None = None
+        self.log_path = tree / _SANDBOX_BROKER_LOG_NAME
+        self.allowed = 0
+        self.refused = 0
+        self._srv: socket.socket | None = None
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+
+    # -- lifecycle ---------------------------------------------------------- #
+    def start(self) -> None:
+        # ── WHY NOT ``<work>/docker-broker.sock`` ────────────────────────────────
+        #
+        # AF_UNIX addresses are capped at 108 bytes by the kernel, path included, and
+        # this harness's work dirs are long: ``/home/k/.cache/swebench-work/
+        # line__line-bot-sdk-python-981_interface__flash-chain/docker-broker.sock``
+        # is 99 bytes on a pinned instance that is already in the manifest, i.e. nine
+        # bytes of headroom before ``bind()`` raises ``AF_UNIX path too long`` and
+        # every brokered ``docker run`` in that row fails. Measured while writing
+        # this: the first end-to-end attempt raised exactly that, from a path only a
+        # little longer than the real ones.
+        #
+        # So the socket is created under a short private mkdtemp and bind-mounted
+        # into the namespace at ``_SANDBOX_BROKER_SOCK_IN_SANDBOX``, which is a
+        # constant. The instance id no longer participates in a length budget.
+        self.sock_dir = Path(tempfile.mkdtemp(prefix="swebench-broker-"))
+        self.sock_dir.chmod(0o700)
+        self.sock_path = self.sock_dir / "s"
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(self.sock_path))
+        # 0600 as a courtesy only. It is NOT the boundary: every run is uid 1000, so
+        # the mode stops nothing that matters. The boundary is that this socket is
+        # mounted into exactly one namespace.
+        os.chmod(self.sock_path, 0o600)
+        srv.listen(16)
+        srv.settimeout(0.5)
+        self._srv = srv
+        self._log(f"broker listening on {self.sock_path} for images {sorted(self.images)}")
+        self._thread = threading.Thread(target=self._serve, name="docker-broker", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=10)
+        if self._srv is not None:
+            with contextlib.suppress(OSError):
+                self._srv.close()
+        if self.sock_dir is not None:
+            shutil.rmtree(self.sock_dir, ignore_errors=True)
+        self._log(f"broker stopped: {self.allowed} allowed, {self.refused} refused")
+
+    # -- guts --------------------------------------------------------------- #
+    def _log(self, line: str) -> None:
+        with self._lock, contextlib.suppress(OSError):
+            with self.log_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"{datetime.now(UTC).isoformat()} {line}\n")
+
+    def _serve(self) -> None:
+        assert self._srv is not None, "start() must run before _serve"
+        while not self._stop.is_set() and not _ABORT.is_set():
+            try:
+                conn, _ = self._srv.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+            threading.Thread(
+                target=self._handle, args=(conn,), name="docker-broker-conn", daemon=True
+            ).start()
+
+    def _handle(self, conn: socket.socket) -> None:
+        with contextlib.closing(conn):
+            try:
+                conn.settimeout(30)
+                chunks: list[bytes] = []
+                size = 0
+                while b"\n" not in b"".join(chunks[-1:]) and size < _SANDBOX_BROKER_MAX_REQUEST:
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    size += len(chunk)
+                raw = b"".join(chunks).split(b"\n", 1)[0]
+                request = json.loads(raw.decode("utf-8", "replace"))
+                argv = [str(a) for a in request["argv"]]
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                self._send(conn, {"denied": f"unreadable request: {type(exc).__name__}: {exc}"})
+                self._send(conn, {"exit": 125})
+                return
+            rewritten, refusal = _sandbox_docker_verdict(
+                argv, tree=self.tree, images=self.images
+            )
+            if refusal is not None or rewritten is None:
+                self.refused += 1
+                self._log(f"REFUSED {refusal} :: {shlex.join(argv)}")
+                self._send(conn, {"denied": refusal or "refused"})
+                self._send(conn, {"exit": 126})
+                return
+            self.allowed += 1
+            self._log(f"ALLOWED {shlex.join(rewritten)}")
+            self._run(conn, rewritten)
+
+    def _run(self, conn: socket.socket, argv: list[str]) -> None:
+        try:
+            proc = subprocess.Popen(  # noqa: S603
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=str(self.tree),
+                # No shell, no inherited stdin: the container command is data that
+                # came from inside the sandbox and must never be re-interpreted here.
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            self._send(conn, {"err": f"docker: broker could not spawn the client: {exc}\n"})
+            self._send(conn, {"exit": 125})
+            return
+        pumps = [
+            threading.Thread(target=self._pump, args=(proc.stdout, conn, "out"), daemon=True),
+            threading.Thread(target=self._pump, args=(proc.stderr, conn, "err"), daemon=True),
+        ]
+        for pump in pumps:
+            pump.start()
+        try:
+            rc = proc.wait(timeout=self.timeout_s)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(OSError):
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            rc = -9
+            self._log(f"TIMEOUT after {self.timeout_s}s :: {shlex.join(argv)}")
+        for pump in pumps:
+            pump.join(timeout=5)
+        self._send(conn, {"exit": rc})
+
+    def _pump(self, stream: Any, conn: socket.socket, key: str) -> None:
+        # ``read1``, NOT ``read``. ``BufferedReader.read(4096)`` blocks until it has
+        # 4096 bytes or EOF, so a pytest run that prints a line every few seconds
+        # would appear frozen to the agent until 4 KiB had accumulated — and a graded
+        # command that looks hung is a command the agent kills and retries, burning
+        # its budget on the harness's buffering. ``read1`` returns whatever has
+        # arrived, which is how a pipe is supposed to be relayed.
+        with contextlib.suppress(OSError, ValueError):
+            for chunk in iter(lambda: stream.read1(65536), b""):
+                self._send(conn, {key: chunk.decode("utf-8", "replace")})
+
+    def _send(self, conn: socket.socket, payload: dict[str, Any]) -> None:
+        with self._lock, contextlib.suppress(OSError):
+            conn.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+
+
+# The ``docker`` the sandbox finds on its PATH. Deliberately dependency-free and
+# written with the system interpreter: ``/usr/bin/python3`` is inside the mount set
+# because ``/usr`` is, whereas the ADW's uv-built venv is not on the agent's PATH by
+# ``_sssf_child_env``'s design.
+_SANDBOX_DOCKER_SHIM = '''#!/usr/bin/env python3
+"""``docker`` inside the benchmark sandbox: a broker client, not the real CLI.
+
+The real /var/run/docker.sock is NOT in this mount namespace, because a process
+that can reach it can run ``docker run -v /:/host`` and read the benchmark's
+answer key. This forwards argv to the harness, which validates it against an
+allow-list (``_sandbox_docker_verdict``) before running the real client.
+"""
+import json
+import os
+import socket
+import sys
+
+SOCK = os.environ.get("SWEBENCH_DOCKER_BROKER", "")
+
+
+def main() -> int:
+    if not SOCK:
+        sys.stderr.write("docker: SWEBENCH_DOCKER_BROKER is unset\\n")
+        return 125
+    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        conn.connect(SOCK)
+    except OSError as exc:
+        sys.stderr.write(f"docker: benchmark broker at {SOCK} is unreachable: {exc}\\n")
+        return 125
+    conn.sendall((json.dumps({"argv": sys.argv[1:]}) + "\\n").encode("utf-8"))
+    conn.shutdown(socket.SHUT_WR)
+    rc = 125
+    with conn.makefile("rb") as fh:
+        for line in fh:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            if "out" in msg:
+                sys.stdout.write(msg["out"])
+                sys.stdout.flush()
+            elif "err" in msg:
+                sys.stderr.write(msg["err"])
+                sys.stderr.flush()
+            elif "denied" in msg:
+                sys.stderr.write(
+                    "docker: refused by the benchmark sandbox: " + msg["denied"] + "\\n"
+                )
+            elif "exit" in msg:
+                rc = int(msg["exit"])
+    return rc
+
+
+sys.exit(main())
+'''
+
+
+def _sandbox_write_shims(tree: Path) -> Path:
+    """Materialise the sandbox's private ``bin`` and return it. Idempotent."""
+    bindir = tree / _SANDBOX_BIN_NAME
+    bindir.mkdir(parents=True, exist_ok=True)
+    shim = bindir / "docker"
+    shim.write_text(_SANDBOX_DOCKER_SHIM, encoding="utf-8")
+    shim.chmod(0o755)
+    return bindir
+
+
+def _sandbox_argv(
+    inner: list[str],
+    *,
+    tree: Path,
+    cwd: Path,
+    ledger_dir: Path,
+    docker_mode: str,
+    broker_sock: Path | None = None,
+) -> list[str]:
+    """Wrap ``inner`` in the bwrap invocation described at the head of this section.
+
+    ORDER IS SEMANTICS, not style. bwrap applies each operation in argv order onto a
+    root that starts EMPTY, so ``--tmpfs $HOME`` before the two ``--ro-bind``s under
+    it gives a blank home with two windows punched through, whereas the same two
+    lines in the other order silently throw the windows away — measured while
+    building this: with the tmpfs last, ``command -v uv`` inside the sandbox printed
+    nothing and the run would have died with "uv: not found".
+    """
+    home = Path.home()
+    argv: list[str] = [
+        _SANDBOX_BWRAP,
+        # The namespace itself. ``--unshare-user`` is what makes the rest possible
+        # without root. ``--unshare-pid`` is not tidiness: ``ps -eo args`` on the
+        # host prints other runs' full problem statements and work-dir paths, so
+        # without it the process table is a cross-arm channel that no path audit
+        # can see. It also means killing bwrap (pid 1 of the namespace) makes the
+        # kernel reap every descendant, which is strictly better cleanup than
+        # ``_kill_tree``'s process-group sweep had before.
+        "--unshare-user",
+        "--unshare-pid",
+        "--unshare-ipc",
+        "--unshare-uts",
+        # NO --unshare-net: pi has to reach the model endpoint and uv has to reach
+        # PyPI on a cold cache. See the enumeration at the head of this section.
+        "--die-with-parent",
+        # -- the read-only system ------------------------------------------------
+        "--ro-bind", "/usr", "/usr",
+        "--ro-bind", "/bin", "/bin",
+        "--ro-bind", "/sbin", "/sbin",
+        "--ro-bind", "/lib", "/lib",
+        "--ro-bind-try", "/lib64", "/lib64",
+        # /etc whole and read-only: ssl/certs for the model call, /etc/gitconfig,
+        # passwd/nsswitch so name lookups work.
+        "--ro-bind", "/etc", "/etc",
+        "--proc", "/proc",
+        "--dev", "/dev",
+        "--tmpfs", "/run",
+        # ── DNS, WHICH ``--ro-bind /etc`` DOES NOT GIVE YOU ──────────────────────
+        #
+        # MEASURED while building this mount set, and it is the failure that would
+        # have been mistaken for a dead deployment. On this host
+        # ``/etc/resolv.conf`` is a SYMLINK to
+        # ``../run/systemd/resolve/stub-resolv.conf``. The read-only /etc bind above
+        # faithfully preserves the symlink, and ``/run`` is the blank tmpfs on the
+        # line above, so the target does not exist: every lookup inside the sandbox
+        # failed with ``socket.gaierror: [Errno -3] Temporary failure in name
+        # resolution`` while ``uv``, ``pi``, the engine and the ledger all resolved
+        # perfectly. A sweep run that way looks like "the model endpoint is down".
+        #
+        # Binding the file over itself does NOT work either — bwrap answers
+        # ``Can't create file at /etc/resolv.conf: No such file or directory``,
+        # because the mountpoint is a dangling symlink inside a read-only bind. What
+        # works is giving the symlink somewhere to land. Both spellings are
+        # ``-try``, so a machine with a plain /etc/resolv.conf, or with resolvconf
+        # instead of systemd-resolved, is not refused for having nothing to bind.
+        #
+        # The stub listener is on loopback and that loopback is still the HOST's:
+        # there is deliberately no ``--unshare-net``, because pi cannot reach the
+        # model endpoint without the network and the run cannot work without pi.
+        "--ro-bind-try", "/run/systemd/resolve", "/run/systemd/resolve",
+        "--ro-bind-try", "/run/resolvconf", "/run/resolvconf",
+        "--tmpfs", "/var/tmp",
+        # ``/tmp`` MUST EXIST, and privately. Two separate reasons, both measured:
+        #
+        # * IT MUST EXIST. bwrap's root starts empty, so a path that is not mounted
+        #   is ENOENT rather than EACCES — and every role prompt tells the agent to
+        #   "send scratch output to /tmp, never into the repo". Without this line the
+        #   sanctioned advice becomes "No such file or directory" and the agent
+        #   spends turns discovering it.
+        # * IT MUST BE PRIVATE. This is the same channel ``run_sssf``'s per-run
+        #   ``TMPDIR`` closes, and this closes it PHYSICALLY instead of by
+        #   redirection: the cross-instance read that was proven (a ``chain`` run
+        #   reading ``/tmp/old.txt`` 1.3 s before its own first write to it, the
+        #   previous writer being another instance's ``chain`` run 15 minutes
+        #   earlier) used a literal ``/tmp`` path, which honours no environment
+        #   variable at all.
+        "--tmpfs", "/tmp",
+        # -- a blank home, then only the tools ----------------------------------
+        # Writes to $HOME land on this tmpfs and die with the run. That is the
+        # ``.bashrc`` PATH-poisoning channel closed physically rather than by
+        # ``_sssf_child_env`` filtering after the fact.
+        "--tmpfs", str(home),
+        "--ro-bind-try", str(home / ".local" / "bin"), str(home / ".local" / "bin"),
+        "--ro-bind-try", str(home / ".local" / "share" / "uv"),
+        str(home / ".local" / "share" / "uv"),
+        # READ-WRITE, and named in the "does not isolate" list above: this is where
+        # ``uv run`` builds the ADW's ephemeral venv, so it cannot be read-only, and
+        # it is shared with every concurrent run.
+        "--bind-try", str(home / ".cache" / "uv"), str(home / ".cache" / "uv"),
+        "--ro-bind-try", str(home / ".npm-global"), str(home / ".npm-global"),
+        # ~/.pi blank-but-for-models.json: agent_pi.py:23 reads that one file, and
+        # anything pi wants to write about a session should not outlive the run or be
+        # visible to the next one.
+        "--tmpfs", str(home / ".pi"),
+        "--ro-bind-try", str(home / ".pi" / "agent" / "models.json"),
+        str(home / ".pi" / "agent" / "models.json"),
+        # -- the engine, read-only ----------------------------------------------
+        "--ro-bind", str(_SSSF_ROOT / "adws"), str(_SSSF_ROOT / "adws"),
+        "--ro-bind-try", str(_SSSF_ROOT / ".env"), str(_SSSF_ROOT / ".env"),
+        # -- the run's own tree, read-write, at its real path -------------------
+        # Its real path because the graded command is literally
+        # ``docker run -v "$PWD":…`` and dockerd resolves that on the host.
+        "--bind", str(tree), str(tree),
+        "--bind", str(ledger_dir), str(ledger_dir),
+        "--chdir", str(cwd),
+    ]
+    if broker_sock is not None:
+        # The ONE hole in the docker wall, and it is a socket that speaks a private
+        # argv protocol rather than the Docker API — a client that finds it cannot
+        # drive dockerd through it, only ask this process to, and this process
+        # refuses anything ``_sandbox_docker_verdict`` does not allow.
+        argv += ["--bind", str(broker_sock), _SANDBOX_BROKER_SOCK_IN_SANDBOX]
+    if docker_mode == "raw":
+        # THE DOCUMENTED HOLE, and it is only reachable by setting
+        # SWEBENCH_SANDBOX_DOCKER=raw by hand. With the socket present the agent can
+        # ``docker run -v /:/host`` and read the oracle store, so a row produced this
+        # way is not an isolated row. The provenance records the word "raw".
+        argv += ["--bind-try", "/var/run/docker.sock", "/var/run/docker.sock"]
+    return [*argv, "--", *inner]
+
+
+def _sandbox_env_overlay(
+    env: dict[str, str],
+    *,
+    tree: Path,
+    shim_dir: Path | None,
+    brokered: bool,
+) -> dict[str, str]:
+    """The environment differences the sandbox needs. Returns the SAME dict, mutated.
+
+    Kept separate from ``_sandbox_argv`` because bwrap inherits this process's
+    environment: the provider credential ``_sssf_child_env`` deliberately passes
+    through has to keep passing through, so nothing here uses ``--clearenv``.
+    """
+    if shim_dir is not None:
+        env["PATH"] = os.pathsep.join([str(shim_dir), env.get("PATH", "")]).rstrip(os.pathsep)
+    if brokered:
+        # The IN-SANDBOX path, not the host mkdtemp path: the shim runs on the other
+        # side of the mount namespace and the host path does not exist there.
+        env["SWEBENCH_DOCKER_BROKER"] = _SANDBOX_BROKER_SOCK_IN_SANDBOX
+    # $HOME is a fresh tmpfs, so XDG_RUNTIME_DIR's usual /run/user/1000 does not
+    # exist in the namespace. Point it inside the run's tree rather than leaving a
+    # dangling path for some library to trip over.
+    runtime = tree / "xdg-runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    runtime.chmod(0o700)
+    env["XDG_RUNTIME_DIR"] = str(runtime)
+    env[_SANDBOX_ENV] = "1"
+    return env
 
 
 # --------------------------------------------------------------------------- #
@@ -7479,8 +8892,24 @@ def _sssf_child_env() -> tuple[dict[str, str], str | None]:
 _SSSF_REACHABILITY_TIMEOUT_S = 20.0
 
 # The whole probe, in tokens. ``max_completion_tokens`` bounds the reply; the prompt
-# is two short strings. At Flash's rates (0.21/0.56 per 1M) that is ~$0.000001.
-_SSSF_REACHABILITY_MAX_TOKENS = 16
+# is two short strings. At Flash's rates (0.21/0.56 per 1M) that is ~$0.0000003.
+#
+# 16 WAS TOO TIGHT AND IT REFUSED A WORKING DEPLOYMENT. Measured 2026-08-14: a
+# 16-token probe against ``Kimi-K2.7-Code`` returns HTTP 200,
+# ``completion_tokens: 16`` and ``content: ""`` — the model spent the entire reply
+# budget on REASONING and never reached the word "ok". The "empty 200 is a failure"
+# rule below then correctly refused it, and the whole ``kimi-solo`` arm failed
+# preflight on all 8 instances without a single model call. The same shape refuses
+# any reasoning-first deployment; ``gpt-5.4-nano`` survived only because it happens
+# to answer in 5 tokens.
+#
+# 512 leaves room for a thinking pass and still costs micro-dollars — Kimi's output
+# rate is $4.40/1M, so a full 512-token probe is $0.0023, and the probe's cost is
+# recorded separately from the run's either way. The bound exists to stop a hung
+# endpoint stalling a sweep, and ``_SSSF_REACHABILITY_TIMEOUT_S`` is what actually
+# does that; this number only has to be large enough that "answered" and "thought
+# and then answered" are not confused.
+_SSSF_REACHABILITY_MAX_TOKENS = 512
 _SSSF_REACHABILITY_SYSTEM_TEXT = "Reply with the single word: ok"
 _SSSF_REACHABILITY_USER_TEXT = "ping"
 
@@ -7499,6 +8928,12 @@ _SSSF_REACHABILITY_TOKEN_KEYS: tuple[str, ...] = (
 # newer name and is what pi sends by default; ``supportsDeveloperRole: false`` in
 # the price table switches it back to ``system``. Named here because the probe's
 # entire value depends on it sending whichever one the real run will send.
+# pi's provider ``api`` values. Only these two matter here: the Foundry host serves
+# some deployments on ``/chat/completions`` and the codex family on ``/responses``
+# ONLY, and pi dispatches on this same field.
+_SSSF_API_COMPLETIONS = "openai-completions"
+_SSSF_API_RESPONSES = "openai-responses"
+
 _SSSF_ROLE_DEVELOPER = "developer"
 _SSSF_ROLE_SYSTEM = "system"
 
@@ -7595,9 +9030,14 @@ def _sssf_probe_usage(payload: dict[str, Any]) -> dict[str, int]:
     reports them, so the probe's cost is derived by the same multiply as the run's.
     """
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    # ``prompt_tokens_details`` is the completions spelling, ``input_tokens_details``
+    # the Responses one. Reading only the first understated a Responses probe's cache
+    # reads as fresh input, which is the wrong direction for a cost figure.
     details = (
         usage.get("prompt_tokens_details")
         if isinstance(usage.get("prompt_tokens_details"), dict)
+        else usage.get("input_tokens_details")
+        if isinstance(usage.get("input_tokens_details"), dict)
         else {}
     )
     cached = _sssf_int(details.get("cached_tokens"))
@@ -7613,7 +9053,30 @@ def _sssf_probe_usage(payload: dict[str, Any]) -> dict[str, int]:
 
 
 def _sssf_reply_text(payload: dict[str, Any]) -> str:
-    """The assistant text out of an openai-completions response, or ``""``."""
+    """The assistant text out of a completions OR responses reply, or ``""``.
+
+    Both shapes are handled in one place because the caller must not have to know
+    which surface answered: the emptiness check downstream is what decides
+    reachable-vs-not, and a parser that silently returned "" for a well-formed
+    Responses reply would report a working deployment as unreachable — the exact
+    failure this function was extended to remove.
+    """
+    # ── the Responses surface: {"output":[{"content":[{"type":"output_text",...}]}]}
+    # Reasoning items appear in the same array with no text, so they contribute "".
+    output = payload.get("output")
+    if isinstance(output, list):
+        parts: list[str] = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            for chunk in item.get("content") or []:
+                if isinstance(chunk, dict) and chunk.get("text"):
+                    parts.append(str(chunk["text"]))
+        if parts:
+            return " ".join(parts)
+        # Some deployments also carry the flattened convenience field.
+        if isinstance(payload.get("output_text"), str):
+            return payload["output_text"]
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
         return ""
@@ -7681,21 +9144,42 @@ def _sssf_probe_model(
         out["error"] = f"{key_var} is empty in the child environment"
         return out
     role = _sssf_system_role(entry)
-    url = f"{base}/chat/completions"
-    out["system_role_sent"] = role
+    # THE PROBE MUST SPEAK THE SAME API THE RUN WILL. The provider block's ``api``
+    # field is what pi itself dispatches on, so it is what this reads. A
+    # chat-completions probe against a Responses-only deployment gets
+    # ``{"error":{"message":"The requested operation is unsupported."}}`` — an
+    # HTTP-200-shaped refusal that is indistinguishable from a broken model, and it
+    # refused the whole ``codexmini-solo`` arm on all 8 instances before any model
+    # call. Measured 2026-08-14 against gpt-5.1-codex-mini, gpt-5.1-codex and
+    # gpt-5.3-codex, all three of which answer ONLY ``/responses``.
+    responses_api = str(block.get("api") or "").strip() == _SSSF_API_RESPONSES
+    url = f"{base}/responses" if responses_api else f"{base}/chat/completions"
+    out["system_role_sent"] = None if responses_api else role
+    out["api"] = str(block.get("api") or "")
     out["url"] = url
     deployment = str(model).partition("/")[2]
     headers = {"Authorization": f"Bearer {api_key}", "api-key": api_key}
     started = time.monotonic()
     for token_key in _SSSF_REACHABILITY_TOKEN_KEYS:
-        payload = {
-            "model": deployment,
-            "messages": [
-                {"role": role, "content": _SSSF_REACHABILITY_SYSTEM_TEXT},
-                {"role": "user", "content": _SSSF_REACHABILITY_USER_TEXT},
-            ],
-            token_key: _SSSF_REACHABILITY_MAX_TOKENS,
-        }
+        if responses_api:
+            # The Responses surface takes ``input`` and ``max_output_tokens``; it has
+            # no ``messages`` array and no developer/system role to get wrong, which
+            # is why the role is recorded as None above rather than as a guess.
+            payload = {
+                "model": deployment,
+                "input": (f"{_SSSF_REACHABILITY_SYSTEM_TEXT}\n\n"
+                          f"{_SSSF_REACHABILITY_USER_TEXT}"),
+                "max_output_tokens": _SSSF_REACHABILITY_MAX_TOKENS,
+            }
+        else:
+            payload = {
+                "model": deployment,
+                "messages": [
+                    {"role": role, "content": _SSSF_REACHABILITY_SYSTEM_TEXT},
+                    {"role": "user", "content": _SSSF_REACHABILITY_USER_TEXT},
+                ],
+                token_key: _SSSF_REACHABILITY_MAX_TOKENS,
+            }
         answer = sender(url, payload, headers, timeout_s)
         status = answer.get("status")
         body = str(answer.get("body") or "")
@@ -7716,8 +9200,12 @@ def _sssf_probe_model(
             # A transport failure is not a parameter-name problem; a second
             # attempt would only wait out the same timeout again.
             break
-        if status == 400 and token_key != _SSSF_REACHABILITY_TOKEN_KEYS[-1]:
-            # The one retryable case, and only for the reply-length parameter.
+        if (status == 400 and not responses_api
+                and token_key != _SSSF_REACHABILITY_TOKEN_KEYS[-1]):
+            # The one retryable case, and only for the reply-length parameter — and
+            # only on the completions surface, whose two spellings are what the
+            # retry exists for. ``/responses`` takes ``max_output_tokens`` and
+            # nothing else, so retrying there would just re-send the same request.
             continue
         if status != 200:
             out["error"] = f"HTTP {status}: {_excerpt(body)[:300]}"
@@ -9037,6 +10525,26 @@ def run_sssf(
     # Everything here except the reachability probe is $0; the probe costs ~$0.000001
     # per deployment and is disclosed separately (see ``_sssf_reachability_report``).
     child_env, credential_problem = _sssf_child_env()
+    # ── PHYSICAL ISOLATION, decided before anything is spent ─────────────────────
+    #
+    # Off unless ``SWEBENCH_SANDBOX`` says otherwise, so the campaign in flight when
+    # this was written is unaffected: with the variable unset every line below is a
+    # dict literal and nothing about the spawn changes.
+    #
+    # FAIL CLOSED when it IS asked for. An operator who exports the variable has
+    # decided this row must be isolated; silently running it unisolated because
+    # bwrap is missing would produce a row that LOOKS isolated in the provenance of
+    # every sweep that groups by "sandbox: requested". Better a refused run at $0.
+    sandbox_on = _sandbox_requested()
+    sandbox_ok, sandbox_problem = _sandbox_probe() if sandbox_on else (False, None)
+    sandbox_plan: dict[str, Any] = {
+        "requested": sandbox_on,
+        "active": bool(sandbox_on and sandbox_ok),
+        "mechanism": "bwrap" if sandbox_on else None,
+        "docker": _sandbox_docker_mode() if sandbox_on else None,
+        "problem": sandbox_problem,
+        "ledger_dir": str(_sandbox_ledger_dir()) if sandbox_on else None,
+    }
     skip_ok, skip_reason, skip_where = _sssf_skip_support()
     # The roster's DECLARED deployments, and their rates — needed here (rather than
     # only after the run) because the probe prices its own spend off the same table
@@ -9081,6 +10589,12 @@ def run_sssf(
         # cost — which is also why it is NOT added into ``cost_usd`` anywhere below.
         "probe_cost_usd": reachability["probe_cost_usd"],
         "engine": str(_SSSF_ADW),
+        # WHETHER THIS ROW WAS PHYSICALLY ISOLATED, decided here so it is recorded
+        # even on the exit paths that never reach the spawn. A row that ran
+        # ``sandbox: {"active": false}`` is not comparable-for-contamination with one
+        # that ran ``true``, and the only way to know afterwards is to have written
+        # it down at the time.
+        "sandbox": sandbox_plan,
     }
     # A real run refuses; a probe records and warns. The probe's whole job is to
     # exercise this plumbing on any machine, and an unspendable path cannot make
@@ -9091,6 +10605,12 @@ def run_sssf(
         fatal.append(
             f"the sssf engine does not implement the {_SSSF_SKIP_KEY!r} roster "
             f"key: {skip_reason}"
+        )
+    if sandbox_on and not sandbox_ok:
+        fatal.append(
+            f"{_SANDBOX_ENV} asks for physical isolation and this machine cannot "
+            f"provide it: {sandbox_problem}. Refusing rather than running the row "
+            "unisolated under a provenance that says it was isolated."
         )
     if fatal and not probe_plumbing:
         # LOUD, and BEFORE the graph starts. The alternative — which is what
@@ -9113,6 +10633,27 @@ def run_sssf(
     # this clone, and at `runs/<id>/<arm>/repo` that was three `..` from
     # `bench/swebench/oracle.json.z`.
     work = _work_dir(instance_id, arm, fresh=True)
+    # ── /tmp IS A SHARED CHANNEL BETWEEN RUNS, so give this run its own ───────
+    #
+    # Every role prompt tells the agent to "send scratch output to /tmp, never into
+    # the repo" — sanctioned, and with a single global /tmp that makes it a
+    # cross-run bus. Measured 2026-08-14: ~100 agent writes to /tmp across 15+ runs
+    # at fixed names (`/tmp/report.json` written by 13 different adw_ids), and one
+    # PROVEN cross-instance read — `hkuds__openharness-217/chain` read
+    # `/tmp/old.txt` 1.3 s BEFORE its own first write to that path, the previous
+    # writer being `alibaba__opensandbox-816/chain` 15 minutes earlier. A stale
+    # `/tmp/report.json` was found holding a complete solution summary
+    # (`changed_files`, `commit_message`, `notes_for_next_agent`).
+    #
+    # Nothing detects this: /tmp is outside the repo, so `permissions.enforce` never
+    # looks, and no probe pattern covers it. Redirecting TMPDIR per cell is what
+    # makes the prompts' own advice safe — bash heredocs, `mktemp`, tempfile and
+    # pytest all honour it, so scratch lands inside the run's own tree and dies with
+    # it, while the instruction the agent reads stays true.
+    tmp = work / "tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+    for var in ("TMPDIR", "TEMP", "TMP"):
+        child_env[var] = str(tmp)
     repo = work / "repo"
     _clone(inst, repo)
     assert_workspace_isolated(repo)
@@ -9182,7 +10723,19 @@ def run_sssf(
     data_dir = work / "adw_data"
     # SHARED, so the engine's UI can watch a whole sweep live. Accounting never
     # reads it — see _SSSF_SHARED_DB and _SSSF_LEDGER_POLL_S.
-    db_path = _SSSF_SHARED_DB
+    #
+    # UNDER THE SANDBOX IT MOVES. ``_SSSF_SHARED_DB`` sits in
+    # ``bench/swebench/runs/``, the same directory as ``manifest.json`` and
+    # ``oracle.json.z``; mounting it so the child could write the ledger would hand
+    # back the answer key. ``_sandbox_ledger_dir`` explains why binding the single
+    # file instead is worse (private WAL over a shared db = corruption). The same
+    # variable feeds both the roster the child reads and ``_sssf_live_cost`` below,
+    # so the spend guard keeps reading the file the child actually writes.
+    db_path = (
+        _sandbox_ledger_dir() / _SSSF_SHARED_DB.name
+        if sandbox_plan["active"]
+        else _SSSF_SHARED_DB
+    )
     db_path.parent.mkdir(parents=True, exist_ok=True)
     test_command = instance_test_command(inst, repo=repo)
     document = _sssf_roster_document(
@@ -9262,12 +10815,58 @@ def run_sssf(
         error = _SSSF_PROBE_ERROR
         termination = "probe"
     else:
+        # ── PHYSICAL ISOLATION, assembled here because it needs the work dir ─────
+        #
+        # Not earlier: two of the three pieces live INSIDE the run's own tree, which
+        # does not exist until after ``_work_dir(fresh=True)`` and the clone — the
+        # broker's unix socket (reachable from the sandbox precisely because that
+        # tree is the one thing bound read-write) and the ``sandbox-bin/docker``
+        # shim. With the sandbox off this whole block is one false branch and the
+        # spawn below is byte-identical to what it was.
+        broker: _SandboxDockerBroker | None = None
+        launch = argv
+        if sandbox_plan["active"]:
+            ledger_dir = _sandbox_ledger_dir()
+            ledger_dir.mkdir(parents=True, exist_ok=True)
+            shim_dir: Path | None = None
+            broker_sock: Path | None = None
+            if sandbox_plan["docker"] == "broker":
+                # The image allow-list is a SET OF ONE: this instance's own image,
+                # the one ``instance_test_command`` bakes into the command the arm
+                # is handed. An arm has no legitimate second image, and a one-element
+                # allow-list is the difference between "docker is brokered" and
+                # "docker is a general-purpose escape with extra steps".
+                broker = _SandboxDockerBroker(
+                    tree=work,
+                    images=frozenset({_image_for(inst)}),
+                    timeout_s=timeout_s,
+                )
+                broker.start()
+                shim_dir = _sandbox_write_shims(work)
+                broker_sock = broker.sock_path
+            child_env = _sandbox_env_overlay(
+                child_env, tree=work, shim_dir=shim_dir, brokered=broker is not None
+            )
+            launch = _sandbox_argv(
+                argv,
+                tree=work,
+                cwd=repo,
+                ledger_dir=ledger_dir,
+                docker_mode=str(sandbox_plan["docker"]),
+                broker_sock=broker_sock,
+            )
+            # RECORDED, not just applied. The bwrap prefix IS the isolation, so the
+            # row has to carry the exact mount set it ran under; "the sandbox was on"
+            # is not a reproducible statement and this is.
+            sandbox_plan["bwrap_argv"] = launch[: len(launch) - len(argv)]
         with traj_path.open("w", encoding="utf-8") as fh:
+            if launch is not argv:
+                fh.write(f"$ {shlex.join(launch[: len(launch) - len(argv)])} \\\n")
             fh.write(f"$ uv run {_SSSF_ADW} <story> --config {roster_path} "
                      f"--adw-id {adw_id}\n")
             fh.flush()
             proc = subprocess.Popen(  # noqa: S603
-                argv,
+                launch,
                 cwd=str(repo),
                 stdout=fh,
                 stderr=subprocess.STDOUT,
@@ -9276,6 +10875,11 @@ def run_sssf(
                 # Its own process group, so _kill_tree can reach the pi children
                 # this child spawns. Killing only the parent would orphan a pi
                 # process that keeps calling the model, i.e. keeps spending.
+                #
+                # Under the sandbox this gets STRONGER, not weaker: bwrap is pid 1 of
+                # a pid namespace, so when the group kill lands on it the kernel
+                # reaps every descendant, including a ``pi`` the process-group sweep
+                # could previously miss if it had changed group.
                 start_new_session=True,
             )
         with _LIVE_LOCK:
@@ -9326,6 +10930,16 @@ def run_sssf(
         finally:
             with _LIVE_LOCK:
                 _LIVE_CHILDREN.discard(proc)
+            if broker is not None:
+                # In ``finally`` for the same reason ``_prepared_tree_dir``'s cleanup
+                # is: the paths out of the loop above include a cost-cap kill, a
+                # wall-clock kill and an abort, and a broker left listening on a
+                # socket inside a tree the NEXT run will ``rmtree`` is exactly the
+                # kind of stranded resource that produced the 669 stale oracle trees.
+                broker.stop()
+                sandbox_plan["docker_allowed"] = broker.allowed
+                sandbox_plan["docker_refused"] = broker.refused
+                sandbox_plan["docker_log"] = str(broker.log_path)
 
     # ---- what the engine's own trace says happened ---------------------------
     # PI'S PER-TURN STREAM IS THE SOURCE OF TRUTH for every published token and
@@ -9774,6 +11388,46 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
     summing the two into one "failure" number would read a broken harness as
     factory incompetence.
     """
+    # ── the oracle tree is destroyed on EVERY exit path ─────────────────────
+    #
+    # The cleanup used to be straight-line code at the end of this function, so
+    # any exception, SystemExit, docker timeout or SIGTERM in between stranded a
+    # tree with the hidden tests applied, permanently. One was found on disk on
+    # 2026-08-14 for `getmoto__moto-9841` — a live campaign instance — 134 MB with
+    # `tests/test_kms/test_kms.py` +43 in it. Registering the mount in a mutable
+    # cell and purging it in a ``finally`` is what makes "deleted the moment
+    # grading ends" true rather than intended.
+    #
+    # Also sweeps anything an EARLIER crash left behind, so a stranded tree cannot
+    # outlive the next grade even if this process is the one that dies.
+    _sweep_stale_oracle_trees()
+    _mount_cell: list[Path] = []
+    try:
+        return _grade_inner(instance_id, arm, timeout_s=timeout_s, _mount_cell=_mount_cell)
+    finally:
+        for stranded in _mount_cell:
+            shutil.rmtree(stranded, ignore_errors=True)
+
+
+def _sweep_stale_oracle_trees(max_age_s: float = 3 * 3600.0) -> None:
+    """Delete prepared oracle trees older than one plausible grade.
+
+    Belt-and-braces for the ``finally`` above: if the process holding a tree is
+    SIGKILLed, no handler runs, and the only thing that can clean up is the next
+    one in. Age-bounded so a concurrently-running grade is never touched.
+    """
+    root = _oracle_tree_root()
+    if not root.is_dir():
+        return
+    cutoff = time.time() - max_age_s
+    for child in root.iterdir():
+        with contextlib.suppress(OSError):
+            if child.stat().st_mtime < cutoff:
+                shutil.rmtree(child, ignore_errors=True)
+
+
+def _grade_inner(instance_id: str, arm: str, *, timeout_s: int,
+                 _mount_cell: list[Path]) -> None:
     inst = _instance(instance_id)
     run_dir = _run_dir(instance_id, arm)
     pred = run_dir / "prediction.diff"
@@ -9844,6 +11498,10 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
         # by the grade script, so as `runs/<id>/<arm>/grade-repo/` it sat three
         # `..` from the next arm's cwd with the hidden tests in plaintext.
         grade_repo = _grade_mount_dir(instance_id, arm)
+        # Registered BEFORE anything can fail, so the caller's ``finally`` owns it
+        # from the moment it exists. `.parent` is the mkdtemp dir; `grade_repo` is
+        # the `repo/` inside it.
+        _mount_cell.append(grade_repo.parent)
         _clone(inst, grade_repo)
         prep_error = _prepare_cloned_tree(inst, grade_repo, timeout_s=timeout_s)
         if prep_error:
@@ -9982,8 +11640,9 @@ def grade(instance_id: str, arm: str, *, timeout_s: int) -> None:
         }
     )
     _write_result(instance_id, arm, {"grade": verdict}, merge=True)
-    # The prepared mount has the oracle test patch applied INSIDE it. Grading
-    # is over, so it is pure liability now.
+    # The prepared mount has the oracle test patch applied INSIDE it. Grading is
+    # over, so it is pure liability now. See ``_finally_purge_mount`` — this call
+    # is kept for the happy path and the ``finally`` guarantees the rest.
     if mount is not None:
         shutil.rmtree(mount.parent, ignore_errors=True)
     # NEVER print the oracle's gold_files. `run-all` captures each grade's
@@ -11276,6 +12935,61 @@ _ACTION_CONTENT_FIELDS = frozenset(
         "thinking",
         "task_list",
         "message",
+        # ── RESULT-SIDE FIELDS. What the agent SAW, never what it RAN. ─────────
+        #
+        # MEASURED FALSE POSITIVE, 2026-08-14. An sssf ``tool_call`` payload is
+        # ``{tool, tool_call_id, args, ok, result_snippet, duration_ms, agent}``,
+        # and ``result_snippet`` is up to ~18 KB of the tool's OUTPUT. It was not
+        # listed here, so ``_command_side_text`` kept it and ``_retrieval_hits``
+        # scanned file bodies for fetch verbs. On
+        # ``harumiweb__exstruct-113`` the repo's own ``tasks/todo.md`` contains
+        # the historical checklist line
+        #   "- [x] Confirm issue `#107` details with `gh issue view 107`."
+        # so every arm that merely READ that file was failed for "the arm went
+        # looking for the answer". It invalidated three real runs —
+        # ``flash-solo`` attempt 2 and both ``flash-chain`` attempts — and would
+        # have kept excluding that instance for whichever arms happened to read
+        # the file, biasing the comparison rather than only shrinking it.
+        #
+        # This is the failure class the sibling factory named "the judge is fed
+        # corrupted evidence and punishes the actor for it". The sssf branch of
+        # ``_scan_oracle_probes`` already states the correct rule in prose — "a
+        # hostname in a tool RESULT is what the agent saw, and only what it RAN
+        # can be a fetch" — and the ORACLE-PATH patterns still scan the whole
+        # line via ``_probe_line_hits``, so seeing answer material is still
+        # caught. Only the retrieval-VERB scan is narrowed, which is the half
+        # that can only be evidence of an action.
+        "result_snippet",
+        "result",
+        "observation",
+        "output",
+        "stdout",
+        "stderr",
+        "tool_result",
+        # ── THE sssf `edit` TOOL'S OWN SPELLING. ───────────────────────────────
+        # The snake_case names above (`old_str`, `new_str`, `file_text`) are the
+        # OpenHands/Claude vocabulary. Measured over the 3,154 real `tool_call`
+        # events on disk, the sssf engine's edit tool takes
+        # `edits: [{oldText, newText}]` — 315 `edit` calls, 344 inner pairs, and
+        # not one of those keys was excluded. So an agent's AUTHORED text, and its
+        # VERBATIM QUOTE of existing repo content, were both scanned for fetch
+        # verbs: identical content was cleared under `old_str` and failed under
+        # `oldText`.
+        #
+        # It is the same instance that produced today's other false positive.
+        # `harumiweb__exstruct-113`'s `tasks/todo.md` contains
+        # "- [x] Confirm issue `#107` details with `gh issue view 107`.", and
+        # ticking a checkbox off is an ordinary ADW action — which would put that
+        # line into `edits[].oldText` and fail the run for "went looking for the
+        # answer", for every arm that touches the file.
+        #
+        # `edits` itself deliberately stays IN scope so the list is still recursed:
+        # only the leaf text keys are excluded, which keeps the fail-closed posture
+        # for a future key nobody has anticipated.
+        "oldText",
+        "newText",
+        "new_source",
+        "source",
     }
 )
 
@@ -11337,6 +13051,72 @@ def _retrieval_hits(command_text: str) -> list[str]:
     those are observations, which never reach this function.
     """
     return [name for name, pat in _NETWORK_PROBE_PATTERNS if pat.search(command_text)]
+
+
+# The harness's OWN paths, handed to the engine in the roster it synthesises. An
+# arm that logs one of these is echoing configuration it was given, not reaching
+# for the answer key — and `sssf-bench.db` sits directly under `runs/`, one level
+# ABOVE the per-instance subtree `_probe_line_hits` exempts, so it could never be
+# cleared as an own-directory reference.
+#
+# Why it matters: the shared db is contended BY DESIGN (one db so the engine's UI
+# can watch a whole sweep live). A single `sqlite3.OperationalError: database is
+# locked: bench/swebench/runs/sssf-bench.db` — the normal sqlite error text — would
+# invalidate every run in the wave that logged it, with the message "the arm went
+# looking for the answer; the run is invalid". The trigger grows with concurrency,
+# i.e. it fires on the widest and most expensive sweep.
+#
+# This weakens no control: the oracle store and the manifest are still flagged, and
+# the shared db holds no answer material (accounting never reads it — see
+# `_SSSF_SHARED_DB`).
+def _harness_authored_paths() -> tuple[str, ...]:
+    out: list[str] = []
+    for path in (_SSSF_SHARED_DB,):
+        try:
+            out.append(str(Path(path).resolve().relative_to(FACTORY_ROOT)))
+        except (ValueError, OSError):
+            out.append(str(path))
+    return tuple(out)
+
+
+# ── another arm's working tree ───────────────────────────────────────────────
+#
+# MEASURED, 2026-08-14. `harumiweb__exstruct-113 | flash-chain | attempt 2` ran
+# `python3 -c "import exstruct; print(exstruct.__file__)"` and got
+# `…/swebench-work/harumiweb__exstruct-113__bare/repo/src/exstruct/__init__.py` —
+# ANOTHER ARM'S TREE. It then grepped that tree directly. Its own local
+# verification was therefore reading the `bare` arm's code, and the trace shows the
+# agent noticing and reasoning about the discrepancy.
+#
+# Root cause, found on disk: an agent in an EARLIER arm ran an editable install, so
+# `/home/k/sacrifice/backend/.venv/lib/python3.12/site-packages/exstruct.pth`
+# contains `…__bare/repo/src`. Three such leaks exist (`exstruct` from `bare`,
+# `keras` from `factory`, `pyinfra` from `bare`), each redirecting an import for
+# every later run on that instance.
+#
+# The GRADE is unaffected — the oracle runs in docker against the mounted tree — so
+# this does not falsify a verdict. What it does is feed the agent another arm's code
+# as evidence, which can change what it decides to do. That is enough to disqualify
+# the row as an independent measurement, and `_scan_oracle_probes` had no predicate
+# for it: the existing rules look for the ORACLE and for fetch verbs, and a sibling
+# work dir is neither.
+#
+# Requested-side only, deliberately. A foreign path echoed inside a tool RESULT is
+# something the agent was shown (a `find` sweeping a shared cache will surface
+# sibling dirs), and failing a run for what it saw is the false-positive class this
+# file has already paid for twice today.
+_WORKDIR_CELL = re.compile(r"swebench-work/([A-Za-z0-9_.\-]+?__[A-Za-z0-9_.\-]+)")
+
+
+def _foreign_workdir_hits(command_text: str, instance_id: str, arm: str) -> list[str]:
+    """Cells of the scratch root this run named that are not its own."""
+    own = f"{instance_id}__{arm}"
+    seen: list[str] = []
+    for match in _WORKDIR_CELL.finditer(command_text or ""):
+        cell = match.group(1)
+        if cell != own and cell not in seen:
+            seen.append(cell)
+    return seen
 
 
 def _probe_line_hits(line: str, instance_id: str, arm: str) -> list[str]:
@@ -11492,6 +13272,13 @@ def _classify_bench_ref(rest: str, own_dir: str, own_arm: str) -> str | None:
     ``openhands`` and runs the Claude CLI under two model names. Inverting it
     to "own arm only" is fail-closed by construction and needs no roster.
     """
+    # The harness's own declared paths first: an arm that logs one of these is
+    # echoing configuration it was HANDED, and `sssf-bench.db` sits above the
+    # per-instance subtree the own-dir rule below can clear. See
+    # `_harness_authored_paths`.
+    for authored in _harness_authored_paths():
+        if rest.startswith(authored):
+            return None
     if rest.startswith(own_dir):
         after = rest[len(own_dir):]
         if not after or (after[0] in _PATH_BOUNDARY and after[0] != "/"):
@@ -11678,6 +13465,15 @@ def _scan_oracle_probes(
                     )
                     command = _command_side_text(payload) if ev else line
                     hits += _retrieval_hits(command)
+                    foreign = _foreign_workdir_hits(command, instance_id, arm)
+                    if foreign:
+                        failures.append(
+                            f"foreign-workdir: {_SSSF_EVENTS_NAME}:{n} named "
+                            f"another arm's working tree {foreign} — this run's "
+                            "evidence is not independent of that arm, so it is not "
+                            "a usable measurement. Requested-side only; a sibling "
+                            "path echoed in a tool RESULT is not counted."
+                        )
                     if hits:
                         failures.append(
                             f"oracle-probe: {_SSSF_EVENTS_NAME}:{n} references the "
@@ -13126,8 +14922,20 @@ def _arm_view(rows: list[dict[str, Any]], arm: str) -> ArmView:
             gradable.append(r)
         else:
             ungradable[kind].append(r)
+    # Starved and crashed rows are excluded EXPLICITLY, not by side effect. Both
+    # already land outside this filter today, but only because `run_sssf` happens
+    # to set an `error` string beside each termination so `classify_run` returns
+    # `run_failed`. `_row_provider_starved` deliberately fires on
+    # `empty_response_turns > 0` ALONE — so a runner that recorded the counter
+    # without the termination value would produce a row the STORE excludes and this
+    # report counts, i.e. two published denominators for the same run. Verified a
+    # no-op over every row on disk at the time this was added.
     valid = [
-        r for r in gradable if r["_audit_ok"] is True and not r["_run_failed"]
+        r for r in gradable
+        if r["_audit_ok"] is True
+        and not r["_run_failed"]
+        and not _row_provider_starved(r)
+        and not _row_engine_crashed(r)
     ]
     valid_ids = {id(r) for r in valid}
     excluded = [r for r in gradable if id(r) not in valid_ids]
@@ -13301,6 +15109,64 @@ def _row_provider_starved(r: dict[str, Any]) -> bool:
         str(r.get("termination") or "") == "provider-empty-response"
         or int(r.get("empty_response_turns") or 0) > 0
     )
+
+
+# ── environment contamination: a leaked editable install across arms ─────────
+#
+# MEASURED 2026-08-14. ``.bashrc`` puts ``/home/k/sacrifice/backend/.venv/bin``
+# first on PATH, so every agent shell command that ran a bare ``python3`` used that
+# venv. Three benchmark-derived installs had accumulated in it from the Aug-2/3
+# ``bare`` and ``factory`` sweeps:
+#
+#   exstruct.pth                  -> …/swebench-work/harumiweb__exstruct-113__bare/repo/src
+#   __editable___keras_3_14_0_…   -> …/swebench-work/keras-team__keras-22316__factory
+#   pyinfra (copied payload)      -> …/swebench-work/pyinfra-dev__pyinfra-1665__bare
+#
+# On those three instances an agent's ``import`` therefore resolved into ANOTHER
+# ARM'S TREE. Caught end to end on ``harumiweb__exstruct-113 | flash-chain``, which
+# ran ``python3 -c "import exstruct; print(exstruct.__file__)"``, got the ``bare``
+# arm's path back, and then grepped that tree.
+#
+# WHAT IT DOES AND DOES NOT INVALIDATE. The oracle grades in docker against the
+# mounted tree, so no verdict is falsified. What is compromised is the agent's own
+# feedback: it verified against another arm's code, which can change what it decides
+# to do. That is enough to disqualify the row as an INDEPENDENT measurement, which
+# is what a paired comparison requires.
+#
+# EXCLUDED BY INSTANCE AND TIME, not by an enumerated row list. Every run on these
+# instances before the fix shared the channel whether or not it happened to print
+# the path, so enumerating only the rows that named it would quarantine the ones
+# that left evidence and keep the ones that did not. The boundary is when the leaked
+# installs were removed and ``_sssf_child_env`` began stripping ``…/.venv/bin``;
+# rows after it are clean by construction and need no entry here.
+# instance -> the import name whose resolution was redirected, and the arm whose
+# tree it was redirected INTO. Named per instance because the leak is per PACKAGE:
+# `exstruct.pth` redirects `import exstruct` and nothing else, so an instance whose
+# own package was never editable-installed cannot be affected by another's leak.
+# That is why this is three instances and not "everything after the first run".
+_ENV_LEAKS: dict[str, tuple[str, str]] = {
+    "harumiweb__exstruct-113": ("exstruct", "harumiweb__exstruct-113__bare"),
+    "keras-team__keras-22316": ("keras", "keras-team__keras-22316__factory"),
+    "pyinfra-dev__pyinfra-1665": ("pyinfra", "pyinfra-dev__pyinfra-1665__bare"),
+}
+_ENV_CONTAMINATED_INSTANCES = frozenset(_ENV_LEAKS)
+
+
+def _env_leak_package(instance_id: Any) -> str | None:
+    """The import this instance's runs could have had redirected, or None."""
+    leak = _ENV_LEAKS.get(str(instance_id or ""))
+    return leak[0] if leak else None
+_ENV_CONTAMINATION_FIXED_AT = "2026-08-14T17:55:00+00:00"
+
+
+def _row_env_contaminated(r: dict[str, Any]) -> bool:
+    """True when this row ran on a polluted instance before the leak was closed."""
+    if str(r.get("instance_id") or "") not in _ENV_CONTAMINATED_INSTANCES:
+        return False
+    ran = str(r.get("ts") or r.get("ran_at") or "")
+    # No timestamp is treated as contaminated: every row that HAS one and predates
+    # the fix is, so an unstamped row cannot be cleared, only assumed.
+    return (not ran) or ran < _ENV_CONTAMINATION_FIXED_AT
 
 
 def _row_engine_crashed(r: dict[str, Any]) -> bool:
@@ -14263,7 +16129,7 @@ def report(
         "re-derivable from it.",
         "",
         *_archive_disclaimer(from_archive),
-        "Tables 1-5 are the shape fixed in `bench/swebench/PRE-REGISTRATION-1.6.md`",
+        "Tables 1-5 are the shape fixed in `bench/swebench/frozen/PRE-REGISTRATION-1.6.md`",
         "before the run. Every cell is filled from an archived artifact or printed",
         "as `n/a` with a reason; no cell is filled by hand.",
         "",
@@ -15323,6 +17189,18 @@ def run_all(
         [i for i in manifest["instances"] if i["instance_id"] in chosen_set]
     )
     workers = max(1, min(workers, len(chosen)))
+    # AFTER the instance-count clamp and AFTER any explicit --workers: an arm's
+    # declared ceiling is a fact about its deployment's quota, so an override may
+    # lower it and must not raise it. Announced rather than applied silently —
+    # an operator who typed --workers 4 needs to see that they got 1.
+    clamped = clamp_workers_for_arm(arm, workers)
+    if clamped != workers:
+        print(
+            f"workers: {workers} -> {clamped} (arm {arm} declares "
+            f"max_workers={arm_spec(arm).max_workers}; its deployment cannot "
+            "serve the provider-safe default — see clamp_workers_for_arm)"
+        )
+        workers = clamped
 
     hourly_cap, daily_cap = load_spend_caps()
     usd, hours, source = estimate_instance_cost(

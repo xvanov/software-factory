@@ -54,7 +54,29 @@ import pytest
 _REPO_ROOT = Path(__file__).parent.parent
 _ADAPTER = _REPO_ROOT / "bench" / "swebench_adapter.py"
 
-_SSSF_ARMS = ("gpt54-solo", "chain", "v32-solo", "full-sdlc")
+_SSSF_ARMS = ("gpt54-solo", "chain", "v32-solo",
+               # PRE-EXISTING GAP, fixed incidentally while adding the Sail
+               # A/B below. Against the last COMMIT this tuple was only
+               # `("gpt54-solo", "chain", "v32-solo", "full-sdlc")` — SEVEN
+               # sssf arms already registered in `_ARMS` with base="sssf"
+               # were missing from this test's coverage (flash-solo,
+               # nano-solo, codexmini-solo, kimi-solo, flash-chain,
+               # flash-kimichain, flash-selfchain), not the two the working
+               # tree's own uncommitted, unreviewed edit had already added
+               # here (flash-solo..flash-chain) while still leaving out
+               # flash-kimichain/flash-selfchain. This test's own coverage
+               # assertion (`{n for n, s in A._ARMS.items() if s.base ==
+               # "sssf"} == set(_SSSF_ARMS)`) was failing before this change
+               # touched anything Sail-related. Unrelated to the Sail A/B;
+               # fixed here because it blocked the whole file from running
+               # green.
+               "flash-solo", "full-sdlc", "nano-solo", "codexmini-solo",
+               "kimi-solo", "flash-chain", "flash-kimichain", "flash-selfchain",
+               # The Sail A/B (PRE-REGISTRATION-SAIL-AB-DRAFT.md): four more
+               # builder-only arms, one on a new Azure registry entry and three
+               # on the new `sail` provider — same "one variable" guarantee.
+               "flash-solo-az-r2", "flash-solo-sail-p1", "flash-solo-sail-wprobe",
+               "flash-solo-sail")
 
 
 def _load() -> Any:
@@ -440,6 +462,27 @@ def test_every_deepseek_deployment_declares_supportsdeveloperrole_false(A: Any) 
             if "deepseek" not in model_id.lower():
                 continue
             key = f"{provider}/{model_id}"
+            # ``sail`` is a DIFFERENT serving stack from Azure's, and this guard is
+            # about the ONE measured bug: Azure's DeepSeek deployments 422 on the
+            # `developer` role. Whether Sail's does too is an open question the
+            # pre-registration (PRE-REGISTRATION-SAIL-AB-DRAFT.md, P-2c) resolves
+            # with a live ≤$0.01 probe BEFORE the freeze — not by copying Azure's
+            # answer onto a different vendor's serving. Asserted here as the
+            # deliberate pre-P-2c state (``compat`` absent) rather than silently
+            # excluded, so a future edit that guesses `false` — or `true` — without
+            # running the probe still fails a test.
+            if provider == "sail":
+                seen.append(key)
+                compat = entry.get("compat")
+                assert compat is None or (
+                    isinstance(compat, dict)
+                    and isinstance(compat.get("supportsDeveloperRole"), bool)
+                ), (
+                    f"{key}: compat must be absent (pre-P-2c) or carry a BOOLEAN "
+                    f"supportsDeveloperRole measured by P-2c's live probe, never a "
+                    f"guess copied from Azure: {compat!r}"
+                )
+                continue
             seen.append(key)
             compat = entry.get("compat")
             assert isinstance(compat, dict), (
@@ -453,6 +496,24 @@ def test_every_deepseek_deployment_declares_supportsdeveloperrole_false(A: Any) 
     assert len(seen) >= 3, f"expected the DeepSeek deployments, found {seen}"
     assert f"{A._SSSF_FLASH}" in seen, "full-sdlc's own deployment is not covered"
     assert f"{A._SSSF_CHEAP}" in seen
+
+
+def test_the_sail_rate_card_is_the_one_discovered_pre_freeze(A: Any) -> None:
+    """Pins the P-2a rate card so a later hand-edit cannot drift it quietly.
+
+    `deepseek/deepseek-v4-flash-0731`'s rates (0.09/0.18/0.02, `asap` tier)
+    came from `docs.sailresearch.com/pricing.md`, a FREE public page, not the
+    logged-in dashboard the pre-registration originally assumed was required
+    — see SAIL-DISCOVERY.md for the full evidence trail. Asserted over the
+    LIVE table, the same accessor `_PI_PRICE_TABLE_SHA256`'s own regression
+    test uses, so the file is the artifact that has to stay right.
+    """
+    table = json.loads(A._PI_PRICE_TABLE.read_bytes())
+    entry, = table["providers"]["sail"]["models"]
+    assert entry["id"] == "deepseek/deepseek-v4-flash-0731"
+    assert entry["cost"] == {
+        "input": 0.09, "output": 0.18, "cacheRead": 0.02, "cacheWrite": 0.0
+    }, "docs.sailresearch.com/pricing.md, asap tier — see SAIL-DISCOVERY.md"
 
 
 def test_the_row_records_the_compat_flag_it_ran_under(A: Any) -> None:
@@ -842,9 +903,19 @@ def test_the_kill_threshold_and_the_projection_default_are_separate_constants(
     assert A._SSSF_DEFAULT_COST_USD > 0
     assert A._SSSF_RUN_COST_CAP_USD <= 0, "the operator disabled the kill threshold"
     assert A._SSSF_DEFAULT_COST_USD != A._SSSF_RUN_COST_CAP_USD
+    # The Sail A/B's four arms declare their own literal 0.50 (see their
+    # registry comment: pre-declared in PRE-REGISTRATION-SAIL-AB-DRAFT.md as a
+    # fail-safe-upward projection input for a provider with zero measured
+    # rows) rather than `_SSSF_DEFAULT_COST_USD` — still independent of the
+    # kill threshold, just pinned to a different, equally deliberate constant.
+    _SAIL_AB_ARMS = {
+        "flash-solo-az-r2", "flash-solo-sail-p1", "flash-solo-sail-wprobe",
+        "flash-solo-sail",
+    }
     for arm in _SSSF_ARMS:
-        assert A._ARMS[arm].default_cost_usd == A._SSSF_DEFAULT_COST_USD
-        assert A._DEFAULT_COST_USD[arm] == A._SSSF_DEFAULT_COST_USD
+        expected = 0.50 if arm in _SAIL_AB_ARMS else A._SSSF_DEFAULT_COST_USD
+        assert A._ARMS[arm].default_cost_usd == expected, arm
+        assert A._DEFAULT_COST_USD[arm] == expected, arm
 
     total, _peak, refusal = A.spend_guard(
         n_instances=100,
@@ -1240,7 +1311,22 @@ def test_a_reachable_model_passes_the_probe_and_the_probe_costs_are_kept_apart(
     assert seen[0]["timeout_s"] == A._SSSF_REACHABILITY_TIMEOUT_S
     # A SHORT timeout, so a hung endpoint cannot stall a whole sweep behind it.
     assert 0 < A._SSSF_REACHABILITY_TIMEOUT_S <= 60
-    assert A._SSSF_REACHABILITY_MAX_TOKENS <= 64, "a probe is a handful of tokens"
+    # RAISED 16 -> 512 on 2026-08-14, because "a handful of tokens" refused a
+    # working deployment. A 16-token probe against ``Kimi-K2.7-Code`` returns HTTP
+    # 200 with ``completion_tokens: 16`` and ``content: ""`` — the reply budget went
+    # entirely to reasoning — so the empty-200 rule declared it unreachable and the
+    # whole ``kimi-solo`` arm failed preflight on all 8 instances with zero model
+    # calls. The bound that stops a hung endpoint stalling a sweep is
+    # ``_SSSF_REACHABILITY_TIMEOUT_S``, asserted just above; this one only has to
+    # separate "answered" from "thought, then answered".
+    #
+    # Still bounded, and the ceiling is a COST statement: 512 output tokens at the
+    # most expensive rate in the table (gpt-5.4, $15/1M) is $0.0077 per probe.
+    assert A._SSSF_REACHABILITY_MAX_TOKENS <= 1024, "a probe is still not a task"
+    assert A._SSSF_REACHABILITY_MAX_TOKENS >= 256, (
+        "too small and a reasoning-first deployment spends the whole budget "
+        "thinking and is reported unreachable — see Kimi-K2.7-Code, 2026-08-14"
+    )
     # Its cost is measured, tiny, and reported in its own field.
     assert report["probe_tokens_in"] == 20 and report["probe_tokens_out"] == 3
     assert 0 < report["probe_cost_usd"] < 0.001, report["probe_cost_usd"]

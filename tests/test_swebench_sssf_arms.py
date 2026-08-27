@@ -47,8 +47,15 @@ import yaml
 _REPO_ROOT = Path(__file__).parent.parent
 _ADAPTER = _REPO_ROOT / "bench" / "swebench_adapter.py"
 
-_ARMS_UNDER_TEST = ("gpt54-solo", "chain", "v32-solo", "full-sdlc")
-_SOLO = ("gpt54-solo", "v32-solo")
+_ARMS_UNDER_TEST = ("gpt54-solo", "chain", "v32-solo", "flash-solo", "full-sdlc",
+                    "nano-solo", "codexmini-solo", "kimi-solo", "flash-chain",
+                    "flash-kimichain", "flash-selfchain",
+                    # The Sail A/B (PRE-REGISTRATION-SAIL-AB-DRAFT.md), appended
+                    # last so no published arm's registry position moves.
+                    "flash-solo-az-r2", "flash-solo-sail-p1",
+                    "flash-solo-sail-wprobe", "flash-solo-sail")
+_SOLO = ("gpt54-solo", "v32-solo", "flash-solo", "nano-solo", "codexmini-solo",
+         "kimi-solo")
 # The only arm that skips NOTHING: all four roles, all 13 phases. Named because
 # several invariants below are stated as "every arm except this one skips a role".
 _FULL = "full-sdlc"
@@ -266,6 +273,14 @@ def test_the_rosters_are_exactly_the_registered_four(A: Any) -> None:
             "reviewer": None,
             "documenter": None,
         },
+        # The cost floor: the SAME builder-only graph as the two arms above, on the
+        # cheapest deployment. Three solo arms now differ only in the weights.
+        "flash-solo": {
+            "planner": None,
+            "builder": flash,
+            "reviewer": None,
+            "documenter": None,
+        },
         # THE COMPLETE GRAPH, one model for all four roles.
         "full-sdlc": {
             "planner": flash,
@@ -273,7 +288,67 @@ def test_the_rosters_are_exactly_the_registered_four(A: Any) -> None:
             "reviewer": flash,
             "documenter": flash,
         },
+        # The 2026-08-14 model sweep: the same builder-only graph, four more
+        # weights, plus the one arm that adds ONLY a reviewer.
+        "nano-solo": {
+            "planner": None, "builder": A._SSSF_NANO,
+            "reviewer": None, "documenter": None,
+        },
+        "codexmini-solo": {
+            "planner": None, "builder": A._SSSF_CODEX_MINI,
+            "reviewer": None, "documenter": None,
+        },
+        "kimi-solo": {
+            "planner": None, "builder": A._SSSF_KIMI,
+            "reviewer": None, "documenter": None,
+        },
+        "flash-chain": {
+            "planner": None, "builder": flash,
+            "reviewer": strong, "documenter": None,
+        },
+        # The reviewer ladder: identical to flash-chain but for the reviewer
+        # model, so the three arms isolate reviewer strength as the only
+        # variable. flash-selfchain routes ONE model to both roles, which is the
+        # null case — the writer's own blind spots reviewing the writer.
+        "flash-kimichain": {
+            "planner": None, "builder": flash,
+            "reviewer": A._SSSF_KIMI, "documenter": None,
+        },
+        "flash-selfchain": {
+            "planner": None, "builder": flash,
+            "reviewer": flash, "documenter": None,
+        },
+        # The Sail A/B: four more builder-only rosters, structurally identical
+        # to flash-solo — one on a new Azure registry entry (fresh engine commit,
+        # the pre-registration's control) and three on the new `sail` provider's
+        # DeepSeek V4 Flash 0731 (the treatment and its two probe arms).
+        "flash-solo-az-r2": {
+            "planner": None, "builder": flash,
+            "reviewer": None, "documenter": None,
+        },
+        "flash-solo-sail-p1": {
+            "planner": None, "builder": A._SSSF_FLASH_SAIL,
+            "reviewer": None, "documenter": None,
+        },
+        "flash-solo-sail-wprobe": {
+            "planner": None, "builder": A._SSSF_FLASH_SAIL,
+            "reviewer": None, "documenter": None,
+        },
+        "flash-solo-sail": {
+            "planner": None, "builder": A._SSSF_FLASH_SAIL,
+            "reviewer": None, "documenter": None,
+        },
     }
+    assert A._SSSF_FLASH_SAIL == "sail/deepseek/deepseek-v4-flash-0731"
+    # The roster-SHAPE claim ("structurally identical to flash-solo, builder
+    # only") is only half tested by the dict equality above — the OTHER half
+    # is that Table 3 must print "harness varies? no" for these four against
+    # every other builder-only solo arm, which is what a SHARED harness_id
+    # asserts. Pinned here so a future edit cannot give one of the four its
+    # own id without a test noticing.
+    for arm in ("flash-solo-az-r2", "flash-solo-sail-p1",
+                "flash-solo-sail-wprobe", "flash-solo-sail"):
+        assert A._ARMS[arm].harness_id == "sssf-solo-builder", arm
 
 
 def test_exactly_one_arm_runs_the_documenter_and_it_skips_nothing(A: Any) -> None:
@@ -315,14 +390,77 @@ def test_the_documenters_own_fence_is_the_shipped_one(A: Any) -> None:
     assert A._SSSF_ROSTERS[_FULL]["documenter"] == A._SSSF_FLASH
 
 
-def test_the_two_solo_arms_differ_only_in_the_builders_model(A: Any) -> None:
-    """The cleanest comparison in the set: same harness, one model swapped."""
-    a, b = (A._SSSF_ROSTERS[n] for n in _SOLO)
-    moved = {role for role in A._SSSF_ROLES if a[role] != b[role]}
-    assert moved == {"builder"}
-    assert A._ARMS["gpt54-solo"].harness_id == A._ARMS["v32-solo"].harness_id, (
-        "Table 3 keys 'harness varies?' off harness_id; these two hold the harness "
-        "constant and vary only the model, so it must print 'no' for the pair"
+def test_flash_solo_is_clamped_to_one_worker_and_cannot_be_widened(A: Any) -> None:
+    """Flash's deployment cannot serve the provider-safe default, so the arm
+    declares its own ceiling and an explicit ``--workers`` may not raise it.
+
+    MEASURED EVIDENCE. ``flash-solo`` at ``--workers 2`` on 2026-08-14 lost
+    ``alibaba__opensandbox-816`` to a 429 on ``DeepSeek-V4-Flash`` in eastus2;
+    ``pi`` swallowed the refusal into an empty assistant turn with all-zero
+    usage, and the adapter marked the row ``provider_starved`` and NOT
+    reportable. The same instance re-run at ``--workers 1`` finished clean in
+    360.2 s. Both Flash quota pools are at 100% subscription-wide, so this is a
+    property of the deployment and not a conservative guess.
+
+    The ``--workers`` override is honoured verbatim for every OTHER arm (see
+    ``_PROVIDER_SAFE_WORKERS``' docstring), which is exactly why this ceiling has
+    to live somewhere the override cannot reach.
+    """
+    assert A._ARMS["flash-solo"].max_workers == 1
+    assert A.default_workers_for_arm("flash-solo") == 1
+    for requested in (2, 4, 24):
+        assert A.clamp_workers_for_arm("flash-solo", requested) == 1, requested
+
+    # The ceiling is PER-DEPLOYMENT, so only arms whose deployment cannot serve
+    # the provider-safe default declare one, each for a reason recorded on the
+    # registry entry: flash-solo and flash-chain share the 250-unit Flash
+    # deployment (measured 429 at width 2); kimi-solo runs on the smallest
+    # deployment on the resource (capacity 100). Everything else must stay None,
+    # or an arm with real quota gets silently capped.
+    #
+    # The two reviewer-ladder arms are constrained for a STRONGER reason than
+    # their siblings: flash-selfchain drives the 250-unit Flash deployment from
+    # two roles within a single run, so even width 1 is already two concurrent
+    # lanes against it, and flash-kimichain additionally inherits the capacity-100
+    # Kimi deployment. Neither can be widened without hitting the 429 that
+    # flash-solo measured.
+    # `full-sdlc` is the one that was MISSING until 2026-08-15, and it is the
+    # heaviest consumer of the Flash deployment in the set: all four roles route
+    # to `_SSSF_FLASH`, so it drove more Flash traffic per run than any other arm
+    # while being handed the provider-safe default of 4.
+    CONSTRAINED = {"flash-solo": 1, "flash-chain": 1, "kimi-solo": 1,
+                   "flash-kimichain": 1, "flash-selfchain": 1, "full-sdlc": 1,
+                   # The Sail A/B: all width-1 except the width probe, whose
+                   # ENTIRE job is measuring width 1 -> 2 -> 4 and which is
+                   # never verdict or cost-ratio evidence (see its registry
+                   # comment in `_ARMS`).
+                   "flash-solo-az-r2": 1, "flash-solo-sail-p1": 1,
+                   "flash-solo-sail-wprobe": 4, "flash-solo-sail": 1}
+    for name, spec in A._ARMS.items():
+        if name in CONSTRAINED:
+            assert spec.max_workers == CONSTRAINED[name], name
+            assert A.clamp_workers_for_arm(name, 8) == CONSTRAINED[name], name
+            continue
+        assert spec.max_workers is None, name
+        assert A.clamp_workers_for_arm(name, 8) == 8, name
+
+
+def test_the_solo_arms_differ_only_in_the_builders_model(A: Any) -> None:
+    """The cleanest comparison in the set: same harness, one model swapped.
+
+    Stated over the whole ``_SOLO`` family rather than over a hardcoded pair, so
+    that registering a third weight (``flash-solo``) is caught by this invariant
+    instead of unpacking-erroring out of it.
+    """
+    ref = A._SSSF_ROSTERS[_SOLO[0]]
+    for name in _SOLO[1:]:
+        other = A._SSSF_ROSTERS[name]
+        moved = {role for role in A._SSSF_ROLES if ref[role] != other[role]}
+        assert moved == {"builder"}, (name, moved)
+    ids = {A._ARMS[n].harness_id for n in _SOLO}
+    assert len(ids) == 1, (
+        "Table 3 keys 'harness varies?' off harness_id; these arms hold the harness "
+        f"constant and vary only the model, so it must print 'no' across them: {ids}"
     )
 
 
@@ -352,11 +490,44 @@ def test_every_sssf_arm_is_distinguishable_from_software_factory(A: Any) -> None
 def test_the_three_arm_specs_differ_only_in_identity_fields(A: Any) -> None:
     """Same base, same budget, same wall clock, same cost basis, same trajectory
     expectation, same chain-verdict capability, same cost guard. Anything else
-    would be a second variable in a three-arm comparison."""
+    would be a second variable in a three-arm comparison.
+
+    ``max_workers`` is admitted to the allowed set, and the reason is worth
+    stating because it IS a real difference between the arms: ``flash-solo`` runs
+    serially and its siblings run four-wide. It is admitted because concurrency
+    is an EXECUTION property, not a MEASUREMENT one — it changes wall clock and
+    429 exposure, not what the model is asked or what the oracle grades — and
+    because running Flash wide is precisely what corrupts its rows
+    (``provider_starved``, not reportable). Serial is the width at which this arm
+    produces a valid row at all, so holding it equal to its siblings would buy
+    comparability in the field and lose it in the data.
+
+    It is declared in the registry rather than left to the operator's
+    ``--workers`` so that the difference is visible in the arm table and in the
+    sweep's own stdout, instead of living in a README.
+    """
+    # ``default_cost_usd`` is admitted for the Sail A/B's four arms ONLY (see
+    # their registry comment: a literal 0.50, a fail-safe-upward projection
+    # input pre-declared for a provider with zero measured rows, not a rate).
+    # The invariant this test protects — the ORIGINAL family's cost projection
+    # is one shared constant — is re-asserted explicitly below rather than
+    # merely widened away.
+    _SAIL_AB_ARMS = {
+        "flash-solo-az-r2", "flash-solo-sail-p1", "flash-solo-sail-wprobe",
+        "flash-solo-sail",
+    }
+    non_sail_specs = [A._ARMS[n] for n in _ARMS_UNDER_TEST if n not in _SAIL_AB_ARMS]
+    assert len({s.default_cost_usd for s in non_sail_specs}) == 1, (
+        "the original family's cost projection must still be one shared constant"
+    )
+    for spec in [A._ARMS[n] for n in _SAIL_AB_ARMS]:
+        assert spec.default_cost_usd == 0.50, spec.name
+
     specs = [A._ARMS[n] for n in _ARMS_UNDER_TEST]
     for other in specs[1:]:
         moved = {f for f in specs[0]._fields if getattr(specs[0], f) != getattr(other, f)}
-        assert moved <= {"name", "harness", "harness_id"}, moved
+        assert moved <= {"name", "harness", "harness_id", "max_workers",
+                          "default_cost_usd"}, moved
     for spec in specs:
         assert spec.base == "sssf"
         assert spec.model is None and spec.model_selectable is False
@@ -404,9 +575,21 @@ def test_the_registrys_cost_default_is_independent_of_the_kill_threshold(
     cannot say no. So the registry keeps its own conservative figure regardless
     of whether anything is being killed.
     """
+    # The Sail A/B's four arms declare their OWN literal 0.50 (see their registry
+    # comment): a fail-safe-upward guess for a provider with zero measured rows,
+    # pre-declared in PRE-REGISTRATION-SAIL-AB-DRAFT.md rather than derived from
+    # `_SSSF_DEFAULT_COST_USD` — that constant is the whole-graph fallback and
+    # these arms are all builder-only. This does not weaken the invariant this
+    # test protects: their `default_cost_usd` is still independent of the kill
+    # threshold, just pinned to a different, equally deliberate figure.
+    _SAIL_AB_ARMS = {
+        "flash-solo-az-r2", "flash-solo-sail-p1", "flash-solo-sail-wprobe",
+        "flash-solo-sail",
+    }
     for arm in _ARMS_UNDER_TEST:
-        assert A._ARMS[arm].default_cost_usd == A._SSSF_DEFAULT_COST_USD
-        assert A._DEFAULT_COST_USD[arm] == A._SSSF_DEFAULT_COST_USD
+        expected = 0.50 if arm in _SAIL_AB_ARMS else A._SSSF_DEFAULT_COST_USD
+        assert A._ARMS[arm].default_cost_usd == expected, arm
+        assert A._DEFAULT_COST_USD[arm] == expected, arm
         assert A._DEFAULT_HOURS[arm] == A._ARMS[arm].default_hours
     # The projection input must stay positive even with the cap disabled, or the
     # sweep guard silently stops being able to refuse anything.
@@ -466,7 +649,17 @@ def test_a_model_override_is_refused_for_every_sssf_arm(A: Any) -> None:
 
 _PUBLISHED_ARMS = ("factory", "openhands", "bare", "claude", "claude-5", "claude-4.8")
 _PUBLISHED_ARMS_SHA256 = (
-    "c1fa09873f46104831f9bdde953ac7d068530a5e62119056b9db0ebabb72c9c9"
+    # MOVED 2026-08-14, by the ADDITION OF A FIELD, not by a change to any of these
+# arms. ``ArmSpec`` gained ``max_workers: int | None = None``; every published
+# arm takes the default ``None``, which is byte-for-byte the previous behaviour
+# (bounded by ``_PROVIDER_SAFE_WORKERS``, nothing else). The digest is taken over
+# the whole NamedTuple repr, so a new field with a default moves it while
+# changing no arm's budget, cost guard or trajectory rule — the same
+# cosmetic-digest-move that ``_sssf_role_color`` documents for
+# ``sssf_roster_sha256``. Verified before re-pinning: all six read
+# ``max_workers=None``.
+    # was c1fa09873f46104831f9bdde953ac7d068530a5e62119056b9db0ebabb72c9c9
+    "1161fd0f8ba83059e7f0053ebeef470ea91fc1e09e7277662f67e0e71e7672f7"
 )
 
 
@@ -492,9 +685,15 @@ def test_the_sssf_arms_are_registered_last(A: Any) -> None:
         "claude-5",
         "claude-4.8",
     )
-    assert A._ARM_NAMES[7:] == _ARMS_UNDER_TEST
-    assert A._ARM_NAMES[-1] == _FULL, (
-        "the newest arm is appended, so no published arm's index moves"
+    assert A._ARM_NAMES[7:] == _ARMS_UNDER_TEST, A._ARM_NAMES[7:]
+    # The invariant is APPEND-ONLY, not "full-sdlc is last" — that spelling was
+    # written when full-sdlc happened to be the newest arm, and it turned a
+    # correctly-appended 2026-08-14 sweep into a failure. What must hold is that
+    # every arm which already has rows keeps the index it had, so the prefix is
+    # pinned and only the tail grows.
+    PRE_2026_08_14 = ("gpt54-solo", "chain", "v32-solo", "flash-solo", "full-sdlc")
+    assert A._ARM_NAMES[7:7 + len(PRE_2026_08_14)] == PRE_2026_08_14, (
+        "an arm with archived rows moved index; the report keys off these names"
     )
     assert A._ARM_NAMES == tuple(A._ARMS)
 
@@ -3620,3 +3819,61 @@ def test_run_sssf_classifies_from_the_artifacts_and_records_the_evidence(
     # The crash sets an ``error`` (which is what excludes it); the breach must not.
     assert "_SSSF_ENGINE_CRASH_TERMINATION" in src
     assert "_SSSF_WRITES_SCOPE_TERMINATION" in src
+
+
+# --------------------------------------------------------------------------- #
+# the oracle-probe scan must judge ACTIONS, never what the agent was shown
+# --------------------------------------------------------------------------- #
+
+def test_a_tool_result_is_not_scanned_for_retrieval_verbs(A: Any) -> None:
+    """MEASURED FALSE POSITIVE, 2026-08-14, worth three discarded runs.
+
+    An sssf ``tool_call`` payload carries ``result_snippet`` — up to ~18 KB of the
+    tool's OUTPUT. It was absent from ``_ACTION_CONTENT_FIELDS``, so
+    ``_command_side_text`` kept it and the retrieval-verb patterns scanned file
+    bodies. ``harumiweb__exstruct-113``'s own ``tasks/todo.md`` contains
+
+        - [x] Confirm issue `#107` details with `gh issue view 107`.
+
+    so every arm that merely READ that file was failed for "the arm went looking
+    for the answer": ``flash-solo`` attempt 2 and both ``flash-chain`` attempts.
+    That is worse than lost data — it excluded one instance for whichever arms
+    happened to read the file, which biases a paired comparison.
+    """
+    seen = {
+        "tool": "read",
+        "args": {"path": "/work/repo/tasks/todo.md"},
+        "ok": True,
+        "result_snippet": "- [x] Confirm issue `#107` with `gh issue view 107`.\n"
+                          "  see also: curl https://github.com/o/r/pull/9.diff",
+        "duration_ms": 12,
+        "agent": "builder",
+    }
+    assert A._retrieval_hits(A._command_side_text(seen)) == [], (
+        "a fetch verb inside a tool RESULT is what the agent saw, not what it ran"
+    )
+
+
+def test_a_real_retrieval_command_is_still_caught(A: Any) -> None:
+    """The narrowing must not fail open: the args side is still scanned."""
+    for command, expected in (
+        ("gh issue view 107 --repo harumiweb/exstruct", "gh cli"),
+        ("curl -s https://github.com/o/r/pull/9.diff", "curl"),
+        ("git fetch origin refs/pull/9/head", "git fetch/pull/ls-remote"),
+    ):
+        ran = {"tool": "bash", "args": {"command": command}, "result_snippet": "ok"}
+        assert expected in A._retrieval_hits(A._command_side_text(ran)), command
+
+
+def test_oracle_paths_are_still_scanned_over_the_whole_line(A: Any) -> None:
+    """Only the retrieval-VERB half was narrowed.
+
+    SEEING answer material is itself the finding, so the oracle/manifest PATH
+    patterns keep scanning the entire serialised event — including results.
+    """
+    import inspect
+    src = inspect.getsource(A._scan_oracle_probes)
+    assert "_probe_line_hits(line" in src, (
+        "the path scan must still read the whole line; narrowing it too would "
+        "let an arm read grade.log and pass the audit"
+    )

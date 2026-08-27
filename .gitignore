@@ -134,6 +134,11 @@ stories/*.md
 # there so every published table stays backed by committed artifacts.
 bench/swebench/runs/
 
+# Phase-0 staging backups (bench/swebench/phase0_sail_ab.py p0_4-stage). Full
+# copies of real run dirs, including grade.log / grade-nodes.log — the hidden
+# test ids the record store marks answer_key and that `export` refuses to emit.
+bench/swebench/.phase0-backups/
+
 # selftest per-instance rows are the parallel driver INTERMEDIATE; `selftest.json`
 # is the artifact they merge into and the one source of truth the sweep reads.
 bench/swebench/selftest-rows/
