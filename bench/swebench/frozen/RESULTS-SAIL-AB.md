@@ -221,3 +221,36 @@ after that reconciliation is recorded here.
 | Phase 1 attempt 1 (excluded row, still money) | $0.00 |
 | Phase 1 attempt 2 | $0.0302 |
 | **Running total** | **$0.030209** of the $15.00 cap |
+
+### Operator directives + early billing reading (2026-08-27, appended)
+
+1. **Campaign hard cap tightened by the operator: $15.00 → $5.00 total.** The
+   operator's Sail balance is $5.00 of free credits and the instruction is to
+   stay under it. A tightened cap is always valid (every phase cap is a
+   ceiling); the phase caps now bind as min(their frozen value, the remaining
+   $5.00 envelope). Realistic Phase-2+3 projection from measured priors
+   (probe rows ~$0.03, Azure control ~$0.08/row, Sail k=2 ~$0.03/row) is
+   ≈ $1.20–2.50 total, inside the new cap with slack.
+2. **Early dashboard reading, PROVISIONAL — not the R2 evaluation:** the
+   operator reports the dashboard shows **$0.0113 spent** at ~T+1–2h after
+   the Phase-1 row. Computed-at-pinned-rates total is **$0.030209**. If this
+   reading were final it would be a **−63% divergence** — billed BELOW
+   computed. Recorded now, evaluated ONLY at the declared ≥T+24h boundary,
+   because the two candidate mechanisms cut opposite ways:
+   - **Billing lag**: the surface registered micro-usage "within hours" for a
+     56-token probe, but a 327k-token run may accrue in parts; the reading
+     may simply be incomplete.
+   - **Unreported cache reads**: the usage payload reported **0 cached
+     tokens** on 318,492 input — but if Sail actually billed a large share at
+     the cached rate ($0.02/M vs $0.09/M), computed overstates. A ~65%
+     cache-billed share reproduces $0.0113 almost exactly
+     (0.35×318,492×0.09/1e6 + 0.65×318,492×0.02/1e6 + 8,292×0.18/1e6 ≈
+     $0.0115). If confirmed, our computed figure is a documented UPPER BOUND
+     (the same safe-direction treatment the rate table already applies to
+     Azure V3.2's phantom cache tier) — conservative against Sail in R6, so
+     adoption math stays honest, but the mechanism must be published before
+     Phase 2 launches.
+   Next action unchanged: operator re-reads the hover at ≥T+24h
+   (after 2026-08-28T21:00Z) and attaches a screenshot; R2's dollar leg is
+   evaluated then, with the investigate branch triggered if the divergence
+   holds outside the 10% band.
