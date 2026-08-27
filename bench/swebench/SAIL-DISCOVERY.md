@@ -456,3 +456,38 @@ file voids pairing for all rows that follow it, per the frozen spec's own
 engine-drift threat. The audit query that re-checks this:
 `git diff --name-only 71668e04..<row sha>` must be a subset of the record
 list above, for every distinct sha the campaign's rows carry.
+
+## Phase 1, attempt 1 — Sail rejects `store=false` (2026-08-27)
+
+The first real Sail row (`flash-solo-sail-p1`, `hkuds__openharness-217`,
+width 1) terminated `provider-empty-response` in 9.8 s: **3 assistant turns
+with empty content and all-zero usage**, $0.00 metered. The captured provider
+reason — recorded verbatim in the row thanks to the engine's stderr-drain and
+EmptyResponse fixes — was:
+
+> `400 store=false is not supported. Responses are always stored.`
+
+Root cause: pi sends the OpenAI `store: false` field on chat-completions
+requests when it detects a standard OpenAI-shaped provider; Sail's compat
+layer rejects the field outright. The P-2c probe passed because the probe
+never sends `store` — so "the probe sends what pi sends" held for the ROLE
+layout it was designed around, not for every field. Fix: pi's documented
+`compat.supportsStore: false` (send-only-if-supported,
+`pi-ai/dist/providers/openai-completions.js:370`) — set on the sail entry;
+models.json sha re-pinned `eec3fa68…` → `f8ddda8b…`; the
+delete-sail-and-rehash recipe still reproduces `fbab9ac0…c45a`.
+
+Two findings beyond the fix:
+
+1. **Baseline advance, disclosed:** this touched a code file (the adapter's
+   pin), which the row-validity supersession above only tolerates before any
+   paired row exists. None did — the failed row is probe-arm, never verdict
+   or cost evidence — so the campaign baseline advances to the commit carrying
+   this note, and Phase 3's two arms both run entirely after it. The failed
+   attempt stays in the store, flagged provider-starved, as the disclosed
+   infrastructure loss; the spec's one-repair-per-cell rule covers the re-run.
+2. **Privacy finding for the operator:** Sail's API states outright that
+   responses are ALWAYS stored, while the vendor's public materials claim
+   ZDR by default. Whatever the resolution, code sent to Sail during this
+   campaign should be assumed retained. Worth raising with the vendor before
+   the evolution campaign ships anything sensitive there.

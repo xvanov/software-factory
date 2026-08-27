@@ -5890,10 +5890,22 @@ _PI_PRICE_TABLE = Path.home() / ".pi" / "agent" / "models.json"
 # delete-sail-and-rehash recipe in SAIL-DISCOVERY.md still reproduces
 # fbab9ac0…c45a, so every archived dollar figure stands. This is the pin the
 # P-1 freeze binds to.
+# MOVED ONCE MORE 2026-08-27, Phase 1 attempt 1 of the Sail A/B: the sail entry
+# gained ``compat.supportsStore: false``. Sail 400s any request carrying
+# ``store=false`` ("store=false is not supported. Responses are always
+# stored."), pi swallowed the 400 into 3 empty assistant turns, and the
+# provider-empty-response detector refused the row — exactly the failure class
+# this file's earlier comments record for Azure's 422 on the developer role.
+# The P-2c probe could not have caught it: the probe never sends ``store``, so
+# "the probe sends what pi sends" holds for roles, not for every field.
+# Disclosed in SAIL-DISCOVERY.md and RESULTS-SAIL-AB.md; changed BEFORE any
+# paired Phase-3 row existed, so no pairing is voided. Recipe still reproduces
+# fbab9ac0…c45a — no azure byte moved.
 _PI_PRICE_TABLE_SHA256 = (
     # was fbab9ac067086c6a6d89925302a3e4c9e87b780100a82e59684a40c98687c45a,
-    # then dd22d0f5270386daed59d7afde1269c3e02357e8608ff7752ddc44337643cf8a
-    "eec3fa6889d33d5288b7ec8bcfc3c6ec3e2c4e2884a9f41cbfec30ab77a3ff6f"
+    # then dd22d0f5270386daed59d7afde1269c3e02357e8608ff7752ddc44337643cf8a,
+    # then eec3fa6889d33d5288b7ec8bcfc3c6ec3e2c4e2884a9f41cbfec30ab77a3ff6f
+    "f8ddda8b19046245fd35eb82fad378850ae3dd86f3438dfd1a0d29272e38c651"
 )
 
 # ``pi`` reads its Azure credential from this env var (models.json declares
