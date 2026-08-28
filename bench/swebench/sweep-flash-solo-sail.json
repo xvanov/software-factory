@@ -3,8 +3,8 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail Research, asap tier) \u2014 the Sail A/B's paired-sweep treatment",
   "workers": 1,
-  "finished_at": "2026-08-28T01:11:52.955994+00:00",
-  "wall_clock_s": 200.7,
+  "finished_at": "2026-08-28T01:17:27.051689+00:00",
+  "wall_clock_s": 253.2,
   "stopped_reason": null,
   "instances": 1,
   "ok": 1,
@@ -29,15 +29,15 @@
   "budget_exhausted": 0,
   "retried_rows": 1,
   "gradable": 1,
-  "tokens_in": 751762,
+  "tokens_in": 591020,
   "cache_read": 0,
-  "fresh_in": 751762,
-  "tokens_out": 13550,
-  "cost_usd": 0.0701,
+  "fresh_in": 591020,
+  "tokens_out": 12988,
+  "cost_usd": 0.0555,
   "cost_source": "price-table estimate",
   "results": [
     {
-      "instance_id": "pyinfra-dev__pyinfra-1665",
+      "instance_id": "zauberzeug__nicegui-5858",
       "arm": "flash-solo-sail",
       "model": null,
       "status": "ok",
@@ -47,13 +47,13 @@
       "grade_rc": 0,
       "audit_rc": 1,
       "audit_failures": [
-        "foreign-workdir: sssf-events.jsonl:38 named another arm's working tree ['ppyinfra-dev__pyinfra-1665__flash-solo-sail'] \u2014 this run's evidence is not independent of that arm, so it is not a usable measurement. Requested-side only; a sibling path echoed in a tool RESULT is not counted."
+        "foreign-workdir: sssf-events.jsonl:25 named another arm's working tree ['zauzerzeug__nicegui-5858__flash-solo-sail'] \u2014 this run's evidence is not independent of that arm, so it is not a usable measurement. Requested-side only; a sibling path echoed in a tool RESULT is not counted."
       ],
       "final_state": "\u2014",
-      "tokens_in": 751762,
+      "tokens_in": 591020,
       "cache_read": 0,
-      "tokens_out": 13550,
-      "cost_usd": 0.0701,
+      "tokens_out": 12988,
+      "cost_usd": 0.0555,
       "factory_says_green": true,
       "oracle_resolved": true,
       "outcome": "resolved",
@@ -66,7 +66,7 @@
       "models_used": [
         "sail/deepseek/deepseek-v4-flash-0731"
       ],
-      "sweep_wall_s": 200.7
+      "sweep_wall_s": 253.2
     }
   ]
 }
