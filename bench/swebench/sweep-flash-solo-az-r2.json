@@ -3,8 +3,8 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek-V4-Flash (Azure, fresh engine commit \u2014 the Sail A/B's control)",
   "workers": 1,
-  "finished_at": "2026-08-27T23:25:28.059809+00:00",
-  "wall_clock_s": 412.1,
+  "finished_at": "2026-08-28T00:07:37.672313+00:00",
+  "wall_clock_s": 1283.6,
   "stopped_reason": null,
   "instances": 1,
   "ok": 1,
@@ -13,12 +13,12 @@
     "ok": 1
   },
   "outcomes": {
-    "right_place_wrong_fix": 1
+    "resolved": 1
   },
   "audited_valid": 1,
   "audit_failed": 0,
   "not_audited": 0,
-  "resolved": 0,
+  "resolved": 1,
   "resolved_but_run_failed": 0,
   "resolved_but_audit_failed": 0,
   "grade_parse_failed": 0,
@@ -29,15 +29,15 @@
   "budget_exhausted": 0,
   "retried_rows": 0,
   "gradable": 1,
-  "tokens_in": 303715,
-  "cache_read": 922368,
+  "tokens_in": 648213,
+  "cache_read": 2014208,
   "fresh_in": 0,
-  "tokens_out": 13382,
-  "cost_usd": 0.0999,
+  "tokens_out": 43945,
+  "cost_usd": 0.2232,
   "cost_source": "price-table estimate",
   "results": [
     {
-      "instance_id": "idaholab__montepy-933_interface",
+      "instance_id": "keras-team__keras-22316",
       "arm": "flash-solo-az-r2",
       "model": null,
       "status": "ok",
@@ -47,13 +47,13 @@
       "grade_rc": 0,
       "audit_rc": 0,
       "final_state": "\u2014",
-      "tokens_in": 303715,
-      "cache_read": 922368,
-      "tokens_out": 13382,
-      "cost_usd": 0.0999,
+      "tokens_in": 648213,
+      "cache_read": 2014208,
+      "tokens_out": 43945,
+      "cost_usd": 0.2232,
       "factory_says_green": true,
-      "oracle_resolved": false,
-      "outcome": "right_place_wrong_fix",
+      "oracle_resolved": true,
+      "outcome": "resolved",
       "attempt": 1,
       "budget_exhausted": false,
       "provider_starved": false,
@@ -63,7 +63,7 @@
       "models_used": [
         "azure/DeepSeek-V4-Flash"
       ],
-      "sweep_wall_s": 412.1
+      "sweep_wall_s": 1283.6
     }
   ]
 }
