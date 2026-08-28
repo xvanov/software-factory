@@ -3,8 +3,8 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail Research, asap tier) \u2014 the Sail A/B's paired-sweep treatment",
   "workers": 1,
-  "finished_at": "2026-08-28T00:37:31.356396+00:00",
-  "wall_clock_s": 510.9,
+  "finished_at": "2026-08-28T00:43:08.849735+00:00",
+  "wall_clock_s": 320.8,
   "stopped_reason": null,
   "instances": 1,
   "ok": 1,
@@ -13,7 +13,7 @@
     "ok": 1
   },
   "outcomes": {
-    "right_place_wrong_fix": 1
+    "wrong_place": 1
   },
   "audited_valid": 1,
   "audit_failed": 0,
@@ -29,15 +29,15 @@
   "budget_exhausted": 0,
   "retried_rows": 1,
   "gradable": 1,
-  "tokens_in": 2183036,
+  "tokens_in": 678508,
   "cache_read": 0,
-  "fresh_in": 2183036,
-  "tokens_out": 34601,
-  "cost_usd": 0.2027,
+  "fresh_in": 678508,
+  "tokens_out": 23198,
+  "cost_usd": 0.0652,
   "cost_source": "price-table estimate",
   "results": [
     {
-      "instance_id": "getmoto__moto-9841",
+      "instance_id": "harumiweb__exstruct-113",
       "arm": "flash-solo-sail",
       "model": null,
       "status": "ok",
@@ -47,14 +47,14 @@
       "grade_rc": 0,
       "audit_rc": 0,
       "final_state": "\u2014",
-      "tokens_in": 2183036,
+      "tokens_in": 678508,
       "cache_read": 0,
-      "tokens_out": 34601,
-      "cost_usd": 0.2027,
+      "tokens_out": 23198,
+      "cost_usd": 0.0652,
       "factory_says_green": true,
       "oracle_resolved": false,
-      "outcome": "right_place_wrong_fix",
-      "attempt": 4,
+      "outcome": "wrong_place",
+      "attempt": 3,
       "budget_exhausted": false,
       "provider_starved": false,
       "engine_crashed": false,
@@ -63,7 +63,7 @@
       "models_used": [
         "sail/deepseek/deepseek-v4-flash-0731"
       ],
-      "sweep_wall_s": 510.9
+      "sweep_wall_s": 320.8
     }
   ]
 }
