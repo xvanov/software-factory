@@ -3,8 +3,8 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek-V4-Flash (Azure, fresh engine commit \u2014 the Sail A/B's control)",
   "workers": 1,
-  "finished_at": "2026-08-28T00:07:37.672313+00:00",
-  "wall_clock_s": 1283.6,
+  "finished_at": "2026-08-28T00:11:26.695634+00:00",
+  "wall_clock_s": 212.2,
   "stopped_reason": null,
   "instances": 1,
   "ok": 1,
@@ -29,15 +29,15 @@
   "budget_exhausted": 0,
   "retried_rows": 0,
   "gradable": 1,
-  "tokens_in": 648213,
-  "cache_read": 2014208,
+  "tokens_in": 159748,
+  "cache_read": 525056,
   "fresh_in": 0,
-  "tokens_out": 43945,
-  "cost_usd": 0.2232,
+  "tokens_out": 8344,
+  "cost_usd": 0.0545,
   "cost_source": "price-table estimate",
   "results": [
     {
-      "instance_id": "keras-team__keras-22316",
+      "instance_id": "pyinfra-dev__pyinfra-1665",
       "arm": "flash-solo-az-r2",
       "model": null,
       "status": "ok",
@@ -47,10 +47,10 @@
       "grade_rc": 0,
       "audit_rc": 0,
       "final_state": "\u2014",
-      "tokens_in": 648213,
-      "cache_read": 2014208,
-      "tokens_out": 43945,
-      "cost_usd": 0.2232,
+      "tokens_in": 159748,
+      "cache_read": 525056,
+      "tokens_out": 8344,
+      "cost_usd": 0.0545,
       "factory_says_green": true,
       "oracle_resolved": true,
       "outcome": "resolved",
@@ -63,7 +63,7 @@
       "models_used": [
         "azure/DeepSeek-V4-Flash"
       ],
-      "sweep_wall_s": 1283.6
+      "sweep_wall_s": 212.1
     }
   ]
 }
