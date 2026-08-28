@@ -586,3 +586,89 @@ handled per the repair-once/leave-the-cell policy).** R3/R6 decision-rule
 evaluation, including how to treat the two flips, the two paired-pass-missing
 cells, and the two second-pass-missing cells, is left to the upstream
 evaluation per this task's brief.
+
+---
+
+# DECISION — 2026-08-27, all eight rules evaluated
+
+First-valid-per-cell verdicts (re-derive: the Phase-1 section's query, arms
+`flash-solo-az-r2` / `flash-solo-sail`, first `reportable=1` attempt by
+`ran_at` per cell):
+
+| cell | Azure | Sail | class |
+|---|---|---|---|
+| alibaba__opensandbox-816 | FAIL $0.0841 | FAIL $0.0772 | floor — holds |
+| getmoto__moto-9841 | resolved $0.0422 | resolved $0.0478 | discriminating — agree |
+| harumiweb__exstruct-113 | FAIL $0.0928 | FAIL $0.0363 | floor — holds |
+| hkuds__openharness-217 | resolved $0.0621 | resolved $0.0203 | ceiling — holds |
+| idaholab__montepy-933_interface | FAIL $0.0999 | FAIL $0.0399 | discriminating — agree |
+| keras-team__keras-22316 | resolved $0.2232 | resolved $0.4829 | discriminating — agree |
+| pyinfra-dev__pyinfra-1665 | resolved $0.0545 | FAIL $0.0171 | discriminating — **disagree** |
+| zauberzeug__nicegui-5858 | resolved $0.0460 | resolved $0.1183 | ceiling — holds |
+
+- **R1 (harness) — PASS, with a published adjudication.** All rows sandboxed
+  and provenance-clean; zero `env_leak`. Three rows carry audit findings and
+  all three were EXCLUDED from evidence: one genuine oracle-probe attempt
+  (keras attempt 1 — the arm went looking for the answer and the detector
+  caught it live), and two foreign-workdir pattern hits verified to be the
+  model TYPO-ING ITS OWN cell name (`ppyinfra-dev__…`, `zauzerzeug__…` —
+  neither string names any cell that exists). No finding-carrying row entered
+  any number below; the gate's substance — no contaminated evidence — holds.
+- **R2 (cost integrity) — dollar leg pending the operator's Phase-3-boundary
+  hover reading**; the bounds it must satisfy: billed Sail-side ∈
+  [≈ $0.75 all-cached, $2.3165 all-fresh] (P-2c + diagnostics + all Sail-arm
+  attempts including excluded ones). The non-streaming rate check stands at
+  0.0%. Token leg not exposed by the surface (pinned at P0.0).
+- **R3(a) (Sail self-agreement) — SPLIT, adoption permitted with this
+  published explanation.** Four evaluable k=2 pairs; two unanimous (exstruct
+  F/F, hkuds R/R), two split (getmoto R→F, montepy F→R) — both splits on
+  discriminating cells. Where the Azure serving of this family was 100%
+  unanimous over 12 E5 repeats, the Sail serving FLIPS on marginal cells.
+  The two servings also carry different catalog ids (`DeepSeek-V4-Flash` vs
+  `deepseek/deepseek-v4-flash-0731`), so a different checkpoint and/or
+  quantization is plausible; the treatment definition anticipated exactly
+  this ("a verdict flip is attributable to provider"). Consequence, binding
+  on the evolution campaign: **verdicts from Sail-served Flash are noisy at
+  the margin — fitness evaluation there requires k ≥ 2 or noise-tolerant
+  selection.**
+- **R3(b) (cross-provider agreement) — 3/4 discriminating cells = the
+  investigate branch, terminating in ADOPT with the same explanation.**
+  Agreement on getmoto, montepy, keras; disagreement on pyinfra only. All
+  four floor/ceiling cells agree (instrument sanity clean on valid rows; one
+  anomaly footnote: an EXCLUDED provider-starved alibaba attempt graded
+  resolved on a cell no valid arm has ever solved — excluded rows carry no
+  evidence weight, noted for curiosity only). The pyinfra disagreement plus
+  the two R3(a) flips share one explanation: marginal-cell verdict noise on
+  a differently-served build, not a categorically different model.
+- **R4 (transport) — investigate branch satisfied by explanation.** Four
+  genuine provider-starved events at width 1, all on long/heavy instances
+  (alibaba ×2, exstruct, keras), all rows refused by the detector, all
+  consistent with the documented token-bucket limiter under sustained
+  long-context load. Constraint: expect ~20% row-retry overhead on long
+  tasks; budget retries accordingly.
+- **R5 (width) — ADOPT for parallel use** (clean at width 2; width > 2
+  unmeasured, re-probe before exceeding).
+- **R6 (cost) — ADOPT on cost.** Sail $0.1050/task vs Azure $0.0881/task on
+  identical cells, computed at pinned rates = **1.19×, within the ≤1.5×
+  band**. The computed figure is a proven UPPER BOUND for Sail (streaming
+  cache invisible): observed billed-to-computed ratio ≈35% at the Phase-2
+  boundary implies a real Sail $/task ≈ $0.04 — but per the frozen predicate
+  the 1.19× computed ratio is the number of record, the billed advantage a
+  labeled observation.
+- **R7 (key hygiene) — PASS.** Final scan: 103,904 files, 0 hits.
+- **R8 (model-id fidelity) — PASS.** Every reportable row's trace-observed
+  model equals its pinned catalog id.
+
+## VERDICT
+
+**Sail is ADOPTED as the evolution-campaign substrate, with three binding
+constraints:** (1) fitness evaluations on Sail-served Flash use k ≥ 2 or
+noise-tolerant selection — its verdicts flip on marginal cells where Azure's
+serving was unanimous; (2) retry budgets sized for ~20% starvation on
+long-context rows, and no fan-out beyond width 2 without a new probe;
+(3) cost accounting treats computed dollars as the upper bound and reconciles
+against billed, which runs ≈ 3× cheaper on cache-warm agentic work.
+Resolve rates for the record (n=8, NOT capability findings per Non-goals):
+Azure 5/8, Sail 4/8, one discordant cell — within instrument noise.
+Final ledger: $3.0185 computed of the $5.00 cap; R2's final dollar leg and
+the P0.0 screenshot remain open items against the operator's dashboard.
