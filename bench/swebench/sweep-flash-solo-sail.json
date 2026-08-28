@@ -3,8 +3,8 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail Research, asap tier) \u2014 the Sail A/B's paired-sweep treatment",
   "workers": 1,
-  "finished_at": "2026-08-28T00:46:03.720252+00:00",
-  "wall_clock_s": 161.6,
+  "finished_at": "2026-08-28T00:49:03.532097+00:00",
+  "wall_clock_s": 167.6,
   "stopped_reason": null,
   "instances": 1,
   "ok": 1,
@@ -29,15 +29,15 @@
   "budget_exhausted": 0,
   "retried_rows": 1,
   "gradable": 1,
-  "tokens_in": 461710,
+  "tokens_in": 692567,
   "cache_read": 0,
-  "fresh_in": 461710,
-  "tokens_out": 11493,
-  "cost_usd": 0.0436,
+  "fresh_in": 692567,
+  "tokens_out": 10461,
+  "cost_usd": 0.0642,
   "cost_source": "price-table estimate",
   "results": [
     {
-      "instance_id": "hkuds__openharness-217",
+      "instance_id": "idaholab__montepy-933_interface",
       "arm": "flash-solo-sail",
       "model": null,
       "status": "ok",
@@ -47,10 +47,10 @@
       "grade_rc": 0,
       "audit_rc": 0,
       "final_state": "\u2014",
-      "tokens_in": 461710,
+      "tokens_in": 692567,
       "cache_read": 0,
-      "tokens_out": 11493,
-      "cost_usd": 0.0436,
+      "tokens_out": 10461,
+      "cost_usd": 0.0642,
       "factory_says_green": true,
       "oracle_resolved": true,
       "outcome": "resolved",
@@ -63,7 +63,7 @@
       "models_used": [
         "sail/deepseek/deepseek-v4-flash-0731"
       ],
-      "sweep_wall_s": 161.6
+      "sweep_wall_s": 167.6
     }
   ]
 }
