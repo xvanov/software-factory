@@ -542,6 +542,32 @@ def _image_for(inst: dict[str, Any]) -> str:
 
 ORACLE_PATH = SWE_DIR / "oracle.json.z"
 
+# An experiment that needs its OWN pinned instance set — drawn fresh, never
+# overlapping the shared campaign's evidence — must not get there by editing
+# manifest.json or oracle.json.z: those two files are read by their fixed
+# paths from 22 call sites, cited by exact sha in multiple FROZEN documents
+# (never edited, per this project's own rule), and `fetch` OVERWRITES them
+# wholesale rather than appending — `random.Random(seed).sample()` gives no
+# guarantee that a bigger `--limit` with the same seed keeps the smaller
+# draw's instances as a prefix, so a "just fetch more" re-run can silently
+# replace every instance every already-frozen result cites.
+#
+# So: an entirely separate manifest.json + oracle.json.z, in their own
+# directory, opted into by ONE env var so every existing consumer of
+# `_manifest()`/`_load_oracle_store()` is unaffected when it is unset — the
+# default path is exactly what it was before this existed.
+_ALT_MANIFEST_DIR_ENV = "SWEBENCH_MANIFEST_DIR"
+
+
+def _manifest_path() -> Path:
+    alt = os.environ.get(_ALT_MANIFEST_DIR_ENV)
+    return Path(alt) / "manifest.json" if alt else MANIFEST_PATH
+
+
+def _oracle_path() -> Path:
+    alt = os.environ.get(_ALT_MANIFEST_DIR_ENV)
+    return Path(alt) / "oracle.json.z" if alt else ORACLE_PATH
+
 # Every per-instance field that names or contains the answer. Pro's
 # ``before_repo_set_cmd`` embeds the FIX COMMIT sha and the oracle file list;
 # ``selected_test_files_to_run`` is the f2p node ids under another name.
@@ -578,7 +604,7 @@ def _load_oracle_store(path: Path | None = None) -> dict[str, dict[str, Any]]:
     import base64
     import zlib
 
-    p = path or ORACLE_PATH
+    p = path or _oracle_path()
     if not p.exists():
         raise SystemExit(
             f"oracle store missing at {p}. The manifest pins oracle digests, so "
@@ -1046,12 +1072,13 @@ def fetch(*, dataset: str, language: str, limit: int, seed: int, after: str | No
 
 
 def _manifest() -> dict[str, Any]:
-    if not MANIFEST_PATH.exists():
+    path = _manifest_path()
+    if not path.exists():
         raise SystemExit(
-            f"no manifest at {MANIFEST_PATH}. Run `fetch` first — instances must "
+            f"no manifest at {path}. Run `fetch` first — instances must "
             "be pinned BEFORE any run, or the sample is chosen after seeing results."
         )
-    return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _instance(instance_id: str) -> dict[str, Any]:
@@ -5612,6 +5639,24 @@ _SSSF_ROSTERS: dict[str, dict[str, str | None]] = {
         "reviewer": None,
         "documenter": None,
     },
+    # The planner ablation (2026-08-28, PRE-REGISTRATION-PLANNER-ABLATION.md):
+    # does adding a planning step before the SAME model builds help or hurt?
+    # E5.4 measured worse (5/8 vs 6/8) on DeepSeek-V3.2 with planner+builder+
+    # reviewer all present, confounding the planner with the reviewer. This
+    # pair isolates the planner alone, same model in both roles, no reviewer
+    # in either arm, on the model this factory actually runs in production.
+    "flash-noplan-sail": {
+        "planner": None,
+        "builder": _SSSF_FLASH_SAIL,
+        "reviewer": None,
+        "documenter": None,
+    },
+    "flash-plan-sail": {
+        "planner": _SSSF_FLASH_SAIL,
+        "builder": _SSSF_FLASH_SAIL,
+        "reviewer": None,
+        "documenter": None,
+    },
 }
 
 # The roster key the sssf engine reads to skip a role's phases, and the tokens
@@ -5920,11 +5965,20 @@ _PI_PRICE_TABLE = Path.home() / ".pi" / "agent" / "models.json"
 # hash, the current file, pi's 18:09 backup, and the value Phases 1–2 ran
 # under are all the SAME hash — f8ddda8b… — so the pin returns to that value
 # and every recorded row stays consistent without a single re-pin.
+#
+# MOVED AGAIN 2026-08-27T19:44 by a GENUINE content change, not a respelling:
+# pi added a seventh azure model, ``grok-4.6`` (3.0/15.0/0.75), to its own
+# catalog on its own — nothing in this session touched models.json. Verified
+# before re-pinning: every existing azure/azure-responses/sail model entry is
+# byte-identical to the prior backup; only the new entry and a `_comment`
+# addition changed. This is exactly the case the canonical hash is NOT
+# supposed to smooth over — a real addition still has to move the pin.
 _PI_PRICE_TABLE_SHA256 = (
     # was fbab9ac067086c6a6d89925302a3e4c9e87b780100a82e59684a40c98687c45a,
     # then dd22d0f5270386daed59d7afde1269c3e02357e8608ff7752ddc44337643cf8a,
-    # then eec3fa6889d33d5288b7ec8bcfc3c6ec3e2c4e2884a9f41cbfec30ab77a3ff6f
-    "f8ddda8b19046245fd35eb82fad378850ae3dd86f3438dfd1a0d29272e38c651"
+    # then eec3fa6889d33d5288b7ec8bcfc3c6ec3e2c4e2884a9f41cbfec30ab77a3ff6f,
+    # then f8ddda8b19046245fd35eb82fad378850ae3dd86f3438dfd1a0d29272e38c651
+    "2d4b49233a0f711e53bcb6cb59cb2e0745c4baa2cc05ac7d56f1d50ac2fe37fd"
 )
 
 # ``pi`` reads its Azure credential from this env var (models.json declares
@@ -6509,6 +6563,50 @@ _ARMS: dict[str, ArmSpec] = {
         # pre-registration's Phase 3 row ("both at width 1 regardless of Phase
         # 2 (comparability with the Azure control, which is hard-capped at 1)").
         max_workers=1,
+    ),
+    "flash-noplan-sail": _arm(
+        name="flash-noplan-sail",
+        base="sssf",
+        harness="sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail "
+                "Research) — the planner ablation's no-planner control",
+        harness_id="sssf-solo-builder",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        # Width 2, structurally — not an operator's ``--workers`` flag this
+        # experiment has to remember every invocation. The Sail A/B measured
+        # this deployment clean at width 2 and never probed above it (R5:
+        # "adopt for parallel use" at 2; 3+ is unmeasured, not proven safe).
+        # Capping it here means no invocation of THIS pair, today or months
+        # from now, can silently drift past the width that was actually
+        # checked — the same reasoning ``flash-solo``'s registry comment gives
+        # for its own ceiling, applied to "unmeasured" rather than "measured
+        # to break".
+        max_workers=2,
+    ),
+    "flash-plan-sail": _arm(
+        name="flash-plan-sail",
+        base="sssf",
+        harness="sssf ADW, planner+builder on DeepSeek V4 Flash 0731 (Sail "
+                "Research), no reviewer — the never-run clean planner "
+                "ablation EXPERIMENTS.md flagged (E5.4) and never executed",
+        harness_id="sssf-plan-build",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        max_workers=2,
     ),
 }
 

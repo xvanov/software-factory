@@ -76,7 +76,10 @@ _SSSF_ARMS = ("gpt54-solo", "chain", "v32-solo",
                # builder-only arms, one on a new Azure registry entry and three
                # on the new `sail` provider — same "one variable" guarantee.
                "flash-solo-az-r2", "flash-solo-sail-p1", "flash-solo-sail-wprobe",
-               "flash-solo-sail")
+               "flash-solo-sail",
+               # The planner ablation (PRE-REGISTRATION-PLANNER-ABLATION.md):
+               # two more builder-only-shaped arms on the same Sail deployment.
+               "flash-noplan-sail", "flash-plan-sail")
 
 
 def _load() -> Any:

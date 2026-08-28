@@ -265,6 +265,37 @@ def test_instance_must_be_in_the_manifest(A: Any, tmp_path: Path, monkeypatch: p
         A._instance("unknown")
 
 
+def test_manifest_path_defaults_to_the_shared_manifest_when_unset(
+    A: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:  # noqa: N803
+    """No env var, no behaviour change — every existing caller of `_manifest()`
+    is unaffected by the alt-dir mechanism existing at all."""
+    monkeypatch.delenv("SWEBENCH_MANIFEST_DIR", raising=False)
+    assert A._manifest_path() == A.MANIFEST_PATH
+    assert A._oracle_path() == A.ORACLE_PATH
+
+
+def test_manifest_path_honors_the_alt_manifest_dir_for_a_fresh_experiment(
+    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # noqa: N803
+    """An experiment needing its OWN pinned instance set (e.g. the planner
+    ablation) sets ONE env var rather than editing the shared manifest.json —
+    which `fetch` overwrites wholesale and which several frozen documents cite
+    by exact sha. Reading must come from the alt dir, never the shared one."""
+    alt = tmp_path / "alt-experiment"
+    alt.mkdir()
+    (alt / "manifest.json").write_text(
+        json.dumps({"manifest_sha256": "altsha", "instances": [{"instance_id": "alt-only"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SWEBENCH_MANIFEST_DIR", str(alt))
+    assert A._manifest_path() == alt / "manifest.json"
+    assert A._oracle_path() == alt / "oracle.json.z"
+    assert A._instance("alt-only")["instance_id"] == "alt-only"
+    with pytest.raises(SystemExit, match="not in the pinned manifest"):
+        A._instance("known")  # the real manifest's fixture id from the test above
+
+
 def test_shell_quoting_survives_test_names_with_quotes(A: Any) -> None:  # noqa: N803
     """Real fail_to_pass entries contain apostrophes (e.g. "should return ...
     and null if key doesn't exist"), which would break the grade script."""

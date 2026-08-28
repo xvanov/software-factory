@@ -53,7 +53,10 @@ _ARMS_UNDER_TEST = ("gpt54-solo", "chain", "v32-solo", "flash-solo", "full-sdlc"
                     # The Sail A/B (frozen/PRE-REGISTRATION-SAIL-AB.md), appended
                     # last so no published arm's registry position moves.
                     "flash-solo-az-r2", "flash-solo-sail-p1",
-                    "flash-solo-sail-wprobe", "flash-solo-sail")
+                    "flash-solo-sail-wprobe", "flash-solo-sail",
+                    # The planner ablation (PRE-REGISTRATION-PLANNER-ABLATION.md),
+                    # appended last for the same reason.
+                    "flash-noplan-sail", "flash-plan-sail")
 _SOLO = ("gpt54-solo", "v32-solo", "flash-solo", "nano-solo", "codexmini-solo",
          "kimi-solo")
 # The only arm that skips NOTHING: all four roles, all 13 phases. Named because
@@ -338,6 +341,17 @@ def test_the_rosters_are_exactly_the_registered_four(A: Any) -> None:
             "planner": None, "builder": A._SSSF_FLASH_SAIL,
             "reviewer": None, "documenter": None,
         },
+        # The planner ablation: the SAME model in both roles (no reviewer in
+        # either arm), so splitting the graph into planner+builder is the
+        # only variable — isolating exactly what E5.4's chain arm confounded.
+        "flash-noplan-sail": {
+            "planner": None, "builder": A._SSSF_FLASH_SAIL,
+            "reviewer": None, "documenter": None,
+        },
+        "flash-plan-sail": {
+            "planner": A._SSSF_FLASH_SAIL, "builder": A._SSSF_FLASH_SAIL,
+            "reviewer": None, "documenter": None,
+        },
     }
     assert A._SSSF_FLASH_SAIL == "sail/deepseek/deepseek-v4-flash-0731"
     # The roster-SHAPE claim ("structurally identical to flash-solo, builder
@@ -435,7 +449,12 @@ def test_flash_solo_is_clamped_to_one_worker_and_cannot_be_widened(A: Any) -> No
                    # never verdict or cost-ratio evidence (see its registry
                    # comment in `_ARMS`).
                    "flash-solo-az-r2": 1, "flash-solo-sail-p1": 1,
-                   "flash-solo-sail-wprobe": 4, "flash-solo-sail": 1}
+                   "flash-solo-sail-wprobe": 4, "flash-solo-sail": 1,
+                   # The planner ablation: capped at the Sail A/B's own
+                   # measured-clean ceiling (R5, width 2) rather than left to
+                   # an operator's --workers flag, since 3+ was never probed
+                   # and the registry is where that has to be unforgettable.
+                   "flash-noplan-sail": 2, "flash-plan-sail": 2}
     for name, spec in A._ARMS.items():
         if name in CONSTRAINED:
             assert spec.max_workers == CONSTRAINED[name], name
