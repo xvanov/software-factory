@@ -5657,6 +5657,29 @@ _SSSF_ROSTERS: dict[str, dict[str, str | None]] = {
         "reviewer": None,
         "documenter": None,
     },
+    # The same planner ablation, moved to Azure 2026-08-28: Sail's rate
+    # limiter went into an extended lockout mid-launch (even a single
+    # standalone reachability probe kept 429ing well past the ~1-minute
+    # recovery the earlier diagnostic probes measured), so this pair runs on
+    # the deployment already proven reliable at width 1. NEW arm ids, not a
+    # reuse of ``flash-solo``: that id already carries 2026-08-14 rows on a
+    # DIFFERENT engine commit, and first-valid-by-ran_at would let an old row
+    # win a cell over today's fresh one for any instance_id that happens to
+    # collide (`harumiweb__exstruct-113` is in both the old E5 set and this
+    # experiment's fresh 25 — the exact collision `flash-solo-az-r2` existed
+    # to prevent, applied here for the same reason).
+    "flash-noplan-azure": {
+        "planner": None,
+        "builder": _SSSF_FLASH,
+        "reviewer": None,
+        "documenter": None,
+    },
+    "flash-plan-azure": {
+        "planner": _SSSF_FLASH,
+        "builder": _SSSF_FLASH,
+        "reviewer": None,
+        "documenter": None,
+    },
 }
 
 # The roster key the sssf engine reads to skip a role's phases, and the tokens
@@ -6607,6 +6630,43 @@ _ARMS: dict[str, ArmSpec] = {
         cost_source=_COST_PRICE_TABLE,
         has_chain=True,
         max_workers=2,
+    ),
+    "flash-noplan-azure": _arm(
+        name="flash-noplan-azure",
+        base="sssf",
+        harness="sssf ADW, builder only, on Azure DeepSeek-V4-Flash — the "
+                "planner ablation's no-planner control, moved off Sail",
+        harness_id="sssf-solo-builder",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        # Same 250-unit Flash deployment flash-solo/flash-chain already
+        # measured 429ing at width 2 — the ceiling here is real and proven,
+        # not a caution.
+        max_workers=1,
+    ),
+    "flash-plan-azure": _arm(
+        name="flash-plan-azure",
+        base="sssf",
+        harness="sssf ADW, planner+builder on Azure DeepSeek-V4-Flash, no "
+                "reviewer — the planner ablation's treatment, moved off Sail",
+        harness_id="sssf-plan-build",
+        model=None,
+        model_selectable=False,
+        max_steps=_SSSF_PHASE_CAP,
+        step_unit="ADW phases",
+        default_cost_usd=_SSSF_DEFAULT_COST_USD,
+        default_hours=0.25,
+        trajectories=_TRAJECTORIES_SSSF_EVENTS,
+        cost_source=_COST_PRICE_TABLE,
+        has_chain=True,
+        max_workers=1,
     ),
 }
 

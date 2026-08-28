@@ -56,7 +56,10 @@ _ARMS_UNDER_TEST = ("gpt54-solo", "chain", "v32-solo", "flash-solo", "full-sdlc"
                     "flash-solo-sail-wprobe", "flash-solo-sail",
                     # The planner ablation (PRE-REGISTRATION-PLANNER-ABLATION.md),
                     # appended last for the same reason.
-                    "flash-noplan-sail", "flash-plan-sail")
+                    "flash-noplan-sail", "flash-plan-sail",
+                    # Same ablation, moved to Azure after Sail's rate limiter
+                    # locked out mid-launch.
+                    "flash-noplan-azure", "flash-plan-azure")
 _SOLO = ("gpt54-solo", "v32-solo", "flash-solo", "nano-solo", "codexmini-solo",
          "kimi-solo")
 # The only arm that skips NOTHING: all four roles, all 13 phases. Named because
@@ -352,6 +355,15 @@ def test_the_rosters_are_exactly_the_registered_four(A: Any) -> None:
             "planner": A._SSSF_FLASH_SAIL, "builder": A._SSSF_FLASH_SAIL,
             "reviewer": None, "documenter": None,
         },
+        # Same ablation, on Azure — see the registry comment on these two.
+        "flash-noplan-azure": {
+            "planner": None, "builder": flash,
+            "reviewer": None, "documenter": None,
+        },
+        "flash-plan-azure": {
+            "planner": flash, "builder": flash,
+            "reviewer": None, "documenter": None,
+        },
     }
     assert A._SSSF_FLASH_SAIL == "sail/deepseek/deepseek-v4-flash-0731"
     # The roster-SHAPE claim ("structurally identical to flash-solo, builder
@@ -454,7 +466,11 @@ def test_flash_solo_is_clamped_to_one_worker_and_cannot_be_widened(A: Any) -> No
                    # measured-clean ceiling (R5, width 2) rather than left to
                    # an operator's --workers flag, since 3+ was never probed
                    # and the registry is where that has to be unforgettable.
-                   "flash-noplan-sail": 2, "flash-plan-sail": 2}
+                   "flash-noplan-sail": 2, "flash-plan-sail": 2,
+                   # Same ablation, on Azure's Flash deployment — the real,
+                   # measured width-1 ceiling every other Azure Flash arm
+                   # shares.
+                   "flash-noplan-azure": 1, "flash-plan-azure": 1}
     for name, spec in A._ARMS.items():
         if name in CONSTRAINED:
             assert spec.max_workers == CONSTRAINED[name], name

@@ -5,6 +5,33 @@ paid call. Same discipline as `PRE-REGISTRATION-SAIL-AB.md`: every number
 carries the query that re-derives it, nothing is quoted forward without its
 arm id.
 
+**AMENDMENT 2026-08-28, before any real row exists: moved to Azure.** The
+Sail-based launch never got past its own preflight check: a burst of 25
+near-simultaneous reachability probes (one per instance, firing regardless of
+`--workers`, far bigger than any burst the Sail A/B ever validated) drew an
+HTTP 429, and Sail stayed locked out — even a single standalone probe kept
+429ing — well past the ~1-minute recovery the Sail A/B's own diagnostic
+probes measured for an isolated hit. **Zero cost was incurred and zero rows
+ever reached the store**, so this is a pre-data design amendment, not a
+correction of a measured result; the original arms (`flash-noplan-sail`,
+`flash-plan-sail`) are left registered, untouched, for a possible later
+repeat on Sail once its limiter is understood better — nothing below that
+names them is retracted, it simply was never run.
+
+**This experiment now runs on `flash-noplan-azure` / `flash-plan-azure`** —
+identical roster shapes (same model in both roles, no reviewer in either
+arm), on `azure/DeepSeek-V4-Flash`, the deployment this project has already
+proven reliable across every prior campaign. The only two things that change
+from the design below: **width is 1, not 2** (Azure's Flash deployment has a
+real, measured 429 ceiling at width 2 — `flash-solo`/`flash-chain` already
+carry this in the registry; it is not new caution, it is the same known
+limit), so the two sweeps run serially rather than in parallel; and the
+**cost estimate rises somewhat** (Azure's list rate is higher than Sail's,
+and Sail's real cache discount doesn't apply here) — still comfortably
+inside the $60 approved budget, and the $20 stop-and-report threshold below
+still holds. Same 25 instances, same isolation guarantees, same k=1 /
+resubmit-once rule, same decision rule, same everything else.
+
 ## The question
 
 E5.4 measured that adding a planning step before the builder made results

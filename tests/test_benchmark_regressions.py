@@ -79,7 +79,11 @@ _SSSF_ARMS = ("gpt54-solo", "chain", "v32-solo",
                "flash-solo-sail",
                # The planner ablation (PRE-REGISTRATION-PLANNER-ABLATION.md):
                # two more builder-only-shaped arms on the same Sail deployment.
-               "flash-noplan-sail", "flash-plan-sail")
+               "flash-noplan-sail", "flash-plan-sail",
+               # Same ablation, moved to Azure after Sail's rate limiter
+               # locked out mid-launch (PRE-REGISTRATION-PLANNER-ABLATION.md's
+               # amendment).
+               "flash-noplan-azure", "flash-plan-azure")
 
 
 def _load() -> Any:
