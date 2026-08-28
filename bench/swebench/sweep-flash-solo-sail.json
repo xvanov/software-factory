@@ -3,8 +3,8 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail Research, asap tier) \u2014 the Sail A/B's paired-sweep treatment",
   "workers": 1,
-  "finished_at": "2026-08-28T01:08:13.708082+00:00",
-  "wall_clock_s": 1139.3,
+  "finished_at": "2026-08-28T01:11:52.955994+00:00",
+  "wall_clock_s": 200.7,
   "stopped_reason": null,
   "instances": 1,
   "ok": 1,
@@ -15,12 +15,12 @@
   "outcomes": {
     "resolved": 1
   },
-  "audited_valid": 1,
-  "audit_failed": 0,
+  "audited_valid": 0,
+  "audit_failed": 1,
   "not_audited": 0,
-  "resolved": 1,
+  "resolved": 0,
   "resolved_but_run_failed": 0,
-  "resolved_but_audit_failed": 0,
+  "resolved_but_audit_failed": 1,
   "grade_parse_failed": 0,
   "provider_starved": 0,
   "engine_crashed": 0,
@@ -29,28 +29,31 @@
   "budget_exhausted": 0,
   "retried_rows": 1,
   "gradable": 1,
-  "tokens_in": 5230399,
+  "tokens_in": 751762,
   "cache_read": 0,
-  "fresh_in": 5230399,
-  "tokens_out": 67615,
-  "cost_usd": 0.4829,
+  "fresh_in": 751762,
+  "tokens_out": 13550,
+  "cost_usd": 0.0701,
   "cost_source": "price-table estimate",
   "results": [
     {
-      "instance_id": "keras-team__keras-22316",
+      "instance_id": "pyinfra-dev__pyinfra-1665",
       "arm": "flash-solo-sail",
       "model": null,
       "status": "ok",
       "error": null,
-      "audit_ok": true,
+      "audit_ok": false,
       "run_rc": 0,
       "grade_rc": 0,
-      "audit_rc": 0,
+      "audit_rc": 1,
+      "audit_failures": [
+        "foreign-workdir: sssf-events.jsonl:38 named another arm's working tree ['ppyinfra-dev__pyinfra-1665__flash-solo-sail'] \u2014 this run's evidence is not independent of that arm, so it is not a usable measurement. Requested-side only; a sibling path echoed in a tool RESULT is not counted."
+      ],
       "final_state": "\u2014",
-      "tokens_in": 5230399,
+      "tokens_in": 751762,
       "cache_read": 0,
-      "tokens_out": 67615,
-      "cost_usd": 0.4829,
+      "tokens_out": 13550,
+      "cost_usd": 0.0701,
       "factory_says_green": true,
       "oracle_resolved": true,
       "outcome": "resolved",
@@ -63,7 +66,7 @@
       "models_used": [
         "sail/deepseek/deepseek-v4-flash-0731"
       ],
-      "sweep_wall_s": 1139.3
+      "sweep_wall_s": 200.7
     }
   ]
 }
