@@ -3,8 +3,8 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek-V4-Flash (Azure, fresh engine commit \u2014 the Sail A/B's control)",
   "workers": 1,
-  "finished_at": "2026-08-28T00:11:26.695634+00:00",
-  "wall_clock_s": 212.2,
+  "finished_at": "2026-08-28T00:23:51.946919+00:00",
+  "wall_clock_s": 275.7,
   "stopped_reason": null,
   "instances": 1,
   "ok": 1,
@@ -29,15 +29,15 @@
   "budget_exhausted": 0,
   "retried_rows": 0,
   "gradable": 1,
-  "tokens_in": 159748,
-  "cache_read": 525056,
+  "tokens_in": 116721,
+  "cache_read": 459520,
   "fresh_in": 0,
-  "tokens_out": 8344,
-  "cost_usd": 0.0545,
+  "tokens_out": 12922,
+  "cost_usd": 0.046,
   "cost_source": "price-table estimate",
   "results": [
     {
-      "instance_id": "pyinfra-dev__pyinfra-1665",
+      "instance_id": "zauberzeug__nicegui-5858",
       "arm": "flash-solo-az-r2",
       "model": null,
       "status": "ok",
@@ -47,10 +47,10 @@
       "grade_rc": 0,
       "audit_rc": 0,
       "final_state": "\u2014",
-      "tokens_in": 159748,
-      "cache_read": 525056,
-      "tokens_out": 8344,
-      "cost_usd": 0.0545,
+      "tokens_in": 116721,
+      "cache_read": 459520,
+      "tokens_out": 12922,
+      "cost_usd": 0.046,
       "factory_says_green": true,
       "oracle_resolved": true,
       "outcome": "resolved",
@@ -63,7 +63,7 @@
       "models_used": [
         "azure/DeepSeek-V4-Flash"
       ],
-      "sweep_wall_s": 212.1
+      "sweep_wall_s": 275.7
     }
   ]
 }
