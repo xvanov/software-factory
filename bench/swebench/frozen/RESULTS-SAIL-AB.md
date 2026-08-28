@@ -469,3 +469,120 @@ budget.
 
 Nothing beyond row 3 of the paired pass has run. Rows 4–16 (paired pass) and
 the 8-row second Sail pass are entirely outstanding.
+
+---
+
+## Phase 3 — RESUMED and COMPLETE, 2026-08-27 (all 24 rows)
+
+Resumed after commit `ca9c0941` (bench repo) fixed the preflight apiKey-spelling
+bug (`_env_var_of_api_key`, `_canonical_price_table_sha256`) — verified before
+resuming: `models.json`'s canonical sha still reduces to the pinned
+`f8ddda8b19046245fd35eb82fad378850ae3dd86f3438dfd1a0d29272e38c651`, and direct
+key-lookup checks for both `azure/DeepSeek-V4-Flash` and
+`sail/deepseek/deepseek-v4-flash-0731` resolved correctly. `sssf` engine repo
+untouched throughout, still `eb9dcffd…`, clean.
+
+### Paired pass (16 rows), resumed at row 2's repair through row 16
+
+Store query: `SELECT instance_id, arm, attempt, reportable, oracle_resolved,
+cost_usd, empty_response_turns, provider_starved, audit_ok FROM run_attempt
+WHERE arm IN ('flash-solo-az-r2','flash-solo-sail') ORDER BY instance_id, arm,
+attempt`
+
+| instance | Azure (flash-solo-az-r2) | Sail, paired-pass valid attempt | agree? |
+|---|---|---|---|
+| alibaba__opensandbox-816 | FAIL right_place_wrong_fix, $0.0841 | **no valid row** — attempt1 provider-starved (3 empty turns, $0.00); repair attempt3 ALSO provider-starved (1 empty turn, $0.0474, oracle would have resolved) — cell left per operator adjudication, both events recorded | n/a |
+| getmoto__moto-9841 | resolved, $0.0422 | resolved, $0.0478 | yes |
+| harumiweb__exstruct-113 | FAIL wrong_place, $0.0928 | FAIL empty_patch, $0.0363 (attempt2, repair — attempt1 was provider-starved, 6 empty turns, $0.3027, repaired once successfully) | yes (both FAIL) |
+| hkuds__openharness-217 | resolved, $0.0621 | resolved, $0.0203 | yes |
+| idaholab__montepy-933_interface | FAIL right_place_wrong_fix, $0.0999 | FAIL right_place_wrong_fix, $0.0399 | yes |
+| keras-team__keras-22316 | resolved, $0.2232 | **no valid row** — attempt1 AUDIT-INVALID (oracle-probe leak, sssf-events.jsonl:132, "referenced harness's oracle/manifest paths … outside the run's own subtree"), $0.2842, bundled with a real 429 (1 empty turn); never re-rolled per policy | n/a |
+| pyinfra-dev__pyinfra-1665 | resolved, $0.0545 | FAIL right_place_wrong_fix, $0.0171 | **no — discordant** (discriminating cell) |
+| zauberzeug__nicegui-5858 | resolved, $0.046 | resolved, $0.1183 | yes |
+
+Azure: 8/8 reportable, $0.7048 total. Sail (paired-pass valid rows only): 6/8
+cells have a valid row, $1.2960 across those 6 (excludes the two
+provider-starved/audit-invalid rows above, which cost $0.00 + $0.2842 +
+$0.3027 — all disclosed, not double-counted here since they carry no
+reportable verdict).
+
+### Second Sail pass (8 rows) — k=2 flip check
+
+| instance | 2nd-pass Sail verdict, cost | vs paired-pass Sail attempt | FLIP? |
+|---|---|---|---|
+| alibaba__opensandbox-816 | FAIL right_place_wrong_fix, $0.0772 | (none — first valid Sail attempt for this cell) | n/a, no prior to compare |
+| getmoto__moto-9841 | FAIL right_place_wrong_fix, $0.2027 | resolved | **YES — resolved → FAIL** |
+| harumiweb__exstruct-113 | FAIL wrong_place, $0.0652 | FAIL empty_patch | no (both FAIL) |
+| hkuds__openharness-217 | resolved, $0.0436 | resolved | no |
+| idaholab__montepy-933_interface | resolved, $0.0642 | FAIL right_place_wrong_fix | **YES — FAIL → resolved** |
+| keras-team__keras-22316 | resolved, $0.4829 | (none — first valid Sail attempt; paired-pass attempt was audit-invalid) | n/a, no prior to compare |
+| pyinfra-dev__pyinfra-1665 | **AUDIT-INVALID** — foreign-workdir, sssf-events.jsonl:38, requested-side read named `ppyinfra-dev__pyinfra-1665__flash-solo-sail` (self-referential, one extra character), $0.0701, never re-rolled | FAIL right_place_wrong_fix | no valid 2nd attempt to compare |
+| zauberzeug__nicegui-5858 | **AUDIT-INVALID** — foreign-workdir, sssf-events.jsonl:25, requested-side read named `zauzerzeug__nicegui-5858__flash-solo-sail` (self-referential, one transposed character), $0.0555, never re-rolled | resolved | no valid 2nd attempt to compare |
+
+**Two genuine Sail self-agreement (k=2) flips**: `getmoto__moto-9841`
+(resolved → FAIL) and `idaholab__montepy-933_interface` (FAIL → resolved) —
+both discriminating cells. Per R3a these require a published explanation
+before adoption may proceed; not adjudicated here (upstream evaluation, per
+this task's brief). Two cells (`pyinfra-dev__pyinfra-1665`,
+`zauberzeug__nicegui-5858`) have their second-pass attempt excluded as
+audit-invalid, leaving only one valid Sail attempt each — no k=2 pair
+available for self-agreement scoring on those two. Two cells
+(`alibaba__opensandbox-816`, `keras-team__keras-22316`) have their
+paired-pass Sail attempt missing/invalid, so their only valid Sail row is the
+second-pass one — flagged: for those two cells, the "paired-pass" A/B
+comparison in the table above actually rests on a second-pass-sourced Sail
+row under the store's first-valid-by-ran_at selection rule, which mixes pass
+provenance. Not adjudicated here.
+
+### Incidents, full campaign
+
+1. **Harness bug (root-caused, fixed by the operator, commit `ca9c0941`)**:
+   `pi`'s own startup normalizer respelled `apiKey` in `~/.pi/agent/models.json`
+   twice in one afternoon (bare var → `env:VAR` → `$VAR`); the adapter's
+   preflight probe read the spelling literally, producing 2 false "key is
+   empty" refusals (the stop that ended the first attempt at this pass, see
+   above). Fixed preflight-only; canonical sha lands back on `f8ddda8b…`, no
+   recorded row's provenance moved.
+2. **Four genuine provider-starved events** (real Sail 429s/empty-turns, not
+   the harness bug): `alibaba__opensandbox-816` ×2 (attempts 1 and 3, cell
+   left uncovered by the paired pass per operator adjudication — repair
+   budget for that cell exhausted, both events recorded);
+   `harumiweb__exstruct-113` ×1 (attempt 1, repaired once, successfully);
+   `keras-team__keras-22316` ×1 (attempt 1, bundled with the audit-invalid
+   finding below, not separately repaired since audit-invalid rows are never
+   re-rolled).
+3. **Three genuine audit-invalid rows** (contamination, never re-rolled):
+   `keras-team__keras-22316` paired-pass attempt1 (oracle-probe leak);
+   `pyinfra-dev__pyinfra-1665` second-pass attempt2 (foreign-workdir, typo'd
+   self-reference); `zauberzeug__nicegui-5858` second-pass attempt2
+   (foreign-workdir, typo'd self-reference). Split 1-in-paired-pass,
+   2-in-second-pass — neither pass individually reached the ≥3-per-pass stop
+   threshold, so neither pass was halted.
+4. **Two Sail k=2 self-agreement flips**, both discriminating cells: see
+   table above.
+
+### Total computed spend by arm
+
+Query: `SELECT arm, COUNT(*), ROUND(SUM(cost_usd),4) FROM run_attempt WHERE
+arm IN ('flash-solo-az-r2','flash-solo-sail') GROUP BY arm`
+
+| arm | all attempts | reportable attempts | reportable cost | all-attempts cost |
+|---|---:|---:|---:|---:|
+| flash-solo-az-r2 | 8 | 8 | $0.7048 | $0.7048 |
+| flash-solo-sail | 18 | 12 | $1.2155 | $1.9754 |
+
+### Final campaign ledger
+
+Query: `SELECT ROUND(SUM(cost_usd),4) FROM run_attempt WHERE arm IN
+('flash-solo-sail','flash-solo-sail-p1','flash-solo-sail-wprobe','flash-solo-az-r2')`
+→ **$2.9857** (store) + **$0.0328** (P-2c probe + diagnostic-probe overhead,
+outside the store) = **$3.0185 of the $5.00 operator-tightened cap**.
+Campaign complete, well inside the cap.
+
+**Phase 3 is complete: all 24 pre-declared rows ran, no stop condition fired
+on the resumed pass (audit-invalid count topped out at 2 in either
+individual pass; provider-starved events were isolated, disclosed, and
+handled per the repair-once/leave-the-cell policy).** R3/R6 decision-rule
+evaluation, including how to treat the two flips, the two paired-pass-missing
+cells, and the two second-pass-missing cells, is left to the upstream
+evaluation per this task's brief.
