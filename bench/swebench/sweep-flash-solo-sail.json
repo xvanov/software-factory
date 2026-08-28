@@ -3,8 +3,8 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail Research, asap tier) \u2014 the Sail A/B's paired-sweep treatment",
   "workers": 1,
-  "finished_at": "2026-08-28T00:43:08.849735+00:00",
-  "wall_clock_s": 320.8,
+  "finished_at": "2026-08-28T00:46:03.720252+00:00",
+  "wall_clock_s": 161.6,
   "stopped_reason": null,
   "instances": 1,
   "ok": 1,
@@ -13,12 +13,12 @@
     "ok": 1
   },
   "outcomes": {
-    "wrong_place": 1
+    "resolved": 1
   },
   "audited_valid": 1,
   "audit_failed": 0,
   "not_audited": 0,
-  "resolved": 0,
+  "resolved": 1,
   "resolved_but_run_failed": 0,
   "resolved_but_audit_failed": 0,
   "grade_parse_failed": 0,
@@ -29,15 +29,15 @@
   "budget_exhausted": 0,
   "retried_rows": 1,
   "gradable": 1,
-  "tokens_in": 678508,
+  "tokens_in": 461710,
   "cache_read": 0,
-  "fresh_in": 678508,
-  "tokens_out": 23198,
-  "cost_usd": 0.0652,
+  "fresh_in": 461710,
+  "tokens_out": 11493,
+  "cost_usd": 0.0436,
   "cost_source": "price-table estimate",
   "results": [
     {
-      "instance_id": "harumiweb__exstruct-113",
+      "instance_id": "hkuds__openharness-217",
       "arm": "flash-solo-sail",
       "model": null,
       "status": "ok",
@@ -47,14 +47,14 @@
       "grade_rc": 0,
       "audit_rc": 0,
       "final_state": "\u2014",
-      "tokens_in": 678508,
+      "tokens_in": 461710,
       "cache_read": 0,
-      "tokens_out": 23198,
-      "cost_usd": 0.0652,
+      "tokens_out": 11493,
+      "cost_usd": 0.0436,
       "factory_says_green": true,
-      "oracle_resolved": false,
-      "outcome": "wrong_place",
-      "attempt": 3,
+      "oracle_resolved": true,
+      "outcome": "resolved",
+      "attempt": 2,
       "budget_exhausted": false,
       "provider_starved": false,
       "engine_crashed": false,
@@ -63,7 +63,7 @@
       "models_used": [
         "sail/deepseek/deepseek-v4-flash-0731"
       ],
-      "sweep_wall_s": 320.8
+      "sweep_wall_s": 161.6
     }
   ]
 }
