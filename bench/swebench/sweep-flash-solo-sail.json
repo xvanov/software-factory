@@ -3,8 +3,8 @@
   "model": null,
   "harness": "sssf ADW, builder only, on DeepSeek V4 Flash 0731 (Sail Research, asap tier) \u2014 the Sail A/B's paired-sweep treatment",
   "workers": 1,
-  "finished_at": "2026-08-28T00:28:45.126597+00:00",
-  "wall_clock_s": 261.6,
+  "finished_at": "2026-08-28T00:37:31.356396+00:00",
+  "wall_clock_s": 510.9,
   "stopped_reason": null,
   "instances": 1,
   "ok": 1,
@@ -29,15 +29,15 @@
   "budget_exhausted": 0,
   "retried_rows": 1,
   "gradable": 1,
-  "tokens_in": 821051,
+  "tokens_in": 2183036,
   "cache_read": 0,
-  "fresh_in": 821051,
-  "tokens_out": 18286,
-  "cost_usd": 0.0772,
+  "fresh_in": 2183036,
+  "tokens_out": 34601,
+  "cost_usd": 0.2027,
   "cost_source": "price-table estimate",
   "results": [
     {
-      "instance_id": "alibaba__opensandbox-816",
+      "instance_id": "getmoto__moto-9841",
       "arm": "flash-solo-sail",
       "model": null,
       "status": "ok",
@@ -47,10 +47,10 @@
       "grade_rc": 0,
       "audit_rc": 0,
       "final_state": "\u2014",
-      "tokens_in": 821051,
+      "tokens_in": 2183036,
       "cache_read": 0,
-      "tokens_out": 18286,
-      "cost_usd": 0.0772,
+      "tokens_out": 34601,
+      "cost_usd": 0.2027,
       "factory_says_green": true,
       "oracle_resolved": false,
       "outcome": "right_place_wrong_fix",
@@ -63,7 +63,7 @@
       "models_used": [
         "sail/deepseek/deepseek-v4-flash-0731"
       ],
-      "sweep_wall_s": 261.6
+      "sweep_wall_s": 510.9
     }
   ]
 }
