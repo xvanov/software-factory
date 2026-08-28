@@ -672,3 +672,15 @@ Resolve rates for the record (n=8, NOT capability findings per Non-goals):
 Azure 5/8, Sail 4/8, one discordant cell — within instrument noise.
 Final ledger: $3.0185 computed of the $5.00 cap; R2's final dollar leg and
 the P0.0 screenshot remain open items against the operator's dashboard.
+
+### R2 final dollar leg (operator reading, post-campaign): PASS — campaign closed
+
+Dashboard total: **$0.7815** billed. Bounds: $0.7815 ∈ [$0.75 all-cached,
+$2.3165 all-fresh] → **PASS**, at 34% of computed — consistent with the
+proven streaming-cache mechanism and the Phase-2 boundary's 35%. All eight
+decision rules are now fully evaluated; the campaign is closed with the
+verdict above. Real total cost of qualifying Sail end-to-end: **$0.78
+billed** (plus ~$0.70 Azure-side control at its own meter). Open item
+carried out of the campaign: the P0.0 screenshot (any dashboard hover shot,
+attached to this file's directory) — evidentiary hygiene, no longer gating
+anything.
