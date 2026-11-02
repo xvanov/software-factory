@@ -747,3 +747,20 @@ def test_without_a_gate_check_the_chain_path_is_unchanged(
     assert len(fake_sdk.instances[0].messages) == 1
     assert graded and res.error == "tests not green after run"
     assert res.gate_rounds == [] and res.gate_stop_reason == ""
+
+
+def test_a_pause_that_lands_during_grading_is_not_lost(
+    tmp_path: Path, fake_sdk: type[_Conv]
+) -> None:
+    """The soft deadline fires while the gate is grading: no further round may
+    start (``run()`` would resume a paused conversation and lose the pause)."""
+
+    def _slow_red() -> GateVerdict:
+        time.sleep(1.3)  # the 1 s soft wall clock fires mid-grading
+        return RED
+
+    fake_sdk.script = [_write("a.py"), _write("b.py")]
+    res = _sandbox(tmp_path, _slow_red, max_gate_rounds=3, wall_clock_timeout_s=1)
+    assert fake_sdk.instances[0].runs == 1
+    assert res.gate_stop_reason == "wall_clock"
+    assert len(res.gate_rounds) == 1 and res.test_run_passed is False

@@ -2549,6 +2549,12 @@ async def sandbox_run(
         try:
             first_write_checked = no_progress_abort_s is None or _start_fp.get("fp") is None
             while not stop.wait(_WATCHDOG_POLL_S):
+                if _gate_state.get("no_progress_abort") or _gate_state.get("soft_deadline_hit"):
+                    # Keep re-asserting the pause until the run ends: a pause
+                    # that lands between a gate check and the next ``run()``
+                    # would otherwise be lost when ``run()`` resumes.
+                    conversation.pause()
+                    continue
                 el = _elapsed()
                 if not first_write_checked and el >= float(no_progress_abort_s or 0):
                     first_write_checked = True
@@ -2556,11 +2562,10 @@ async def sandbox_run(
                     if now_fp is not None and now_fp == _start_fp.get("fp"):
                         _gate_state["no_progress_abort"] = True
                         conversation.pause()
-                        return
+                        continue
                 if gate_check is not None and el >= float(effective_wall_clock_timeout_s):
                     _gate_state["soft_deadline_hit"] = True
                     conversation.pause()
-                    return
         except Exception:  # noqa: BLE001 - the watchdog must never break a run
             return
 
@@ -2607,11 +2612,22 @@ async def sandbox_run(
                 _gate_state["stop"] = "no_time"
                 return
             prev_fp = fp
+            if _gate_state.get("no_progress_abort") or _gate_state.get("soft_deadline_hit"):
+                # The watchdog fired DURING this round's grading: the verdict
+                # above is the grade; do not start another round.
+                _gate_state["stop"] = (
+                    "wall_clock"
+                    if _gate_state.get("soft_deadline_hit")
+                    else "no_progress_first_write"
+                )
+                return
             conversation.send_message(_render_gate_feedback(verdict, rnd, rounds))
             _run_turn(conversation)
 
     def _run_turn(conversation: Any) -> None:
         """``run()`` plus the prose-ending rescue, on the SAME conversation."""
+        if _gate_state.get("no_progress_abort") or _gate_state.get("soft_deadline_hit"):
+            return  # never (re)start a run the watchdog has stopped
         conversation.run()
         if _gate_state.get("no_progress_abort") or _gate_state.get("soft_deadline_hit"):
             return
