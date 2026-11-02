@@ -117,7 +117,9 @@ def _sweep_acceptance_oracles(worktree: Path, *, story_id: int | None) -> None:
     if removed:
         _logger.warning(
             "removed leaked acceptance oracle(s) from reused worktree %s (story=%s): %s",
-            worktree, story_id, removed,
+            worktree,
+            story_id,
+            removed,
         )
 
 
@@ -129,8 +131,16 @@ def ensure_worktree_for_story(
     story_id: int | None,
     slug: str,
     base_branch: str = "main",
+    stack_on: str | None = None,
 ) -> Path:
     """Idempotently produce a private worktree for ``story_id`` on its branch.
+
+    ``stack_on`` (delivery levels below ``auto_merge``, review 2026-11-02
+    SHOULD 5): the branch of an earlier sibling story that was DELIVERED but
+    never merged. A NEW story branch is cut from it instead of from the base,
+    so the dependent builds on its sibling's work. Tried as a local branch
+    first (level ``none`` never pushes), then ``origin/<stack_on>``; if neither
+    resolves the base is used, as before. Has no effect on an existing branch.
 
     Returns the worktree path. The worktree is checked out on the
     per-story feature branch; that branch is created from
@@ -184,6 +194,20 @@ def ensure_worktree_for_story(
         base_ref = remote_ref if ref_check.returncode == 0 else base_branch
     else:
         base_ref = base_branch
+
+    if stack_on:
+        local_ok = _run_git(
+            repo, "show-ref", "--verify", "--quiet", f"refs/heads/{stack_on}", check=False
+        )
+        if local_ok.returncode == 0:
+            base_ref = stack_on
+        elif _has_remote(repo):
+            _run_git(repo, "fetch", "origin", stack_on, check=False)
+            remote_ok = _run_git(
+                repo, "rev-parse", "--verify", "--quiet", f"origin/{stack_on}", check=False
+            )
+            if remote_ok.returncode == 0:
+                base_ref = f"origin/{stack_on}"
 
     # If the branch already exists locally (e.g. a previous story's
     # worktree was removed but the branch wasn't), check it out;

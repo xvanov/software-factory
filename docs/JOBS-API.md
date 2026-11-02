@@ -29,6 +29,68 @@ apps with no `delivery` block behave exactly as today (`auto_merge`).
 The PA always sends `--delivery` explicitly, chosen from what the operator asked for; the app
 default applies only when a job omits it.
 
+How the factory enforces it (see `factory/chain/delivery_gate.py`):
+
+- The level is resolved ONCE when the job's story is spawned and recorded on the story
+  (`StoryRecord.delivery_level` + a `delivery_level_resolved` event). Later app-config edits
+  never change an in-flight story's level. An unknown/unreadable level resolves to `none`. A
+  story with NO recorded level predates stamping and is backfilled with the pre-existing
+  default, `auto_merge`.
+- Every level runs the same chain (dev, review, tech_writer, docs enforcer) up to the point
+  where work would leave the factory. Story end states, all terminal:
+  `none` → `delivered_local` (committed on the local `story/<n>-<slug>` branch, nothing
+  pushed); `branch` → `delivered_branch`; `draft_pr` / `pr` → `delivered_pr` (with the PR
+  number); `auto_merge` / `push_to_main` → `deployed` (via `deploy_pending`).
+- `push_to_main` first checks GitHub (`delivery_gate.push_to_main_preflight`):
+  - if the default branch's own CI is red or still running, or GitHub cannot be read, the story
+    is HELD (the same main-green hold PR merges get): untouched, re-checked every tick, with a
+    `ci_hold_main_red:` reason visible in `factory inbox`. This is checked first: a red base
+    holds even when it is also protected.
+  - if the (green) default branch requires status checks or a pull request (branch protection
+    or a ruleset), the factory never pushes directly and never forces. It FALLS BACK to
+    `auto_merge` for that story (operator decision 2026-11-02): it opens a ready PR, re-stamps
+    the story's level as `auto_merge`, and from then on the normal auto-merge path applies —
+    main-green hold, the repo's required checks, the full gate set, then `gh pr merge --auto`.
+    The fallback is recorded as a `push_to_main_fell_back_to_pr` story event with reason
+    `push_to_main_fell_back_to_pr:<why>`, and `factory job status` reports it per story as
+    `delivery_note`. When that PR merges, the push_to_main job is `done`. If opening the PR
+    fails twice, the story parks in `blocked_deploy_failed`.
+  - a hold is capped at 24 h: after that the story falls back to level `pr` (a ready PR for a
+    human, ending `delivered_pr`), recorded the same way (`push_to_main_fell_back_to_pr:held
+    since …`).
+  Then it runs the full merge gate set against the worktree commit and pushes that exact
+  commit to the default branch without force. Gate failures are capped at 3 per STORY (not per
+  commit), then the story parks in `blocked_ci_unresolved`. If the push is not a fast-forward
+  (or is rejected) it falls back to `pr`: the story's level is recorded as `pr`, a ready PR is
+  opened, and the story ends in `delivered_pr`. Factory self-edits (`apps/factory`) are always
+  treated as `pr` instead of `push_to_main`, because they must pass the PR staging gate.
+- Whenever a story with a PR settles below `auto_merge`, the factory disarms any GitHub
+  auto-merge on that PR (`gh pr merge --disable-auto`), so an earlier `--auto` cannot merge it
+  behind the job's back. `factory job cancel` does the same.
+- A `delivered_pr` story whose PR a human merges is picked up by the factory's GitHub
+  reconciliation and continues to `deploy_pending` → `deployed` like any merged work. If the
+  human CLOSES it unmerged, the story settles to `closed_by_operator`.
+- The `delivered_*` states never close the story's GitHub issue (the change is not on the
+  default branch yet). They DO count as finished for the direction: once every story of a job
+  is `delivered_*` (or otherwise resolved), the direction is complete and its tracker issue is
+  closed by the factory's hourly issue hygiene.
+- Multi-story jobs below `auto_merge`: a later story does not wait for an earlier sibling to
+  deploy (it never will without a human); a sibling in `delivered_*` satisfies the ordering.
+  The later story is STACKED: its branch is cut from the latest delivered sibling's branch (the
+  local branch at `none`, `origin/<branch>` once pushed), so it builds on that work. Its PR still
+  targets the default branch and its body says `Stacked on <branch> (PR #n)` — merge in order.
+- Cancel vs. merge: the final merge / fast-forward and its `deploy_pending` write run under a
+  per-story lock (`state/locks/story-<id>.lock`) that `factory job cancel` also takes, after a
+  re-read of the story; a story cancelled while its gates ran is never merged or pushed.
+  Cancellation is also recorded durably per job (`job_cancellations` table, written only by
+  `factory job cancel`): the locked merge section refuses a cancelled job's story, the
+  orchestrator never dispatches one (it re-parks it), and `persist_story` refuses to move a row
+  out of `closed_by_operator` (a stale handler write-back); only `factory resume-story` may.
+- Known gap: at `none`, the factory still opens the story's GitHub ISSUE (no code is pushed).
+
+PA mode → delivery mapping (PA side owns this): plan→(not a factory job), local→none,
+branch→branch, mr→draft_pr, full→draft_pr.
+
 ## Pipelines
 
 `chain` (PM→SM→dev→reviewer→gates), `solo` (single dev agent + gates, B.1 solo mode), `auto`

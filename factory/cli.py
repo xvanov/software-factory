@@ -1606,6 +1606,18 @@ def inbox_cmd(
                 if r.last_rejection_reason:
                     reason = r.last_rejection_reason
                 elif r.state in {
+                    StoryState.DELIVERED_LOCAL.value,
+                    StoryState.DELIVERED_BRANCH.value,
+                    StoryState.DELIVERED_PR.value,
+                }:
+                    # Delivery level stopped short of merging: finished work a
+                    # human must merge, push, or discard.
+                    reason = f"delivered at level {r.delivery_level or '?'}; " + (
+                        f"PR #{r.github_pr_number} awaits a human merge"
+                        if r.github_pr_number
+                        else f"branch {r.github_branch} awaits a human"
+                    )
+                elif r.state in {
                     "blocked_tests_need_clarification",
                     # Dev declared the story unsatisfiable as written. The whole
                     # point of the escape hatch is that a HUMAN reads the claim,
@@ -1989,6 +2001,9 @@ def queue_cmd(
         StoryState.BLOCKED_UNDERSPECIFIED.value,
         StoryState.SUPERSEDED_BY_SIBLING.value,
         StoryState.CLOSED_BY_OPERATOR.value,
+        StoryState.DELIVERED_LOCAL.value,
+        StoryState.DELIVERED_BRANCH.value,
+        StoryState.DELIVERED_PR.value,
     }
     eng = create_engine(f"sqlite:///{db}", echo=False)
     table = Table(title="queue (in-flight stories)")

@@ -1053,8 +1053,11 @@ def test_pending_inside_a_hold_episode_is_not_evaluated(
     assert "re-running" in actions[0].reason
 
     events = read_story_events(story.id, software_factory_root=tmp_path, slug_hint=story.slug)
-    # The episode boundary is intact: the last event is still the transition.
-    assert events[-1].get("event") == "ci_hold_main_red"
+    # The episode boundary is intact: the last event is still the transition
+    # (one-shot delivery bookkeeping — a legacy row's first-touch
+    # ``delivery_level_resolved`` — is transparent to the boundary by design).
+    assert am._hold_stream(events)[-1].get("event") == "ci_hold_main_red"
+    assert am._in_hold_episode(story, tmp_path)
     assert not [e for e in events if e.get("event") == "merge_gates_failed"]
 
 

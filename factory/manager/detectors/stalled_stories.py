@@ -62,6 +62,15 @@ _TERMINAL_STATES = frozenset(
         # will ever move it (same rationale as ``blocked_deploy_failed`` and
         # the other three human-pending sinks above).
         "blocked_dependency_unmet",
+        # Delivery-level end states (``StoryState.DELIVERED_*``): the job asked
+        # for less than a merge, the factory delivered it, and a human owns the
+        # next step. Aging here is the intended end state; without these entries
+        # every job below auto_merge re-alarmed as "stalled" forever. Raw strings
+        # (not an import of ``DELIVERED_UNMERGED_STATES``) to keep this
+        # detector free of chain imports, like the rest of the set.
+        "delivered_local",
+        "delivered_branch",
+        "delivered_pr",
     }
 )
 
@@ -269,9 +278,7 @@ def stalled_stories(
         conn: sqlite3.Connection | None = None
         try:
             conn = sqlite3.connect(str(db_path))
-            rows = conn.execute(
-                "SELECT id, state, app, slug, updated_at FROM stories"
-            ).fetchall()
+            rows = conn.execute("SELECT id, state, app, slug, updated_at FROM stories").fetchall()
         except sqlite3.Error:
             rows = []
         finally:
@@ -385,8 +392,7 @@ def stalled_stories(
     # escalate when this is true.
     last_idle = _last_idle_ts(root)
     idle_recently = (
-        last_idle is not None
-        and (now - last_idle).total_seconds() / 60.0 <= idle_recently_minutes
+        last_idle is not None and (now - last_idle).total_seconds() / 60.0 <= idle_recently_minutes
     )
     healthy_drain = (not alarms) and draining and idle_recently
 

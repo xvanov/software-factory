@@ -15,6 +15,7 @@ the story for this tick; an operator can inspect via ``factory why``.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -35,6 +36,7 @@ from factory.chain.ci_health import CiHealthResult, main_ci_health_tick
 from factory.chain.detector_watch import DetectorWatchResult, detector_watch_tick
 from factory.chain.event_log import log_story_event
 from factory.chain.state_machine import (
+    DELIVERED_UNMERGED_STATES,
     DEP_DEFER_CAP_REASON_PREFIX,
     EVENT_BUDGET_EXCEEDED,
     StoryRecord,
@@ -432,6 +434,10 @@ _NON_CAP_COUNTING_STATES = {
     StoryState.BLOCKED_DEPENDENCY_UNMET.value,
     # Operator-closed sink (terminal). The human ruled; it must not hold a slot.
     StoryState.CLOSED_BY_OPERATOR.value,
+    # Delivery-level end states (terminal): the factory's part is done.
+    StoryState.DELIVERED_LOCAL.value,
+    StoryState.DELIVERED_BRANCH.value,
+    StoryState.DELIVERED_PR.value,
     # Passive transition states — no agent is actively running; the story
     # is simply waiting for the orchestrator to dispatch the next handler
     # on the next tick. Counting these against the cap deadlocks any
@@ -587,6 +593,23 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
     from factory.chain.dual_draft import _draft_alt_suffix
 
     story_is_alt = _draft_alt_suffix(story.slug or "") is not None
+    # DELIVERY LEVELS (finding 10, 2026-11-02): a story whose own recorded level
+    # does not merge (none / branch / draft_pr / pr) can never wait for a
+    # sibling to DEPLOY — at those levels nothing deploys until a human acts, so
+    # every multi-story job below auto_merge deadlocked on its first story. A
+    # sibling that reached its DELIVERED_* end state has done all the factory
+    # will do; for such a dependent it is not a pending dependency. Stories are
+    # NOT stacked: the dependent builds from the default branch, not from the
+    # sibling's unmerged branch. An unknown / merging level keeps the strict
+    # rule (fail safe: wait).
+    dependent_never_merges = False
+    try:
+        from factory.delivery import parse_level
+
+        _lvl = parse_level(getattr(story, "delivery_level", None))
+        dependent_never_merges = _lvl is not None and not _lvl.merges
+    except ValueError:
+        dependent_never_merges = False
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
         siblings = session.exec(
@@ -604,6 +627,8 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
         # A superseded sibling's work belongs to another story now — it is not an
         # un-built foundation, so it is not a dependency (see the docstring).
         and s.state != StoryState.SUPERSEDED_BY_SIBLING.value
+        # A delivered sibling is done as far as a non-merging dependent goes.
+        and not (dependent_never_merges and s.state in DELIVERED_UNMERGED_STATES)
         # Exempt same-direction dual-draft siblings from each other's deps.
         and not (story_is_alt and _draft_alt_suffix(s.slug or "") is not None)
     )
@@ -721,6 +746,14 @@ _PENDING_HUMAN_STATES: frozenset[str] = frozenset(
         # behind one is waiting on a human — and it must stay revivable rather
         # than be treated as a definitive dead end.
         StoryState.BLOCKED_UNDERSPECIFIED.value,
+        # Delivery-level end states: the work is finished but NOT on the
+        # default branch — a human merges (or discards) it. A dependent behind
+        # one is waiting on that human, so it is capped-then-surfaced rather
+        # than abandoned, and closing the story issue settles it to
+        # closed_by_operator like any other pending-human row.
+        StoryState.DELIVERED_LOCAL.value,
+        StoryState.DELIVERED_BRANCH.value,
+        StoryState.DELIVERED_PR.value,
     }
 )
 
@@ -1409,6 +1442,46 @@ def _query_issue_state(*, app_config: AppConfig, issue_number: int) -> str | Non
     return state if state in ("OPEN", "CLOSED") else None
 
 
+def _repark_cancelled_job_stories(
+    stories: list[StoryRecord], *, db: Path, root: Path
+) -> list[StoryRecord]:
+    """Drop (and re-park as ``closed_by_operator``) stories of cancelled jobs.
+
+    The durable marker is ``delivery_gate.is_job_cancelled`` (its own table,
+    written only by ``factory job cancel``). The re-park is a compare-and-set
+    under the story lock, so it never races the auto-merge pass. Finished work
+    (``deploy_pending``) is left alone, like cancel itself does. Never raises.
+    """
+    from factory.chain import delivery_gate
+
+    kept: list[StoryRecord] = []
+    for s in stories:
+        try:
+            cancelled = delivery_gate.is_job_cancelled(db, s.app, s.direction_id)
+        except Exception:  # noqa: BLE001
+            cancelled = False
+        if not cancelled or s.state == StoryState.DEPLOY_PENDING.value or s.id is None:
+            kept.append(s)
+            continue
+        with delivery_gate.story_lock(root, s.id, timeout=5) as held:
+            if held and delivery_gate.cas_story_state(
+                db,
+                s.id,
+                {s.state},
+                StoryState.CLOSED_BY_OPERATOR.value,
+                error=f"job cancelled; re-parked a write-back to {s.state}",
+            ):
+                with contextlib.suppress(Exception):
+                    log_story_event(
+                        s.id,
+                        "cancelled_job_story_reparked",
+                        {"from_state": s.state},
+                        software_factory_root=root,
+                        slug_hint=s.slug or "",
+                    )
+    return kept
+
+
 def reconcile_closed_trackers(
     db: Path,
     app: str,
@@ -1417,8 +1490,16 @@ def reconcile_closed_trackers(
     root: Path,
     max_reconcile: int = _MAX_RECONCILE_PER_TICK,
     query_issue_state: Callable[..., str | None] = _query_issue_state,
+    query_pr_state: Callable[..., str | None] | None = None,
 ) -> list[tuple[str, str, str]]:
     """Settle pending-human stories whose tracker ISSUE the operator has closed.
+
+    DELIVERED_PR exception (review 2026-11-02, SHOULD 6): a human merging a
+    delivered PR usually closes its story issue too ("Closes #n"). Settling
+    that row to CLOSED_BY_OPERATOR here would strand a MERGED change before
+    ``reconcile_from_github`` routes it to deploy. So a ``delivered_pr`` row is
+    only settled when GitHub says its PR is NOT merged (OPEN or CLOSED);
+    MERGED or unknown → skipped, left for ``reconcile_from_github``.
 
     The companion to ``reconcile_from_github``. That pass makes the local DB agree
     with GitHub about **PR** state; this one makes it agree about whether the work
@@ -1472,6 +1553,9 @@ def reconcile_closed_trackers(
     candidates = [
         s for s in rows if _awaits_human(s) and s.github_issue_number and s.github_issue_number > 0
     ]
+    # Delivered-unmerged rows can accumulate while they wait on a human; check
+    # them LAST so they never starve the per-tick budget of genuine blocks.
+    candidates.sort(key=lambda s: s.state in DELIVERED_UNMERGED_STATES)
 
     settled: list[tuple[str, str, str]] = []
     checked = 0
@@ -1495,6 +1579,16 @@ def reconcile_closed_trackers(
             story.state = live_state
 
         checked += 1
+        if (
+            story.state == StoryState.DELIVERED_PR.value
+            and story.github_pr_number
+            and story.github_pr_number > 0
+        ):
+            pr_query = query_pr_state or _query_pr_state
+            pr_state = pr_query(app_config=cfg, pr_number=story.github_pr_number)
+            if pr_state not in ("OPEN", "CLOSED"):
+                # MERGED → reconcile_from_github deploys it; None → unknown.
+                continue
         issue_state = query_issue_state(app_config=cfg, issue_number=issue_number)
         if issue_state != "CLOSED":
             # OPEN → the work is still wanted; None → unknown. Never settle on
@@ -1910,6 +2004,13 @@ def reconcile_from_github(
         # settled.
         if state_value == StoryState.BLOCKED_CI_UNRESOLVED.value:
             return False
+        # SAME exception for ``delivered_pr``: the factory left the PR open for a
+        # human (delivery level draft_pr / pr). When that human merges it, merge
+        # reality must flow into DEPLOY_PENDING exactly like an auto-merge. A
+        # CLOSED-unmerged delivered PR settles to CLOSED_BY_OPERATOR below: the
+        # human discarded the work (finding 11, 2026-11-02).
+        if state_value == StoryState.DELIVERED_PR.value:
+            return False
         return _terminal(state_value) or state_value == StoryState.DEPLOY_PENDING.value
 
     # Candidates: EVERY non-settled story that carries a real PR — NOT just the
@@ -1931,6 +2032,9 @@ def reconcile_from_github(
         for s in all_rows
         if s.github_pr_number and s.github_pr_number > 0 and not _settled(s.state)
     ]
+    # Delivered PRs wait on a human and can accumulate; query them LAST so they
+    # never starve the per-tick ``max_reconcile`` budget of live stories.
+    candidates.sort(key=lambda s: s.state == StoryState.DELIVERED_PR.value)
 
     reconciled: list[tuple[str, str, str]] = []
     checked = 0
@@ -1976,6 +2080,16 @@ def reconcile_from_github(
                 new_state = advance(story, EVENT_MERGED)
             except IllegalTransitionError:
                 new_state = StoryState.DEPLOY_PENDING
+        elif from_state == StoryState.DELIVERED_PR.value:
+            # CLOSED-unmerged DELIVERED PR (level draft_pr / pr): the factory
+            # finished and handed the PR to a human, who closed it without
+            # merging — a ruling, like closing the story issue. Settle it to the
+            # operator-closed terminal sink so it stops being polled every tick
+            # and its job/direction can finish. Direct assignment (no
+            # ``_TRANSITIONS`` edge — adding one would make DELIVERED_PR
+            # non-terminal for ``is_terminal``); declared in the conformance model.
+            event = "delivered_pr_closed_unmerged"
+            new_state = StoryState.CLOSED_BY_OPERATOR
         else:
             # CLOSED (not merged). Only sink to the attention state from a
             # MERGEABLE state (a story whose OPEN PR was closed). A CLOSED PR on
@@ -1999,6 +2113,12 @@ def reconcile_from_github(
                 continue
 
         story.state = new_state.value
+        if event == "delivered_pr_closed_unmerged":
+            story.error = None
+            story.last_rejection_reason = (
+                f"delivered PR #{pr_number} was closed on GitHub without merging; "
+                "settled to closed_by_operator"
+            )
         if event == EVENT_PR_UNMERGEABLE:
             story.error = (
                 f"reconcile: PR #{pr_number} is CLOSED on GitHub (not merged) "
@@ -2549,6 +2669,11 @@ def tick(
                 )
 
         stories = H.stories_in_flight(app, db)
+        # N2 (review 2026-11-02): never dispatch a story whose JOB was
+        # cancelled. A handler that held a stale row can have written it back
+        # to a live state after the cancel parked it; re-park it instead.
+        if not dry_run:
+            stories = _repark_cancelled_job_stories(stories, db=db, root=root)
 
         # Optional shard partitioning for safe multi-loop parallelism. Several
         # concurrent ``drive_chain`` loops each take the SAME ordered in-flight
@@ -2969,8 +3094,7 @@ def tick(
                             f"deferrals {story.dependency_defer_count}/"
                             f"{_MAX_DEPENDENCY_DEFERRALS}"
                             + (
-                                f", holding for the {_MIN_DEP_STALL_SECONDS // 60}m "
-                                "stall window"
+                                f", holding for the {_MIN_DEP_STALL_SECONDS // 60}m stall window"
                                 if _deps_stalled
                                 and story.dependency_defer_count >= _MAX_DEPENDENCY_DEFERRALS
                                 else ""
