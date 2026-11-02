@@ -108,7 +108,8 @@ def submit_cmd(
     ),
     as_json: bool = typer.Option(False, "--json", help="Print one JSON object"),
 ) -> None:
-    """Create a job (an operator-approved direction). Idempotent on (source, external-id)."""
+    """Create a job (a direction; pre-approved for --source pa/human). Idempotent on
+    (source, external-id)."""
     from factory.jobs.submit import SubmitRequest, submit_job
 
     def read(path: Path | None, flag: str) -> str | None:

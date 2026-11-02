@@ -63,6 +63,7 @@ class GitHubView:
     _index: dict[int, PRInfo] | None = None
     _index_failed: bool = False
     _branches: dict[str, bool | None] = field(default_factory=dict)
+    _contains: dict[str, bool | None] = field(default_factory=dict)
 
     def _call(self, args: list[str]) -> subprocess.CompletedProcess[str] | None:
         try:
@@ -147,6 +148,39 @@ class GitHubView:
             self._note(f"gh api branch lookup failed: {(proc.stderr or '').strip()[:200]}")
             result = None
         self._branches[branch] = result
+        return result
+
+    def branch_contains(self, branch: str, sha: str) -> bool | None:
+        """Does ``branch`` on GitHub contain commit ``sha``? ``None`` = unknown.
+
+        ``push_to_main`` has no PR, so "merged" can only be proven by the
+        default branch itself (finding 5, 2026-11-02): GitHub's compare API
+        reports ``branch...sha`` as ``identical`` or ``behind`` exactly when
+        the commit is already reachable from the branch head.
+        """
+        key = f"{branch}@{sha}"
+        if key in self._contains:
+            return self._contains[key]
+        proc = self._call(["api", f"repos/{self.repo}/compare/{branch}...{sha}", "--jq", ".status"])
+        result: bool | None
+        if proc is None:
+            result = None
+        elif proc.returncode == 0:
+            status = (proc.stdout or "").strip().strip('"')
+            if status in ("identical", "behind"):
+                result = True
+            elif status in ("ahead", "diverged"):
+                result = False
+            else:
+                self._note(f"gh compare returned unexpected status {status!r}")
+                result = None
+        elif "404" in (proc.stderr or "") or "Not Found" in (proc.stderr or ""):
+            # Unknown commit on GitHub: definitely not on the branch.
+            result = False
+        else:
+            self._note(f"gh compare failed: {(proc.stderr or '').strip()[:200]}")
+            result = None
+        self._contains[key] = result
         return result
 
 

@@ -11,9 +11,18 @@ State mapping (docs/JOBS-API.md), first match wins:
 * no stories yet: direction ``created`` → ``queued`` (or ``needs_human`` when
   the approval gate parks it); ``pm-validated`` → ``triaging``;
   ``needs-direction`` → ``needs_human``; ``closed`` → ``failed``.
-* every story delivered at the job's effective delivery level → ``done`` —
-  but only when GitHub CONFIRMED it (PR merged / PR open / branch exists);
-  a delivery only the local view claims stays ``in_progress`` with a ``why``.
+* every story finished successfully → ``done`` — but only when GitHub
+  CONFIRMED it; a delivery only the local view claims stays ``in_progress``
+  with a ``why``. "Finished" is read from the story ITSELF (the chain stamps
+  ``StoryRecord.delivery_level`` at spawn and ends each story in its level's
+  end state), never recomputed from today's app config:
+
+  - ``delivered_pr`` → its PR is open or merged on GitHub;
+  - ``delivered_branch`` → its branch exists on GitHub;
+  - ``delivered_local`` → nothing to confirm remotely (level ``none``);
+  - ``deploy_pending`` / ``deployed`` → merged: the PR is MERGED on GitHub,
+    or, for ``push_to_main`` (no PR), the default branch on GitHub contains
+    the fast-forwarded commit. A local flag alone is never ``done``.
 * any story waiting on a human (the orchestrator's pending-human sinks, or a
   dependency-cap park) → ``needs_human``.
 * any story still live → ``in_progress``, or ``blocked`` when the factory is
@@ -33,12 +42,14 @@ from pathlib import Path
 from typing import Any
 
 from factory.app_config import AppConfig, load_app_config
+from factory.chain.orchestrator import _PENDING_HUMAN_STATES
 from factory.chain.state_machine import (
+    DELIVERED_UNMERGED_STATES,
     StoryState,
     is_dependency_cap_parked,
     is_terminal,
 )
-from factory.delivery import DeliveryLevel, effective_level
+from factory.delivery import DeliveryLevel, effective_level, parse_level
 from factory.directions.approval import (
     approval_blocked_reason,
     awaiting_operator_approval,
@@ -70,16 +81,12 @@ TERMINAL_JOB_STATES: frozenset[str] = frozenset({"done", "failed", "cancelled"})
 CANCEL_KEY = "job_cancelled"
 
 _S = StoryState
-#: Mirrors ``orchestrator._PENDING_HUMAN_STATES`` (kept in sync by a test).
-HUMAN_STATES: frozenset[str] = frozenset(
-    {
-        _S.BLOCKED_DEPLOY_FAILED.value,
-        _S.BLOCKED_BUDGET_EXCEEDED.value,
-        _S.BLOCKED_TESTS_NEED_CLARIFICATION.value,
-        _S.BLOCKED_REVIEW_NONCONVERGENT.value,
-        _S.BLOCKED_UNDERSPECIFIED.value,
-    }
-)
+#: Stories waiting on a human = the orchestrator's pending-human sinks MINUS
+#: the delivery end states. Derived, not hand-copied (finding 1, 2026-11-02:
+#: the hand-copied list went stale the moment ``delivered_*`` joined the
+#: orchestrator's set). For the CHAIN a delivered story awaits a human merge;
+#: for the JOB it is SUCCESS — the job asked for exactly that end state.
+HUMAN_STATES: frozenset[str] = frozenset(_PENDING_HUMAN_STATES - DELIVERED_UNMERGED_STATES)
 #: Terminal sinks that mean "this story will not deliver".
 FAILED_STATES: frozenset[str] = frozenset(
     {
@@ -90,8 +97,10 @@ FAILED_STATES: frozenset[str] = frozenset(
     }
 )
 IGNORED_STATES: frozenset[str] = frozenset({_S.SUPERSEDED_BY_SIBLING.value})
-#: Local evidence that a merge happened (used only when GitHub can't be asked).
+#: Local evidence that a merge happened. Never sufficient for ``done`` alone.
 LOCAL_MERGED_STATES: frozenset[str] = frozenset({_S.DEPLOY_PENDING.value, _S.DEPLOYED.value})
+#: Finished work that ``factory job cancel`` must leave alone (finding 6).
+CANCEL_PROTECTED_STATES: frozenset[str] = LOCAL_MERGED_STATES | DELIVERED_UNMERGED_STATES
 #: Local evidence that a PR exists.
 LOCAL_PR_STATES: frozenset[str] = frozenset(
     {
@@ -219,14 +228,47 @@ class _StoryView:
     delivered: bool
     merged: bool
     kind: str  # delivered | unverified | human | failed | live | ignored
+    level: str = ""
+    note: str | None = None
+
+
+def _story_level(row: dict[str, Any], job_level: DeliveryLevel) -> DeliveryLevel:
+    """The level the chain stamped on this story; the job's level only for a
+    row that predates stamping. An unreadable stamp is ``none`` (fail safe —
+    the same rule ``delivery_gate.story_level`` applies)."""
+    try:
+        return parse_level(row.get("delivery_level")) or job_level
+    except ValueError:
+        return DeliveryLevel.NONE
+
+
+def _merged_sha(ctx: _Ctx, row: dict[str, Any]) -> str | None:
+    """``push_to_main``: the commit the fast-forward published, recorded by the
+    auto-merge worker under the ``-(story.id)`` placeholder PR number."""
+    sid = row.get("id")
+    if sid is None:
+        return None
+    rows = _query(
+        ctx.conn,
+        "SELECT head_sha FROM merge_actions WHERE app = ? AND pr_number = ? AND merged = 1 "
+        "ORDER BY id DESC LIMIT 1",
+        (row.get("app"), -int(sid)),
+    )
+    return str(rows[0]["head_sha"]) if rows and rows[0]["head_sha"] else None
 
 
 def _classify(
-    row: dict[str, Any], level: DeliveryLevel, repo: str, gh: GitHubView | None
+    ctx: _Ctx,
+    row: dict[str, Any],
+    job_level: DeliveryLevel,
+    cfg: AppConfig,
+    gh: GitHubView | None,
 ) -> _StoryView:
+    repo = cfg.repo
     state = str(row.get("state") or "")
+    level = _story_level(row, job_level)
     pr_number = row.get("github_pr_number")
-    pr_number = int(pr_number) if pr_number else None
+    pr_number = int(pr_number) if pr_number and int(pr_number) > 0 else None
     pr = gh.pr(pr_number) if (gh is not None and pr_number) else None
     gh_known = pr is not None
 
@@ -240,35 +282,53 @@ def _classify(
     else:
         pr_state, pr_url = None, None
 
-    if gh_known:
-        merged = pr_state == "merged"
-        has_pr = pr_state in ("open", "merged")
-    else:
-        merged = state in LOCAL_MERGED_STATES
-        has_pr = bool(pr_number) and state in LOCAL_PR_STATES
-
     live = _is_live(state)
-    settled_ok = not live and state not in FAILED_STATES | HUMAN_STATES | IGNORED_STATES
-    # ``verified``: GitHub confirmed the delivery fact (or none is needed).
-    # A delivery only the LOCAL view claims never yields a terminal ``done``.
+    delivered = False
+    merged = False
     verified = True
-    if level in (DeliveryLevel.AUTO_MERGE,):
-        delivered = merged
-        verified = gh_known
-    elif level is DeliveryLevel.PUSH_TO_MAIN:
-        # No PR on this path: the default branch IS the delivery.
-        delivered = merged or state in LOCAL_MERGED_STATES
-        merged = delivered
-    elif level in (DeliveryLevel.PR, DeliveryLevel.DRAFT_PR):
-        delivered = has_pr
-        verified = gh_known
-    elif level is DeliveryLevel.BRANCH:
-        branch = row.get("github_branch")
-        exists = gh.branch_exists(branch) if (gh is not None and branch) else None
-        delivered = settled_ok and (exists if exists is not None else True)
-        verified = exists is not None
-    else:  # NONE: committed locally, nothing pushed
-        delivered = settled_ok
+    note: str | None = None
+    if gh_known and pr_state == "merged" and state not in IGNORED_STATES:
+        # Merge reality is GitHub: a merged PR is delivered whatever the local
+        # row says (reconcile may simply not have caught up yet).
+        delivered = merged = True
+    elif state in DELIVERED_UNMERGED_STATES:
+        # The chain's own success end state for a level below auto_merge.
+        if state == _S.DELIVERED_PR.value:
+            delivered = True if not gh_known else pr_state in ("open", "merged")
+            merged = gh_known and pr_state == "merged"
+            verified = gh_known
+            if gh_known and pr_state == "closed":
+                note = f"PR #{pr_number} was closed without merging"
+        elif state == _S.DELIVERED_BRANCH.value:
+            branch = row.get("github_branch")
+            exists = gh.branch_exists(branch) if (gh is not None and branch) else None
+            delivered = exists is not False
+            verified = exists is True
+            if exists is False:
+                note = f"branch {branch} is not on GitHub"
+        else:  # delivered_local: level none, nothing to confirm remotely
+            delivered = True
+    elif state in LOCAL_MERGED_STATES:
+        delivered = True
+        if pr_number:
+            merged = pr_state == "merged" if gh_known else True
+            verified = gh_known and pr_state == "merged"
+            if gh_known and pr_state != "merged":
+                delivered = False
+                note = f"local state {state} but PR #{pr_number} is {pr_state} on GitHub"
+        else:
+            # push_to_main: no PR. Proof = the default branch contains the
+            # fast-forwarded commit (finding 5) — never the local row alone.
+            sha = _merged_sha(ctx, row)
+            base = cfg.default_branch or "main"
+            contains = gh.branch_contains(base, sha) if (gh is not None and sha) else None
+            merged = contains is not False
+            verified = contains is True
+            if sha is None:
+                note = "no recorded fast-forward commit to confirm on GitHub"
+            elif contains is False:
+                delivered = False
+                note = f"{base} on GitHub does not contain {sha[:12]}"
 
     if state in IGNORED_STATES:
         kind = "ignored"
@@ -276,11 +336,13 @@ def _classify(
         kind = "delivered" if verified else "unverified"
     elif state in HUMAN_STATES or is_dependency_cap_parked(state, row.get("last_rejection_reason")):
         kind = "human"
-    elif live:
+    elif live and note is None:
         kind = "live"
     else:
         kind = "failed"
-    return _StoryView(row, pr, pr_number, pr_url, pr_state, delivered, merged, kind)
+    return _StoryView(
+        row, pr, pr_number, pr_url, pr_state, delivered, merged, kind, level.value, note
+    )
 
 
 def _story_reason(row: dict[str, Any]) -> str:
@@ -318,7 +380,7 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
     dir_status = _direction_status(ctx, ref, state_yaml)
     rows = _stories(ctx, ref)
     gh = ctx.github.view(cfg.repo)
-    views = [_classify(r, level, cfg.repo, gh) for r in rows]
+    views = [_classify(ctx, r, level, cfg, gh) for r in rows]
     counted = [v for v in views if v.kind != "ignored"]
     cancel = state_yaml.get(CANCEL_KEY) if isinstance(state_yaml.get(CANCEL_KEY), dict) else None
 
@@ -327,6 +389,8 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
     human = [v for v in counted if v.kind == "human"]
     failed = [v for v in counted if v.kind == "failed"]
 
+    # Merged/delivered work classifies as delivered, never live, so a cancel
+    # that left it alone (finding 6) still reads as cancelled here.
     if cancel is not None and not live:
         state = "cancelled"
         why = f"cancelled at {cancel.get('at', '?')} by {cancel.get('by', '?')}"
@@ -357,10 +421,12 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
     elif all(v.kind in ("delivered", "unverified") for v in counted):
         unverified = [v for v in counted if v.kind == "unverified"]
         if unverified:
+            u = unverified[0]
             state = "in_progress"
             why = (
-                f"story {unverified[0].row.get('id')} looks delivered locally "
-                f"({unverified[0].row.get('state')}) but GitHub could not confirm it"
+                f"story {u.row.get('id')} looks delivered locally "
+                f"({u.row.get('state')}) but GitHub could not confirm it"
+                + (f" ({u.note})" if u.note else "")
             )
         else:
             state = "done"
@@ -395,7 +461,9 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
     else:
         state = "failed"
         v = failed[0] if failed else counted[0]
-        why = f"story {v.row.get('id')} ended {v.row.get('state')}{_story_reason(v.row)}"
+        why = f"story {v.row.get('id')} ended {v.row.get('state')}" + (
+            f": {v.note}" if v.note else _story_reason(v.row)
+        )
 
     if gh is not None and gh.errors:
         note = "GitHub unavailable, local view: " + gh.errors[0]
@@ -408,6 +476,7 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
             "pr_url": v.pr_url,
             "pr_state": v.pr_state,
             "branch": v.row.get("github_branch"),
+            "delivery_level": v.level,
         }
         for v in views
     ]
@@ -421,7 +490,7 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
         "external_id": meta.get("external_id"),
         "state": state,
         "terminal": state in TERMINAL_JOB_STATES,
-        "pipeline": effective_pipeline(ctx.root, ref.app, meta.get("pipeline")),
+        "pipeline": effective_pipeline(cfg, meta.get("pipeline")),
         "delivery": level.value,
         "stories": stories,
         "pr_urls": [v.pr_url for v in views if v.pr_url],
@@ -475,15 +544,30 @@ def list_jobs(
     return {"jobs": jobs}
 
 
-def cancel_job(root: Path, job_id: str, *, by: str = "factory job cancel") -> dict[str, Any]:
-    """Stop dispatch for the job: park live stories, close the direction.
+def cancel_job(
+    root: Path, job_id: str, *, by: str = "factory job cancel", github: bool = True
+) -> dict[str, Any]:
+    """Stop dispatch for the job: park in-flight stories, close the direction.
 
     Never deletes evidence: worktrees, branches, PRs, logs and spend stay.
-    Live stories move to ``closed_by_operator`` (terminal, not mergeable, not
-    auto-recoverable — so the chain stops driving them and auto-merge will not
-    merge their PRs). Already-terminal stories are left exactly as they are.
+
+    * FINISHED work is left exactly as it is (finding 6, 2026-11-02): a story in
+      ``deploy_pending`` / ``deployed`` (merged) or a ``delivered_*`` end state
+      is never parked — cancelling the job must not orphan a merge from its
+      deploy or rewrite a delivered result.
+    * A story whose PR GitHub reports MERGED (reconcile has not caught up yet)
+      is merged work too: left alone.
+    * Every other in-flight story moves to ``closed_by_operator`` (terminal,
+      not mergeable, not auto-recoverable). Before that, any GitHub
+      auto-merge armed on its PR is DISARMED (``gh pr merge --disable-auto``) —
+      parking the row alone does not stop GitHub merging an armed PR.
+    * Fail safe: when a story has a PR and GitHub cannot say whether it merged,
+      or the disarm fails, the story is NOT parked; it is listed in
+      ``stories_left`` with the reason, and re-running cancel retries.
+
     Idempotent: re-running re-parks anything an in-flight handler wrote back.
     """
+    from factory.chain import delivery_gate
     from factory.chain.handlers import get_story, persist_story
     from factory.directions.parser import parse_direction_dir
     from factory.directions.watcher import mark_direction_status, merge_state
@@ -492,12 +576,15 @@ def cancel_job(root: Path, job_id: str, *, by: str = "factory job cancel") -> di
     db = state_db_path(root)
     now = datetime.now(UTC).isoformat()
     direction = parse_direction_dir(ref.app, ref.dir_path)
+    cfg = load_app_config(ref.app, root)
+    gh = GitHubCache(enabled=github).view(cfg.repo)
 
     state_yaml = read_state_yaml(ref.dir_path)
     if not isinstance(state_yaml.get(CANCEL_KEY), dict):
         merge_state(direction, {CANCEL_KEY: {"at": now, "by": by}})
 
     parked: list[int] = []
+    left: list[dict[str, Any]] = []
     ctx = _ctx(root, github=False)
     try:
         rows = _stories(ctx, ref)
@@ -510,6 +597,38 @@ def cancel_job(root: Path, job_id: str, *, by: str = "factory job cancel") -> di
         story = get_story(int(row["id"]), db)
         if story is None or not _is_live(story.state):
             continue
+        if story.state in CANCEL_PROTECTED_STATES:
+            left.append({"id": story.id, "state": story.state, "reason": "finished work"})
+            continue
+        pr_no = story.github_pr_number if (story.github_pr_number or 0) > 0 else None
+        if pr_no is not None:
+            info = gh.pr(pr_no) if gh is not None else None
+            if info is None:
+                left.append(
+                    {
+                        "id": story.id,
+                        "state": story.state,
+                        "reason": f"cannot confirm PR #{pr_no} is unmerged (GitHub unavailable); "
+                        "re-run cancel",
+                    }
+                )
+                continue
+            if info.state == "merged":
+                left.append(
+                    {"id": story.id, "state": story.state, "reason": f"PR #{pr_no} is merged"}
+                )
+                continue
+            if info.state == "open":
+                err = delivery_gate.disable_auto_merge(cfg, pr_no)
+                if err is not None:
+                    left.append(
+                        {
+                            "id": story.id,
+                            "state": story.state,
+                            "reason": f"could not disarm auto-merge on PR #{pr_no}: {err}",
+                        }
+                    )
+                    continue
         from_state = story.state
         story.state = StoryState.CLOSED_BY_OPERATOR.value
         story.error = (
@@ -523,7 +642,12 @@ def cancel_job(root: Path, job_id: str, *, by: str = "factory job cancel") -> di
             mark_direction_status(direction, "closed", by=by, details={"job_cancelled": now})
     except Exception as exc:  # noqa: BLE001
         raise JobError("cancel_failed", f"could not close direction: {exc}") from exc
-    return {"job_id": ref.job_id, "state": "cancelled", "stories_parked": parked}
+    return {
+        "job_id": ref.job_id,
+        "state": "cancelled",
+        "stories_parked": parked,
+        "stories_left": left,
+    }
 
 
 __all__ = [

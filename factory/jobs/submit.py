@@ -1,4 +1,4 @@
-"""``factory job submit`` — turn a PA job into an operator-approved direction.
+"""``factory job submit`` — turn a job into a direction (pre-approved for pa/human).
 
 What a submit writes, all inside ONE directory that appears atomically
 (staged under a dot-name, then ``rename``-d into place so a concurrent tick's
@@ -8,8 +8,9 @@ pm-sync can never triage a half-written job):
   direction uses, plus the job keys in frontmatter: ``source``,
   ``external_id``, ``pipeline`` (as requested: chain|solo|auto),
   ``delivery`` (as requested, raw, or null) and ``models``.
-* ``state.yaml`` — ``status: created``, ``source: <source>`` and a signed
-  ``operator_approval`` record (see :func:`_approval_record`).
+* ``state.yaml`` — ``status: created``, ``source: <source>`` and, for
+  ``--source pa`` / ``human`` only, a signed ``operator_approval`` record
+  (see :func:`_approval_record`, ``AUTO_APPROVED_SOURCES``).
 * ``artifacts/ask.md`` — the ask, verbatim, as evidence.
 * optional ``flow.md`` / ``api_spec.md`` from ``--flow-file`` /
   ``--api-spec-file`` (the backpressure gate's inputs; see JOBS-API.md).
@@ -39,17 +40,32 @@ from factory.delivery import effective_level, parse_level
 from factory.directions.approval import APPROVAL_KEY
 from factory.directions.creator import _build_direction_md, _write_initial_state_yaml
 from factory.directions.parser import next_direction_id, parse_direction_dir, slugify
+from factory.job_routing import (
+    PIPELINES,
+    JobRouting,
+    JobRoutingError,
+    parse_model_flags,
+    resolve_job_routing,
+    resolve_pipeline,
+)
 from factory.jobs.common import (
     JobError,
     format_job_id,
     iter_jobs,
+    read_state_yaml,
     registered_apps,
     state_db_path,
 )
 
-PIPELINES: tuple[str, ...] = ("chain", "solo", "auto")
-CONCRETE_PIPELINES: tuple[str, ...] = ("chain", "solo")
 SUBMITTED_BY = "factory job submit"
+
+#: Sources whose submit is SIGNED as operator approval (finding 7, 2026-11-02).
+#: ``pa`` relays a plan its human approved; ``human`` is the human at the CLI.
+#: Any other ``--source`` (a bot, a webhook, a scanner) is NOT operator intent
+#: just because it reached this CLI: its direction is written without an
+#: approval record and waits for ``factory approve-direction`` under the
+#: normal approval policy (``factory.directions.approval``).
+AUTO_APPROVED_SOURCES: frozenset[str] = frozenset({"pa", "human"})
 
 
 @dataclass
@@ -117,86 +133,33 @@ def resolve_app(root: Path, app: str | None, repo: str | None) -> tuple[str, App
     return app, cfg
 
 
-def app_pipeline_default(root: Path, app: str) -> str | None:
-    """The app's pipeline default, read from raw config (``pipeline_default``
-    or ``pipeline: {default: …}``) so this works before/without an
-    ``AppConfig`` field for it. ``None`` when unset or invalid."""
-    path = Path(root) / "apps" / app / "config.yaml"
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return None
-    if not isinstance(raw, dict):
-        return None
-    value = raw.get("pipeline_default")
-    block = raw.get("pipeline")
-    if value is None and isinstance(block, dict):
-        value = block.get("default")
-    value = str(value).strip().lower() if value else None
-    return value if value in CONCRETE_PIPELINES else None
-
-
-def effective_pipeline(root: Path, app: str, requested: Any) -> str:
-    """docs/JOBS-API.md v1: ``auto`` = app default, else ``chain``."""
-    req = str(requested or "auto").strip().lower()
-    if req in CONCRETE_PIPELINES:
-        return req
-    return app_pipeline_default(root, app) or "chain"
-
-
-def _parse_models(items: list[str]) -> dict[str, str]:
-    """``["reviewer=azure/x", "dev.hard=azure/y"]`` → mapping, validated."""
-    from factory.model_router import all_known_personas
-
-    known = set(all_known_personas())
-    out: dict[str, str] = {}
-    for item in items:
-        persona, sep, model = (item or "").partition("=")
-        persona, model = persona.strip(), model.strip()
-        if not sep or not persona or not model:
-            raise JobError("invalid_model", f"--model must be <persona>=<model_id>, got {item!r}")
-        base, _, tier = persona.partition(".")
-        if base not in known or (tier and (base != "dev" or tier not in ("standard", "hard"))):
-            raise JobError(
-                "invalid_model",
-                f"unknown persona {persona!r}; one of: {', '.join(sorted(known))} "
-                "(dev may be dev.standard / dev.hard)",
-            )
-        out[persona] = model
-    _check_reviewer_independence(out)
-    return out
-
-
-def _check_reviewer_independence(models: dict[str, str]) -> None:
-    """Refuse a job whose overrides make the reviewer share a model with dev.
-
-    CLAUDE.md hard guardrail ("Reviewer independence"): the router enforces it
-    for routes.yaml; a per-job override must not be a way around it. Checked
-    against the ACTIVE provider's routes overlaid with the job's overrides.
+def resolve_routing(cfg: AppConfig, models: list[str], pipeline: str | None) -> JobRouting:
+    """Validate the job's ``--model`` / ``--pipeline`` request with the SAME
+    resolver spawn uses (``factory.job_routing.resolve_job_routing``), so a
+    request submit accepts is one spawn will honour — and a bad one (bare model
+    id without ``<provider>/``, unknown persona, reviewer/dev collision, solo
+    that cannot run) is refused here, before any direction is written.
+    ``JobRoutingError`` codes pass through unchanged (docs/JOBS-API.md).
     """
-    if not any(k == "reviewer" or k.startswith("dev") for k in models):
-        return
-    from factory.model_router import _dev_tier_models, _load_routes, active_provider
-
-    data = _load_routes()
-    provider = active_provider()
-    block = "azure_routes" if provider == "azure" else "routes"
-    section = dict(data.get(block) or {})
-    dev = dict(_dev_tier_models(section))
-    if "dev" in models:
-        dev = {"standard": models["dev"], "hard": models["dev"]}
-    for tier in ("standard", "hard"):
-        if f"dev.{tier}" in models:
-            dev[tier] = models[f"dev.{tier}"]
-    reviewer = models.get("reviewer", section.get("reviewer"))
-    clash = sorted(t for t, m in dev.items() if reviewer and m == reviewer)
-    if clash:
-        raise JobError(
-            "invalid_model",
-            f"reviewer would share model {reviewer!r} with "
-            f"{', '.join('dev.' + t for t in clash)}; reviewer independence is a hard "
-            "guardrail — pick a different reviewer or dev model",
+    try:
+        return resolve_job_routing(
+            cfg,
+            job_models=parse_model_flags(models) if models else None,
+            pipeline=pipeline,
+            source="factory job submit --model",
         )
+    except JobRoutingError as exc:
+        raise JobError(exc.code, exc.message) from exc
+
+
+def effective_pipeline(cfg: AppConfig, requested: Any) -> str:
+    """The pipeline a job resolves to (``auto`` → ``AppConfig.pipeline_default``,
+    whose ``auto`` means ``chain``). Read path (status/resubmit): never raises —
+    a request that can no longer be honoured reports the raw request."""
+    try:
+        return resolve_pipeline(str(requested) if requested else None, cfg)[0]
+    except JobRoutingError:
+        return str(requested or "auto")
 
 
 def _demote_headings(text: str) -> str:
@@ -210,13 +173,14 @@ def _demote_headings(text: str) -> str:
 
 
 def _approval_record(source: str, external_id: str | None) -> dict[str, Any]:
-    """Every job is pre-approved, deliberately.
+    """The signed approval a ``pa`` / ``human`` job carries.
 
     The approval gate (``factory.directions.approval``) exists to stop the
-    factory filing work for ITSELF. A job is filed through an operator CLI by a
-    human or by the PA acting on a plan its human approved — operator intent,
-    so it is recorded as an explicit, signed approval rather than left to
-    wait in ``factory inbox`` for a redundant second yes.
+    factory filing work for ITSELF. A job filed by the human, or by the PA
+    acting on a plan its human approved, is operator intent, so it is
+    recorded as an explicit, signed approval rather than left to wait in
+    ``factory inbox`` for a redundant second yes. Only
+    ``AUTO_APPROVED_SOURCES`` get one.
     """
     note = f"submitted via '{SUBMITTED_BY}' (source={source}"
     note += f", external_id={external_id})" if external_id else ")"
@@ -278,13 +242,22 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
 
     pipeline = (req.pipeline or "auto").strip().lower()
     if pipeline not in PIPELINES:
-        raise JobError("invalid_pipeline", f"--pipeline must be one of {', '.join(PIPELINES)}")
+        raise JobError("bad_pipeline", f"--pipeline must be one of {', '.join(PIPELINES)}")
     try:
+        # Every level is accepted, push_to_main included: there is no per-app
+        # ceiling (operator decision 2026-11-02); the request is the level.
         requested = parse_level(req.delivery)
     except ValueError as exc:
         raise JobError("invalid_delivery", str(exc)) from exc
-    models = _parse_models(req.models)
     app, cfg = resolve_app(root, req.app, req.repo)
+    routing = resolve_routing(cfg, list(req.models), pipeline)
+    # Frontmatter keeps the JOB's own request (``models:`` persona → model id,
+    # ``pipeline:`` as requested) — exactly the keys
+    # ``job_routing.resolve_for_direction`` reads at spawn.
+    models = {
+        k: v for k, v in routing.model_overrides.items() if routing.model_sources.get(k) == "job"
+    }
+    auto_approved = source in AUTO_APPROVED_SOURCES
 
     with _submit_lock(root):
         if external_id:
@@ -333,18 +306,19 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
             if req.api_spec_md and req.api_spec_md.strip():
                 (staging / "api_spec.md").write_text(req.api_spec_md, encoding="utf-8")
             _write_initial_state_yaml(staging, source=source)
-            state_path = staging / "state.yaml"
-            state = yaml.safe_load(state_path.read_text(encoding="utf-8")) or {}
-            state[APPROVAL_KEY] = _approval_record(source, external_id)
-            state.setdefault("audit", []).append(
-                {
-                    "ts": state[APPROVAL_KEY]["approved_at"],
-                    "by": SUBMITTED_BY,
-                    "event": "operator_approved",
-                    "details": {"source": source, "external_id": external_id},
-                }
-            )
-            state_path.write_text(yaml.safe_dump(state, sort_keys=False), encoding="utf-8")
+            if auto_approved:
+                state_path = staging / "state.yaml"
+                state = yaml.safe_load(state_path.read_text(encoding="utf-8")) or {}
+                state[APPROVAL_KEY] = _approval_record(source, external_id)
+                state.setdefault("audit", []).append(
+                    {
+                        "ts": state[APPROVAL_KEY]["approved_at"],
+                        "by": SUBMITTED_BY,
+                        "event": "operator_approved",
+                        "details": {"source": source, "external_id": external_id},
+                    }
+                )
+                state_path.write_text(yaml.safe_dump(state, sort_keys=False), encoding="utf-8")
             os.rename(staging, final)
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
@@ -352,6 +326,7 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
 
     _record_direction_row(root, app, direction_id, slug, source)
     result = _result(root, app, final, meta, created=True, cfg=cfg)
+    result["warnings"] = list(routing.warnings) + result["warnings"]
     return result
 
 
@@ -400,7 +375,7 @@ def _result(
         "app": app,
         "direction_id": direction.id,
         "direction_path": str(dir_path),
-        "pipeline": effective_pipeline(root, app, meta.get("pipeline")),
+        "pipeline": effective_pipeline(cfg, meta.get("pipeline")),
         "delivery": effective_level(cfg.delivery, requested).value,
         "delivery_requested": requested if requested else None,
         "created": created,
@@ -421,5 +396,20 @@ def _result(
         )
     if validation is not None:
         warnings += [f"backpressure: {issue}" for issue in validation.issues]
+    approval = read_state_yaml(dir_path).get(APPROVAL_KEY)
+    if not (isinstance(approval, dict) and approval.get("approved")):
+        try:
+            from factory.directions.approval import awaiting_operator_approval
+
+            direction.status = "created"
+            pending = awaiting_operator_approval(direction)
+        except Exception:  # noqa: BLE001
+            pending = True
+        if pending:
+            warnings.append(
+                f"approval: source {meta.get('source')!r} is not auto-approved "
+                f"({', '.join(sorted(AUTO_APPROVED_SOURCES))} are); the job waits for "
+                f"'factory approve-direction {direction.id} --app {app}'"
+            )
     out["warnings"] = warnings
     return out

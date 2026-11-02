@@ -40,7 +40,7 @@ def _write_app(root: Path, name: str, repo: str, extra: str = "") -> None:
 
 @pytest.fixture
 def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    _write_app(tmp_path, "demo", "acme/demo", "delivery:\n  max: pr\n  default: draft_pr\n")
+    _write_app(tmp_path, "demo", "acme/demo", "delivery:\n  default: draft_pr\n")
     _write_app(tmp_path, "legacy", "acme/legacy")  # no delivery block → auto_merge
     (tmp_path / "state").mkdir()
     monkeypatch.setattr(cli_jobs, "_FACTORY_ROOT", tmp_path)
@@ -156,11 +156,28 @@ def test_pa_source_is_operator_intent_even_without_an_approval_record(root: Path
     assert not requires_operator_approval(direction)
 
 
-def test_other_sources_are_approved_by_the_signed_record(root: Path) -> None:
+def test_finding7_other_sources_stay_pending_approval(root: Path) -> None:
+    """Only ``pa`` and ``human`` get a signed approval; any other source's job
+    waits for ``factory approve-direction`` like any machine-filed direction."""
     obj = _submit("--source", "slack-bot")
-    direction = parse_direction_dir("demo", Path(obj["direction_path"]))
-    assert requires_operator_approval(direction)  # not a human-family source…
-    assert is_auto_buildable(direction)  # …but submit signed an approval
+    d = Path(obj["direction_path"])
+    assert "operator_approval" not in (yaml.safe_load((d / "state.yaml").read_text()) or {})
+    direction = parse_direction_dir("demo", d)
+    hydrate_direction_source(direction, root / "state" / "factory.db")
+    assert requires_operator_approval(direction)
+    assert not is_auto_buildable(direction)
+    assert any("approve-direction" in w for w in obj["warnings"])
+    assert job_status(root, obj["job_id"], github=False)["state"] == "needs_human"
+
+
+@pytest.mark.parametrize("source", ["pa", "human"])
+def test_finding7_pa_and_human_are_signed(root: Path, source: str) -> None:
+    obj = _submit("--source", source)
+    d = Path(obj["direction_path"])
+    approval = (yaml.safe_load((d / "state.yaml").read_text()) or {})["operator_approval"]
+    assert approval["approved"] is True and approval["approved_by"].endswith(f":{source}")
+    assert is_auto_buildable(parse_direction_dir("demo", d))
+    assert not any("approve-direction" in w for w in obj["warnings"])
 
 
 def test_submit_is_idempotent_on_source_and_external_id(root: Path) -> None:
@@ -187,9 +204,12 @@ def test_submit_resolves_repo_to_app(root: Path) -> None:
         (["--repo", "nobody/nothing"], "unknown_repo"),
         (["--app", "ghost"], "unknown_app"),
         (["--app", "demo", "--delivery", "yolo"], "invalid_delivery"),
-        (["--app", "demo", "--pipeline", "swarm"], "invalid_pipeline"),
-        (["--app", "demo", "--model", "nobody=x/y"], "invalid_model"),
-        (["--app", "demo", "--model", "reviewer"], "invalid_model"),
+        (["--app", "demo", "--pipeline", "swarm"], "bad_pipeline"),
+        (["--app", "demo", "--model", "nobody=x/y"], "unknown_persona"),
+        (["--app", "demo", "--model", "reviewer"], "bad_model_flag"),
+        # A bare id without a provider/ prefix is refused at submit (#332).
+        (["--app", "demo", "--model", "reviewer=gpt-5.4"], "bad_model_id"),
+        (["--app", "demo", "--pipeline", "solo"], "pipeline_unavailable"),
         (["--app", "demo", "--repo", "acme/legacy"], "app_repo_mismatch"),
         ([], "missing_argument"),
     ],
@@ -216,8 +236,7 @@ def test_submit_refuses_a_reviewer_dev_model_collision(root: Path) -> None:
         "--model",
         "reviewer=azure/same",
     )
-    assert exit_code != 0 and obj["error"] == "invalid_model"
-    assert "independence" in obj["message"]
+    assert exit_code != 0 and obj["error"] == "review_independence"
 
 
 def test_submit_requires_title_as_json_error(root: Path) -> None:
@@ -226,16 +245,39 @@ def test_submit_requires_title_as_json_error(root: Path) -> None:
     assert obj == {"error": "missing_argument", "message": "--title is required"}
 
 
-def test_requested_delivery_is_clamped_to_app_ceiling(root: Path) -> None:
-    obj = _submit("--delivery", "push_to_main")
-    assert obj["delivery_requested"] == "push_to_main"
-    assert obj["delivery"] == "pr"
+@pytest.mark.parametrize(
+    "level", ["none", "branch", "draft_pr", "pr", "auto_merge", "push_to_main"]
+)
+def test_every_delivery_level_is_accepted_no_ceiling(root: Path, level: str) -> None:
+    obj = _submit("--delivery", level)
+    assert obj["delivery_requested"] == level
+    assert obj["delivery"] == level
+    fm = Path(obj["direction_path"], "direction.md").read_text()
+    assert f"delivery: {level}" in fm
 
 
-def test_pipeline_auto_uses_app_default(root: Path) -> None:
+def test_pipeline_auto_uses_app_config_pipeline_default(root: Path) -> None:
+    _write_app(root, "auto-app", "acme/auto", "pipeline_default: auto\n")
+    assert _submit(app="auto-app")["pipeline"] == "chain"  # app-level auto = chain (v1)
     _write_app(root, "solo-app", "acme/solo", "pipeline_default: solo\n")
-    obj = _submit(app="solo-app")
-    assert obj["pipeline"] == "solo"
+    code, obj = _cli("submit", "--json", "--app", "solo-app", "--title", "t", "--ask", "a")
+    assert code == 1 and obj["error"] == "pipeline_unavailable"
+
+
+def test_finding9_pipeline_and_models_land_in_frontmatter_for_routing(root: Path) -> None:
+    """The keys #332's ``job_routing.resolve_for_direction`` reads: ``pipeline``
+    (as requested) and ``models`` (persona → model id, the JOB's own)."""
+    from factory.app_config import load_app_config
+    from factory.job_routing import resolve_for_direction
+
+    obj = _submit("--pipeline", "chain", "--model", "dev.hard=azure/some-dev-model")
+    d = Path(obj["direction_path"])
+    direction = parse_direction_dir("demo", d)
+    assert direction.raw_frontmatter["pipeline"] == "chain"
+    assert direction.raw_frontmatter["models"] == {"dev.hard": "azure/some-dev-model"}
+    routing = resolve_for_direction(direction, load_app_config("demo", root))
+    assert routing.pipeline == "chain"
+    assert routing.model_overrides["dev.hard"] == "azure/some-dev-model"
 
 
 def test_submit_warns_when_backpressure_will_park_it(root: Path, tmp_path: Path) -> None:
@@ -362,7 +404,7 @@ def test_local_merged_flag_is_not_trusted_when_github_disagrees(
 
 def test_pr_delivery_is_done_when_pr_is_open(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     job = _submit("--delivery", "pr")
-    _story(root, "001", StoryState.PR_OPEN.value, github_pr_number=3)
+    _story(root, "001", StoryState.DELIVERED_PR.value, github_pr_number=3, delivery_level="pr")
     monkeypatch.setattr(
         gh_mod,
         "_run_gh",
@@ -387,7 +429,7 @@ def test_github_failure_degrades_to_local_view_with_why(root: Path) -> None:
 def test_superseded_sibling_is_ignored(root: Path) -> None:
     job = _submit("--delivery", "none")
     _story(root, "001", StoryState.SUPERSEDED_BY_SIBLING.value)
-    _story(root, "001", StoryState.DEPLOYED.value, slug="winner")
+    _story(root, "001", StoryState.DELIVERED_LOCAL.value, slug="winner", delivery_level="none")
     assert job_status(root, job["job_id"])["state"] == "done"
 
 
@@ -449,10 +491,12 @@ def test_status_unknown_job_is_json_error(root: Path) -> None:
     assert code == 1 and obj["error"] == "invalid_job_id"
 
 
-def test_human_states_mirror_the_orchestrator() -> None:
+def test_finding1_human_states_derive_from_the_orchestrator_minus_delivered() -> None:
     from factory.chain.orchestrator import _PENDING_HUMAN_STATES
+    from factory.chain.state_machine import DELIVERED_UNMERGED_STATES
 
-    assert status_mod.HUMAN_STATES == _PENDING_HUMAN_STATES
+    assert status_mod.HUMAN_STATES == _PENDING_HUMAN_STATES - DELIVERED_UNMERGED_STATES
+    assert not (status_mod.HUMAN_STATES & DELIVERED_UNMERGED_STATES)
 
 
 # --------------------------------------------------------------------------- #
@@ -563,11 +607,11 @@ def test_follow_streams_events_and_exits_when_terminal(root: Path) -> None:
             log_story_event(
                 s.id,
                 "handler_end",
-                {"handler": "dev", "to_state": "deployed"},
+                {"handler": "dev", "to_state": "delivered_local"},
                 software_factory_root=root,
                 slug_hint="slug-x",
             )
-            s.state = StoryState.DEPLOYED.value
+            s.state = StoryState.DELIVERED_LOCAL.value
             persist_story(s, root / "state" / "factory.db")
 
     final = follow_job(
@@ -576,8 +620,8 @@ def test_follow_streams_events_and_exits_when_terminal(root: Path) -> None:
     text = "\n".join(lines)
     assert final["state"] == "done"
     assert "handler_start handler=dev" in text
-    assert "handler_end handler=dev to_state=deployed" in text
-    assert f"story {s.id} state dev_in_progress -> deployed" in text
+    assert "handler_end handler=dev to_state=delivered_local" in text
+    assert f"story {s.id} state dev_in_progress -> delivered_local" in text
     assert "job in_progress -> done" in text
     assert lines[-1].split(" ", 1)[1].startswith("job finished: done")
     assert ticks["n"] == 1
@@ -591,3 +635,213 @@ def test_dependency_deferred_story_reports_blocked(root: Path) -> None:
     # A stale counter on a story that has moved on is not a block.
     _story(root, "001", StoryState.DEV_IN_PROGRESS.value, dependency_defer_count=3, slug="b")
     assert job_status(root, job["job_id"])["state"] == "in_progress"
+
+
+# --------------------------------------------------------------------------- #
+# adversarial review 2026-11-02 — status reads the stamped level; push_to_main
+# is confirmed on GitHub; cancel leaves finished work alone and disarms
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("state", "level"),
+    [
+        (StoryState.DELIVERED_LOCAL.value, "none"),
+        (StoryState.DELIVERED_BRANCH.value, "branch"),
+        (StoryState.DELIVERED_PR.value, "draft_pr"),
+        (StoryState.DELIVERED_PR.value, "pr"),
+    ],
+)
+def test_finding1_delivered_states_are_success_at_the_stamped_level(
+    root: Path, monkeypatch: pytest.MonkeyPatch, state: str, level: str
+) -> None:
+    """The job runs on the LEGACY app (config default auto_merge). The story's
+    stamped level is what counts — status never recomputes it from config."""
+    job = _submit("--delivery", level, app="legacy")
+    _story(
+        root,
+        "001",
+        state,
+        app="legacy",
+        delivery_level=level,
+        github_branch="story/1-x",
+        github_pr_number=5 if state == StoryState.DELIVERED_PR.value else None,
+    )
+    monkeypatch.setattr(
+        gh_mod,
+        "_run_gh",
+        _fake_gh(
+            [{"number": 5, "state": "OPEN", "url": "u5", "headRefName": "story/1-x"}],
+            branches={"story/1-x"},
+        ),
+    )
+    st = job_status(root, job["job_id"])
+    assert st["state"] == "done", st["why"]
+    assert st["stories"][0]["delivery_level"] == level
+
+
+def test_finding1_delivered_pr_closed_unmerged_is_not_done(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = _submit("--delivery", "pr")
+    _story(root, "001", StoryState.DELIVERED_PR.value, github_pr_number=6, delivery_level="pr")
+    monkeypatch.setattr(
+        gh_mod,
+        "_run_gh",
+        _fake_gh([{"number": 6, "state": "CLOSED", "url": "u", "headRefName": "b"}]),
+    )
+    st = job_status(root, job["job_id"])
+    assert st["state"] == "failed" and "closed without merging" in st["why"]
+
+
+def test_finding1_delivered_without_github_is_unverified_not_done(root: Path) -> None:
+    job = _submit("--delivery", "pr")
+    _story(root, "001", StoryState.DELIVERED_PR.value, github_pr_number=6, delivery_level="pr")
+    st = job_status(root, job["job_id"])  # gh down
+    assert st["state"] == "in_progress" and "could not confirm" in st["why"]
+
+
+def _p2m_story(root: Path, sha: str) -> StoryRecord:
+    from factory.chain.auto_merge import MergeActionRecord
+
+    s = _story(
+        root, "001", StoryState.DEPLOY_PENDING.value, app="legacy", delivery_level="push_to_main"
+    )
+    eng = create_engine(f"sqlite:///{root / 'state' / 'factory.db'}")
+    SQLModel.metadata.create_all(eng)
+    with Session(eng) as ses:
+        ses.add(
+            MergeActionRecord(
+                app="legacy",
+                pr_number=-(s.id or 0),
+                head_sha=sha,
+                merged=True,
+                reason="push_to_main: fast-forwarded",
+                gates_passed_json="[]",
+                blocking_labels_json="[]",
+            )
+        )
+        ses.commit()
+    return s
+
+
+def _compare_gh(status: str | None) -> Any:
+    calls: list[list[str]] = []
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:2] == ["pr", "list"]:
+            return subprocess.CompletedProcess(args, 0, "[]", "")
+        if args[0] == "api" and "/compare/" in args[1]:
+            if status is None:
+                return subprocess.CompletedProcess(args, 1, "", "HTTP 502")
+            return subprocess.CompletedProcess(args, 0, status + "\n", "")
+        raise AssertionError(args)
+
+    run.calls = calls  # type: ignore[attr-defined]
+    return run
+
+
+@pytest.mark.parametrize(
+    ("compare", "expected"),
+    [("behind", "done"), ("identical", "done"), ("ahead", "failed"), (None, "in_progress")],
+)
+def test_finding5_push_to_main_done_only_when_github_main_contains_the_commit(
+    root: Path, monkeypatch: pytest.MonkeyPatch, compare: str | None, expected: str
+) -> None:
+    job = _submit("--delivery", "push_to_main", app="legacy")
+    _p2m_story(root, "ab" * 20)
+    fake = _compare_gh(compare)
+    monkeypatch.setattr(gh_mod, "_run_gh", fake)
+    st = job_status(root, job["job_id"])
+    assert st["state"] == expected, st["why"]
+    assert any(c[0] == "api" and c[1].endswith(f"/compare/main...{'ab' * 20}") for c in fake.calls)
+
+
+def test_finding5_push_to_main_local_flag_alone_is_never_done(root: Path) -> None:
+    job = _submit("--delivery", "push_to_main", app="legacy")
+    _story(root, "001", StoryState.DEPLOYED.value, app="legacy", delivery_level="push_to_main")
+    st = job_status(root, job["job_id"], github=False)
+    assert st["state"] == "in_progress" and not st["terminal"]
+
+
+@pytest.fixture
+def disarm_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    from factory.chain import delivery_gate
+
+    calls: list[int] = []
+
+    def _disarm(_cfg: Any, pr: int | None, **_k: Any) -> str | None:
+        calls.append(int(pr or 0))
+        return None
+
+    monkeypatch.setattr(delivery_gate, "disable_auto_merge", _disarm)
+    return calls
+
+
+def test_finding6_cancel_leaves_finished_work_alone(
+    root: Path, monkeypatch: pytest.MonkeyPatch, disarm_calls: list[int]
+) -> None:
+    from factory.chain.handlers import get_story
+
+    job = _submit()
+    db = root / "state" / "factory.db"
+    deploying = _story(root, "001", StoryState.DEPLOY_PENDING.value, slug="a", github_pr_number=11)
+    delivered = _story(root, "001", StoryState.DELIVERED_PR.value, slug="b", github_pr_number=12)
+    merged_on_gh = _story(root, "001", StoryState.PR_OPEN.value, slug="c", github_pr_number=13)
+    live_open = _story(root, "001", StoryState.PR_OPEN.value, slug="d", github_pr_number=14)
+    no_pr = _story(root, "001", StoryState.DEV_IN_PROGRESS.value, slug="e")
+    monkeypatch.setattr(
+        gh_mod,
+        "_run_gh",
+        _fake_gh(
+            [
+                {"number": 13, "state": "MERGED", "url": "u", "headRefName": "c"},
+                {"number": 14, "state": "OPEN", "url": "u", "headRefName": "d"},
+            ]
+        ),
+    )
+    out = cancel_job(root, job["job_id"])
+    assert sorted(out["stories_parked"]) == sorted([live_open.id, no_pr.id])
+    left = {x["id"]: x["reason"] for x in out["stories_left"]}
+    assert set(left) == {deploying.id, merged_on_gh.id}
+    assert get_story(deploying.id, db).state == StoryState.DEPLOY_PENDING.value
+    assert get_story(delivered.id, db).state == StoryState.DELIVERED_PR.value
+    assert get_story(merged_on_gh.id, db).state == StoryState.PR_OPEN.value
+    assert get_story(live_open.id, db).state == StoryState.CLOSED_BY_OPERATOR.value
+    # finding 2 (cancel): the open PR's auto-merge was disarmed before parking.
+    assert disarm_calls == [14]
+
+
+def test_finding6_cancel_does_not_park_a_pr_story_when_github_is_down(
+    root: Path, disarm_calls: list[int]
+) -> None:
+    from factory.chain.handlers import get_story
+
+    job = _submit()
+    s = _story(root, "001", StoryState.PR_OPEN.value, github_pr_number=21)
+    out = cancel_job(root, job["job_id"])  # gh down (fixture default)
+    assert out["stories_parked"] == []
+    assert "cannot confirm" in out["stories_left"][0]["reason"]
+    assert get_story(s.id, root / "state" / "factory.db").state == StoryState.PR_OPEN.value
+    assert disarm_calls == []
+
+
+def test_finding2_cancel_refuses_to_park_when_disarm_fails(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factory.chain import delivery_gate
+    from factory.chain.handlers import get_story
+
+    monkeypatch.setattr(delivery_gate, "disable_auto_merge", lambda *a, **k: "gh exit=1: nope")
+    monkeypatch.setattr(
+        gh_mod,
+        "_run_gh",
+        _fake_gh([{"number": 22, "state": "OPEN", "url": "u", "headRefName": "b"}]),
+    )
+    job = _submit()
+    s = _story(root, "001", StoryState.PR_OPEN.value, github_pr_number=22)
+    out = cancel_job(root, job["job_id"])
+    assert out["stories_parked"] == []
+    assert "could not disarm" in out["stories_left"][0]["reason"]
+    assert get_story(s.id, root / "state" / "factory.db").state == StoryState.PR_OPEN.value

@@ -59,22 +59,27 @@ PA files it after its human approved that exact plan. So:
   is operator intent, relayed. This keeps a PA job buildable even if
   `state.yaml` is lost (it is gitignored, D018) and only the row's `source`
   survives.
-- Every job, whatever its `--source`, also gets the signed `operator_approval`
-  record in `state.yaml`.
+- Only `pa` and `human` jobs get the signed `operator_approval` record
+  (`submit.AUTO_APPROVED_SOURCES`). Any other `--source` is not operator
+  intent just because it reached this CLI: its job is written without the
+  record, waits under the normal approval policy, and submit returns a
+  `warnings` entry naming `factory approve-direction`.
 
 ## Validation
 
-- `--delivery` goes through `factory.delivery.parse_level`. Garbage is an
-  `invalid_delivery` error. The reported `delivery` is
-  `effective_level(app.delivery, requested)`, the request clamped to the
-  app's ceiling.
-- `--pipeline auto` resolves to the app's `pipeline_default` (raw config key,
-  or `pipeline: {default: …}`), else `chain`. The frontmatter keeps the
-  request; the JSON reports the resolved value.
-- `--model persona=model`: the persona must be known to `routes.yaml`
-  (`dev.standard` / `dev.hard` allowed). Overrides that make the reviewer
-  share a model with any dev tier are refused (`invalid_model`). Reviewer
-  independence is a hard guardrail, and a per-job override must not bypass it.
+- `--delivery` goes through `factory.delivery.parse_level`. Every level is
+  accepted, `push_to_main` included: there is no per-app ceiling. Garbage is
+  an `invalid_delivery` error. The reported `delivery` is
+  `effective_level(app.delivery, requested)` = the request, else the app's
+  `delivery.default`.
+- `--pipeline` and `--model persona=<provider>/<model>` are validated by
+  `factory.job_routing.resolve_job_routing` (the same resolver spawn uses),
+  via `submit.resolve_routing`; its `JobRoutingError` codes pass through
+  (`bad_pipeline`, `pipeline_unavailable`, `bad_model_flag`,
+  `unknown_persona`, `bad_model_id` for a bare id, `review_independence`).
+  `auto` resolves to `AppConfig.pipeline_default` (whose `auto` = `chain`).
+  The frontmatter keeps the request (`pipeline:`) and the job's own
+  `models:` map; the JSON reports the resolved pipeline.
 - Backpressure is checked at submit time (`validate_direction`). A job with no
   flow, no api spec and no explore tag deterministically lands in
   `needs-direction` at pm-sync. Submit still creates the job, but returns a
@@ -92,13 +97,12 @@ First match wins (`status.py` docstring):
    `needs_human` if the approval gate parks it); `pm-validated` → `triaging`;
    `needs-direction` → `needs_human` (the `why` lists what is missing);
    `closed` → `failed`.
-3. Every counted story is delivered at the effective level → `done`. This
-   holds only when GitHub CONFIRMED each delivery (PR merged, PR open, or
-   branch exists). A delivery that only the local view claims stays
+3. Every counted story is delivered → `done`. This holds only when GitHub
+   CONFIRMED each delivery. A delivery that only the local view claims stays
    `in_progress`, with a `why` saying GitHub could not confirm it.
-4. Any story is in a pending-human sink (mirrors
-   `orchestrator._PENDING_HUMAN_STATES`, kept in sync by a test) or is
-   dependency-cap parked → `needs_human`.
+4. Any story is in a pending-human sink (`HUMAN_STATES` =
+   `orchestrator._PENDING_HUMAN_STATES` minus `DELIVERED_UNMERGED_STATES`,
+   derived, not copied) or is dependency-cap parked → `needs_human`.
 5. Any story is live → `in_progress`. It is `blocked` instead when the factory
    is halted or in `paused` mode, or when every live story is
    still in `story_created` with a dependency deferral recorded.
@@ -106,13 +110,19 @@ First match wins (`status.py` docstring):
 
 `superseded_by_sibling` (the dual-draft loser) is ignored.
 
-"Delivered" per level:
+"Delivered" is read from the story itself — its stamped
+`StoryRecord.delivery_level` and the chain's end state — never recomputed
+from today's app config:
 
-- `auto_merge`: GitHub says the PR is merged.
-- `push_to_main`: merged, or locally deployed.
-- `pr` / `draft_pr`: GitHub says the PR is open or merged.
-- `branch`: the story settled successfully and the branch exists on GitHub.
-- `none`: the story settled successfully.
+- any story whose PR GitHub reports MERGED (reconcile may lag).
+- `delivered_pr`: GitHub says the PR is open or merged (closed → `failed`).
+- `delivered_branch`: the branch exists on GitHub.
+- `delivered_local`: nothing to confirm remotely (level `none`).
+- `deploy_pending` / `deployed` with a PR: GitHub says the PR is merged.
+- `deploy_pending` / `deployed` without a PR (`push_to_main`): the default
+  branch on GitHub contains the fast-forwarded commit (`merge_actions` row
+  under `-(story.id)`, checked with `GitHubView.branch_contains` — the
+  compare API's `identical`/`behind`). The local row alone is never `done`.
 
 **Merge reality comes from GitHub, never a local flag.** If `gh` fails, the
 status uses the local view (`deploy_pending`/`deployed` = merged) for
@@ -122,8 +132,14 @@ everything except a terminal `done`, reports `pr_state: null`, and appends `GitH
 
 ## Cancel
 
-Sets `state.yaml: job_cancelled`, moves every LIVE story to
+Sets `state.yaml: job_cancelled`, moves every IN-FLIGHT story to
 `closed_by_operator`, and closes the direction (`mark_direction_status`).
+Finished work is never parked: `deploy_pending`/`deployed`, `delivered_*`
+(`status.CANCEL_PROTECTED_STATES`), or a story whose PR GitHub reports
+merged. A story with an open PR has its GitHub auto-merge disarmed
+(`delivery_gate.disable_auto_merge`) before it is parked. If GitHub cannot
+say whether the PR merged, or the disarm fails, the story is NOT parked and
+is returned in `stories_left` with the reason (fail safe; re-run cancel).
 `closed_by_operator` is terminal, not mergeable and not auto-recoverable.
 Nothing is deleted: worktrees, branches, PRs, logs and spend all stay. Cancel
 does not close PRs or issues; `factory reconcile-issues` closes the issues of

@@ -70,7 +70,8 @@ _HUMAN_SOURCE_PREFIXES: tuple[str, ...] = ("operator", "cli", "user", "human")
 #: operator intent, relayed. Treating it as machine-filed would make every
 #: PA job sit in ``factory inbox`` waiting for a second, redundant yes.
 #: ``factory job submit`` additionally writes a signed ``operator_approval``
-#: record for every job (any ``--source``); this allowlist entry is what keeps a
+#: record for ``pa`` and ``human`` jobs only (any other ``--source`` waits for
+#: approval like any machine filer); this allowlist entry is what keeps a
 #: PA job buildable even if that ``state.yaml`` record is lost and only the
 #: ``directions`` row's ``source`` survives (D018: ``state.yaml`` is gitignored).
 _DELEGATED_HUMAN_SOURCES: frozenset[str] = frozenset({"pa"})
