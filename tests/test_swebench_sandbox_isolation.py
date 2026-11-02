@@ -495,6 +495,7 @@ def test_the_model_endpoint_is_still_reachable_from_inside(A: Any, tree: _Tree) 
         pytest.skip("no AZURE_ENDPOINT to test reachability against")
     try:
         ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         with socket.create_connection((host, 443), timeout=15) as raw:
             with ctx.wrap_socket(raw, server_hostname=host):
                 pass
