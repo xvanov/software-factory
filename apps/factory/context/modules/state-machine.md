@@ -228,7 +228,17 @@ Enforcement sites:
   first `delivery_ci_watch_started` after the last redispatch. Writes run
   under `story_lock` after re-reading state and `is_job_cancelled`. Such
   stories skip `_story_worktree` and `freshen_behind_prs`; a PR closed
-  during the watch reconciles to `CLOSED_BY_OPERATOR`.
+  during the watch reconciles to `CLOSED_BY_OPERATOR`. Runs even with
+  `auto_merge.enabled: false` (`auto_merge_tick(watch_only=True)`).
+  Delivered-with-note, never re-dispatched: the last fix was not pushed
+  (`fix_push_failed` / `fix_push_skipped_no_commits` /
+  `fix_push_refused_foreign_commits` — `_push_fix_to_existing_pr` pushes
+  fast-forward only for these levels and refuses when origin has commits the
+  factory did not write); the PR head is not the factory's last pushed sha
+  (`delivery_pr_head_pushed` / `fix_push.head_sha`); infra-only red (no
+  `FAILURE` conclusion); no fetchable Actions log; docs chain. A dev that
+  exhausts on a CI fix: no WIP push, `deliver_watched_pr_with_note` →
+  `DELIVERED_PR` (direct write).
 * `auto_merge.auto_merge_tick`: a guard at the top of the per-PR loop (before
   the main-green hold, the CI-failure re-dispatch and gate evaluation) skips
   draft PRs and settles any mergeable story whose level does not merge

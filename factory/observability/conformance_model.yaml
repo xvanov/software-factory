@@ -205,6 +205,14 @@ allowed_direct_writes:
       post-PR state. Shared by the auto_merge CI loop (`_handle_ci_failure`)
       and the draft_pr / pr CI watch (`_watch_ci_then_deliver`), both capped
       at `_MAX_CI_FIX_CYCLES`.
+  - writer: auto_merge.deliver_watched_pr_with_note
+    to: [delivered_pr]
+    from: [dev_in_progress, dev_retry, tests_green, reviewer_requested_changes]
+    why: >-
+      A draft_pr / pr story's CI-fix cycle exhausted the dev. The PR already
+      exists and is the deliverable, so the story settles to DELIVERED_PR with a
+      note instead of pushing the failed fix and blocking; there is no DEV_* ->
+      DELIVERED_PR edge, so the write is direct (under the story lock).
   - writer: auto_merge._handle_pr_conflict_rebuild
     to: [reviewer_requested_changes]
     why: >-

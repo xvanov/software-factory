@@ -1900,6 +1900,61 @@ def _dev_retry_cap(story: StoryRecord, software_factory_root: Path | None = None
     return max_dev_attempts(story, _max_dev_retries(software_factory_root))
 
 
+def _settle_exhausted_ci_fix_of_watched_pr(
+    story: StoryRecord,
+    app_config: AppConfig,
+    software_factory_root: Path,
+    *,
+    db: Path,
+    same_sig_count: int,
+) -> StoryState | None:
+    """Dev ran out of attempts on a CI-FIX of a ``draft_pr`` / ``pr`` PR.
+
+    The PR exists and is the deliverable; the failed fix must not be pushed
+    onto it (the dev-exhausted WIP push would do exactly that), and a failed
+    FIX must not turn a delivered PR into a ``blocked_tests_need_clarification``
+    story (review of PR #335, SHOULD 3). The broken attempt is left as local,
+    UNCOMMITTED work in the worktree (nothing is pushed) and the story is
+    settled to ``DELIVERED_PR`` with a note. Returns the new state, or None
+    when this does not apply (no PR / not watched / no CI-fix in progress /
+    the settle could not take the lock) — the caller's exhausted path runs.
+    """
+    from factory.chain import auto_merge as _am
+    from factory.chain.delivery_gate import story_is_ci_watched
+    from factory.chain.event_log import read_story_events
+
+    if not story_is_ci_watched(story) or not story.github_pr_number:
+        return None
+    if story.github_pr_number <= 0 or story.id is None:
+        return None
+    try:
+        events = read_story_events(
+            story.id, software_factory_root=software_factory_root, slug_hint=story.slug
+        )
+        prior, _since, _start = _am._ci_watch_scope(events)
+    except Exception:  # noqa: BLE001
+        return None
+    if not prior:
+        return None
+    stall = f"same failure {same_sig_count}x; " if same_sig_count else ""
+    note = (
+        f"CI fix {len(prior)} for PR #{story.github_pr_number} did not converge "
+        f"(dev exhausted: {stall}{story.dev_retries} attempt(s)); the failed fix was NOT "
+        "pushed — the PR still holds the last pushed commit, whose CI was red. "
+        "Delivered for a human"
+    )
+    if not _am.deliver_watched_pr_with_note(
+        story=story,
+        app_config=app_config,
+        root=software_factory_root,
+        db=db,
+        note=note,
+        reason="CI-fix cycle exhausted the dev",
+    ):
+        return None
+    return StoryState.DELIVERED_PR
+
+
 def _block_solo_oracle_leak(
     story: StoryRecord,
     leaks: list[str],
@@ -3136,6 +3191,20 @@ def _handle_dev_once(
         _cur_sig = str(attempt_record.get("failure_signature", "") or "")
         same_sig_count = _consecutive_same_dev_signature(_attempts_now, _cur_sig)
     same_sig_stall = same_sig_count >= _MAX_DEV_SAME_SIGNATURE
+
+    if (
+        story.dev_retries >= _dev_retry_cap(story, software_factory_root) or same_sig_stall
+    ) and not dry_run:
+        _settled = _settle_exhausted_ci_fix_of_watched_pr(
+            story,
+            app_config,
+            software_factory_root,
+            db=db,
+            same_sig_count=same_sig_count if same_sig_stall else 0,
+        )
+        if _settled is not None:
+            payload["dev_exhausted_ci_fix_settled"] = story.state
+            return HandlerResult(next_state=_settled, payload=payload)
 
     if story.dev_retries >= _dev_retry_cap(story, software_factory_root) or same_sig_stall:
         # Preserve whatever dev produced so the work doesn't evaporate
@@ -5430,6 +5499,9 @@ def _push_fix_to_existing_pr(
     """
     import subprocess
 
+    from factory.chain.delivery_gate import story_is_ci_watched
+
+    watched = story_is_ci_watched(story)
     branch = story.github_branch
     if not branch:
         return False, "no branch recorded on the story"
@@ -5498,9 +5570,46 @@ def _push_fix_to_existing_pr(
                 slug_hint=story.slug,
             )
             return False, None
+        if watched:
+            # draft_pr / pr: the PR is the HUMAN's deliverable. If origin has
+            # commits the local branch lacks, someone else pushed to it —
+            # never push (and never force) over them (review of PR #335,
+            # MUST 2). The CI watch then delivers with a note.
+            behind = _git(["rev-list", "--count", f"{branch}..{remote_ref}"], timeout=60)
+            try:
+                behind_n = int(((behind.stdout if behind else "") or "").strip() or "-1")
+            except ValueError:
+                behind_n = -1
+            if behind is None or behind.returncode != 0 or behind_n != 0:
+                why = (
+                    f"PR branch {branch} has {behind_n} commit(s) the factory did not write"
+                    if behind_n > 0
+                    else "could not prove the PR branch has no commits the factory did not write"
+                )
+                reason = f"{why}; CI fix NOT pushed (never forced over a human)"
+                log_story_event(
+                    story.id,
+                    "fix_push_refused_foreign_commits",
+                    {
+                        "branch": branch,
+                        "pr_number": story.github_pr_number,
+                        "behind": behind_n,
+                        "error": reason,
+                    },
+                    software_factory_root=software_factory_root,
+                    slug_hint=story.slug,
+                )
+                return False, reason
     # A missing remote branch means "never pushed / deleted upstream" — push.
 
-    push = _git(["push", "--force-with-lease", "origin", str(branch)], timeout=120)
+    # draft_pr / pr: fast-forward only — a plain push cannot drop a commit
+    # someone else pushed between the check above and this push.
+    push_args = (
+        ["push", "origin", str(branch)]
+        if watched
+        else ["push", "--force-with-lease", "origin", str(branch)]
+    )
+    push = _git(push_args, timeout=120)
     ok = push is not None and push.returncode == 0
     # ``state/events/git.ndjson`` is the stream whose ONE push line exposed this
     # bug in the first place; make sure a fix push is visible there too, with
@@ -5520,16 +5629,62 @@ def _push_fix_to_existing_pr(
     except Exception:  # noqa: BLE001 - signal emission is best-effort
         pass
     if ok:
+        sha_proc = _git(["rev-parse", "--verify", "--quiet", f"{branch}^{{commit}}"], timeout=30)
+        pushed_sha = (
+            (sha_proc.stdout or "").strip() or None
+            if sha_proc is not None and sha_proc.returncode == 0
+            else None
+        )
         log_story_event(
             story.id,
             "fix_push",
-            {"branch": branch, "pr_number": story.github_pr_number},
+            # ``head_sha``: the commit the CI watch must grade
+            # (``auto_merge._expected_pr_head``); a different PR head is not ours.
+            {"branch": branch, "pr_number": story.github_pr_number, "head_sha": pushed_sha},
             software_factory_root=software_factory_root,
             slug_hint=story.slug,
         )
         return True, None
     detail = "git push timed out or could not run" if push is None else (push.stderr or "").strip()
-    return False, f"git push --force-with-lease failed: {detail[:300]}"
+    return False, f"git {' '.join(push_args[:-2])} failed: {detail[:300]}"
+
+
+def _log_watched_pr_head(
+    story: StoryRecord, app_config: AppConfig, software_factory_root: Path, pr_number: int
+) -> None:
+    """Record the commit the factory just pushed for a ``draft_pr`` / ``pr`` PR
+    (``auto_merge.EVENT_PR_HEAD_PUSHED``), so the CI watch grades THAT commit
+    and recognises a head someone else pushed. Best-effort: with no record the
+    watch simply skips the foreign-head check."""
+    import subprocess
+
+    from factory.chain.auto_merge import EVENT_PR_HEAD_PUSHED
+
+    sha: str | None = None
+    try:
+        wt = _writing_worktree(app_config, software_factory_root, story)
+        proc = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{story.github_branch}^{{commit}}"],
+            cwd=str(wt),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            sha = (proc.stdout or "").strip() or None
+    except Exception:  # noqa: BLE001 - best-effort
+        sha = None
+    try:
+        log_story_event(
+            story.id,
+            EVENT_PR_HEAD_PUSHED,
+            {"pr_number": pr_number, "branch": story.github_branch, "head_sha": sha},
+            software_factory_root=software_factory_root,
+            slug_hint=story.slug,
+        )
+    except Exception:  # noqa: BLE001 - telemetry only
+        pass
 
 
 def handle_docs_enforcer(
@@ -5841,6 +5996,8 @@ def handle_docs_enforcer(
             if opened is not None:
                 story.github_pr_number = opened
                 payload["pr_number"] = opened
+                if not level.merges:
+                    _log_watched_pr_head(story, app_config, software_factory_root, opened)
             # ``draft_pr`` / ``pr`` do NOT stop here any more (2026-11-02,
             # template-probe PR #18: a red ``docker build`` was never fed back
             # because the story was DELIVERED_PR the moment the PR opened).

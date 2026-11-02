@@ -41,7 +41,15 @@ from factory.chain.orchestrator import (
 )
 from factory.chain.state_machine import StoryRecord, StoryState
 from factory.delivery import DeliveryLevel as L
-from tests.test_delivery_enforcement import _cfg, _reload, _root, _story, _write_cfg
+from tests.test_delivery_enforcement import (
+    _cfg,
+    _git,
+    _reload,
+    _repo_with_origin,
+    _root,
+    _story,
+    _write_cfg,
+)
 
 GREEN = {"state": "passing", "failing": [], "pending": []}
 RED = {"state": "failing", "failing": ["docker build"], "pending": []}
@@ -66,9 +74,13 @@ def no_gh(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     """Any real subprocess (gh) call is recorded and answered with failure;
     ``gh pr ready`` / ``gh pr merge`` / ``gh pr close`` are forbidden."""
     seen: list[list[str]] = []
+    real_run = subprocess.run
 
     def _run(cmd: Any, *a: Any, **k: Any) -> subprocess.CompletedProcess[str]:
         argv = [str(c) for c in cmd] if isinstance(cmd, list | tuple) else [str(cmd)]
+        if argv[:1] == ["git"]:
+            # Local git against tmp_path repos only (the push-safety tests).
+            return real_run(cmd, *a, **k)
         seen.append(argv)
         if argv[:3] in (["gh", "pr", "ready"], ["gh", "pr", "merge"], ["gh", "pr", "close"]):
             raise AssertionError(f"forbidden gh call: {argv}")
@@ -521,3 +533,351 @@ def test_red_main_green_alone_is_a_wait_not_a_dev_fix(
     assert "main is red" in acts[0].reason
     assert _reload(db, s.id).state == StoryState.PR_OPEN.value
     assert "ci_fix_redispatch" not in _names(am_root, s)
+
+
+# --------------------------------------------------------------------------- #
+# Review of PR #335 — must-fix / should-fix
+# --------------------------------------------------------------------------- #
+
+
+def test_must1_watch_only_runs_the_watch_and_touches_nothing_else(
+    am_root: Path, disarms: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``auto_merge.enabled=false`` → the orchestrator calls with
+    ``watch_only=True``: the draft_pr story is watched and delivered, the
+    auto_merge story is not evaluated, gated or merged."""
+    monkeypatch.setattr(am, "_query_pr_checks", lambda **_k: GREEN)
+    monkeypatch.setattr(
+        am, "_evaluate_one_pr", lambda **_k: pytest.fail("watch_only must not evaluate gates")
+    )
+    db = am_root / "state" / "factory.db"
+    watched = _story(db, StoryState.PR_OPEN, L.DRAFT_PR, github_pr_number=40)
+    merging = _story(
+        db, StoryState.PR_OPEN, L.AUTO_MERGE, github_pr_number=41, github_branch="story/2-u"
+    )
+    acts = am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        db_path=db,
+        merge_fn=_merge_must_not_run,
+        watch_only=True,
+    )
+    assert [a.pr_number for a in acts] == [40]
+    assert _reload(db, watched.id).state == StoryState.DELIVERED_PR.value
+    assert _reload(db, merging.id).state == StoryState.PR_OPEN.value
+
+
+def test_must1_orchestrator_runs_the_watch_when_auto_merge_is_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factory.chain import orchestrator
+    from tests.test_orchestrator_auto_merge_integration import _write_settings
+
+    root = tmp_path / "software-factory"
+    (root / "state").mkdir(parents=True)
+    (root / "apps" / "sacrifice").mkdir(parents=True)
+    (tmp_path / "sacrifice").mkdir()
+    (root / "apps" / "sacrifice" / "config.yaml").write_text(
+        f"name: sacrifice\nrepo: x/y\ndefault_branch: main\napp_repo_path: {tmp_path / 'sacrifice'}\n",
+        encoding="utf-8",
+    )
+    calls: list[dict[str, Any]] = []
+
+    def _rec(*_a: Any, **k: Any) -> list[Any]:
+        calls.append(k)
+        return []
+
+    monkeypatch.setattr(orchestrator, "auto_merge_tick", _rec)
+    for enabled in (False, True):
+        calls.clear()
+        _write_settings(root, auto_merge_enabled=enabled)
+        orchestrator.tick(root, "sacrifice", dry_run=True, db_path=root / "state" / "factory.db")
+        assert calls, f"auto_merge_tick not called with enabled={enabled}"
+        assert all(c.get("watch_only") is (not enabled) for c in calls)
+
+
+def _seed_fix_cycle(am_root: Path, s: StoryRecord) -> None:
+    """One red → re-dispatch, then the story back at PR_OPEN."""
+    _tick(am_root, s, RED, log="first failure")
+    assert _reload(am_root / "state" / "factory.db", s.id).state == (
+        StoryState.REVIEWER_REQUESTED_CHANGES.value
+    )
+    _back_from_dev(am_root, s)
+
+
+@pytest.mark.parametrize(
+    "event",
+    ["fix_push_refused_foreign_commits", "fix_push_failed", "fix_push_skipped_no_commits"],
+)
+def test_must2_should5_unpushed_fix_delivers_with_the_real_reason(
+    am_root: Path, disarms: list[int], red_acts_at_once: None, event: str
+) -> None:
+    from factory.chain.event_log import log_story_event
+
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.DRAFT_PR, github_pr_number=42)
+    _seed_fix_cycle(am_root, s)
+    assert s.id is not None
+    log_story_event(
+        s.id, event, {"error": f"because {event}"}, software_factory_root=am_root, slug_hint=s.slug
+    )
+    # Whatever the old head's CI says now, it is not re-graded / re-dispatched.
+    _tick(am_root, s, RED, log="first failure", draft=True)
+    row = _reload(db, s.id)
+    assert row.state == StoryState.DELIVERED_PR.value
+    assert "was NOT pushed" in (row.error or "") and event in (row.error or "")
+    assert _names(am_root, s).count("ci_fix_redispatch") == 1
+
+
+def test_must2_fix_push_refuses_commits_a_human_pushed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin, wt = _repo_with_origin(tmp_path)
+    _git(wt, "checkout", "-b", "story/1-t")
+    (wt / "a.txt").write_text("factory\n")
+    _git(wt, "add", "a.txt")
+    _git(wt, "commit", "-m", "factory")
+    _git(wt, "push", "origin", "story/1-t")
+    # A human pushes to the PR branch from elsewhere...
+    human = tmp_path / "human"
+    _git(tmp_path, "clone", "-b", "story/1-t", str(origin), str(human))
+    for k, v in (("user.email", "h@h"), ("user.name", "h"), ("commit.gpgsign", "false")):
+        _git(human, "config", k, v)
+    (human / "h.txt").write_text("human\n")
+    _git(human, "add", "h.txt")
+    _git(human, "commit", "-m", "human fix")
+    _git(human, "push", "origin", "story/1-t")
+    human_sha = _git(human, "rev-parse", "HEAD")
+    # ...while the factory committed a CI fix locally.
+    (wt / "a.txt").write_text("factory fix\n")
+    _git(wt, "commit", "-am", "ci fix")
+
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    monkeypatch.setattr(H, "_writing_worktree", lambda *a, **k: wt)
+    s = _story(db, StoryState.DOCS_ENFORCER_CHECK, L.DRAFT_PR, github_pr_number=43)
+    pushed, err = H._push_fix_to_existing_pr(s, _cfg(L.DRAFT_PR), root)
+    assert pushed is False and "did not write" in (err or "")
+    assert _git(origin, "rev-parse", "story/1-t") == human_sha  # never clobbered
+    assert "fix_push_refused_foreign_commits" in _names(root, s)
+
+
+def test_must2_fix_push_fast_forwards_and_records_the_pushed_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin, wt = _repo_with_origin(tmp_path)
+    _git(wt, "checkout", "-b", "story/1-t")
+    (wt / "a.txt").write_text("v1\n")
+    _git(wt, "add", "a.txt")
+    _git(wt, "commit", "-m", "v1")
+    _git(wt, "push", "origin", "story/1-t")
+    (wt / "a.txt").write_text("v2\n")
+    _git(wt, "commit", "-am", "ci fix")
+    local = _git(wt, "rev-parse", "HEAD")
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    monkeypatch.setattr(H, "_writing_worktree", lambda *a, **k: wt)
+    s = _story(db, StoryState.DOCS_ENFORCER_CHECK, L.PR, github_pr_number=44)
+    assert H._push_fix_to_existing_pr(s, _cfg(L.PR), root) == (True, None)
+    assert _git(origin, "rev-parse", "story/1-t") == local
+    pushes = [e for e in _events(root, s) if e.get("event") == "fix_push"]
+    assert pushes and pushes[-1]["head_sha"] == local
+
+
+def test_should5_red_on_a_head_the_factory_did_not_push_is_not_redispatched(
+    am_root: Path, disarms: list[int], red_acts_at_once: None
+) -> None:
+    from factory.chain.event_log import log_story_event
+
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PR, github_pr_number=45)
+    assert s.id is not None
+    log_story_event(
+        s.id,
+        am.EVENT_PR_HEAD_PUSHED,
+        {"head_sha": "a" * 40},
+        software_factory_root=am_root,
+        slug_hint=s.slug,
+    )
+    _tick(am_root, s, {**RED, "head_sha": "b" * 40}, log="red on the human head")
+    row = _reload(db, s.id)
+    assert row.state == StoryState.DELIVERED_PR.value
+    assert "someone else pushed" in (row.error or "")
+    assert "ci_fix_redispatch" not in _names(am_root, s)
+
+
+def test_should5_red_on_our_own_head_is_redispatched_and_recorded_by_sha(
+    am_root: Path, disarms: list[int], red_acts_at_once: None
+) -> None:
+    from factory.chain.event_log import log_story_event
+
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PR, github_pr_number=46)
+    assert s.id is not None
+    log_story_event(
+        s.id,
+        am.EVENT_PR_HEAD_PUSHED,
+        {"head_sha": "c" * 40},
+        software_factory_root=am_root,
+        slug_hint=s.slug,
+    )
+    _tick(am_root, s, {**RED, "head_sha": "c" * 40}, log="real red")
+    assert _reload(db, s.id).state == StoryState.REVIEWER_REQUESTED_CHANGES.value
+    redispatch = [e for e in _events(am_root, s) if e.get("event") == "ci_fix_redispatch"]
+    assert redispatch[-1]["head_sha"] == "c" * 40
+    from sqlmodel import Session, create_engine, select
+
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        rows = ses.exec(
+            select(am.MergeActionRecord).where(am.MergeActionRecord.pr_number == 46)
+        ).all()
+    assert rows and rows[-1].head_sha == "c" * 40  # the real head, not local-<id>
+
+
+def test_should4_infra_only_red_is_not_sent_to_the_dev(
+    am_root: Path, disarms: list[int], red_acts_at_once: None
+) -> None:
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PR, github_pr_number=47)
+    _tick(am_root, s, {**RED, "genuine": []}, log="The job was cancelled")
+    row = _reload(db, s.id)
+    assert row.state == StoryState.DELIVERED_PR.value
+    assert "infra" in (row.error or "")
+    assert "ci_fix_redispatch" not in _names(am_root, s)
+
+
+def test_should4_no_fetchable_log_is_not_sent_to_the_dev(
+    am_root: Path, disarms: list[int], red_acts_at_once: None
+) -> None:
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PR, github_pr_number=48)
+    _tick(am_root, s, RED, log="")
+    row = _reload(db, s.id)
+    assert row.state == StoryState.DELIVERED_PR.value
+    assert "no GitHub Actions log" in (row.error or "")
+    assert "ci_fix_redispatch" not in _names(am_root, s)
+
+
+def test_should4_query_pr_checks_marks_only_real_failures_genuine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rollup = [
+        {"__typename": "CheckRun", "name": "docker build", "status": "COMPLETED",
+         "conclusion": "FAILURE", "completedAt": "2026-11-02T10:00:00Z"},
+        {"__typename": "CheckRun", "name": "e2e", "status": "COMPLETED",
+         "conclusion": "TIMED_OUT", "completedAt": "2026-11-02T10:00:00Z"},
+        {"__typename": "CheckRun", "name": "lint", "status": "COMPLETED",
+         "conclusion": "SUCCESS", "completedAt": "2026-11-02T10:00:00Z"},
+    ]  # fmt: skip
+    out = json.dumps({"statusCheckRollup": rollup, "headRefOid": "d" * 40})
+
+    def _run(cmd: Any, *a: Any, **k: Any) -> subprocess.CompletedProcess[str]:
+        assert "statusCheckRollup,headRefOid" in cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    ci = am._query_pr_checks(app_config=_cfg(L.PR), pr_number=5)
+    assert ci is not None
+    assert ci["state"] == "failing"
+    assert sorted(ci["failing"]) == ["docker build", "e2e"]
+    assert ci["genuine"] == ["docker build"]
+    assert ci["head_sha"] == "d" * 40
+
+
+def test_should6_docs_chain_red_is_not_sent_to_the_code_dev(
+    am_root: Path, disarms: list[int], red_acts_at_once: None
+) -> None:
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PR, github_pr_number=49, chain_kind="docs")
+    _tick(am_root, s, RED, log="docs build failed")
+    row = _reload(db, s.id)
+    assert row.state == StoryState.DELIVERED_PR.value
+    assert "docs-chain" in (row.error or "")
+    assert "ci_fix_redispatch" not in _names(am_root, s)
+
+
+def test_should3_exhausted_ci_fix_settles_delivered_without_pushing(
+    am_root: Path, disarms: list[int], red_acts_at_once: None
+) -> None:
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.DRAFT_PR, github_pr_number=50)
+    _tick(am_root, s, RED, log="red", draft=True)
+    row = _reload(db, s.id)
+    row.state = StoryState.DEV_IN_PROGRESS.value
+    row.dev_retries = 3
+    H.persist_story(row, db)
+    got = H._settle_exhausted_ci_fix_of_watched_pr(
+        row, _cfg(L.DRAFT_PR), am_root, db=db, same_sig_count=2
+    )
+    assert got == StoryState.DELIVERED_PR
+    row = _reload(db, s.id)
+    assert row.state == StoryState.DELIVERED_PR.value
+    assert "was NOT pushed" in (row.error or "") and "same failure 2x" in (row.error or "")
+    delivered = [e for e in _events(am_root, s) if e.get("event") == "delivered"][-1]
+    assert "did not converge" in delivered["ci_note"]
+    assert disarms == [50]
+
+
+def test_should3_first_dev_cycle_and_merging_levels_keep_the_exhausted_path(
+    am_root: Path, disarms: list[int]
+) -> None:
+    db = am_root / "state" / "factory.db"
+    fresh = _story(db, StoryState.DEV_IN_PROGRESS, L.DRAFT_PR, github_pr_number=None)
+    assert (
+        H._settle_exhausted_ci_fix_of_watched_pr(
+            fresh, _cfg(L.DRAFT_PR), am_root, db=db, same_sig_count=0
+        )
+        is None
+    )
+    merging = _story(
+        db, StoryState.DEV_IN_PROGRESS, L.AUTO_MERGE, github_pr_number=51, github_branch="b/2"
+    )
+    assert (
+        H._settle_exhausted_ci_fix_of_watched_pr(
+            merging, _cfg(L.AUTO_MERGE), am_root, db=db, same_sig_count=0
+        )
+        is None
+    )
+    no_fix_yet = _story(
+        db, StoryState.DEV_IN_PROGRESS, L.PR, github_pr_number=52, github_branch="b/3"
+    )
+    assert (
+        H._settle_exhausted_ci_fix_of_watched_pr(
+            no_fix_yet, _cfg(L.PR), am_root, db=db, same_sig_count=0
+        )
+        is None
+    )
+
+
+def test_nice_durable_clock_when_the_watch_start_event_cannot_be_written(
+    am_root: Path, disarms: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import factory.chain.event_log as ev
+
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PR, github_pr_number=53)
+    real_log = ev.log_story_event
+
+    def _log(sid: int, event: str, *a: Any, **k: Any) -> Any:
+        if event == am.EVENT_CI_WATCH_STARTED:
+            raise OSError("disk full")
+        return real_log(sid, event, *a, **k)
+
+    monkeypatch.setattr(ev, "log_story_event", _log)
+    row = _reload(db, s.id)
+    entered = 2_000_000_000.0
+    row.updated_at = "2033-05-18T03:33:20+00:00"  # == entered
+    act = am._watch_ci_then_deliver(
+        story=row,
+        fixture=am.FixturePR(pr_number=53, head_sha="ab" * 20, base_branch="main", story=row),
+        level=L.PR,
+        cfg=_cfg(L.PR),
+        app="sacrifice",
+        root=am_root,
+        db=db,
+        checks_query=lambda **_k: PENDING,
+        now_fn=lambda: entered + am.DELIVERY_CI_WAIT_S + 5,
+    )
+    assert "never merged" in act.reason or "delivered" in act.reason
+    assert "did not finish" in (_reload(db, s.id).error or "")

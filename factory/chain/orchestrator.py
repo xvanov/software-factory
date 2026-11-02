@@ -3024,25 +3024,29 @@ def tick(
         # not wait for this tick's story loop to finish before merging
         # (observed 2026-07-18: two mergeable PRs sat >2h behind a long tick).
         # The end-of-tick hook below still runs for PRs that open THIS tick.
-        if settings.auto_merge.enabled:
+        # auto_merge.enabled=false still runs the draft_pr / pr CI WATCH
+        # (watch_only): it never merges, and without it those stories would
+        # sit in pr_open forever (review of PR #335, MUST 1).
+        _am_watch_only = not settings.auto_merge.enabled
+        try:
+            _pre_mode = get_mode(root, db_path=db)
+        except Exception as _pre_mode_exc:  # noqa: BLE001 - fail-safe: skip the write
+            _pre_mode = "paused"
+            summary.errors.append(("auto-merge-pre-mode-read", repr(_pre_mode_exc)))
+        if _pre_mode not in {"paused", "drain-reviews"}:
             try:
-                _pre_mode = get_mode(root, db_path=db)
-            except Exception as _pre_mode_exc:  # noqa: BLE001 - fail-safe: skip the write
-                _pre_mode = "paused"
-                summary.errors.append(("auto-merge-pre-mode-read", repr(_pre_mode_exc)))
-            if _pre_mode not in {"paused", "drain-reviews"}:
-                try:
-                    summary.merges = auto_merge_tick(
-                        root,
-                        app,
-                        dry_run=dry_run,
-                        db_path=db,
-                        merge_method=settings.auto_merge.merge_method,
-                        wait_for_ci=settings.auto_merge.wait_for_ci,
-                        delete_branch_after_merge=settings.auto_merge.delete_branch_after_merge,
-                    )
-                except Exception as exc:
-                    summary.errors.append(("auto-merge-pre", repr(exc)))
+                summary.merges = auto_merge_tick(
+                    root,
+                    app,
+                    dry_run=dry_run,
+                    db_path=db,
+                    merge_method=settings.auto_merge.merge_method,
+                    wait_for_ci=settings.auto_merge.wait_for_ci,
+                    delete_branch_after_merge=settings.auto_merge.delete_branch_after_merge,
+                    watch_only=_am_watch_only,
+                )
+            except Exception as exc:
+                summary.errors.append(("auto-merge-pre", repr(exc)))
 
         # Even when no in-flight stories exist, we still want the
         # end-of-tick auto-merge hook to fire so PRs that landed in
@@ -3588,42 +3592,46 @@ def tick(
         # a merge attempt on the same tick. Gated by
         # ``factory_settings.auto_merge.enabled`` and skipped in modes where
         # forward motion is suppressed (``paused``, ``drain-reviews``).
-        if settings.auto_merge.enabled:
-            try:
-                # ``get_mode`` WRITES to the DB (first-touch default insert),
-                # so a `database is locked` error is possible here. It MUST be
-                # inside this try: previously it sat between the ``enabled``
-                # check and the try block, so a locked-DB exception propagated
-                # straight out of ``tick()``, killing the whole tick and
-                # discarding ``summary`` before the caller ever saw it (a
-                # reviewer-flagged hazard shared by every hook below — fixed
-                # in all of them together, 019 safety-mechanism rewire).
-                current_mode = get_mode(root, db_path=db)
-                if current_mode not in {"paused", "drain-reviews"}:
-                    merge_actions = auto_merge_tick(
-                        root,
-                        app,
-                        dry_run=dry_run,
-                        db_path=db,
-                        merge_method=settings.auto_merge.merge_method,
-                        wait_for_ci=settings.auto_merge.wait_for_ci,
-                        delete_branch_after_merge=settings.auto_merge.delete_branch_after_merge,
-                    )
-                    # EXTEND, never overwrite: the start-of-tick pass may have
-                    # already recorded decisions (and advanced those stories),
-                    # so a quiet end-of-tick pass would otherwise erase them.
-                    # Dedup by pr_number: in dry-run a "merged" fixture isn't
-                    # actually removed, so both passes report the same PR —
-                    # keep the first decision per PR.
-                    _seen_prs = {m.pr_number for m in (summary.merges or [])}
-                    summary.merges = list(summary.merges or []) + [
-                        m for m in merge_actions if m.pr_number not in _seen_prs
-                    ]
-            except Exception as exc:
-                # Auto-merge (and the mode lookup guarding it) failures must
-                # not break the tick — the operator can still inspect the
-                # chain via ``factory story`` and re-run auto-merge by hand.
-                summary.errors.append(("auto-merge", repr(exc)))
+        # auto_merge.enabled=false still runs the draft_pr / pr CI WATCH
+        # (watch_only): it never merges, and without it those stories would
+        # sit in pr_open forever (review of PR #335, MUST 1).
+        _am_watch_only = not settings.auto_merge.enabled
+        try:
+            # ``get_mode`` WRITES to the DB (first-touch default insert),
+            # so a `database is locked` error is possible here. It MUST be
+            # inside this try: previously it sat between the ``enabled``
+            # check and the try block, so a locked-DB exception propagated
+            # straight out of ``tick()``, killing the whole tick and
+            # discarding ``summary`` before the caller ever saw it (a
+            # reviewer-flagged hazard shared by every hook below — fixed
+            # in all of them together, 019 safety-mechanism rewire).
+            current_mode = get_mode(root, db_path=db)
+            if current_mode not in {"paused", "drain-reviews"}:
+                merge_actions = auto_merge_tick(
+                    root,
+                    app,
+                    dry_run=dry_run,
+                    db_path=db,
+                    merge_method=settings.auto_merge.merge_method,
+                    wait_for_ci=settings.auto_merge.wait_for_ci,
+                    delete_branch_after_merge=settings.auto_merge.delete_branch_after_merge,
+                    watch_only=_am_watch_only,
+                )
+                # EXTEND, never overwrite: the start-of-tick pass may have
+                # already recorded decisions (and advanced those stories),
+                # so a quiet end-of-tick pass would otherwise erase them.
+                # Dedup by pr_number: in dry-run a "merged" fixture isn't
+                # actually removed, so both passes report the same PR —
+                # keep the first decision per PR.
+                _seen_prs = {m.pr_number for m in (summary.merges or [])}
+                summary.merges = list(summary.merges or []) + [
+                    m for m in merge_actions if m.pr_number not in _seen_prs
+                ]
+        except Exception as exc:
+            # Auto-merge (and the mode lookup guarding it) failures must
+            # not break the tick — the operator can still inspect the
+            # chain via ``factory story`` and re-run auto-merge by hand.
+            summary.errors.append(("auto-merge", repr(exc)))
 
         # Post-merge main-branch CI-health monitor (D004). Cheap (1-2 ``gh``
         # calls) — runs once per app per tick regardless of in-flight story

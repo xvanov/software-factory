@@ -3599,21 +3599,41 @@ DELIVERY_CI_RED_MIN_AGE_S = 90
 EVENT_CI_WATCH_STARTED = "delivery_ci_watch_started"
 
 
-def watches_ci_before_delivery(level: DeliveryLevel | None) -> bool:
-    """True for the levels whose PR's CI is watched before ``DELIVERED_PR``."""
-    return level in (DeliveryLevel.DRAFT_PR, DeliveryLevel.PR)
+#: Re-exported: the level predicate lives in ``delivery_gate`` so ``handlers``
+#: can use it without importing this module.
+watches_ci_before_delivery = delivery_gate.watches_ci_before_delivery
+
+
+#: Logged by ``handlers.handle_docs_enforcer`` when it opens a watched PR: the
+#: commit the factory pushed (``head_sha``). ``fix_push`` carries the same
+#: field for every later CI-fix push. The watch grades only THAT commit.
+EVENT_PR_HEAD_PUSHED = "delivery_pr_head_pushed"
+
+#: Events ``handle_docs_enforcer`` / ``_push_fix_to_existing_pr`` log when a
+#: CI-fix cycle came back WITHOUT moving the PR head. After one of these the
+#: PR still shows the old red commit, so re-grading it would only burn a cycle.
+_FIX_NOT_PUSHED_EVENTS = frozenset(
+    {"fix_push_failed", "fix_push_skipped_no_commits", "fix_push_refused_foreign_commits"}
+)
 
 
 def _query_pr_checks(*, app_config: AppConfig, pr_number: int) -> dict[str, Any] | None:
-    """The PR's CI rollup over ALL its checks: ``{"state", "failing",
-    "pending"}`` with ``state`` in ``passing`` / ``failing`` / ``pending`` /
-    ``none``; ``None`` when GitHub could not be read.
+    """The PR's CI rollup over ALL its checks, or ``None`` when GitHub could
+    not be read::
+
+        {"state": "passing" | "failing" | "pending" | "none",
+         "failing": [names], "pending": [names],
+         "genuine": [failing names whose conclusion is a real FAILURE],
+         "head_sha": "<the PR head commit the rollup describes>" | None}
 
     ALL checks, not just required ones (``_query_ci_state`` reads
     ``--required``): a ``draft_pr`` / ``pr`` repo often has no branch
     protection at all, and the human the PR is handed to reads every check.
     Same reducer ``factory job status`` uses (``jobs.github.summarize_checks``),
-    so the watch and the status report agree on what "red" means.
+    so the watch and the status report agree on what "red" means. ``genuine``
+    applies ``_GENUINE_FAILURE_CONCLUSIONS`` (the rule ``_ci_failure_is_genuine``
+    uses) to every check, since there may be no required set to scope it to: a
+    red made only of CANCELLED / TIMED_OUT / ERROR is infra, not the dev's to fix.
     """
     import subprocess
 
@@ -3631,7 +3651,7 @@ def _query_pr_checks(*, app_config: AppConfig, pr_number: int) -> dict[str, Any]
                 "--repo",
                 app_config.repo,
                 "--json",
-                "statusCheckRollup",
+                "statusCheckRollup,headRefOid",
             ],
             capture_output=True,
             text=True,
@@ -3642,12 +3662,26 @@ def _query_pr_checks(*, app_config: AppConfig, pr_number: int) -> dict[str, Any]
     if proc.returncode != 0:
         return None
     try:
-        rows = (json.loads(proc.stdout or "{}") or {}).get("statusCheckRollup") or []
+        data = json.loads(proc.stdout or "{}") or {}
+        rows = data.get("statusCheckRollup") or []
     except (ValueError, AttributeError):
         return None
     if not isinstance(rows, list):
         return None
-    return summarize_checks(rows)
+    summary = summarize_checks(rows)
+    failing = set(summary.get("failing") or [])
+    genuine: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        verdict = str(row.get("conclusion") or row.get("state") or "").upper()
+        name = str(row.get("name") or row.get("context") or "?")
+        if verdict in _GENUINE_FAILURE_CONCLUSIONS and name in failing:
+            genuine.add(name)
+    summary["genuine"] = sorted(genuine)
+    head = data.get("headRefOid") if isinstance(data, dict) else None
+    summary["head_sha"] = str(head) if head else None
+    return summary
 
 
 def _ci_watch_window(
@@ -3660,6 +3694,15 @@ def _ci_watch_window(
     budget). The current wait is the first ``delivery_ci_watch_started`` after
     the latest redispatch — each fix the dev hands back gets a fresh clock.
     """
+    prior, _since_fix, start = _ci_watch_scope(events)
+    return prior, start
+
+
+def _ci_watch_scope(
+    events: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float | None]:
+    """``(prior redispatches, events since the latest redispatch, wait start)``
+    — all scoped after the latest ``story_resumed``."""
     resume_idx = max(
         (i for i, e in enumerate(events) if e.get("event") == "story_resumed"), default=-1
     )
@@ -3668,13 +3711,73 @@ def _ci_watch_window(
     last_fix_idx = max(
         (i for i, e in enumerate(scoped) if e.get("event") == "ci_fix_redispatch"), default=-1
     )
+    since_fix = scoped[last_fix_idx + 1 :]
     start: float | None = None
-    for e in scoped[last_fix_idx + 1 :]:
+    for e in since_fix:
         if e.get("event") == EVENT_CI_WATCH_STARTED:
             start = _parse_event_ts(e.get("ts"))
             if start is not None:
                 break
-    return redispatches, start
+    return redispatches, since_fix, start
+
+
+def _expected_pr_head(since_fix: list[dict[str, Any]]) -> str | None:
+    """The commit the factory itself last pushed to the PR in this cycle: the
+    latest ``fix_push`` / ``delivery_pr_head_pushed`` ``head_sha``, or None."""
+    for e in reversed(since_fix):
+        if e.get("event") in ("fix_push", EVENT_PR_HEAD_PUSHED) and e.get("head_sha"):
+            return str(e["head_sha"])
+    return None
+
+
+def deliver_watched_pr_with_note(
+    *,
+    story: StoryRecord,
+    app_config: AppConfig,
+    root: Path,
+    db: Path,
+    note: str,
+    reason: str,
+) -> bool:
+    """Settle a ``draft_pr`` / ``pr`` story whose CI-fix cycle could not finish
+    (dev exhausted / same-signature stall) straight to ``DELIVERED_PR``.
+
+    The PR already exists and IS the deliverable; the fix that failed must not
+    be pushed onto it and the story must not end in a human-blocked sink just
+    because a FIX attempt failed. Called from ``handlers._handle_dev_once``
+    instead of the dev-exhausted WIP push. Direct state write (there is no
+    ``DEV_*`` → ``DELIVERED_PR`` edge; declared in the conformance model),
+    under ``story_lock`` with the job-cancel marker re-checked. Returns whether
+    it settled; on ``False`` the caller keeps its own exhausted path.
+    """
+    from factory.chain.event_log import log_story_event
+    from factory.chain.handlers import persist_story
+
+    sid = story.id
+    if sid is None or not story.github_pr_number or story.github_pr_number <= 0:
+        return False
+    with delivery_gate.story_lock(root, sid) as held:
+        if not held or delivery_gate.is_job_cancelled(db, story.app, story.direction_id):
+            return False
+        disarm_err = delivery_gate.disable_auto_merge(app_config, story.github_pr_number)
+        story.state = StoryState.DELIVERED_PR.value
+        story.error = note if not disarm_err else f"{note}; auto-merge disarm failed: {disarm_err}"
+        persist_story(story, db)
+        with contextlib.suppress(Exception):
+            log_story_event(
+                sid,
+                delivery_gate.EVENT_DELIVERED,
+                {
+                    "level": story.delivery_level,
+                    "state": story.state,
+                    "pr_number": story.github_pr_number,
+                    "reason": reason,
+                    "ci_note": note,
+                },
+                software_factory_root=root,
+                slug_hint=story.slug,
+            )
+    return True
 
 
 def _watch_ci_then_deliver(
@@ -3700,21 +3803,23 @@ def _watch_ci_then_deliver(
       disarmed there).
     * red → the failing log goes to dev via ``_redispatch_ci_fix`` (story →
       ``REVIEWER_REQUESTED_CHANGES``); the fix is pushed to the SAME PR by
-      ``handle_docs_enforcer`` and the story comes back here at PR_OPEN. At
-      most ``_MAX_CI_FIX_CYCLES`` re-dispatches, and none when the dev's last
-      fix reproduced the identical failure signature.
-    * red after that, or no verdict within ``DELIVERY_CI_WAIT_S`` (or no checks
-      at all after ``DELIVERY_NO_CHECKS_GRACE_S``) → still ``DELIVERED_PR`` —
-      the PR exists and IS the requested deliverable — but with a ``ci_note``
-      on the ``delivered`` event that ``factory job status`` shows. Unlike
-      auto_merge's exhaustion path the PR is NEVER closed: a human asked for
-      it.
+      ``handle_docs_enforcer`` (fast-forward only — never forced over a
+      human's commits) and the story comes back here at PR_OPEN. At most
+      ``_MAX_CI_FIX_CYCLES`` re-dispatches.
+    * delivered WITH a ``ci_note`` (which ``factory job status`` reports), and
+      never re-dispatched, when: the cap is reached; the last fix reproduced
+      the identical failure; the last fix was NOT pushed (push failed, no new
+      commit, or the PR has commits the factory did not write); the PR head is
+      not the commit the factory pushed (a human pushed); the red is infra-only
+      (cancelled / timed out / errored); no Actions log could be fetched; the
+      story is a docs-chain story; no verdict within ``DELIVERY_CI_WAIT_S``; or
+      no checks at all after ``DELIVERY_NO_CHECKS_GRACE_S``. The PR is never
+      closed: a human asked for it.
     * pending → nothing is written; re-checked next tick.
 
     Every state write happens under ``delivery_gate.story_lock`` after a
     re-read of the committed state and of the durable job-cancel marker, so a
-    ``factory job cancel`` landing mid-wait wins (the cancel re-park, not this
-    function, owns the row then). Never raises.
+    ``factory job cancel`` landing mid-wait wins. Never raises.
     """
     from factory.chain.event_log import log_story_event, read_story_events
 
@@ -3734,10 +3839,9 @@ def _watch_ci_then_deliver(
         events = read_story_events(sid, software_factory_root=root, slug_hint=story.slug)
     except Exception:  # noqa: BLE001 - an unreadable stream starts a fresh wait
         events = []
-    prior, start = _ci_watch_window(events)
+    prior, since_fix, start = _ci_watch_scope(events)
     if start is None:
-        start = now
-        with contextlib.suppress(Exception):
+        try:
             log_story_event(
                 sid,
                 EVENT_CI_WATCH_STARTED,
@@ -3745,27 +3849,17 @@ def _watch_ci_then_deliver(
                 software_factory_root=root,
                 slug_hint=story.slug,
             )
+            start = now
+        except Exception:  # noqa: BLE001
+            # The clock could not be recorded. Fall back to a DURABLE one —
+            # the row's updated_at, which nothing touches while it waits — so
+            # the 2 h / 10 min / 90 s bounds still fire instead of restarting
+            # every tick.
+            start = _parse_event_ts(getattr(story, "updated_at", None)) or now
     age = max(0.0, now - start)
+    expected_head = _expected_pr_head(since_fix)
 
-    try:
-        ci = (checks_query or _query_pr_checks)(app_config=cfg, pr_number=pr)
-    except Exception:  # noqa: BLE001 - unreadable == unknown == keep waiting (bounded)
-        ci = None
-    if not isinstance(ci, dict):
-        ci = {}
-    ci_state = ci.get("state")
-    failing = [str(n) for n in (ci.get("failing") or [])][:5]
-    pending = [str(n) for n in (ci.get("pending") or [])][:5]
-    if (
-        ci_state == "failing"
-        and failing
-        and {n.lower() for n in failing} == {_MAIN_GREEN_CHECK_NAME}
-    ):
-        # E6 environment guard: ``main-green`` red ALONE means MAIN is red, not
-        # this PR (the ``_CI_STATE_HOLD`` rule). Never send the dev after it —
-        # wait like a pending run (bounded by ``DELIVERY_CI_WAIT_S``).
-        ci_state = "pending"
-        pending = [f"{_MAIN_GREEN_CHECK_NAME} (main is red)"]
+    head_for_record = fixture.head_sha
 
     def _locked(write: Any) -> MergeAction:
         """Run ``write`` under the story lock, after re-checking cancel/state."""
@@ -3779,7 +3873,7 @@ def _watch_ci_then_deliver(
                 return _act(f"story state changed to {live!r} during the CI watch — left alone")
             story.state = live
             action: MergeAction = write()
-            _record_merge_action(action, fixture.head_sha, db)
+            _record_merge_action(action, head_for_record, db)
             return action
 
     def _deliver(reason: str, note: str | None) -> MergeAction:
@@ -3802,8 +3896,60 @@ def _watch_ci_then_deliver(
 
         return _locked(_write)
 
+    # A CI-fix cycle that came back WITHOUT moving the PR head: the PR still
+    # shows the commit that was red. Say exactly why, and stop (re-grading the
+    # old head would only re-dispatch the same failure).
+    if prior and not any(e.get("event") == "fix_push" for e in since_fix):
+        not_pushed = [e for e in since_fix if e.get("event") in _FIX_NOT_PUSHED_EVENTS]
+        if not_pushed:
+            last = not_pushed[-1]
+            why = str(last.get("error") or last.get("note") or last.get("event"))
+            return _deliver(
+                f"CI fix {len(prior)} was not pushed to PR #{pr}",
+                f"CI fix {len(prior)} was NOT pushed to PR #{pr} ({last.get('event')}: "
+                f"{why[:200]}); the PR head is still the commit whose CI was red — "
+                "delivered for a human",
+            )
+
+    try:
+        ci = (checks_query or _query_pr_checks)(app_config=cfg, pr_number=pr)
+    except Exception:  # noqa: BLE001 - unreadable == unknown == keep waiting (bounded)
+        ci = None
+    if not isinstance(ci, dict):
+        ci = {}
+    ci_state = ci.get("state")
+    failing = [str(n) for n in (ci.get("failing") or [])][:5]
+    pending = [str(n) for n in (ci.get("pending") or [])][:5]
+    pr_head = str(ci["head_sha"]) if ci.get("head_sha") else None
+    if pr_head:
+        head_for_record = pr_head
+    if (
+        ci_state == "failing"
+        and failing
+        and {n.lower() for n in failing} == {_MAIN_GREEN_CHECK_NAME}
+    ):
+        # E6 environment guard: ``main-green`` red ALONE means MAIN is red, not
+        # this PR (the ``_CI_STATE_HOLD`` rule). Never send the dev after it —
+        # wait like a pending run (bounded by ``DELIVERY_CI_WAIT_S``).
+        ci_state = "pending"
+        pending = [f"{_MAIN_GREEN_CHECK_NAME} (main is red)"]
+
+    # The verdict is about the commit the factory pushed — or it is not ours
+    # to act on. Right after a push GitHub's PR head can lag, so a mismatch is
+    # believed only past the stale-head window.
+    foreign_head = bool(
+        expected_head and pr_head and pr_head != expected_head and age >= DELIVERY_CI_RED_MIN_AGE_S
+    )
+    foreign_note = (
+        f"PR #{pr} head {pr_head[:12] if pr_head else '?'} is not the commit the factory "
+        f"pushed ({(expected_head or '?')[:12]}) — someone else pushed to this PR"
+    )
+
     if ci_state == "passing":
-        return _deliver(f"CI green on PR #{pr}", None)
+        return _deliver(
+            f"CI green on PR #{pr}",
+            f"{foreign_note}; its CI is green" if foreign_head else None,
+        )
 
     if ci_state == "none":
         if age < DELIVERY_NO_CHECKS_GRACE_S:
@@ -3818,24 +3964,47 @@ def _watch_ci_then_deliver(
         if age < DELIVERY_CI_RED_MIN_AGE_S:
             return _act(f"CI red on PR #{pr} but the watch just started; re-checked next tick")
         names = ", ".join(failing) or "unnamed check"
+        red = f"CI is RED on PR #{pr} ({names})"
+        if foreign_head:
+            return _deliver(
+                f"CI red on a PR head the factory did not push (PR #{pr})",
+                f"{foreign_note}; {red} — not re-dispatched to the dev, delivered for a human",
+            )
+        if (getattr(story, "chain_kind", "tdd") or "tdd") == "docs":
+            return _deliver(
+                f"CI red on docs-chain PR #{pr}",
+                f"{red} on a docs-chain story — not sent to the code dev; delivered for a human",
+            )
         if len(prior) >= _MAX_CI_FIX_CYCLES:
             return _deliver(
                 f"CI red on PR #{pr} after the CI-fix cap",
-                f"CI is RED on PR #{pr} ({names}) after {len(prior)} CI-fix "
-                f"cycle(s) (cap {_MAX_CI_FIX_CYCLES}) — delivered for a human to fix",
+                f"{red} after {len(prior)} CI-fix cycle(s) (cap {_MAX_CI_FIX_CYCLES}) — "
+                "delivered for a human to fix",
+            )
+        genuine = [str(n) for n in ci.get("genuine", failing)]
+        if not genuine:
+            return _deliver(
+                f"CI red on PR #{pr} from infra only",
+                f"{red}, but only from cancelled / timed-out / errored runs (infra, not "
+                "the change) — not sent to the dev; re-run the checks",
             )
         try:
             logs = str((log_fetch or _fetch_ci_failure_logs)(app_config=cfg, pr_number=pr) or "")
         except Exception:  # noqa: BLE001
             logs = ""
+        if not logs.strip():
+            return _deliver(
+                f"CI red on PR #{pr} with no fetchable log",
+                f"{red}, but no GitHub Actions log could be fetched for it (a non-Actions "
+                "check?) — not sent to the dev without the failure text",
+            )
         signature = _ci_failure_signature(logs)
         last_sig = prior[-1].get("failure_signature") if prior else None
         if signature and last_sig is not None and signature == last_sig:
             return _deliver(
                 f"CI red on PR #{pr}: the last fix reproduced the identical failure",
-                f"CI is RED on PR #{pr} ({names}): the dev's last CI fix reproduced "
-                f"the identical failure ({len(prior)} CI-fix cycle(s)) — delivered for "
-                "a human to fix",
+                f"{red}: the dev's last CI fix reproduced the identical failure "
+                f"({len(prior)} CI-fix cycle(s)) — delivered for a human to fix",
             )
 
         def _redispatch() -> MergeAction:
@@ -3847,7 +4016,7 @@ def _watch_ci_then_deliver(
                 attempt=len(prior) + 1,
                 db=db,
                 root=root,
-                extra={"level": level.value, "failing": failing},
+                extra={"level": level.value, "failing": failing, "head_sha": pr_head},
             )
             return _act(
                 f"CI red on PR #{pr} ({names}); re-dispatched to dev with the CI log "
@@ -4135,6 +4304,7 @@ def auto_merge_tick(
     push_to_main_preflight_fn: Any = None,
     pr_checks_query: Any = None,
     ci_log_fetch: Any = None,
+    watch_only: bool = False,
 ) -> list[MergeAction]:
     """Single pass of the auto-merge worker against ``app``.
 
@@ -4143,6 +4313,11 @@ def auto_merge_tick(
     back to dev (≤ ``_MAX_CI_FIX_CYCLES``), green or exhausted settles to
     ``DELIVERED_PR``. ``pr_checks_query`` / ``ci_log_fetch`` are its test
     seams (default ``_query_pr_checks`` / ``_fetch_ci_failure_logs``).
+
+    ``watch_only=True`` runs ONLY that watch and touches nothing else (no
+    merge, no gate, no CI-fix for merging levels). The orchestrator uses it
+    when ``auto_merge.enabled`` is false: the watch never merges, and without
+    it a ``draft_pr`` / ``pr`` story would sit in ``pr_open`` forever.
 
     DELIVERY LEVELS (``factory/chain/delivery_gate.py``): a story is merged
     only when its recorded level is ``auto_merge`` (``gh pr merge``) or
@@ -4303,6 +4478,8 @@ def auto_merge_tick(
                     )
                 )
                 continue
+            if watch_only:
+                continue
             if (pr_no is None or pr_no <= 0) and delivery_gate.story_level(
                 db_story, cfg, root, db, persist=not dry_run
             ) is DeliveryLevel.PUSH_TO_MAIN:
@@ -4384,7 +4561,9 @@ def auto_merge_tick(
                     repo_root=_story_worktree(root, app, db_story),
                 )
             )
-    if not fixtures and not dry_run and github_client is not None:  # pragma: no cover - real GH
+    if (
+        not fixtures and not dry_run and github_client is not None and not watch_only
+    ):  # pragma: no cover - real GH
         repo = github_client.get_repo(cfg.repo)
         for pr in repo.get_pulls(state="open"):
             # Resolve the StoryRecord for this PR, if any.
@@ -4438,6 +4617,8 @@ def auto_merge_tick(
                     )
                 )
                 continue
+        if watch_only:
+            continue
         # DELIVERY-LEVEL GUARD — before the hold, the CI-failure loop and the
         # gate evaluation, because every one of those can act on a PR (re-run
         # checks, re-dispatch dev, close it, merge it). A draft PR is never

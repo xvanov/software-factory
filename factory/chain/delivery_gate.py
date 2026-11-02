@@ -67,6 +67,22 @@ EVENT_LOWERED = "delivery_level_lowered"
 EVENT_DELIVERED = "delivered"
 
 
+def watches_ci_before_delivery(level: DeliveryLevel | None) -> bool:
+    """True for the levels whose PR's CI the factory watches (and fixes, at
+    most ``auto_merge._MAX_CI_FIX_CYCLES`` times) before ``DELIVERED_PR``:
+    ``draft_pr`` and ``pr``. See ``auto_merge._watch_ci_then_deliver``."""
+    return level in (DeliveryLevel.DRAFT_PR, DeliveryLevel.PR)
+
+
+def story_is_ci_watched(story: Any) -> bool:
+    """``watches_ci_before_delivery`` for a story's RECORDED level. Pure read
+    (no backfill, no event); an unreadable level is not watched."""
+    try:
+        return watches_ci_before_delivery(parse_level(getattr(story, "delivery_level", None)))
+    except ValueError:
+        return False
+
+
 def _app_opted_in(app_config: Any) -> bool:
     """True when ``apps/<app>/config.yaml`` carries an explicit ``delivery`` block."""
     fields_set = getattr(app_config, "model_fields_set", None) or set()

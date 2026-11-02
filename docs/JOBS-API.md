@@ -75,9 +75,21 @@ How the factory enforces it (see `factory/chain/delivery_gate.py`):
     `auto_merge` has, `ci_fix_redispatch` events); the fix is pushed to the SAME PR and the
     watch restarts on the new head. At most 3 CI-fix cycles, and none when the last fix
     reproduced the identical failure.
+  - The fix is pushed fast-forward only. If the PR branch has commits the factory did not
+    write (a human pushed), the fix is NOT pushed — the factory never forces over a human.
+  - The watch grades only the commit the factory pushed: if the PR head is someone else's
+    commit, a red CI is not sent to the dev.
+  - The dev is only sent a red run it can act on: a red made only of cancelled / timed-out /
+    errored runs (infra), a red check with no fetchable GitHub Actions log, and a red on a
+    docs-chain story are delivered with a note instead.
+  - If the dev runs out of attempts on a CI fix, the failed fix is not pushed; the story is
+    delivered (the PR still holds the last pushed commit) with a note.
+  - The watch runs even when `auto_merge.enabled` is false in `factory_settings.yaml` (it never
+    merges); with it off, nothing else in the auto-merge pass runs.
   - still red after that, no verdict within 2 h, or no checks at all within 10 min → STILL
     `delivered_pr` (the PR is the deliverable; the factory never closes it), with a `ci_note`
-    on the story's `delivered` event, which `factory job status` reports as that story's
+    on the story's `delivered` event (every "delivered with a note" case above), which
+    `factory job status` reports as that story's
     `delivery_note` (e.g. `CI is RED on PR #18 (docker build) after 3 CI-fix cycle(s) (cap 3)
     — delivered for a human to fix`). A failing PR is also named in `why`.
   - never merged, never marked ready (a draft stays a draft), and the factory does not merge
