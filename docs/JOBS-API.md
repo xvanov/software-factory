@@ -113,6 +113,8 @@ Sharpened 2026-11-02 (`factory/job_routing.py`):
   `solo_dev_rounds` events). `job_routing.SOLO_PIPELINE_IMPLEMENTED = False` is the kill
   switch (new solo requests → `pipeline_unavailable`; in-flight solo stories still finish
   as solo).
+  The factory's own app (`apps/factory`) refuses solo with `pipeline_unavailable` unless its
+  `config.yaml` sets `solo_allowed: true` (a reviewer-less self-edit is an operator decision).
 
 ## Model overrides
 
