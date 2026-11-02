@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_d46b2ac485394ab8_cli_apps_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.0">coverage.py v7.17.0</a>,
-            created at 2026-11-02 17:08 +0000
+            created at 2026-11-02 17:24 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -2681,7 +2681,7 @@
     <p class="pln"><span class="n"><a id="t2599" href="#t2599">2599</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t2600" href="#t2600">2600</a></span><span class="t">    <span class="key">from</span> <span class="nam">factory</span><span class="op">.</span><span class="nam">chain</span><span class="op">.</span><span class="nam">handlers</span> <span class="key">import</span> <span class="nam">_engine</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t2601" href="#t2601">2601</a></span><span class="t">    <span class="key">from</span> <span class="nam">factory</span><span class="op">.</span><span class="nam">chain</span><span class="op">.</span><span class="nam">handlers</span> <span class="key">import</span> <span class="nam">stories_in_flight</span> <span class="key">as</span> <span class="nam">_in_flight</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t2602" href="#t2602">2602</a></span><span class="t">    <span class="key">from</span> <span class="nam">factory</span><span class="op">.</span><span class="nam">chain</span><span class="op">.</span><span class="nam">orchestrator</span> <span class="key">import</span> <span class="nam">_DISPATCH</span><span class="op">,</span> <span class="nam">_build_current_state</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t2602" href="#t2602">2602</a></span><span class="t">    <span class="key">from</span> <span class="nam">factory</span><span class="op">.</span><span class="nam">chain</span><span class="op">.</span><span class="nam">orchestrator</span> <span class="key">import</span> <span class="nam">_build_current_state</span><span class="op">,</span> <span class="nam">_dispatch_for_story</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t2603" href="#t2603">2603</a></span><span class="t">    <span class="key">from</span> <span class="nam">factory</span><span class="op">.</span><span class="nam">chain</span><span class="op">.</span><span class="nam">state_machine</span> <span class="key">import</span> <span class="nam">StoryRecord</span><span class="op">,</span> <span class="nam">StoryState</span><span class="op">,</span> <span class="nam">list_transitions_from</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t2604" href="#t2604">2604</a></span><span class="t">    <span class="key">from</span> <span class="nam">factory</span><span class="op">.</span><span class="nam">settings</span><span class="op">.</span><span class="nam">enforcer</span> <span class="key">import</span> <span class="nam">can_dispatch</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t2605" href="#t2605">2605</a></span><span class="t">    <span class="key">from</span> <span class="nam">factory</span><span class="op">.</span><span class="nam">settings</span><span class="op">.</span><span class="nam">loader</span> <span class="key">import</span> <span class="nam">load_settings</span>&nbsp;</span><span class="r"></span></p>
@@ -2709,7 +2709,7 @@
     <p class="pln"><span class="n"><a id="t2627" href="#t2627">2627</a></span><span class="t">    <span class="com"># Project the next tick: which handler kind would fire, and would the</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2628" href="#t2628">2628</a></span><span class="t">    <span class="com"># enforcer allow it?</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t2629" href="#t2629">2629</a></span><span class="t">    <span class="nam">projection_line</span> <span class="op">=</span> <span class="str">&quot;next-tick projection: (terminal &#8212; no handler dispatches from here)&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t2630" href="#t2630">2630</a></span><span class="t">    <span class="nam">handler_name</span> <span class="op">=</span> <span class="nam">_DISPATCH</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">StoryState</span><span class="op">(</span><span class="nam">story</span><span class="op">.</span><span class="nam">state</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t2630" href="#t2630">2630</a></span><span class="t">    <span class="nam">handler_name</span> <span class="op">=</span> <span class="nam">_dispatch_for_story</span><span class="op">(</span><span class="nam">story</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t2631" href="#t2631">2631</a></span><span class="t">    <span class="key">if</span> <span class="nam">handler_name</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2632" href="#t2632">2632</a></span><span class="t">        <span class="com"># Resolve the actual job_kind the orchestrator would pass to the</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2633" href="#t2633">2633</a></span><span class="t">        <span class="com"># enforcer; ``_resolve_job_kind`` handles bug-suffix routing for</span>&nbsp;</span><span class="r"></span></p>
@@ -4629,7 +4629,7 @@
             <a class="nav" href="z_d46b2ac485394ab8_cli_apps_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.17.0">coverage.py v7.17.0</a>,
-            created at 2026-11-02 17:08 +0000
+            created at 2026-11-02 17:24 +0000
         </p>
     </div>
 </footer>
