@@ -95,7 +95,11 @@ def max_dev_attempts(story: Any, configured_cap: int) -> int:
     """
     if not is_solo(story):
         return configured_cap
-    return max(1, min(int(configured_cap), SOLO_MAX_DEV_ATTEMPTS))
+    # Floor: the early stall guard (``handlers._MAX_DEV_SAME_SIGNATURE``) must
+    # stay STRICTLY below the cap or it becomes unreachable (CLAUDE.md).
+    from factory.chain.handlers import _MAX_DEV_SAME_SIGNATURE
+
+    return max(_MAX_DEV_SAME_SIGNATURE + 1, min(int(configured_cap), SOLO_MAX_DEV_ATTEMPTS))
 
 
 def spend_cap_for(
@@ -104,8 +108,9 @@ def spend_cap_for(
     """The live spend cap for ONE solo conversation, plus how it was derived.
 
     ``min(per_story_spend_usd - this story's ledger spend,
-    daily_spend_usd - today's ledger spend)`` over whichever caps are set
-    (> 0). The orchestrator's breakers only run BETWEEN dispatches; a 5400 s
+    daily_spend_usd - today's ledger spend,
+    hourly_spend_usd - the last hour's ledger spend)`` over whichever caps are
+    set (> 0). The orchestrator's breakers only run BETWEEN dispatches; a 5400 s
     conversation could otherwise blow through both inside one dispatch. The
     watchdog pauses the run and the tree is graded when its live cost reaches
     this. ``None`` = no cap configured. Fail SAFE: if the caps or the ledger
@@ -114,28 +119,43 @@ def spend_cap_for(
     """
     try:
         from factory.settings.loader import load_settings
-        from factory.settings.spend import today_spend_usd
+        from factory.settings.spend import hour_spend_usd, today_spend_usd
 
         caps = load_settings(software_factory_root).caps
         per_story = float(getattr(caps, "per_story_spend_usd", 0.0) or 0.0)
         daily = float(getattr(caps, "daily_spend_usd", 0.0) or 0.0)
-        basis: dict[str, Any] = {"per_story_spend_usd": per_story, "daily_spend_usd": daily}
-        candidates: list[float] = []
+        hourly = float(getattr(caps, "hourly_spend_usd", 0.0) or 0.0)
+        basis: dict[str, Any] = {
+            "per_story_spend_usd": per_story,
+            "daily_spend_usd": daily,
+            "hourly_spend_usd": hourly,
+        }
+        limits: dict[str, float] = {}
         if per_story > 0:
             story_spent = _story_ledger_spend(getattr(story, "id", None), db_path)
             basis["story_spent_usd"] = round(story_spent, 4)
-            candidates.append(per_story - story_spent)
+            limits["per_story"] = per_story - story_spent
         if daily > 0:
             today = today_spend_usd(software_factory_root, db_path=db_path)
             basis["today_spent_usd"] = round(today, 4)
-            candidates.append(daily - today)
-        if not candidates:
+            limits["daily"] = daily - today
+        if hourly > 0:
+            hour = hour_spend_usd(software_factory_root, db_path=db_path)
+            basis["hour_spent_usd"] = round(hour, 4)
+            limits["hourly"] = hourly - hour
+        if not limits:
             return None, basis
-        cap = max(0.0, min(candidates))
+        binding = min(limits, key=lambda k: limits[k])
+        cap = max(0.0, limits[binding])
         basis["cap_usd"] = round(cap, 4)
+        basis["binding_limit"] = binding
         return cap, basis
     except Exception as exc:  # noqa: BLE001 - fail safe: a cap we cannot compute is 0
-        return 0.0, {"cap_usd": 0.0, "reason": f"cap unreadable, fail-safe 0: {exc!r}"[:300]}
+        return 0.0, {
+            "cap_usd": 0.0,
+            "binding_limit": "unreadable",
+            "reason": f"cap unreadable, fail-safe 0: {exc!r}"[:300],
+        }
 
 
 def _story_ledger_spend(story_id: int | None, db_path: Path) -> float:
@@ -320,6 +340,84 @@ def make_gate_check(
 
 
 # --------------------------------------------------------------------------- #
+# Read-only branch probes (used INSIDE the conversation)
+# --------------------------------------------------------------------------- #
+#
+# The gate must grade the tree the dev left and must not change it. The chain's
+# own helpers (``handlers._dev_produced_empty_diff`` /
+# ``_branch_has_production_delta``) go through ``handlers._writing_worktree``,
+# which FETCHES and MERGES ``origin/<base>`` into the worktree: called between
+# the test verdict and the ship, that grades one tree and ships another, and it
+# moves HEAD between rounds (defeating the no-progress check). These probes only
+# READ: ``git status`` and ``git diff`` against the merge-base of the base ref
+# the worktree already has. The base refresh happens once, BEFORE the
+# conversation starts (``_handle_dev_once`` → ``_writing_worktree``).
+
+
+def _git_ro(repo: Path, *args: str) -> tuple[int, str]:
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return -1, ""
+    return proc.returncode, proc.stdout
+
+
+def _merge_base(repo: Path, base_branch: str) -> str | None:
+    for ref in (f"origin/{base_branch}", base_branch):
+        rc, out = _git_ro(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        if rc == 0 and out.strip():
+            rc2, mb = _git_ro(repo, "merge-base", ref, "HEAD")
+            if rc2 == 0 and mb.strip():
+                return mb.strip()
+    return None
+
+
+def _changed_paths_ro(repo: Path, base_branch: str) -> set[str] | None:
+    """Paths this branch changes vs its merge-base: committed + uncommitted +
+    untracked. ``None`` = cannot tell."""
+    mb = _merge_base(repo, base_branch)
+    if mb is None:
+        return None
+    rc, tracked = _git_ro(repo, "diff", "--name-only", mb)
+    if rc != 0:
+        return None
+    rc, untracked = _git_ro(repo, "ls-files", "--others", "--exclude-standard")
+    if rc != 0:
+        return None
+    return {p for p in (tracked.splitlines() + untracked.splitlines()) if p.strip()}
+
+
+def branch_is_empty_ro(repo: Path, base_branch: str) -> bool | None:
+    """True = no change vs the merge-base (committed or not); None = unknown."""
+    paths = _changed_paths_ro(repo, base_branch)
+    if paths is None:
+        return None
+    return not paths
+
+
+def production_delta_ro(repo: Path, base_branch: str) -> bool | None:
+    """True = at least one non-test path changed; False = none; None = unknown."""
+    from factory import diff_paths
+
+    paths = _changed_paths_ro(repo, base_branch)
+    if paths is None:
+        return None
+    if not paths:
+        return False
+    return any(not diff_paths.is_test_path(p) for p in paths)
+
+
+# --------------------------------------------------------------------------- #
 # Oracle leak precondition + the logged check plan
 # --------------------------------------------------------------------------- #
 
@@ -392,4 +490,6 @@ __all__ = [
     "oracle_leak_precheck",
     "requires_production_delta",
     "spend_cap_for",
+    "branch_is_empty_ro",
+    "production_delta_ro",
 ]

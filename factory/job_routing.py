@@ -283,7 +283,8 @@ def solo_refusal_reason(app_config: AppConfig) -> str | None:
     test command, its required merge gates and CI; when the app DOES enable the
     oracle it is a required merge gate and its leak check blocks every solo dev
     dispatch (``factory/chain/solo.py``). What ran is logged per story
-    (``solo_checks``). The only remaining refusal is the engine kill switch.
+    (``solo_checks``). Refusals left: the engine kill switch, and the factory's
+    own app without an explicit ``solo_allowed: true`` opt-in.
     """
     if not SOLO_PIPELINE_IMPLEMENTED:
         return (
@@ -291,7 +292,17 @@ def solo_refusal_reason(app_config: AppConfig) -> str | None:
             "False); running this job as solo would silently run the full chain. "
             "Submit with --pipeline chain or auto."
         )
-    del app_config  # every app can run solo; kept for the call signature
+    from factory.app_config import targets_factory_repo
+
+    if (
+        targets_factory_repo(getattr(app_config, "repo", None))
+        or getattr(app_config, "name", "") == "factory"
+    ) and not bool(getattr(app_config, "solo_allowed", False)):
+        return (
+            f"app {app_config.name!r} is the factory itself: solo removes the reviewer "
+            "from a self-edit, which needs an explicit operator opt-in "
+            "(`solo_allowed: true` in apps/factory/config.yaml)."
+        )
     return None
 
 

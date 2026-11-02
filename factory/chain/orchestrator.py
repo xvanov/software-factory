@@ -344,9 +344,20 @@ def _story_budget_breaker_reason(story: StoryRecord, caps: Any) -> str | None:
 #: unit's ``TimeoutStartSec`` (``factory-tick@.service``: 3h). Override with
 #: env ``FACTORY_TICK_BUDGET_S``.
 _DEFAULT_TICK_BUDGET_S = 3 * 3600
-#: Headroom a solo dev dispatch needs on top of the conversation's own wall
-#: clock + grading backstop: worktree prep, commit, the post-run bookkeeping.
-_SOLO_TICK_MARGIN_S = 600
+#: Headroom a sandbox dispatch needs on top of its own wall clock (+ grading
+#: backstop for solo): worktree prep, commit, post-run bookkeeping.
+_SANDBOX_TICK_MARGIN_S = 600
+_SOLO_TICK_MARGIN_S = _SANDBOX_TICK_MARGIN_S  # back-compat name
+#: Consecutive budget deferrals after which the story is surfaced in
+#: ``factory inbox`` (``last_rejection_reason``). Still deferred, never parked:
+#: the next fresh tick normally runs it.
+_MAX_SILENT_BUDGET_DEFERRALS = 3
+_BUDGET_DEFER_EVENT = "sandbox_deferred_tick_budget"
+_BUDGET_DEFER_REASON_PREFIX = "deferred: "
+#: Monotonic clock reading at import, the fallback for "process start".
+_IMPORT_MONO = time.monotonic()
+#: Handlers that run a long OpenHands sandbox inside the tick process.
+_SANDBOX_HANDLERS = frozenset({"dev", "docs_onboarder"})
 
 
 def _tick_budget_s() -> float:
@@ -356,28 +367,147 @@ def _tick_budget_s() -> float:
         return float(_DEFAULT_TICK_BUDGET_S)
 
 
-def _solo_tick_budget_shortfall(
-    story: StoryRecord, tick_started_mono: float, *, now_mono: float | None = None
-) -> str | None:
-    """Why a solo dev dispatch must wait for the next tick, or None to go.
-
-    Chain stories are never deferred here (their 1800 s attempts are the
-    status quo this guard does not change).
+def _process_started_mono() -> float:
+    """Monotonic timestamp of THIS PROCESS's start (what systemd's
+    ``TimeoutStartSec`` counts from), not of the ``tick()`` call: a CLI that
+    did other work first, or ticks several apps in one process, has already
+    spent some of the budget. Linux ``/proc``; falls back to module import time.
     """
-    from factory.chain.solo import SOLO_DEV_WALL_CLOCK_S, is_solo
-    from factory.runner import _GATE_GRADING_GRACE_S
+    try:
+        with open("/proc/self/stat", encoding="ascii") as fh:
+            fields = fh.read().rsplit(")", 1)[1].split()
+        start_ticks = float(fields[19])  # field 22 overall: starttime (clock ticks)
+        hz = float(os.sysconf("SC_CLK_TCK"))
+        with open("/proc/uptime", encoding="ascii") as fh:
+            uptime = float(fh.read().split()[0])
+        age = max(0.0, uptime - start_ticks / hz)
+        return time.monotonic() - age
+    except Exception:  # noqa: BLE001 - non-Linux / sandboxed: import time
+        return _IMPORT_MONO
 
-    if not is_solo(story):
+
+def _sandbox_seconds_needed(story: StoryRecord, handler_name: str, settings: Any) -> float:
+    from factory.chain.solo import SOLO_DEV_WALL_CLOCK_S, is_solo
+    from factory.runner import _GATE_GRADING_GRACE_S, _SANDBOX_WALL_CLOCK_TIMEOUT_S
+
+    if handler_name == "dev" and is_solo(story):
+        return SOLO_DEV_WALL_CLOCK_S + _GATE_GRADING_GRACE_S + _SANDBOX_TICK_MARGIN_S
+    if handler_name == "dev":
+        conv = getattr(settings, "dev_convergence", None)
+        per = float(getattr(conv, "dev_sandbox_timeout_s", 0) or _SANDBOX_WALL_CLOCK_TIMEOUT_S)
+        return per + _SANDBOX_TICK_MARGIN_S
+    return float(_SANDBOX_WALL_CLOCK_TIMEOUT_S) + _SANDBOX_TICK_MARGIN_S
+
+
+def _sandbox_tick_budget_shortfall(
+    story: StoryRecord,
+    handler_name: str,
+    tick_started_mono: float,
+    *,
+    settings: Any = None,
+    now_mono: float | None = None,
+) -> str | None:
+    """Why a sandbox dispatch must wait for the next tick, or None to go.
+
+    Dispatch is serial and the systemd tick is killed at ``TimeoutStartSec``.
+    A sandbox that cannot finish inside what is left of THIS process's budget
+    would be killed mid-run, so it is deferred (no state change, nothing
+    spent). Applies to solo dev (5400 s + backstop), chain dev
+    (``dev_sandbox_timeout_s``) and the docs onboarder.
+    """
+    if handler_name not in _SANDBOX_HANDLERS:
         return None
     now = time.monotonic() if now_mono is None else now_mono
     remaining = _tick_budget_s() - (now - tick_started_mono)
-    needed = SOLO_DEV_WALL_CLOCK_S + _GATE_GRADING_GRACE_S + _SOLO_TICK_MARGIN_S
+    needed = _sandbox_seconds_needed(story, handler_name, settings)
     if remaining >= needed:
         return None
     return (
-        f"solo dev needs {needed:.0f}s of tick wall clock, {max(0.0, remaining):.0f}s "
-        "left in this tick — deferred to the next tick"
+        f"{handler_name} sandbox needs {needed:.0f}s of tick wall clock, "
+        f"{max(0.0, remaining):.0f}s left in this tick — deferred to the next tick"
     )
+
+
+def _solo_tick_budget_shortfall(
+    story: StoryRecord, tick_started_mono: float, *, now_mono: float | None = None
+) -> str | None:
+    """Solo-only view of :func:`_sandbox_tick_budget_shortfall` (dev handler)."""
+    from factory.chain.solo import is_solo
+
+    if not is_solo(story):
+        return None
+    return _sandbox_tick_budget_shortfall(story, "dev", tick_started_mono, now_mono=now_mono)
+
+
+def _record_budget_deferral(story: StoryRecord, reason: str, *, db: Path, root: Path) -> int:
+    """Log one deferral; after ``_MAX_SILENT_BUDGET_DEFERRALS`` CONSECUTIVE ones
+    surface it in ``factory inbox`` via ``last_rejection_reason`` (cleared by the
+    orchestrator the moment the story is dispatched). Returns the streak."""
+    from factory.chain.event_log import read_story_events
+
+    streak = 1
+    if story.id is not None:
+        try:
+            events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+        except Exception:  # noqa: BLE001
+            events = []
+        for e in reversed(events):
+            if e.get("event") != _BUDGET_DEFER_EVENT:
+                break
+            streak += 1
+    log_story_event(
+        story.id,
+        _BUDGET_DEFER_EVENT,
+        {"reason": reason, "consecutive": streak},
+        software_factory_root=root,
+        slug_hint=story.slug,
+    )
+    if streak >= _MAX_SILENT_BUDGET_DEFERRALS:
+        note = f"{_BUDGET_DEFER_REASON_PREFIX}{streak}x in a row — {reason}"[:500]
+        if story.last_rejection_reason != note:
+            story.last_rejection_reason = note
+            H.persist_story(story, db)
+    return streak
+
+
+def _solo_spend_precheck(
+    story: StoryRecord, *, root: Path, db: Path
+) -> tuple[str, str, dict[str, Any]] | None:
+    """``None`` = dispatch. Otherwise ``("block"|"defer", reason, basis)``.
+
+    A solo conversation is capped at the remaining per-story / daily / hourly
+    budget (``solo.spend_cap_for``). At a cap of 0 it would pause before
+    spending and burn a dev retry on an untouched tree, so it is never
+    dispatched: per-story exhausted → ``block`` (the terminal budget sink, as
+    the WS1.1 breaker does); daily / hourly / unreadable → ``defer`` (the
+    window refills, and the streak surfaces in ``factory inbox``).
+    """
+    from factory.chain.solo import is_solo, spend_cap_for
+
+    if not is_solo(story):
+        return None
+    cap, basis = spend_cap_for(story, root, db)
+    if cap is None or cap > 0.0:
+        return None
+    limit = basis.get("binding_limit")
+    if limit == "per_story":
+        return ("block", "solo: per-story spend cap exhausted before dispatch", basis)
+    return ("defer", f"solo spend cap is 0 ({limit} limit exhausted)", basis)
+
+
+def _solo_first(stories: list[StoryRecord]) -> list[StoryRecord]:
+    """Stable order with solo stories DUE for dev first, so a long solo
+    conversation starts while the tick still has budget for it."""
+    from factory.chain.solo import is_solo
+
+    def _key(s: StoryRecord) -> int:
+        try:
+            due = is_solo(s) and _dispatch_for_story(s) == "dev"
+        except Exception:  # noqa: BLE001 - a poisoned row sorts last-neutral
+            due = False
+        return 0 if due else 1
+
+    return sorted(stories, key=_key)
 
 
 def _dispatch_for_story(story: StoryRecord) -> str | None:
@@ -2484,7 +2614,9 @@ def tick(
     """
     root = Path(software_factory_root)
     db = db_path or (root / "state" / "factory.db")
-    _tick_started_mono = time.monotonic()
+    # The budget is the PROCESS's (systemd TimeoutStartSec counts from process
+    # start), not this call's.
+    _tick_started_mono = _process_started_mono()
 
     # Dry-run isolation: when the caller did not pass an explicit ``db_path``
     # (i.e. the CLI is hitting the production state DB), copy the live DB to
@@ -2884,6 +3016,7 @@ def tick(
         # end-of-tick auto-merge hook to fire so PRs that landed in
         # PR_OPEN on a previous tick (and are therefore terminal here) get
         # a fresh merge attempt.
+        stories = _solo_first(list(stories))
         for story in stories:
             # Poisoned-row guard: a state value outside the StoryState enum
             # (e.g. a bad manual/manager write) must quarantine THAT story,
@@ -2971,23 +3104,51 @@ def tick(
                     summary.stories_blocked += 1
                     break
 
-                # SOLO tick-budget guard. Dispatch is serial and the systemd tick
-                # is killed at ``TimeoutStartSec``; a solo dev conversation may
-                # legitimately run SOLO_DEV_WALL_CLOCK_S + the grading backstop.
-                # Starting one that cannot finish inside what is left of this
-                # tick would be killed mid-run. Defer it to the next tick instead
-                # (no state change, nothing spent).
+                # Tick-budget guard (solo AND chain sandboxes). Dispatch is serial
+                # and the systemd tick is killed at ``TimeoutStartSec``; never
+                # start a sandbox that cannot finish inside what is left of this
+                # process's budget. Defer to the next tick (no state change).
+                if handler_name in _SANDBOX_HANDLERS and not dry_run:
+                    _budget_defer = _sandbox_tick_budget_shortfall(
+                        story, handler_name, _tick_started_mono, settings=settings
+                    )
+                    if _budget_defer is not None:
+                        summary.deferred.append((story.slug, _budget_defer))
+                        _record_budget_deferral(story, _budget_defer, db=db, root=root)
+                        break
+
+                # SOLO spend precondition: a solo conversation is capped at the
+                # remaining per-story / daily / hourly budget. With nothing left
+                # it would pause before spending and burn a dev retry on an
+                # untouched tree — so never dispatch it. Per-story exhausted →
+                # the terminal budget sink (same as the WS1.1 breaker); daily /
+                # hourly / unreadable → defer (the window refills).
                 if handler_name == "dev" and not dry_run:
-                    _solo_defer = _solo_tick_budget_shortfall(story, _tick_started_mono)
-                    if _solo_defer is not None:
-                        summary.deferred.append((story.slug, _solo_defer))
-                        log_story_event(
-                            story.id,
-                            "solo_dev_deferred_tick_budget",
-                            {"reason": _solo_defer},
-                            software_factory_root=root,
-                            slug_hint=story.slug,
-                        )
+                    _pre = _solo_spend_precheck(story, root=root, db=db)
+                    if _pre is not None:
+                        _action, _why, _basis = _pre
+                        if _action == "block":
+                            _from = story.state
+                            story.state = advance(story, EVENT_BUDGET_EXCEEDED).value
+                            story.last_rejection_reason = _why
+                            H.persist_story(story, db)
+                            log_story_event(
+                                story.id,
+                                "budget_exceeded",
+                                {
+                                    "from_state": _from,
+                                    "to_state": story.state,
+                                    "reason": "solo_spend_cap_exhausted",
+                                    **_basis,
+                                },
+                                software_factory_root=root,
+                                slug_hint=story.slug,
+                            )
+                            summary.handler_runs.append((story.slug, _from, story.state))
+                            summary.stories_blocked += 1
+                        else:
+                            summary.deferred.append((story.slug, _why))
+                            _record_budget_deferral(story, _why, db=db, root=root)
                         break
 
                 # Dependency-ordering gate. A story does not build until every

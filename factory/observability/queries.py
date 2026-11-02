@@ -366,8 +366,7 @@ def in_flight_stories(db_path: Path, app: str | None = None) -> list[StoryRow]:
     conn = _connect(db_path)
     try:
         sql = f"""
-            SELECT id, app, direction_id, title, slug, state, chain_kind,
-                   points, estimated_seconds, dev_retries, last_rejection_reason
+            SELECT *
             FROM stories
             WHERE state NOT IN ({','.join('?' for _ in _NOT_IN_FLIGHT_STATES)})
         """
@@ -382,6 +381,8 @@ def in_flight_stories(db_path: Path, app: str | None = None) -> list[StoryRow]:
     out: list[StoryRow] = []
     for r in rows:
         chain_kind = r["chain_kind"] or "tdd"
+        # ``pipeline`` is absent on a DB that predates per-job routing.
+        pipeline = r["pipeline"] if "pipeline" in r.keys() else None
         out.append(
             StoryRow(
                 id=int(r["id"]),
@@ -400,11 +401,11 @@ def in_flight_stories(db_path: Path, app: str | None = None) -> list[StoryRow]:
                 dev_retries=int(r["dev_retries"] or 0),
                 last_rejection_reason=r["last_rejection_reason"],
                 completed_handlers=completed_handlers_for_story(
-                    r["state"], chain_kind
+                    r["state"], chain_kind, pipeline
                 ),
-                total_handlers=total_handlers_for_chain(chain_kind),
+                total_handlers=total_handlers_for_chain(chain_kind, pipeline),
                 remaining_handlers=remaining_handlers_for_story(
-                    r["state"], chain_kind
+                    r["state"], chain_kind, pipeline
                 ),
             )
         )
@@ -419,8 +420,7 @@ def stories_for_direction(
     try:
         rows = conn.execute(
             """
-            SELECT id, app, direction_id, title, slug, state, chain_kind,
-                   points, estimated_seconds, dev_retries, last_rejection_reason
+            SELECT *
             FROM stories
             WHERE app = ? AND direction_id = ?
             ORDER BY id ASC
@@ -432,6 +432,8 @@ def stories_for_direction(
     out: list[StoryRow] = []
     for r in rows:
         chain_kind = r["chain_kind"] or "tdd"
+        # ``pipeline`` is absent on a DB that predates per-job routing.
+        pipeline = r["pipeline"] if "pipeline" in r.keys() else None
         out.append(
             StoryRow(
                 id=int(r["id"]),
@@ -450,11 +452,11 @@ def stories_for_direction(
                 dev_retries=int(r["dev_retries"] or 0),
                 last_rejection_reason=r["last_rejection_reason"],
                 completed_handlers=completed_handlers_for_story(
-                    r["state"], chain_kind
+                    r["state"], chain_kind, pipeline
                 ),
-                total_handlers=total_handlers_for_chain(chain_kind),
+                total_handlers=total_handlers_for_chain(chain_kind, pipeline),
                 remaining_handlers=remaining_handlers_for_story(
-                    r["state"], chain_kind
+                    r["state"], chain_kind, pipeline
                 ),
             )
         )

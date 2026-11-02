@@ -617,7 +617,9 @@ def handle_stories_spawned(
                 estimate_story_seconds as _est_secs_dd,
             )
 
-            dd_estimated_seconds = _est_secs_dd(db_path=db, points=dd_points, chain_kind=chain_kind)
+            dd_estimated_seconds = _est_secs_dd(
+                db_path=db, points=dd_points, chain_kind=chain_kind, pipeline=routing.pipeline
+            )
             story = StoryRecord(
                 direction_id=direction.id or direction.slug,
                 app=direction.app,
@@ -854,7 +856,9 @@ def handle_stories_spawned(
             points = int(points_raw) if points_raw is not None else 3
         except (TypeError, ValueError):
             points = 3
-        estimated_seconds = estimate_story_seconds(db_path=db, points=points, chain_kind=chain_kind)
+        estimated_seconds = estimate_story_seconds(
+            db_path=db, points=points, chain_kind=chain_kind, pipeline=routing.pipeline
+        )
         issue_number = None
         story_file_path = f"stories/0-{slug}.md"
 
@@ -2223,7 +2227,11 @@ def _dry_run_dev(story: StoryRecord) -> tuple[bool, dict[str, Any]]:
 
 
 def _commit_green_dev_work(
-    story: StoryRecord, app_config: AppConfig, software_factory_root: Path
+    story: StoryRecord,
+    app_config: AppConfig,
+    software_factory_root: Path,
+    *,
+    repo: Path | None = None,
 ) -> None:
     """Deterministically ``git add -A && commit`` the dev's uncommitted worktree
     changes on a GREEN outcome, so the reviewer's ``origin/base...HEAD`` diff is
@@ -2237,7 +2245,10 @@ def _commit_green_dev_work(
     try:
         from factory.chain.branch import _run_git as _git
 
-        repo = _writing_worktree(app_config, software_factory_root, story)
+        # ``repo`` given (solo): commit EXACTLY the tree the gate just graded —
+        # ``_writing_worktree`` would first merge origin/<base> into it.
+        if repo is None:
+            repo = _writing_worktree(app_config, software_factory_root, story)
         _git(repo, "add", "-A")
         if _git(repo, "status", "--porcelain").stdout.strip():
             _git(repo, "commit", "-m", f"dev: implement story {story.id} ({story.slug})")
@@ -2625,19 +2636,16 @@ def _handle_dev_once(
                 slug_hint=story.slug,
             )
             _require_delta = _solo.requires_production_delta(app_config)
+            _base = app_config.default_branch or "main"
             solo_kwargs = {
                 "gate_check": _solo.make_gate_check(
                     repo_path=Path(repo_path),
                     test_command=app_config.gates.test_command,
-                    branch_is_empty=lambda: _dev_produced_empty_diff(
-                        story, app_config, software_factory_root
-                    ),
+                    # READ-ONLY probes on the live tree: never _writing_worktree
+                    # (it fetches + merges base) inside the conversation.
+                    branch_is_empty=lambda: _solo.branch_is_empty_ro(Path(repo_path), _base),
                     production_delta=(
-                        (
-                            lambda: _branch_has_production_delta(
-                                story, app_config, software_factory_root
-                            )
-                        )
+                        (lambda: _solo.production_delta_ro(Path(repo_path), _base))
                         if _require_delta
                         else None
                     ),
@@ -2931,7 +2939,12 @@ def _handle_dev_once(
             # reviewer's origin/base...HEAD diff is never empty (see
             # ``_commit_green_dev_work``). Fixes the dev<->review empty-diff
             # churn observed on story 106 (2026-07-21).
-            _commit_green_dev_work(story, app_config, software_factory_root)
+            _commit_green_dev_work(
+                story,
+                app_config,
+                software_factory_root,
+                repo=Path(repo_path) if solo_kwargs else None,
+            )
         story.state = advance(story, EVENT_DEV_TESTS_GREEN).value
         story.dev_step_checkpoint = None
         from factory.chain.solo import is_solo as _is_solo_green

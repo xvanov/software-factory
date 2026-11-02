@@ -757,6 +757,19 @@ def _record_run(
         if existing is not None:
             # Finalise the provisional row this run has been checkpointing into
             # (``_upsert_provisional_run``) instead of adding a second row.
+            # NEVER lower booked spend: a final write whose usage read failed
+            # (an exception path with no live snapshot) would otherwise erase
+            # spend the ledger already holds. The SDK counters are cumulative,
+            # so max() is the true floor. Booked spend also means the model DID
+            # work: such a row is never pre-model infra.
+            tokens_in = max(tokens_in, int(existing.tokens_in or 0))
+            tokens_out = max(tokens_out, int(existing.tokens_out or 0))
+            cost_usd = max(cost_usd, float(existing.cost_usd or 0.0))
+            cached_input_tokens = max(
+                int(cached_input_tokens or 0), int(existing.cached_input_tokens or 0)
+            )
+            if float(existing.cost_usd or 0.0) > 0.0 or int(existing.tokens_out or 0) > 0:
+                premodel_infra = False
             session.delete(existing)
             session.flush()
         row = Run(
@@ -2606,6 +2619,21 @@ async def sandbox_run(
         except Exception:  # noqa: BLE001 - telemetry only
             return None
 
+    def _merge_checkpointed_usage() -> None:
+        """Raise ``_partial_usage`` to what the provisional ledger row already
+        booked. A failure path whose live snapshot read failed must not report
+        less than was checkpointed — that would erase spend AND turn a real
+        attempt into a free pre-model infra retry."""
+        with _ledger_lock:
+            booked = {k: _ledger.get(k) for k in ("tokens_in", "tokens_out", "cached", "cost")}
+        if not booked.get("tokens_out") and not booked.get("cost"):
+            return
+        for k, v in booked.items():
+            if v is not None and v > (_partial_usage.get(k) or 0):
+                _partial_usage[k] = v
+        if "reliable" not in _usage_meta:
+            _usage_meta["reliable"] = False  # a floor from checkpoints, not a final read
+
     def _checkpoint_spend() -> None:
         """Upsert the provisional ledger row from live usage. Never raises."""
         if not _incremental_ledger:
@@ -2620,6 +2648,13 @@ async def sandbox_run(
             with _ledger_lock:
                 if _ledger["final"]:
                     return
+                for _k, _v in (
+                    ("tokens_in", t_in),
+                    ("tokens_out", t_out),
+                    ("cached", t_cached),
+                    ("cost", cost),
+                ):
+                    _ledger[_k] = max(_ledger.get(_k, 0) or 0, _v)
                 _ledger["id"] = _upsert_provisional_run(
                     _ledger["id"],
                     db_path=db_path,
@@ -2721,26 +2756,28 @@ async def sandbox_run(
         watchdog that crashes must leave the run exactly as it would have been
         without one (the hard ``wait_for`` backstop still applies).
         """
-        try:
-            first_write_checked = no_progress_abort_s is None or _start_fp.get("fp") is None
-            last_checkpoint = 0.0
-            while not stop.wait(_WATCHDOG_POLL_S):
+        first_write_checked = no_progress_abort_s is None or _start_fp.get("fp") is None
+        last_checkpoint = 0.0
+        while not stop.wait(_WATCHDOG_POLL_S):
+            # One iteration's failure (a transient ``pause()`` / stats / git
+            # error) must NOT end the watchdog: that would silently stop the
+            # spend cap and the soft deadline for the rest of the run. Log and
+            # keep looping; a stop flag already set re-asserts ``pause()`` on
+            # the next poll, which is the retry.
+            try:
                 if _incremental_ledger and _elapsed() - last_checkpoint >= _LEDGER_CHECKPOINT_S:
                     last_checkpoint = _elapsed()
                     _checkpoint_spend()
-                if spend_cap_usd is not None and not _stopped():
+                if _stopped():
+                    conversation.pause()
+                    continue
+                if spend_cap_usd is not None:
                     live = _live_cost()
                     if live is not None and live[3] >= float(spend_cap_usd):
                         _gate_state["spend_cap_hit"] = True
                         _gate_state["spend_cap_cost_usd"] = round(live[3], 4)
                         conversation.pause()
                         continue
-                if _stopped():
-                    # Keep re-asserting the pause until the run ends: a pause
-                    # that lands between a gate check and the next ``run()``
-                    # would otherwise be lost when ``run()`` resumes.
-                    conversation.pause()
-                    continue
                 el = _elapsed()
                 if not first_write_checked and el >= float(no_progress_abort_s or 0):
                     first_write_checked = True
@@ -2752,8 +2789,8 @@ async def sandbox_run(
                 if gate_check is not None and el >= float(effective_wall_clock_timeout_s):
                     _gate_state["soft_deadline_hit"] = True
                     conversation.pause()
-        except Exception:  # noqa: BLE001 - the watchdog must never break a run
-            return
+            except Exception:  # noqa: BLE001 - keep watching; never break a run
+                _log.warning("sandbox watchdog iteration failed; retrying", exc_info=True)
 
     def _gate_loop(conversation: Any) -> None:
         """Grade, feed the verdict back, repeat — inside ONE conversation."""
@@ -2915,6 +2952,7 @@ async def sandbox_run(
         # A stalled-before-any-call sandbox still reports zero here, so genuine
         # infra keeps its free retry.
         _snapshot_live_usage()
+        _merge_checkpointed_usage()
         _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
         _cost = float(_partial_usage.get("cost", 0.0) or 0.0)
         model_did_work = _t_out > 0 or _cost > 0.0
@@ -2980,6 +3018,7 @@ async def sandbox_run(
         # with ``_partial_usage`` empty, because that holder is only written
         # once ``run()`` returns. Recover from the live conversation first.
         _snapshot_live_usage()
+        _merge_checkpointed_usage()
         _x_last_msg, _x_calls, _x_finish = _snapshot_live_memory()
         _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
         _cost = float(_partial_usage.get("cost", 0.0) or 0.0)

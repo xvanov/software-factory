@@ -823,7 +823,11 @@ def test_spend_cap_for_takes_the_tighter_of_story_and_daily(temp_root: Path) -> 
 
     caps = load_settings(temp_root).caps
     cap, basis = solo.spend_cap_for(story, temp_root, db)
-    expected = min(caps.per_story_spend_usd - 2.0, caps.daily_spend_usd - 2.0)
+    expected = min(
+        caps.per_story_spend_usd - 2.0,
+        caps.daily_spend_usd - 2.0,
+        caps.hourly_spend_usd - 2.0,
+    )
     assert cap == pytest.approx(max(0.0, expected))
     assert basis["story_spent_usd"] == pytest.approx(2.0)
 
@@ -1012,15 +1016,19 @@ def test_solo_dev_is_deferred_when_the_tick_cannot_fit_it(
     assert orch._solo_tick_budget_shortfall(s, 0.0, now_mono=0.0) is not None
 
 
-def test_the_tick_checks_the_budget_before_dispatching_dev() -> None:
+def test_the_tick_checks_budget_and_spend_before_dispatching() -> None:
     import inspect
 
     src = inspect.getsource(orch.tick)
-    i = src.index("_solo_tick_budget_shortfall(")
-    assert 'handler_name == "dev"' in src[i - 200 : i]
-    assert "summary.deferred.append" in src[i : i + 400]
-    # It runs before the handler is invoked.
-    assert i < src.index("_invoke_handler(")
+    i = src.index("_sandbox_tick_budget_shortfall(")
+    assert "_SANDBOX_HANDLERS" in src[i - 200 : i]
+    assert "_record_budget_deferral" in src[i : i + 500]
+    j = src.index("_solo_spend_precheck(")
+    k = src.index("_invoke_handler(")
+    assert i < k and j < k
+    # The clock is the PROCESS's, and solo-due stories go first.
+    assert "_process_started_mono()" in src
+    assert "_solo_first(" in src
 
 
 def test_tick_budget_default_matches_the_systemd_unit() -> None:
@@ -1029,3 +1037,347 @@ def test_tick_budget_default_matches_the_systemd_unit() -> None:
         pytest.skip("tick unit not in repo")
     assert "TimeoutStartSec=3h" in unit.read_text(encoding="utf-8")
     assert orch._DEFAULT_TICK_BUDGET_S == 3 * 3600
+
+
+# --------------------------------------------------------------------------- #
+# Review fixes (independent review of #333)
+# --------------------------------------------------------------------------- #
+
+
+def _clone_with_moving_base(tmp_path: Path) -> tuple[Path, Path]:
+    def g(cwd: Path, *a: str) -> str:
+        return subprocess.run(
+            ["git", *a], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout
+
+    origin = tmp_path / "origin.git"
+    g(tmp_path, "init", "--bare", "-b", "main", str(origin))
+    seed = tmp_path / "seed"
+    g(tmp_path, "clone", str(origin), str(seed))
+    wt = tmp_path / "wt"
+    for d in (seed,):
+        g(d, "config", "user.email", "t@t")
+        g(d, "config", "user.name", "t")
+    (seed / "app.py").write_text("x = 1\n")
+    g(seed, "add", "-A")
+    g(seed, "commit", "-m", "base")
+    g(seed, "push", "origin", "main")
+    g(tmp_path, "clone", str(origin), str(wt))
+    g(wt, "config", "user.email", "t@t")
+    g(wt, "config", "user.name", "t")
+    g(wt, "checkout", "-b", "feat")
+    # A sibling lands on the base WHILE the conversation runs.
+    (seed / "sibling.py").write_text("BROKEN = 1/0\n")
+    g(seed, "add", "-A")
+    g(seed, "commit", "-m", "sibling")
+    g(seed, "push", "origin", "main")
+    return wt, seed
+
+
+def _head(wt: Path) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=wt, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_R4_gate_probes_never_touch_the_graded_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MUST 1: the gate grades and ships the SAME tree — no fetch/merge, no HEAD
+    move between the test verdict and the ship (or between rounds)."""
+    wt, _ = _clone_with_moving_base(tmp_path)
+
+    def _no_refresh(*a: Any, **k: Any) -> Path:
+        raise AssertionError("_writing_worktree (fetch+merge) called inside the conversation")
+
+    monkeypatch.setattr(handlers_module, "_writing_worktree", _no_refresh)
+    monkeypatch.setattr(handlers_module, "ensure_worktree_for_story", _no_refresh)
+    graded: list[bool] = []
+
+    def _pytest(repo: Path, test_command: str | None = None) -> tuple[bool, str]:
+        graded.append((Path(repo) / "sibling.py").exists())
+        return True, "1 passed"
+
+    monkeypatch.setattr(runner_module, "_run_pytest", _pytest)
+    head0 = _head(wt)
+    check = solo.make_gate_check(
+        repo_path=wt,
+        test_command="pytest",
+        branch_is_empty=lambda: solo.branch_is_empty_ro(wt, "main"),
+        production_delta=lambda: solo.production_delta_ro(wt, "main"),
+    )
+    # Untouched branch: empty → red, and still nothing moved.
+    v0 = check()
+    assert not v0.passed and "NO change" in v0.reason
+    (wt / "feature.py").write_text("y = 2\n")  # the dev's uncommitted work
+    v = check()
+    assert v.passed is True, v.reason
+    assert graded == [False, False]
+    assert _head(wt) == head0 and not (wt / "sibling.py").exists()
+
+
+def test_readonly_probes_classify_changes(tmp_path: Path) -> None:
+    wt, _ = _clone_with_moving_base(tmp_path)
+    assert solo.branch_is_empty_ro(wt, "main") is True
+    assert solo.production_delta_ro(wt, "main") is False
+    (wt / "tests").mkdir()
+    (wt / "tests" / "test_x.py").write_text("def test_x():\n    pass\n")
+    assert solo.branch_is_empty_ro(wt, "main") is False
+    assert solo.production_delta_ro(wt, "main") is False  # tests only
+    (wt / "app.py").write_text("x = 2\n")
+    assert solo.production_delta_ro(wt, "main") is True
+    assert solo.branch_is_empty_ro(tmp_path, "nope") is None  # not a repo: unknown
+
+
+def test_solo_green_commit_does_not_refresh_the_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wt, _ = _clone_with_moving_base(tmp_path)
+    (wt / "feature.py").write_text("y = 2\n")
+
+    def _no_refresh(*a: Any, **k: Any) -> Path:
+        raise AssertionError("refreshed the base after the green verdict")
+
+    monkeypatch.setattr(handlers_module, "_writing_worktree", _no_refresh)
+    story = StoryRecord(id=5, direction_id="1", app="a", title="t", slug="s", pipeline="solo")
+    handlers_module._commit_green_dev_work(
+        story, AppConfig(name="a", repo="x/y"), tmp_path, repo=wt
+    )
+    assert not (wt / "sibling.py").exists()
+    log = subprocess.run(
+        ["git", "log", "--oneline", "-1"], cwd=wt, capture_output=True, text=True
+    ).stdout
+    assert "dev: implement story 5" in log
+
+
+def test_solo_dispatch_gate_check_is_read_only(
+    temp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = temp_root / "state" / "factory.db"
+    story = _story_at(StoryState.SM_DONE, temp_root)
+    captured: dict[str, Any] = {}
+
+    async def _capture(*args: Any, **kwargs: Any) -> RunResult:
+        captured.update(kwargs)
+        # Calling the gate INSIDE the run must not refresh the worktree.
+        monkeypatch.setattr(
+            handlers_module,
+            "_writing_worktree",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("refresh in conversation")),
+        )
+        monkeypatch.setattr(runner_module, "_run_pytest", lambda r, test_command=None: (True, "ok"))
+        captured["verdict"] = kwargs["gate_check"]()
+        return RunResult(success=True, files_changed=["a"], test_run_passed=True, summary="ok")
+
+    monkeypatch.setattr(runner_module, "sandbox_run", _capture, raising=True)
+    monkeypatch.setattr(handlers_module, "route", lambda *a, **kw: "azure/gpt-5.4")
+    handle_dev(story, _app(temp_root), temp_root, dry_run=False, db_path=db)
+    assert isinstance(captured["verdict"], GateVerdict)
+
+
+def test_R1_final_record_never_lowers_booked_spend(tmp_path: Path) -> None:
+    """MUST 2: a final write with a failed usage read keeps the booked spend
+    and is not pre-model infra."""
+    db = tmp_path / "state" / "factory.db"
+    rid = runner_module._upsert_provisional_run(
+        None,
+        db_path=db,
+        persona="dev",
+        model="m",
+        tokens_in=10,
+        tokens_out=5,
+        cached_input_tokens=0,
+        cost_usd=3.0,
+        duration_s=1.0,
+        story_path=None,
+        repo_path=None,
+        story_id=7,
+        model_tier="standard",
+        direction_id="1",
+        app="a",
+    )
+    runner_module._record_run(
+        persona="dev",
+        model="m",
+        mode="sandbox",
+        tokens_in=0,
+        tokens_out=0,
+        cost_usd=0.0,
+        success=False,
+        story_path=None,
+        repo_path=None,
+        error="sandbox run raised: X",
+        db_path=db,
+        story_id=7,
+        premodel_infra=True,
+        update_row_id=rid,
+    )
+    rows = _rows(db)
+    assert len(rows) == 1
+    assert rows[0].cost_usd == pytest.approx(3.0)
+    assert rows[0].tokens_out == 5 and rows[0].tokens_in == 10
+    assert rows[0].premodel_infra is False
+
+
+def test_R1b_exception_path_keeps_provisional_spend_and_burns_a_retry(
+    tmp_path: Path, fake_sdk: type[_Conv], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner_module, "_LEDGER_CHECKPOINT_S", 0.02)
+    db = tmp_path / "state" / "factory.db"
+    state = {"boom": False}
+    orig_stats = _Conv.conversation_stats
+
+    def _spend_then_raise(conv: _Conv) -> None:
+        _write("a.py")(conv)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not (db.exists() and _rows(db)):
+            time.sleep(0.02)
+        state["boom"] = True
+        raise RuntimeError("provider 5xx mid-run")
+
+    def _stats(self: _Conv) -> Any:
+        if state["boom"]:
+            raise RuntimeError("stats unavailable after crash")
+        return orig_stats.fget(self)  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(_Conv, "conversation_stats", property(_stats))
+    fake_sdk.script = [_spend_then_raise]
+    res = _sandbox(tmp_path, _seq(GREEN), max_gate_rounds=3)
+    rows = _rows(db)
+    assert len(rows) == 1
+    assert rows[0].cost_usd == pytest.approx(0.5) and rows[0].premodel_infra is False
+    assert res.premodel_infra is False and res.cost_usd == pytest.approx(0.5)
+    from factory.chain.handlers import _is_premodel_infra_failure
+
+    assert _is_premodel_infra_failure(res) is False  # consumes a dev retry
+
+
+def test_R2_watchdog_survives_a_pause_error_and_retries(
+    tmp_path: Path, fake_sdk: type[_Conv], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SHOULD 3: one failing pause() must not disable the spend cap."""
+    calls = {"n": 0}
+    orig_pause = _Conv.pause
+
+    def _flaky_pause(self: _Conv) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient: state lock busy")
+        orig_pause(self)
+
+    monkeypatch.setattr(_Conv, "pause", _flaky_pause)
+    fake_sdk.script = [lambda conv: conv.paused.wait(timeout=5)]
+    t0 = time.monotonic()
+    res = _sandbox(tmp_path, _seq(RED), max_gate_rounds=1, spend_cap_usd=0.1)
+    assert calls["n"] >= 2
+    assert time.monotonic() - t0 < 4
+    assert res.gate_stop_reason == "spend_cap" and res.spend_cap_hit_usd == pytest.approx(0.5)
+
+
+def test_tick_clock_is_the_process_start() -> None:
+    """SHOULD 4: the budget counts from process start, not from tick()."""
+    started = orch._process_started_mono()
+    now = time.monotonic()
+    assert started <= now
+    # This test process has been alive at least as long as the import.
+    assert started <= orch._IMPORT_MONO + 1.0
+
+
+def test_budget_deferral_surfaces_in_the_inbox_after_three(temp_root: Path) -> None:
+    """SHOULD 5: not silent — the third consecutive deferral sets the inbox note."""
+    db = temp_root / "state" / "factory.db"
+    story = _story_at(StoryState.SM_DONE, temp_root)
+    for n in (1, 2):
+        assert orch._record_budget_deferral(story, "why", db=db, root=temp_root) == n
+        assert get_story(story.id or 0, db).last_rejection_reason is None  # type: ignore[union-attr]
+    assert orch._record_budget_deferral(story, "why", db=db, root=temp_root) == 3
+    note = get_story(story.id or 0, db).last_rejection_reason  # type: ignore[union-attr]
+    assert note and note.startswith(orch._BUDGET_DEFER_REASON_PREFIX) and "3x" in note
+
+
+def test_solo_due_stories_go_first_and_chain_sandboxes_are_budgeted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("FACTORY_TICK_BUDGET_S", raising=False)
+
+    def mk(slug: str, state: StoryState, pipeline: str) -> StoryRecord:
+        return StoryRecord(
+            direction_id="1", app="a", title="t", slug=slug, state=state.value, pipeline=pipeline
+        )
+
+    a = mk("chain-dev", StoryState.SM_DONE, "chain")
+    b = mk("solo-review", StoryState.TESTS_GREEN, "solo")
+    c = mk("solo-dev", StoryState.SM_DONE, "solo")
+    assert [s.slug for s in orch._solo_first([a, b, c])] == ["solo-dev", "chain-dev", "solo-review"]
+    # A chain dev sandbox late in the tick (after a long solo run) is deferred too.
+    budget = orch._DEFAULT_TICK_BUDGET_S
+    late = budget - 1000
+    assert orch._sandbox_tick_budget_shortfall(a, "dev", 0.0, now_mono=late) is not None
+    assert orch._sandbox_tick_budget_shortfall(a, "dev", 0.0, now_mono=0.0) is None
+    assert orch._sandbox_tick_budget_shortfall(a, "review", 0.0, now_mono=late) is None
+
+
+def test_zero_spend_cap_never_dispatches(temp_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SHOULD 6: cap <= 0 → block (per-story) or defer (daily/hourly), never a
+    paused-before-spending run that burns a dev retry."""
+    db = temp_root / "state" / "factory.db"
+    story = _story_at(StoryState.SM_DONE, temp_root)
+    chain = _story_at(StoryState.SM_DONE, temp_root, pipeline="chain", slug="c")
+    monkeypatch.setattr(
+        solo, "spend_cap_for", lambda s, r, d: (0.0, {"binding_limit": "per_story"})
+    )
+    act = orch._solo_spend_precheck(story, root=temp_root, db=db)
+    assert act is not None and act[0] == "block"
+    # The block uses an existing breaker edge from every dev-dispatch state.
+    for st in (StoryState.SM_DONE, StoryState.DEV_RETRY, StoryState.REVIEWER_REQUESTED_CHANGES):
+        s = StoryRecord(direction_id="1", app="a", title="t", slug="s", state=st.value)
+        assert advance(s, orch.EVENT_BUDGET_EXCEEDED) is StoryState.BLOCKED_BUDGET_EXCEEDED
+    monkeypatch.setattr(solo, "spend_cap_for", lambda s, r, d: (0.0, {"binding_limit": "hourly"}))
+    act = orch._solo_spend_precheck(story, root=temp_root, db=db)
+    assert act is not None and act[0] == "defer" and "hourly" in act[1]
+    monkeypatch.setattr(solo, "spend_cap_for", lambda s, r, d: (0.5, {"binding_limit": "daily"}))
+    assert orch._solo_spend_precheck(story, root=temp_root, db=db) is None
+    assert orch._solo_spend_precheck(chain, root=temp_root, db=db) is None
+
+
+def test_spend_cap_for_includes_the_hourly_cap(
+    temp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import factory.settings.spend as spend
+
+    monkeypatch.setattr(spend, "hour_spend_usd", lambda root, db_path=None: 10_000.0)
+    story = _story_at(StoryState.SM_DONE, temp_root)
+    cap, basis = solo.spend_cap_for(story, temp_root, temp_root / "state" / "factory.db")
+    assert cap == 0.0 and basis["binding_limit"] == "hourly"
+
+
+def test_factory_app_needs_an_explicit_solo_opt_in() -> None:
+    import factory.job_routing as jr
+
+    own = AppConfig(name="factory", repo="xvanov/software-factory")
+    with pytest.raises(jr.JobRoutingError) as ei:
+        jr.resolve_job_routing(own, pipeline="solo")
+    assert ei.value.code == "pipeline_unavailable" and "solo_allowed" in ei.value.message
+    with pytest.raises(jr.JobRoutingError):
+        jr.resolve_job_routing(AppConfig(name="factory", repo="x/y"), pipeline="solo")
+    ok = AppConfig(name="factory", repo="xvanov/software-factory", solo_allowed=True)
+    assert jr.resolve_job_routing(ok, pipeline="solo").pipeline == "solo"
+    assert jr.resolve_job_routing(own, pipeline="chain").pipeline == "chain"
+
+
+def test_estimator_has_no_reviewer_time_for_solo(tmp_path: Path) -> None:
+    from factory.observability import estimator as est
+
+    assert "reviewer" in est.remaining_handlers_for_story("tests_green", "tdd")
+    assert "reviewer" not in est.remaining_handlers_for_story("tests_green", "tdd", "solo")
+    assert est.total_handlers_for_chain("tdd", "solo") == est.total_handlers_for_chain("tdd") - 1
+    chain_s = est.estimate_story_seconds(db_path=tmp_path / "e.db", points=3)
+    solo_s = est.estimate_story_seconds(db_path=tmp_path / "e.db", points=3, pipeline="solo")
+    assert chain_s is not None and solo_s is not None
+    assert solo_s == pytest.approx(chain_s - est._COLD_START_HANDLER_SECONDS["reviewer"][3])
+
+
+def test_solo_cap_keeps_the_stall_guard_reachable_even_if_configured_low() -> None:
+    s = StoryRecord(direction_id="1", app="a", title="t", slug="s", pipeline="solo")
+    for configured in (1, 2, 3, 9):
+        assert solo.max_dev_attempts(s, configured) > _MAX_DEV_SAME_SIGNATURE
