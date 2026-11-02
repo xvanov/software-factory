@@ -116,6 +116,8 @@ from today's app config:
 
 - any story whose PR GitHub reports MERGED (reconcile may lag).
 - `delivered_pr`: GitHub says the PR is open or merged (closed → `failed`).
+  Reached only after the chain watched the PR's CI; a red/unreported CI at
+  delivery is the story's `delivery_note` (the `delivered` event's `ci_note`).
 - `delivered_branch`: the branch exists on GitHub.
 - `delivered_local`: nothing to confirm remotely (level `none`).
 - `deploy_pending` / `deployed` with a PR: GitHub says the PR is merged.

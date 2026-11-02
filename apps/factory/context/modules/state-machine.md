@@ -185,7 +185,7 @@ are absent from `_DISPATCH` and `auto_merge._MERGEABLE_STATES`:
 | `CLOSED_BY_OPERATOR` | `orchestrator.reconcile_closed_trackers` (direct assignment) | operator re-opens tracker issue, then `factory resume-story` |
 | `DELIVERED_LOCAL` | `EVENT_DELIVERED_LOCAL` — delivery level `none` | n/a — success at that level; the work is committed on the local `story/<n>-<slug>` branch, never pushed |
 | `DELIVERED_BRANCH` | `EVENT_DELIVERED_BRANCH` — delivery level `branch` | n/a — success at that level; branch pushed, no PR |
-| `DELIVERED_PR` | `EVENT_DELIVERED_PR` — level `draft_pr` / `pr`, or a refused `push_to_main` | n/a — a human merges; `reconcile_from_github` then routes it to `DEPLOY_PENDING`. Closed unmerged → `reconcile_from_github` settles it to `CLOSED_BY_OPERATOR` (direct assignment) |
+| `DELIVERED_PR` | `EVENT_DELIVERED_PR` — level `draft_pr` / `pr` (from `PR_OPEN`, after the CI watch), or a refused `push_to_main` | n/a — a human merges; `reconcile_from_github` then routes it to `DEPLOY_PENDING`. Closed unmerged → `reconcile_from_github` settles it to `CLOSED_BY_OPERATOR` (direct assignment) |
 
 ### Delivery levels (how far finished work goes)
 
@@ -208,11 +208,37 @@ Enforcement sites:
 * `handlers.handle_docs_enforcer` (the PR-open site): `none` →
   `delivery_gate.commit_local_work`, `DELIVERED_LOCAL`; `branch` →
   `_push_story_branch`, `DELIVERED_BRANCH`; `draft_pr`/`pr` →
-  `_open_pr_for_story(draft=…, will_auto_merge=False)`, `DELIVERED_PR`;
+  `_open_pr_for_story(draft=…, will_auto_merge=False)`, `PR_OPEN` (the CI
+  watch below settles it to `DELIVERED_PR`);
   `auto_merge` → unchanged (`PR_OPEN`); `push_to_main` → `_push_story_branch`,
   `PR_OPEN` with NO PR. Push/PR failures share the `pr_create_retries` cap.
 * `handlers._handle_dev_once` dev-exhausted WIP preservation: commits always,
   pushes only when the level pushes.
+* `auto_merge.auto_merge_tick`, `draft_pr`/`pr` CI WATCH (first, before the
+  draft guard): `_watch_ci_then_deliver` reads ALL the PR's checks
+  (`_query_pr_checks`, `jobs.github.summarize_checks`). Green →
+  `_settle_non_merging_story` → `DELIVERED_PR`. Red →
+  `_redispatch_ci_fix` (shared with `_handle_ci_failure`: CI log as a
+  finding, `REVIEWER_REQUESTED_CHANGES`, `ci_fix_redispatch`); the fix is
+  pushed to the same PR by `handle_docs_enforcer`. Capped at
+  `_MAX_CI_FIX_CYCLES` + the identical-signature guard; after that, or no
+  verdict within `DELIVERY_CI_WAIT_S` (2 h; no checks: 10 min), it still
+  settles to `DELIVERED_PR` with a `ci_note` on the `delivered` event
+  (`factory job status` → `delivery_note`) — never closes the PR. Clock =
+  first `delivery_ci_watch_started` after the last redispatch. Writes run
+  under `story_lock` after re-reading state and `is_job_cancelled`. Such
+  stories skip `_story_worktree` and `freshen_behind_prs`; a PR closed
+  during the watch reconciles to `CLOSED_BY_OPERATOR`. Runs even with
+  `auto_merge.enabled: false` (`auto_merge_tick(watch_only=True)`).
+  Delivered-with-note, never re-dispatched: the last fix was not pushed
+  (`fix_push_failed` / `fix_push_skipped_no_commits` /
+  `fix_push_refused_foreign_commits` — `_push_fix_to_existing_pr` pushes
+  fast-forward only for these levels and refuses when origin has commits the
+  factory did not write); the PR head is not the factory's last pushed sha
+  (`delivery_pr_head_pushed` / `fix_push.head_sha`); infra-only red (no
+  `FAILURE` conclusion); no fetchable Actions log; docs chain. A dev that
+  exhausts on a CI fix: no WIP push, `deliver_watched_pr_with_note` →
+  `DELIVERED_PR` (direct write).
 * `auto_merge.auto_merge_tick`: a guard at the top of the per-PR loop (before
   the main-green hold, the CI-failure re-dispatch and gate evaluation) skips
   draft PRs and settles any mergeable story whose level does not merge

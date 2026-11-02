@@ -116,6 +116,12 @@ LOCAL_PR_STATES: frozenset[str] = frozenset(
 )
 
 
+#: Where a ``draft_pr`` / ``pr`` story waits while its PR's CI is watched.
+_WATCHED_PR_STATES: frozenset[str] = frozenset(
+    {_S.PR_OPEN.value, _S.CI_GREEN.value, _S.READY_FOR_MERGE.value}
+)
+
+
 #: States with no ``_TRANSITIONS`` edge that are nevertheless IN FLIGHT:
 #: ``ci_pending`` is driven by the auto-merge poller by direct assignment, so
 #: ``is_terminal`` wrongly calls it terminal (review 2026-11-02, MUST 2).
@@ -259,7 +265,9 @@ def _delivery_note(ctx: _Ctx, row: dict[str, Any]) -> str | None:
     Today: a ``push_to_main`` story whose default branch requires checks or a
     PR falls back to a ready PR at ``auto_merge`` (``auto_merge.
     _fall_back_push_to_main_to_pr``); its event carries the reason
-    ``push_to_main_fell_back_to_pr:<why>``. Read from the story's event log
+    ``push_to_main_fell_back_to_pr:<why>``. And a ``draft_pr`` / ``pr`` PR
+    delivered with red or unreported CI (the ``delivered`` event's
+    ``ci_note``). Read from the story's event log
     (a file read; the DB stays read-only). ``None`` when nothing to say."""
     sid = row.get("id")
     if sid is None:
@@ -272,10 +280,21 @@ def _delivery_note(ctx: _Ctx, row: dict[str, Any]) -> str | None:
         )
     except Exception:  # noqa: BLE001 - a note is best-effort, never a status failure
         return None
+    notes: list[str] = []
     for e in reversed(events):
         if e.get("event") == "push_to_main_fell_back_to_pr" and e.get("reason"):
-            return str(e["reason"])
-    return None
+            notes.append(str(e["reason"]))
+            break
+    # draft_pr / pr: a PR delivered WITHOUT green CI (red after the CI-fix cap,
+    # or no verdict in time) carries a ``ci_note`` on its LATEST ``delivered``
+    # event (``auto_merge._watch_ci_then_deliver``). Only the latest counts: a
+    # resumed story that later delivered green must not keep an old red note.
+    for e in reversed(events):
+        if e.get("event") == "delivered":
+            if e.get("ci_note"):
+                notes.append(str(e["ci_note"]))
+            break
+    return "; ".join(notes) or None
 
 
 def _merged_sha(ctx: _Ctx, row: dict[str, Any]) -> str | None:
@@ -518,6 +537,14 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
         else:
             v = live[0]
             why = f"story {v.row.get('id')} is {v.row.get('state')}"
+            if (
+                v.pr_number
+                and v.row.get("state") in _WATCHED_PR_STATES
+                and v.level in (DeliveryLevel.DRAFT_PR.value, DeliveryLevel.PR.value)
+            ):
+                # draft_pr / pr: the chain watches the PR's CI (and sends a red
+                # run back to dev) before it reports the story delivered.
+                why += f" (watching CI on PR #{v.pr_number} before delivery)"
         if cancel is not None:
             why = (
                 f"cancel requested at {cancel.get('at', '?')} but story "

@@ -2176,6 +2176,15 @@ def reconcile_from_github(
         is_terminal,
     )
 
+    def _ci_watched(s: StoryRecord) -> bool:
+        from factory.chain.auto_merge import watches_ci_before_delivery
+        from factory.delivery import parse_level
+
+        try:
+            return watches_ci_before_delivery(parse_level(s.delivery_level))
+        except ValueError:
+            return False
+
     def _terminal(state_value: str | None) -> bool:
         try:
             return is_terminal(StoryState(state_value))
@@ -2271,7 +2280,9 @@ def reconcile_from_github(
                 new_state = advance(story, EVENT_MERGED)
             except IllegalTransitionError:
                 new_state = StoryState.DEPLOY_PENDING
-        elif from_state == StoryState.DELIVERED_PR.value:
+        elif from_state == StoryState.DELIVERED_PR.value or (
+            from_state in _MERGEABLE_STATES and _ci_watched(story)
+        ):
             # CLOSED-unmerged DELIVERED PR (level draft_pr / pr): the factory
             # finished and handed the PR to a human, who closed it without
             # merging — a ruling, like closing the story issue. Settle it to the
@@ -2279,6 +2290,10 @@ def reconcile_from_github(
             # and its job/direction can finish. Direct assignment (no
             # ``_TRANSITIONS`` edge — adding one would make DELIVERED_PR
             # non-terminal for ``is_terminal``); declared in the conformance model.
+            # Same ruling for a draft_pr / pr story whose PR the human closed
+            # while the factory was still watching its CI (it would have been
+            # DELIVERED_PR a tick later): closed_by_operator, not the
+            # blocked_deploy_failed attention sink.
             event = "delivered_pr_closed_unmerged"
             new_state = StoryState.CLOSED_BY_OPERATOR
         else:
@@ -2307,7 +2322,8 @@ def reconcile_from_github(
         if event == "delivered_pr_closed_unmerged":
             story.error = None
             story.last_rejection_reason = (
-                f"delivered PR #{pr_number} was closed on GitHub without merging; "
+                f"PR #{pr_number} (delivery level {story.delivery_level}, story was "
+                f"{from_state}) was closed on GitHub without merging; "
                 "settled to closed_by_operator"
             )
         if event == EVENT_PR_UNMERGEABLE:
@@ -2403,10 +2419,26 @@ def freshen_behind_prs(
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
         rows = session.exec(select(StoryRecord).where(StoryRecord.app == app)).all()
+    from factory.chain.auto_merge import watches_ci_before_delivery
+    from factory.delivery import parse_level
+
+    def _factory_may_update(s: StoryRecord) -> bool:
+        # draft_pr / pr: the PR is the HUMAN's deliverable — the factory does
+        # not write a base merge into it while it watches its CI (it never did
+        # once the story was DELIVERED_PR either), and a merge-in would restart
+        # the very CI run being watched.
+        try:
+            return not watches_ci_before_delivery(parse_level(s.delivery_level))
+        except ValueError:
+            return True
+
     candidates = [
         s
         for s in rows
-        if s.github_pr_number and s.github_pr_number > 0 and s.state in _MERGEABLE_STATES
+        if s.github_pr_number
+        and s.github_pr_number > 0
+        and s.state in _MERGEABLE_STATES
+        and _factory_may_update(s)
     ]
 
     refreshed: list[tuple[str, int]] = []
@@ -2992,25 +3024,29 @@ def tick(
         # not wait for this tick's story loop to finish before merging
         # (observed 2026-07-18: two mergeable PRs sat >2h behind a long tick).
         # The end-of-tick hook below still runs for PRs that open THIS tick.
-        if settings.auto_merge.enabled:
+        # auto_merge.enabled=false still runs the draft_pr / pr CI WATCH
+        # (watch_only): it never merges, and without it those stories would
+        # sit in pr_open forever (review of PR #335, MUST 1).
+        _am_watch_only = not settings.auto_merge.enabled
+        try:
+            _pre_mode = get_mode(root, db_path=db)
+        except Exception as _pre_mode_exc:  # noqa: BLE001 - fail-safe: skip the write
+            _pre_mode = "paused"
+            summary.errors.append(("auto-merge-pre-mode-read", repr(_pre_mode_exc)))
+        if _pre_mode not in {"paused", "drain-reviews"}:
             try:
-                _pre_mode = get_mode(root, db_path=db)
-            except Exception as _pre_mode_exc:  # noqa: BLE001 - fail-safe: skip the write
-                _pre_mode = "paused"
-                summary.errors.append(("auto-merge-pre-mode-read", repr(_pre_mode_exc)))
-            if _pre_mode not in {"paused", "drain-reviews"}:
-                try:
-                    summary.merges = auto_merge_tick(
-                        root,
-                        app,
-                        dry_run=dry_run,
-                        db_path=db,
-                        merge_method=settings.auto_merge.merge_method,
-                        wait_for_ci=settings.auto_merge.wait_for_ci,
-                        delete_branch_after_merge=settings.auto_merge.delete_branch_after_merge,
-                    )
-                except Exception as exc:
-                    summary.errors.append(("auto-merge-pre", repr(exc)))
+                summary.merges = auto_merge_tick(
+                    root,
+                    app,
+                    dry_run=dry_run,
+                    db_path=db,
+                    merge_method=settings.auto_merge.merge_method,
+                    wait_for_ci=settings.auto_merge.wait_for_ci,
+                    delete_branch_after_merge=settings.auto_merge.delete_branch_after_merge,
+                    watch_only=_am_watch_only,
+                )
+            except Exception as exc:
+                summary.errors.append(("auto-merge-pre", repr(exc)))
 
         # Even when no in-flight stories exist, we still want the
         # end-of-tick auto-merge hook to fire so PRs that landed in
@@ -3556,42 +3592,46 @@ def tick(
         # a merge attempt on the same tick. Gated by
         # ``factory_settings.auto_merge.enabled`` and skipped in modes where
         # forward motion is suppressed (``paused``, ``drain-reviews``).
-        if settings.auto_merge.enabled:
-            try:
-                # ``get_mode`` WRITES to the DB (first-touch default insert),
-                # so a `database is locked` error is possible here. It MUST be
-                # inside this try: previously it sat between the ``enabled``
-                # check and the try block, so a locked-DB exception propagated
-                # straight out of ``tick()``, killing the whole tick and
-                # discarding ``summary`` before the caller ever saw it (a
-                # reviewer-flagged hazard shared by every hook below — fixed
-                # in all of them together, 019 safety-mechanism rewire).
-                current_mode = get_mode(root, db_path=db)
-                if current_mode not in {"paused", "drain-reviews"}:
-                    merge_actions = auto_merge_tick(
-                        root,
-                        app,
-                        dry_run=dry_run,
-                        db_path=db,
-                        merge_method=settings.auto_merge.merge_method,
-                        wait_for_ci=settings.auto_merge.wait_for_ci,
-                        delete_branch_after_merge=settings.auto_merge.delete_branch_after_merge,
-                    )
-                    # EXTEND, never overwrite: the start-of-tick pass may have
-                    # already recorded decisions (and advanced those stories),
-                    # so a quiet end-of-tick pass would otherwise erase them.
-                    # Dedup by pr_number: in dry-run a "merged" fixture isn't
-                    # actually removed, so both passes report the same PR —
-                    # keep the first decision per PR.
-                    _seen_prs = {m.pr_number for m in (summary.merges or [])}
-                    summary.merges = list(summary.merges or []) + [
-                        m for m in merge_actions if m.pr_number not in _seen_prs
-                    ]
-            except Exception as exc:
-                # Auto-merge (and the mode lookup guarding it) failures must
-                # not break the tick — the operator can still inspect the
-                # chain via ``factory story`` and re-run auto-merge by hand.
-                summary.errors.append(("auto-merge", repr(exc)))
+        # auto_merge.enabled=false still runs the draft_pr / pr CI WATCH
+        # (watch_only): it never merges, and without it those stories would
+        # sit in pr_open forever (review of PR #335, MUST 1).
+        _am_watch_only = not settings.auto_merge.enabled
+        try:
+            # ``get_mode`` WRITES to the DB (first-touch default insert),
+            # so a `database is locked` error is possible here. It MUST be
+            # inside this try: previously it sat between the ``enabled``
+            # check and the try block, so a locked-DB exception propagated
+            # straight out of ``tick()``, killing the whole tick and
+            # discarding ``summary`` before the caller ever saw it (a
+            # reviewer-flagged hazard shared by every hook below — fixed
+            # in all of them together, 019 safety-mechanism rewire).
+            current_mode = get_mode(root, db_path=db)
+            if current_mode not in {"paused", "drain-reviews"}:
+                merge_actions = auto_merge_tick(
+                    root,
+                    app,
+                    dry_run=dry_run,
+                    db_path=db,
+                    merge_method=settings.auto_merge.merge_method,
+                    wait_for_ci=settings.auto_merge.wait_for_ci,
+                    delete_branch_after_merge=settings.auto_merge.delete_branch_after_merge,
+                    watch_only=_am_watch_only,
+                )
+                # EXTEND, never overwrite: the start-of-tick pass may have
+                # already recorded decisions (and advanced those stories),
+                # so a quiet end-of-tick pass would otherwise erase them.
+                # Dedup by pr_number: in dry-run a "merged" fixture isn't
+                # actually removed, so both passes report the same PR —
+                # keep the first decision per PR.
+                _seen_prs = {m.pr_number for m in (summary.merges or [])}
+                summary.merges = list(summary.merges or []) + [
+                    m for m in merge_actions if m.pr_number not in _seen_prs
+                ]
+        except Exception as exc:
+            # Auto-merge (and the mode lookup guarding it) failures must
+            # not break the tick — the operator can still inspect the
+            # chain via ``factory story`` and re-run auto-merge by hand.
+            summary.errors.append(("auto-merge", repr(exc)))
 
         # Post-merge main-branch CI-health monitor (D004). Cheap (1-2 ``gh``
         # calls) — runs once per app per tick regardless of in-flight story

@@ -40,7 +40,7 @@ How the factory enforces it (see `factory/chain/delivery_gate.py`):
   where work would leave the factory. Story end states, all terminal:
   `none` → `delivered_local` (committed on the local `story/<n>-<slug>` branch, nothing
   pushed); `branch` → `delivered_branch`; `draft_pr` / `pr` → `delivered_pr` (with the PR
-  number); `auto_merge` / `push_to_main` → `deployed` (via `deploy_pending`).
+  number, once its CI has been watched — see below); `auto_merge` / `push_to_main` → `deployed` (via `deploy_pending`).
 - `push_to_main` first checks GitHub (`delivery_gate.push_to_main_preflight`):
   - if the default branch's own CI is red or still running, or GitHub cannot be read, the story
     is HELD (the same main-green hold PR merges get): untouched, re-checked every tick, with a
@@ -64,6 +64,42 @@ How the factory enforces it (see `factory/chain/delivery_gate.py`):
   (or is rejected) it falls back to `pr`: the story's level is recorded as `pr`, a ready PR is
   opened, and the story ends in `delivered_pr`. Factory self-edits (`apps/factory`) are always
   treated as `pr` instead of `push_to_main`, because they must pass the PR staging gate.
+- `draft_pr` / `pr` WATCH THE PR'S CI before delivering (2026-11-02; before this a story was
+  `delivered_pr` the moment its PR opened, so a red CI never reached the dev). After the PR
+  opens the story sits in `pr_open` (job `in_progress`, `why`: `… (watching CI on PR #N before
+  delivery)`) and the factory reads ALL of the PR's checks every tick
+  (`auto_merge._watch_ci_then_deliver`; required-only would miss repos with no branch
+  protection):
+  - green → `delivered_pr`.
+  - red → the failing CI log goes back to the dev as a finding (the same CI-fix loop
+    `auto_merge` has, `ci_fix_redispatch` events); the fix is pushed to the SAME PR and the
+    watch restarts on the new head. At most 3 CI-fix cycles, and none when the last fix
+    reproduced the identical failure.
+  - The fix is pushed fast-forward only. If the PR branch has commits the factory did not
+    write (a human pushed), the fix is NOT pushed — the factory never forces over a human.
+  - The watch grades only the commit the factory pushed: if the PR head is someone else's
+    commit, a red CI is not sent to the dev.
+  - The dev is only sent a red run it can act on: a red made only of cancelled / timed-out /
+    errored runs (infra), a red check with no fetchable GitHub Actions log, and a red on a
+    docs-chain story are delivered with a note instead.
+  - If the dev runs out of attempts on a CI fix, the failed fix is not pushed; the story is
+    delivered (the PR still holds the last pushed commit) with a note.
+  - The watch runs even when `auto_merge.enabled` is false in `factory_settings.yaml` (it never
+    merges); with it off, nothing else in the auto-merge pass runs.
+  - still red after that, no verdict within 2 h, or no checks at all within 10 min → STILL
+    `delivered_pr` (the PR is the deliverable; the factory never closes it), with a `ci_note`
+    on the story's `delivered` event (every "delivered with a note" case above), which
+    `factory job status` reports as that story's
+    `delivery_note` (e.g. `CI is RED on PR #18 (docker build) after 3 CI-fix cycle(s) (cap 3)
+    — delivered for a human to fix`). A failing PR is also named in `why`.
+  - never merged, never marked ready (a draft stays a draft), and the factory does not merge
+    the base branch into a watched PR. A `factory job cancel` during the watch wins: the
+    watch re-checks the durable cancel marker under the per-story lock before every write. A
+    human closing the PR during the watch settles the story to `closed_by_operator`, as for a
+    delivered PR. Solo-pipeline stories go through the same watch.
+  - Exception: a `push_to_main` story that falls back to level `pr` (refused fast-forward, or
+    the 24 h hold cap) is still settled to `delivered_pr` as soon as its PR opens, without the
+    watch.
 - Whenever a story with a PR settles below `auto_merge`, the factory disarms any GitHub
   auto-merge on that PR (`gh pr merge --disable-auto`), so an earlier `--auto` cannot merge it
   behind the job's back. `factory job cancel` does the same.
