@@ -856,27 +856,83 @@ def test_finding4_hold_reason_cleared_when_main_turns_green(
     assert len(gates_red) == 1  # evaluated once main was green
 
 
-def test_finding4_push_to_main_refused_on_protected_branch(
-    am_root: Path, gates_red: list[int]
+def _refuse(_c: Any, _b: str) -> tuple[str, str]:
+    return delivery_gate.PREFLIGHT_REFUSE, "main requires status checks ['ci']"
+
+
+def test_finding4_protected_branch_falls_back_to_an_auto_merge_pr(
+    am_root: Path, gates_red: list[int], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Operator decision 2026-11-02: a protected base is delivered THROUGH a PR
+    at auto_merge (required checks + main-green hold + gates), never pushed."""
+    opened: list[dict[str, Any]] = []
+
+    def _open(*_a: Any, **k: Any) -> int:
+        opened.append(k)
+        return 777
+
+    monkeypatch.setattr(H, "_open_pr_for_story", _open)
     _write_cfg(am_root, L.PUSH_TO_MAIN)
     db = am_root / "state" / "factory.db"
     s = _story(db, StoryState.PR_OPEN, L.PUSH_TO_MAIN)
-    _p2m_tick(
+    actions = _p2m_tick(am_root, db, s.id, "a" * 40, push_to_main_preflight_fn=_refuse)
+    assert not actions[0].merged and actions[0].pr_number == 777
+    assert opened == [{"draft": False, "will_auto_merge": True}]
+    row = _reload(db, s.id)
+    assert row.state == StoryState.PR_OPEN.value
+    assert row.github_pr_number == 777 and row.delivery_level == L.AUTO_MERGE.value
+    assert row.last_rejection_reason is None  # healthy story: not an inbox item
+    assert gates_red == []  # nothing evaluated on the refused path
+    ev = read_story_events(s.id or 0, software_factory_root=am_root, slug_hint=s.slug)
+    fell = [e for e in ev if e.get("event") == "push_to_main_fell_back_to_pr"]
+    assert fell and str(fell[0]["reason"]).startswith("push_to_main_fell_back_to_pr:")
+    assert "requires status checks" in str(fell[0]["reason"])
+
+
+def test_finding4_fallen_back_story_merges_through_the_normal_auto_merge_path(
+    am_root: Path, gates_green: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: 778)
+    _write_cfg(am_root, L.PUSH_TO_MAIN)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PUSH_TO_MAIN)
+    _p2m_tick(am_root, db, s.id, "a" * 40, push_to_main_preflight_fn=_refuse)
+    merged: list[int] = []
+
+    def _merge(**kw: Any) -> None:
+        merged.append(kw["pr_number"])
+
+    fx = am.FixturePR(pr_number=778, head_sha="a" * 40, base_branch="main", story=_reload(db, s.id))
+    actions = am.auto_merge_tick(
         am_root,
-        db,
-        s.id,
-        "a" * 40,
-        push_to_main_preflight_fn=lambda c, b: (
-            delivery_gate.PREFLIGHT_REFUSE,
-            "main requires status checks ['ci']",
-        ),
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fx],
+        db_path=db,
+        merge_fn=_merge,
+        pr_merged_query=lambda **k: False,
+        wait_for_ci=False,
+        push_to_main_preflight_fn=lambda *a: pytest.fail("not a push_to_main story any more"),
     )
+    assert merged == [778] and actions[0].merged
+    assert _reload(db, s.id).state == StoryState.DEPLOY_PENDING.value
+
+
+def test_finding4_fallback_pr_create_failure_is_bounded(
+    am_root: Path, gates_red: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(H, "_open_pr_for_story", lambda *a, **k: None)
+    _write_cfg(am_root, L.PUSH_TO_MAIN)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PUSH_TO_MAIN)
+    _p2m_tick(am_root, db, s.id, "a" * 40, push_to_main_preflight_fn=_refuse)
+    row = _reload(db, s.id)
+    assert row.state == StoryState.PR_OPEN.value and row.delivery_level == L.PUSH_TO_MAIN.value
+    _p2m_tick(am_root, db, s.id, "a" * 40, push_to_main_preflight_fn=_refuse)
     row = _reload(db, s.id)
     assert row.state == StoryState.BLOCKED_DEPLOY_FAILED.value
-    assert (row.last_rejection_reason or "").startswith("push_to_main_refused:")
+    assert "retries exhausted" in (row.last_rejection_reason or "")
     assert gates_red == []
-    assert "push_to_main_refused" in _events(am_root, s)
 
 
 def test_finding4_preflight_error_is_a_hold(am_root: Path, gates_red: list[int]) -> None:
@@ -929,6 +985,19 @@ _GREEN = {
             delivery_gate.PREFLIGHT_REFUSE,
         ),
         ({"rules/branches/main": [{"type": "pull_request"}]}, delivery_gate.PREFLIGHT_REFUSE),
+        # Protected AND red: main-green hold wins — never a fallback on a red base.
+        (
+            {
+                "branches/main": {
+                    "protected": True,
+                    "protection": {"required_status_checks": {"contexts": ["main-green"]}},
+                },
+                "check-runs": {
+                    "check_runs": [{"name": "ci", "status": "completed", "conclusion": "failure"}]
+                },
+            },
+            delivery_gate.PREFLIGHT_HOLD,
+        ),
         (
             {
                 "check-runs": {

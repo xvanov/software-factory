@@ -223,9 +223,14 @@ Enforcement sites:
   head sha, `pr_number = -(story.id)`). Before any gate runs,
   `_push_to_main_preflight_gate` (→ `delivery_gate.push_to_main_preflight`)
   HOLDS while the base branch's checks are red/running/unreadable (no gate
-  run, nothing counted, `ci_hold_main_red:` reason) and REFUSES a base branch
-  that requires status checks or a PR (→ `BLOCKED_DEPLOY_FAILED`,
-  `push_to_main_refused:` reason, never forced). Then the same gate set runs;
+  run, nothing counted, `ci_hold_main_red:` reason; checked before
+  protection) and, for a green base that requires status checks or a PR,
+  FALLS BACK via `_fall_back_push_to_main_to_pr`: opens a ready PR, re-stamps
+  `delivery_level = auto_merge`, logs `push_to_main_fell_back_to_pr` (reason
+  `push_to_main_fell_back_to_pr:<why>`) + `delivery_level_lowered`; state
+  stays `PR_OPEN` and the next tick takes the normal auto-merge path. Never
+  pushed directly, never forced; PR-create failure is capped by
+  `_MAX_PR_CREATE_RETRIES` → `BLOCKED_DEPLOY_FAILED`. Otherwise the same gate set runs;
   its block cap is keyed per STORY (`_gate_block_history(per_story=True)`) —
   the worktree sha is not a stable key — and parks in `BLOCKED_CI_UNRESOLVED`
   after 3. `delivery_gate.fast_forward_default_branch` pushes the gated commit

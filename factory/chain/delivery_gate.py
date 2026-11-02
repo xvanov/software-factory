@@ -413,14 +413,15 @@ def push_to_main_preflight(app_config: Any, base: str, *, run: Any = None) -> tu
 
     Returns ``(verdict, reason)`` with ``verdict`` one of:
 
-    * ``PREFLIGHT_REFUSE`` — ``base`` is protected by required status checks or
-      a required pull request (classic branch protection or a ruleset). A
-      direct push would bypass the checks every PR must pass (or be rejected
-      outright), so the factory refuses ``push_to_main`` rather than force it.
-      Terminal for this story: it parks with the reason.
     * ``PREFLIGHT_HOLD`` — ``base``'s own CI is red or still running (the same
-      main-green hold PR merges get), or GitHub could not be read. Nothing is
-      written to the story beyond a hold reason; it is re-checked next tick.
+      main-green hold PR merges get), or GitHub could not be read. Checked
+      BEFORE protection: a red base holds even when it is protected. Nothing
+      is written to the story beyond a hold reason; re-checked next tick.
+    * ``PREFLIGHT_REFUSE`` — ``base`` is green but protected by required status
+      checks or a required pull request (classic branch protection or a
+      ruleset). A direct push would bypass the checks every PR must pass (or
+      be rejected outright), so the factory never pushes or forces; the
+      caller falls back to delivering through a PR at ``auto_merge``.
     * ``PREFLIGHT_OK`` — unprotected, and every check on ``base``'s head is
       green (or there are none).
 
@@ -443,11 +444,11 @@ def push_to_main_preflight(app_config: Any, base: str, *, run: Any = None) -> tu
         required = list(rsc.get("contexts") or []) + [
             c.get("context") for c in (rsc.get("checks") or []) if isinstance(c, dict)
         ]
+        refusal: str | None = None
         if branch.get("protected") and [r for r in required if r]:
-            return (
-                PREFLIGHT_REFUSE,
+            refusal = (
                 f"{base} requires status checks {sorted(r for r in required if r)!r}; "
-                "a direct push would bypass them",
+                "a direct push would bypass them"
             )
         # 2. Repository rulesets that apply to the branch.
         rules, err = _gh_api_json(f"repos/{repo}/rules/branches/{base}", runner)
@@ -461,11 +462,10 @@ def push_to_main_preflight(app_config: Any, base: str, *, run: Any = None) -> tu
                 and r.get("type") in ("required_status_checks", "pull_request")
             }
         )
-        if blocking:
-            return (
-                PREFLIGHT_REFUSE,
+        if blocking and refusal is None:
+            refusal = (
                 f"{base} is governed by ruleset rule(s) {blocking!r}; "
-                "a direct push would bypass them",
+                "a direct push would bypass them"
             )
         # 3. Main-green: every check on the base head must be green.
         runs, err = _gh_api_json(f"repos/{repo}/commits/{base}/check-runs?per_page=100", runner)
@@ -499,6 +499,10 @@ def push_to_main_preflight(app_config: Any, base: str, *, run: Any = None) -> tu
                 PREFLIGHT_HOLD,
                 f"{base}'s checks are still running ({sorted(set(running))!r}) — main-green hold",
             )
+        # Main-green FIRST: a red/running base holds even when the branch is
+        # protected — the PR fallback is for a green, guarded base.
+        if refusal is not None:
+            return PREFLIGHT_REFUSE, refusal
         return PREFLIGHT_OK, f"{base} unprotected and green"
     except Exception as exc:  # noqa: BLE001 - fail safe: hold, never push on a guess
         return PREFLIGHT_HOLD, f"preflight error: {exc!r}"[:300]

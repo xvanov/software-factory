@@ -3372,6 +3372,105 @@ def _settle_non_merging_story(
     return f"delivery {level.value}: never merged by the factory — {reason}; story -> {story.state}"
 
 
+#: Prefix of the reason recorded when ``push_to_main`` falls back to a PR.
+P2M_FALLBACK_REASON_PREFIX = "push_to_main_fell_back_to_pr:"
+EVENT_P2M_FELL_BACK = "push_to_main_fell_back_to_pr"
+
+
+def _fall_back_push_to_main_to_pr(
+    *,
+    story: StoryRecord,
+    fixture: FixturePR,
+    app: str,
+    cfg: AppConfig,
+    root: Path,
+    db: Path,
+    why: str,
+) -> MergeAction:
+    """Base branch requires status checks or a PR → deliver via ``auto_merge``.
+
+    Operator decision 2026-11-02: a protected default branch is not a reason
+    to stop; it is a reason to go through the door it guards. The story's
+    branch is already pushed (``handle_docs_enforcer`` pushes it for
+    ``push_to_main``), so this opens a READY PR and re-stamps the story at
+    ``auto_merge``. From the next tick the story is an ordinary auto-merge
+    story: the main-green hold, the repo's required checks and the full gate
+    set all apply, and ``gh pr merge --auto`` is armed only when they pass.
+    Nothing is ever pushed to the default branch directly and nothing is
+    forced.
+
+    Recorded as a ``push_to_main_fell_back_to_pr`` event (reason
+    ``push_to_main_fell_back_to_pr:<why>``) plus ``delivery_level_lowered``;
+    ``factory job status`` surfaces it as ``delivery_note``. Deliberately NOT
+    written to ``last_rejection_reason`` — that would list a healthy story in
+    ``factory inbox``.
+
+    A ``gh pr create`` failure leaves the level at ``push_to_main`` (so the
+    next tick retries this same path), bounded by
+    ``handlers._MAX_PR_CREATE_RETRIES``; exhaustion parks the story in
+    ``BLOCKED_DEPLOY_FAILED`` for a human.
+    """
+    from factory.chain.event_log import log_story_event
+    from factory.chain.handlers import (
+        _MAX_PR_CREATE_RETRIES,
+        _open_pr_for_story,
+        persist_story,
+    )
+
+    reason = f"{P2M_FALLBACK_REASON_PREFIX}{why}"
+    opened = _open_pr_for_story(story, cfg, root, draft=False, will_auto_merge=True)
+    if opened is None:
+        story.pr_create_retries += 1
+        msg = (
+            f"delivery push_to_main -> PR fallback: gh pr create failed (attempt "
+            f"{story.pr_create_retries}/{_MAX_PR_CREATE_RETRIES}) — {why}"
+        )
+        if story.pr_create_retries >= _MAX_PR_CREATE_RETRIES:
+            story.state = StoryState.BLOCKED_DEPLOY_FAILED.value
+            story.last_rejection_reason = msg + " — retries exhausted, parked for human action"
+        story.error = msg
+        persist_story(story, db)
+        action = MergeAction(app=app, pr_number=fixture.pr_number, merged=False, reason=msg)
+        _record_merge_action(action, fixture.head_sha, db)
+        return action
+
+    prev = story.delivery_level
+    story.github_pr_number = opened
+    story.pr_create_retries = 0
+    story.delivery_level = DeliveryLevel.AUTO_MERGE.value
+    story.error = None
+    persist_story(story, db)
+    for event, payload in (
+        (
+            EVENT_P2M_FELL_BACK,
+            {
+                "reason": reason,
+                "pr_number": opened,
+                "base": fixture.base_branch,
+                "head_sha": fixture.head_sha,
+            },
+        ),
+        (
+            delivery_gate.EVENT_LOWERED,
+            {"from": prev, "to": DeliveryLevel.AUTO_MERGE.value, "reason": reason},
+        ),
+    ):
+        try:
+            log_story_event(
+                story.id, event, payload, software_factory_root=root, slug_hint=story.slug
+            )
+        except Exception:  # noqa: BLE001 - telemetry only
+            pass
+    action = MergeAction(
+        app=app,
+        pr_number=opened,
+        merged=False,
+        reason=f"{reason}; opened PR #{opened}, delivered via auto_merge from the next tick",
+    )
+    _record_merge_action(action, fixture.head_sha, db)
+    return action
+
+
 def _push_to_main_preflight_gate(
     *,
     story: StoryRecord,
@@ -3394,15 +3493,13 @@ def _push_to_main_preflight_gate(
       stays put with a ``ci_hold_main_red:`` reason (so ``factory inbox`` shows
       why) and is re-checked next tick — identical semantics to the PR hold.
     * REFUSE (base requires status checks or a PR): the factory will not
-      bypass them, and will not force. The story parks in
-      ``BLOCKED_DEPLOY_FAILED`` with a ``push_to_main_refused:`` reason and a
-      ``push_to_main_refused`` event. Nothing was pushed to the default branch.
+      bypass them and will not force; it FALLS BACK to ``auto_merge`` via a
+      ready PR (``_fall_back_push_to_main_to_pr``). Nothing is pushed to the
+      default branch directly.
     * OK: clears a stale hold reason and returns ``None`` (evaluate normally).
 
     Never raises: an error in the check itself is a HOLD.
     """
-    from factory.chain.event_log import log_story_event
-    from factory.chain.handlers import persist_story
 
     try:
         fn = preflight_fn or delivery_gate.push_to_main_preflight
@@ -3416,28 +3513,9 @@ def _push_to_main_preflight_gate(
         return None
 
     if verdict == delivery_gate.PREFLIGHT_REFUSE:
-        reason = f"push_to_main_refused: {detail}"
-        story.state = StoryState.BLOCKED_DEPLOY_FAILED.value
-        story.last_rejection_reason = reason
-        story.error = (
-            f"delivery push_to_main: {detail}. Nothing was pushed. Re-submit the job "
-            "at level pr or auto_merge (which run the required checks), or change "
-            "the branch protection."
+        return _fall_back_push_to_main_to_pr(
+            story=story, fixture=fixture, app=app, cfg=cfg, root=root, db=db, why=detail
         )
-        persist_story(story, db)
-        try:
-            log_story_event(
-                story.id,
-                "push_to_main_refused",
-                {"base": fixture.base_branch, "head_sha": fixture.head_sha, "reason": detail},
-                software_factory_root=root,
-                slug_hint=story.slug,
-            )
-        except Exception:  # noqa: BLE001 - telemetry only
-            pass
-        action = MergeAction(app=app, pr_number=fixture.pr_number, merged=False, reason=reason)
-        _record_merge_action(action, fixture.head_sha, db)
-        return action
 
     # HOLD (anything not OK/REFUSE is a hold — fail safe).
     hold_reason = f"{_HOLD_REASON_PREFIX} push_to_main held — {detail}"

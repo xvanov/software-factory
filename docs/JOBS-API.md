@@ -40,13 +40,19 @@ How the factory enforces it (see `factory/chain/delivery_gate.py`):
   pushed); `branch` → `delivered_branch`; `draft_pr` / `pr` → `delivered_pr` (with the PR
   number); `auto_merge` / `push_to_main` → `deployed` (via `deploy_pending`).
 - `push_to_main` first checks GitHub (`delivery_gate.push_to_main_preflight`):
-  - if the default branch requires status checks or a pull request (branch protection or a
-    ruleset), the factory refuses: nothing is pushed, nothing is forced, and the story ends in
-    `blocked_deploy_failed` with a `push_to_main_refused: <why>` reason. Re-submit at `pr` or
-    `auto_merge`, which run those checks.
   - if the default branch's own CI is red or still running, or GitHub cannot be read, the story
     is HELD (the same main-green hold PR merges get): untouched, re-checked every tick, with a
-    `ci_hold_main_red:` reason visible in `factory inbox`.
+    `ci_hold_main_red:` reason visible in `factory inbox`. This is checked first: a red base
+    holds even when it is also protected.
+  - if the (green) default branch requires status checks or a pull request (branch protection
+    or a ruleset), the factory never pushes directly and never forces. It FALLS BACK to
+    `auto_merge` for that story (operator decision 2026-11-02): it opens a ready PR, re-stamps
+    the story's level as `auto_merge`, and from then on the normal auto-merge path applies —
+    main-green hold, the repo's required checks, the full gate set, then `gh pr merge --auto`.
+    The fallback is recorded as a `push_to_main_fell_back_to_pr` story event with reason
+    `push_to_main_fell_back_to_pr:<why>`, and `factory job status` reports it per story as
+    `delivery_note`. When that PR merges, the push_to_main job is `done`. If opening the PR
+    fails twice, the story parks in `blocked_deploy_failed`.
   Then it runs the full merge gate set against the worktree commit and pushes that exact
   commit to the default branch without force. Gate failures are capped at 3 per STORY (not per
   commit), then the story parks in `blocked_ci_unresolved`. If the push is not a fast-forward
