@@ -5,7 +5,7 @@
 | Name                                                   |    Stmts |     Miss |   Cover |   Missing |
 |------------------------------------------------------- | -------: | -------: | ------: | --------: |
 | factory/\_\_init\_\_.py                                |        2 |        0 |    100% |           |
-| factory/app\_config.py                                 |       98 |        4 |     96% |305, 309, 324, 358 |
+| factory/app\_config.py                                 |      100 |        4 |     96% |310, 314, 329, 363 |
 | factory/artifacts/\_\_init\_\_.py                      |        0 |        0 |    100% |           |
 | factory/backpressure/\_\_init\_\_.py                   |        0 |        0 |    100% |           |
 | factory/backpressure/parser.py                         |       67 |        5 |     93% |103-104, 128, 132-133 |
@@ -58,6 +58,7 @@
 | factory/context/loader.py                              |       87 |        5 |     94% |97, 101-102, 106, 179 |
 | factory/context/navigator.py                           |       39 |        2 |     95% |     65-66 |
 | factory/context/updater.py                             |       29 |        1 |     97% |        77 |
+| factory/delivery.py                                    |       51 |        1 |     98% |        75 |
 | factory/deploy/\_\_init\_\_.py                         |        4 |        0 |    100% |           |
 | factory/deploy/models.py                               |       28 |        0 |    100% |           |
 | factory/deploy/orchestrator.py                         |      284 |       34 |     88% |259, 261-264, 267-269, 318, 404-407, 433-443, 488-492, 534-538, 557-558, 563, 580, 591, 598, 706-707 |
@@ -133,7 +134,7 @@
 | factory/webhook/\_\_init\_\_.py                        |        0 |        0 |    100% |           |
 | factory/webhook/github.py                              |      186 |       40 |     78% |56, 60, 63-64, 96, 126, 162-167, 191-207, 252, 298-302, 345-346, 369-381, 385 |
 | factory/webhook/openhands\_events.py                   |       36 |        7 |     81% |69, 84-123 |
-| **TOTAL**                                              | **19710** | **3462** | **82%** |           |
+| **TOTAL**                                              | **19763** | **3463** | **82%** |           |
 
 
 ## Setup coverage badge
