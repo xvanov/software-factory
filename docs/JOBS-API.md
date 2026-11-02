@@ -18,16 +18,16 @@ is a success shape; non-zero = stdout is `{"error": "<code>", "message": "..."}`
 - `draft_pr`  — push + open a DRAFT PR; never mark ready, never merge.
 - `pr`        — open a ready PR; never merge.
 - `auto_merge`— today's behaviour: merge when chain gates (+ required CI) pass.
-- `push_to_main` — gates pass → fast-forward the default branch directly (no PR). Only valid on
-  repos whose config explicitly allows it.
+- `push_to_main` — gates pass → fast-forward the default branch directly (no PR).
 
-Per-app config (`apps/<app>/config.yaml`) sets `delivery.max` (ceiling) and `delivery.default`.
-A job may request a level; the EFFECTIVE level is `min(requested or default, max)`. A job can
-only lower autonomy below the app ceiling, never raise it (fail safe). Existing apps with no
-`delivery` block behave exactly as today (`auto_merge`).
+Per-app config (`apps/<app>/config.yaml`) sets only `delivery.default`. There is NO per-app
+ceiling: a job's requested level wins in either direction (operator decision 2026-11-02 — the
+operator tells the personal assistant the end state, and the assistant passes it on every job).
+`delivery.max` in a config is refused at load. A malformed request resolves to `none`. Existing
+apps with no `delivery` block behave exactly as today (`auto_merge`).
 
-PA mode → delivery mapping (PA side owns this): plan→(not a factory job), local→none,
-branch→branch, mr→draft_pr, full→draft_pr.
+The PA always sends `--delivery` explicitly, chosen from what the operator asked for; the app
+default applies only when a job omits it.
 
 ## Pipelines
 
@@ -84,12 +84,11 @@ Stops further dispatch for the job's stories (park/close), never deletes evidenc
 ```
 --repo <owner/name>      required
 --path <local clone>     optional; clones under the factory's repos root if absent
---delivery-max <level>   default draft_pr for newly added repos (safe default)
---delivery-default <level>
+--delivery-default <level>   default draft_pr for newly added repos
 ```
 Registers any repo as a factory app: writes `apps/<app>/config.yaml` with detected gate commands
 (language/toolchain detection; may use the onboarder persona), creates `directions/`.
-`{"app", "repo", "path", "config_path", "gates": {...}, "delivery": {"max", "default"}}`
+`{"app", "repo", "path", "config_path", "gates": {...}, "delivery": {"default"}}`
 
 ### `factory app list --json`
-`{"apps": [{"app", "repo", "path", "delivery": {"max", "default"}, "pipeline_default"}]}`
+`{"apps": [{"app", "repo", "path", "delivery": {"default"}, "pipeline_default"}]}`

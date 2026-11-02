@@ -9,21 +9,21 @@ def test_absent_block_keeps_legacy_auto_merge():
     assert effective_level(DeliveryConfig()) is L.AUTO_MERGE
 
 
-def test_request_can_lower_but_never_raise():
-    cfg = DeliveryConfig(max=L.PR, default=L.DRAFT_PR)
+def test_request_wins_in_both_directions():
+    cfg = DeliveryConfig(default=L.DRAFT_PR)
     assert effective_level(cfg) is L.DRAFT_PR
     assert effective_level(cfg, "branch") is L.BRANCH
-    assert effective_level(cfg, "push_to_main") is L.PR
-    assert effective_level(cfg, "AUTO_MERGE") is L.PR
+    assert effective_level(cfg, "push_to_main") is L.PUSH_TO_MAIN
+    assert effective_level(cfg, "AUTO_MERGE") is L.AUTO_MERGE
 
 
 def test_garbage_request_fails_safe_to_none():
     assert effective_level(DeliveryConfig(), "merge-please") is L.NONE
 
 
-def test_default_above_max_rejected():
+def test_ceiling_key_is_refused():
     with pytest.raises(ValueError):
-        DeliveryConfig(max=L.DRAFT_PR, default=L.AUTO_MERGE)
+        DeliveryConfig.model_validate({"max": "pr", "default": "draft_pr"})
 
 
 def test_predicates():

@@ -5,13 +5,14 @@ One ordered vocabulary shared with the personal assistant (see
 
     none < branch < draft_pr < pr < auto_merge < push_to_main
 
-An app's ``config.yaml`` sets a ceiling (``delivery.max``) and a default
-(``delivery.default``). A job (direction) may *request* a level in its
-``direction.md`` frontmatter (``delivery: <level>``); the effective level is
-``min(requested or default, max)``. A request can only LOWER autonomy below
-the app ceiling, never raise it — an unknown or malformed request resolves to
-the most restrictive level, ``none`` (fail safe: a broken input must block, not
-wave work through).
+An app's ``config.yaml`` sets a default (``delivery.default``). A job
+(direction) may request ANY level in its ``direction.md`` frontmatter
+(``delivery: <level>``) and that request wins outright — there is no per-app
+ceiling (operator decision 2026-11-02: whoever submits the job, normally the
+personal assistant acting on the operator's instruction, decides the end
+state). An unknown or malformed request resolves to the most restrictive
+level, ``none`` (fail safe: a typo must never make the factory do more than
+intended).
 
 Apps with no ``delivery`` block keep today's behaviour, ``auto_merge``, so this
 module changes nothing until an app opts in.
@@ -79,25 +80,22 @@ def parse_level(value: Any) -> DeliveryLevel | None:
         raise ValueError(f"unknown delivery level {value!r}; one of: {allowed}") from exc
 
 
-def clamp(level: DeliveryLevel, ceiling: DeliveryLevel) -> DeliveryLevel:
-    return level if level.rank <= ceiling.rank else ceiling
-
-
 class DeliveryConfig(BaseModel):
     """``delivery:`` block of ``apps/<app>/config.yaml``."""
 
-    max: DeliveryLevel = LEGACY_DEFAULT
-    default: DeliveryLevel | None = None
+    default: DeliveryLevel = LEGACY_DEFAULT
 
-    @model_validator(mode="after")
-    def _default_within_max(self) -> DeliveryConfig:
-        if self.default is None:
-            self.default = self.max
-        elif self.default.rank > self.max.rank:
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_ceiling(cls, data: Any) -> Any:
+        # A ``max`` key is a leftover from the ceiling design. Refuse it loudly
+        # rather than silently ignore a limit the operator thinks is enforced.
+        if isinstance(data, dict) and "max" in data:
             raise ValueError(
-                f"delivery.default={self.default.value} exceeds delivery.max={self.max.value}"
+                "delivery.max is not supported: there is no per-app ceiling; "
+                "set delivery.default and let each job choose its level"
             )
-        return self
+        return data
 
 
 def effective_level(config: DeliveryConfig | None, requested: Any = None) -> DeliveryLevel:
@@ -108,10 +106,8 @@ def effective_level(config: DeliveryConfig | None, requested: Any = None) -> Del
     the factory do *more* than intended — and never crashes a tick either.
     """
     cfg = config or DeliveryConfig()
-    ceiling = cfg.max
-    base = cfg.default or ceiling
     try:
         req = parse_level(requested)
     except ValueError:
         return DeliveryLevel.NONE
-    return clamp(req if req is not None else base, ceiling)
+    return req if req is not None else cfg.default
