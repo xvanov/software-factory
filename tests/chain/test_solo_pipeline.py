@@ -565,9 +565,10 @@ def fake_sdk(monkeypatch: pytest.MonkeyPatch) -> type[_Conv]:
     tools = types.ModuleType("openhands.tools.preset.default")
     tools.get_default_agent = lambda **_: object()  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "openhands.tools.preset.default", tools)
-    pyd = types.ModuleType("pydantic")
-    pyd.SecretStr = lambda s: s  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "pydantic", pyd)
+    # NOTE: do NOT stub ``pydantic`` here (other tests do). Swapping it out of
+    # ``sys.modules`` while a lazy ``litellm`` import runs leaves a half-imported
+    # ``litellm`` package behind and breaks later tests on the same worker
+    # (``KeyError: 'litellm'``). The runner only needs the real ``SecretStr``.
     monkeypatch.setenv("AZURE_API_KEY", "k")
     # A dev run never ends on prose in these fakes.
     monkeypatch.setattr(runner_module, "_ended_on_prose", lambda conv, persona: False)
