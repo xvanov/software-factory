@@ -151,7 +151,8 @@ Sharpened 2026-11-02 (`factory/job_routing.py`):
 --pipeline chain|solo|auto       default auto
 --delivery <level>               optional; any level incl. push_to_main (no ceiling, see above)
 --model <persona>=<model_id>     repeatable; per-job route override
---source <name>                  default "pa"; recorded on the direction
+--source <name>                  REQUIRED (no default); recorded on the direction; pa|human
+                                 are auto-approved (see Approval)
 --external-id <id>               the PA's run id; idempotency key per (source, external-id):
                                  a resubmit returns the existing job, does not create a second
 --flow-file <path>               optional (added v1.1): becomes the direction's flow.md
@@ -168,6 +169,10 @@ gate needs a `flow.md`, an `api_spec.md` or an explore tag. A job with none of t
 pm-sync deterministically marks it needs-direction, so `status` reports `needs_human`. Pass
 `--flow-file` (numbered user steps) or `--api-spec-file` (METHOD /path → status) to avoid that.
 A resubmit (`created: false`) returns the ORIGINAL job; the new flags are ignored.
+
+`--title`, `--source`, `--external-id` and each `--done` must be single lines: a CR/LF is refused
+with `invalid_argument` (it would inject sections into `direction.md`). A missing positional
+job id on `status`/`cancel` is a `missing_argument` JSON error under `--json`.
 
 Validation errors (`{"error": code, ...}`, exit 1): `missing_argument`, `invalid_argument`,
 `unknown_app`, `unknown_repo`, `ambiguous_repo`, `app_repo_mismatch`, `invalid_delivery`,
@@ -233,13 +238,24 @@ Stops further dispatch for the job's stories (park/close), never deletes evidenc
 `{"job_id", "state": "cancelled", "stories_parked": [<story id>, ...],
 "stories_left": [{"id", "state", "reason"}, ...]}`
 
-In-flight stories move to `closed_by_operator` and the direction is closed. FINISHED work is
-left alone: `deploy_pending`/`deployed` (merged), `delivered_*`, and any story whose PR GitHub
-reports merged. Before parking a story with an open PR, cancel disarms GitHub auto-merge
-(`gh pr merge --disable-auto`); open PRs are NOT closed. Fail safe: if GitHub cannot say whether
-a story's PR merged, or the disarm fails, that story is not parked and is listed in
-`stories_left` — re-run cancel. Idempotent. If an in-flight handler writes a story back after a
-cancel, `status` keeps reporting the live state with a `why` telling you to re-run cancel.
+A job that is already `done` is NOT cancelled: cancel is a no-op returning
+`{"job_id", "state": "done", "stories_parked": [], "stories_left": [], "why"}` and writes
+nothing (a cancel cannot un-deliver work). And `status` reports a fully delivered and
+GitHub-confirmed job as `done` even if a cancel marker landed late, with a `why` saying so.
+
+Otherwise every story that is not finished moves to `closed_by_operator`. That covers in-flight
+stories and also the stuck sinks (`blocked_ci_unresolved`, `blocked_deploy_failed`,
+`blocked_review_nonconvergent`, …). The direction is closed. FINISHED work is left alone:
+`deploy_pending`/`deployed` (merged), `delivered_*`, the superseded dual-draft loser, and any
+story whose PR GitHub reports merged. Every remaining story with an OPEN PR has GitHub
+auto-merge disarmed (`gh pr merge --disable-auto`) before it is parked, whatever its state.
+Open PRs are NOT closed. Each story is handled under the same per-story lock the auto-merge pass
+holds around a merge: it is re-read inside the lock and parked with a compare-and-set. So a
+cancel can never be overwritten by a merge, nor a merge by a cancel. Fail safe: lock busy,
+GitHub unable to say whether the PR merged, or a failed disarm → that story is not parked and is
+listed in `stories_left` with the reason; re-run cancel. Idempotent. If an in-flight handler
+writes a story back after a cancel, `status` keeps reporting the live state with a `why`
+telling you to re-run cancel.
 
 ### `factory app add --json`
 ```

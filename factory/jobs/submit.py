@@ -78,7 +78,7 @@ class SubmitRequest:
     pipeline: str = "auto"
     delivery: str | None = None
     models: list[str] = field(default_factory=list)
-    source: str = "pa"
+    source: str = ""
     external_id: str | None = None
     flow_md: str | None = None
     api_spec_md: str | None = None
@@ -237,7 +237,20 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
         raise JobError("missing_argument", "one of --ask or --ask-file is required (non-empty)")
     source = (req.source or "").strip()
     if not source:
-        raise JobError("missing_argument", "--source must be non-empty")
+        raise JobError(
+            "missing_argument", "--source is required (pa | human | <other>; see JOBS-API.md)"
+        )
+    # SHOULD 7 (review 2026-11-02): single-line fields are written into
+    # direction.md headings/list items; a CR/LF would inject a section
+    # (e.g. a fake "## Acceptance Criteria"). Refuse rather than sanitise.
+    for flag, value in (
+        ("--title", title),
+        ("--source", source),
+        ("--external-id", req.external_id or ""),
+        *(("--done", d) for d in req.done),
+    ):
+        if "\n" in value or "\r" in value:
+            raise JobError("invalid_argument", f"{flag} must be a single line (no CR/LF)")
     external_id = (req.external_id or "").strip() or None
 
     pipeline = (req.pipeline or "auto").strip().lower()

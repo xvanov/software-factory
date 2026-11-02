@@ -113,7 +113,15 @@ LOCAL_PR_STATES: frozenset[str] = frozenset(
 )
 
 
+#: States with no ``_TRANSITIONS`` edge that are nevertheless IN FLIGHT:
+#: ``ci_pending`` is driven by the auto-merge poller by direct assignment, so
+#: ``is_terminal`` wrongly calls it terminal (review 2026-11-02, MUST 2).
+_LIVE_BY_OMISSION: frozenset[str] = frozenset({_S.CI_PENDING.value})
+
+
 def _is_live(state: str) -> bool:
+    if state in _LIVE_BY_OMISSION:
+        return True
     try:
         return not is_terminal(StoryState(state))
     except ValueError:
@@ -397,13 +405,34 @@ def _latest_ts(values: list[Any]) -> str:
 # --------------------------------------------------------------------------- #
 
 
+def _job_level(cfg: AppConfig, meta: dict[str, Any], rows: list[dict[str, Any]]) -> DeliveryLevel:
+    """The job's delivery level (nice 11, review 2026-11-02).
+
+    An explicit ``delivery:`` request IS the level. A job that omitted it ran
+    at the app default AS OF SPAWN — which the chain stamped on its stories —
+    so read the stamp (lowest-id story) rather than today's config, which may
+    have changed since. No stories yet → the current app default."""
+    if meta.get("delivery"):
+        return effective_level(cfg.delivery, meta.get("delivery"))
+    for row in rows:
+        if row.get("state") in IGNORED_STATES:
+            continue
+        try:
+            stamped = parse_level(row.get("delivery_level"))
+        except ValueError:
+            return DeliveryLevel.NONE
+        if stamped is not None:
+            return stamped
+    return effective_level(cfg.delivery, None)
+
+
 def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
     cfg: AppConfig = load_app_config(ref.app, ctx.root)
     meta = ref.meta
-    level = effective_level(cfg.delivery, meta.get("delivery"))
     state_yaml = read_state_yaml(ref.dir_path)
     dir_status = _direction_status(ctx, ref, state_yaml)
     rows = _stories(ctx, ref)
+    level = _job_level(cfg, meta, rows)
     gh = ctx.github.view(cfg.repo)
     views = [_classify(ctx, r, level, cfg, gh) for r in rows]
     counted = [v for v in views if v.kind != "ignored"]
@@ -414,9 +443,18 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
     human = [v for v in counted if v.kind == "human"]
     failed = [v for v in counted if v.kind == "failed"]
 
+    all_confirmed = bool(counted) and all(v.kind == "delivered" for v in counted)
+    if cancel is not None and all_confirmed:
+        # MUST 3 (review 2026-11-02): a job that FINISHED is done, whatever a
+        # later cancel says — a cancel cannot un-deliver work.
+        state = "done"
+        why = (
+            f"cancel requested at {cancel.get('at', '?')} after every story was already "
+            "delivered; nothing was cancelled"
+        )
     # Merged/delivered work classifies as delivered, never live, so a cancel
     # that left it alone (finding 6) still reads as cancelled here.
-    if cancel is not None and not live:
+    elif cancel is not None and not live:
         state = "cancelled"
         why = f"cancelled at {cancel.get('at', '?')} by {cancel.get('by', '?')}"
     elif not counted:
@@ -570,35 +608,56 @@ def list_jobs(
     return {"jobs": jobs}
 
 
+#: Never parked by cancel — the human (or quarantine) already ruled.
+_CANCEL_LEAVE_STATES: frozenset[str] = frozenset(
+    {_S.CLOSED_BY_OPERATOR.value, _S.QUARANTINED_INVALID_STATE.value}
+)
+
+
 def cancel_job(
     root: Path, job_id: str, *, by: str = "factory job cancel", github: bool = True
 ) -> dict[str, Any]:
-    """Stop dispatch for the job: park in-flight stories, close the direction.
+    """Stop the job: disarm its PRs, park its unfinished stories, close the direction.
 
     Never deletes evidence: worktrees, branches, PRs, logs and spend stay.
 
-    * FINISHED work is left exactly as it is (finding 6, 2026-11-02): a story in
-      ``deploy_pending`` / ``deployed`` (merged) or a ``delivered_*`` end state
-      is never parked — cancelling the job must not orphan a merge from its
-      deploy or rewrite a delivered result.
-    * A story whose PR GitHub reports MERGED (reconcile has not caught up yet)
-      is merged work too: left alone.
-    * Every other in-flight story moves to ``closed_by_operator`` (terminal,
-      not mergeable, not auto-recoverable). Before that, any GitHub
-      auto-merge armed on its PR is DISARMED (``gh pr merge --disable-auto``) —
-      parking the row alone does not stop GitHub merging an armed PR.
-    * Fail safe: when a story has a PR and GitHub cannot say whether it merged,
-      or the disarm fails, the story is NOT parked; it is listed in
-      ``stories_left`` with the reason, and re-running cancel retries.
+    * A job that is already ``done`` is left exactly as it is (MUST 3, review
+      2026-11-02): cancel is a no-op returning the real state — a cancel cannot
+      un-deliver work, and it must not flip a finished job to ``cancelled``.
+    * FINISHED work is never touched: ``deploy_pending`` / ``deployed``
+      (merged), ``delivered_*``, a story whose PR GitHub reports MERGED, and
+      the superseded dual-draft loser.
+    * EVERY other story of the job with an OPEN PR has GitHub auto-merge
+      DISARMED (``gh pr merge --disable-auto``) — whatever its state, including
+      the terminal / human-pending sinks (``blocked_ci_unresolved``,
+      ``blocked_deploy_failed``, ``blocked_review_nonconvergent``, …) that can
+      still carry an armed auto-merge (MUST 2). Then it is parked in
+      ``closed_by_operator``.
+    * Race-safe (MUST 1): each story is handled under the same per-story lock
+      the auto-merge pass takes around its merge, re-read inside the lock, and
+      parked with a compare-and-set from the state just read.
+    * Fail safe: lock busy, GitHub unable to say whether the PR merged, or a
+      failed disarm → the story is NOT parked and is listed in
+      ``stories_left`` with the reason; re-run cancel.
 
     Idempotent: re-running re-parks anything an in-flight handler wrote back.
     """
     from factory.chain import delivery_gate
-    from factory.chain.handlers import get_story, persist_story
+    from factory.chain.handlers import get_story
     from factory.directions.parser import parse_direction_dir
     from factory.directions.watcher import mark_direction_status, merge_state
 
     ref = find_job(root, job_id)
+    before = job_status(root, job_id, github=github)
+    if before["state"] == "done":
+        return {
+            "job_id": ref.job_id,
+            "state": "done",
+            "stories_parked": [],
+            "stories_left": [],
+            "why": "job already done — nothing to cancel",
+        }
+
     db = state_db_path(root)
     now = datetime.now(UTC).isoformat()
     direction = parse_direction_dir(ref.app, ref.dir_path)
@@ -617,51 +676,60 @@ def cancel_job(
     finally:
         if ctx.conn is not None:
             ctx.conn.close()
+    untouchable = CANCEL_PROTECTED_STATES | IGNORED_STATES | _CANCEL_LEAVE_STATES
+
+    def _leave(sid: int, state: str, reason: str) -> None:
+        left.append({"id": sid, "state": state, "reason": reason})
+
     for row in rows:
-        if not _is_live(str(row.get("state") or "")):
+        sid = int(row["id"])
+        row_state = str(row.get("state") or "")
+        if row_state in untouchable:
+            if row_state in CANCEL_PROTECTED_STATES and _is_live(row_state):
+                _leave(sid, row_state, "finished work (merged, deploying)")
             continue
-        story = get_story(int(row["id"]), db)
-        if story is None or not _is_live(story.state):
-            continue
-        if story.state in CANCEL_PROTECTED_STATES:
-            left.append({"id": story.id, "state": story.state, "reason": "finished work"})
-            continue
-        pr_no = story.github_pr_number if (story.github_pr_number or 0) > 0 else None
-        if pr_no is not None:
-            info = gh.pr(pr_no) if gh is not None else None
-            if info is None:
-                left.append(
-                    {
-                        "id": story.id,
-                        "state": story.state,
-                        "reason": f"cannot confirm PR #{pr_no} is unmerged (GitHub unavailable); "
-                        "re-run cancel",
-                    }
-                )
+        with delivery_gate.story_lock(root, sid, timeout=30) as held:
+            if not held:
+                _leave(sid, str(row.get("state")), "story lock busy (a merge in progress?); re-run")
                 continue
-            if info.state == "merged":
-                left.append(
-                    {"id": story.id, "state": story.state, "reason": f"PR #{pr_no} is merged"}
-                )
+            story = get_story(sid, db)
+            if story is None or story.state in untouchable:
+                if story is not None and story.state in CANCEL_PROTECTED_STATES:
+                    _leave(sid, story.state, "finished work (became merged/delivered)")
                 continue
-            if info.state == "open":
-                err = delivery_gate.disable_auto_merge(cfg, pr_no)
-                if err is not None:
-                    left.append(
-                        {
-                            "id": story.id,
-                            "state": story.state,
-                            "reason": f"could not disarm auto-merge on PR #{pr_no}: {err}",
-                        }
+            pr_no = story.github_pr_number if (story.github_pr_number or 0) > 0 else None
+            if pr_no is not None:
+                info = gh.pr(pr_no) if gh is not None else None
+                if info is None:
+                    _leave(
+                        sid,
+                        story.state,
+                        f"cannot confirm PR #{pr_no} is unmerged (GitHub unavailable); re-run",
                     )
                     continue
-        from_state = story.state
-        story.state = StoryState.CLOSED_BY_OPERATOR.value
-        story.error = (
-            f"cancelled via 'factory job cancel' ({job_id}) at {now} while in {from_state}"
-        )
-        persist_story(story, db_path=db)
-        parked.append(int(row["id"]))
+                if info.state == "merged":
+                    _leave(sid, story.state, f"PR #{pr_no} is merged")
+                    continue
+                if info.state == "open":
+                    err = delivery_gate.disable_auto_merge(cfg, pr_no)
+                    if err is not None:
+                        _leave(
+                            sid, story.state, f"could not disarm auto-merge on PR #{pr_no}: {err}"
+                        )
+                        continue
+            from_state = story.state
+            if delivery_gate.cas_story_state(
+                db,
+                sid,
+                {from_state},
+                StoryState.CLOSED_BY_OPERATOR.value,
+                error=(
+                    f"cancelled via 'factory job cancel' ({job_id}) at {now} while in {from_state}"
+                ),
+            ):
+                parked.append(sid)
+            else:
+                _leave(sid, from_state, "state changed during cancel; re-run")
 
     try:
         if direction.status != "closed":

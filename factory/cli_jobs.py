@@ -67,6 +67,14 @@ def _render_human(obj: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _need_job_id(job_id: str | None) -> str:
+    """Nice 8 (review 2026-11-02): a missing positional is a JSON error under
+    ``--json`` like every other validation error, not Typer's usage text."""
+    if not job_id:
+        raise JobError("missing_argument", "a job id (<app>:<direction_id>) is required")
+    return job_id
+
+
 def _run(as_json: bool, fn: Callable[[], dict[str, Any]]) -> None:
     """Run ``fn`` with stdout diverted to stderr, then print exactly one result."""
     _load_env()
@@ -98,7 +106,9 @@ def submit_cmd(
     pipeline: str = typer.Option("auto", "--pipeline", help="chain | solo | auto"),
     delivery: str | None = typer.Option(None, "--delivery", help="Requested delivery level"),
     model: list[str] | None = typer.Option(None, "--model", help="<persona>=<model_id> (repeat)"),
-    source: str = typer.Option("pa", "--source", help="Who is submitting (recorded)"),
+    source: str | None = typer.Option(
+        None, "--source", help="Who is submitting (required; pa|human are auto-approved)"
+    ),
     external_id: str | None = typer.Option(
         None, "--external-id", help="Caller's id; idempotency key per (source, external-id)"
     ),
@@ -135,7 +145,7 @@ def submit_cmd(
                 pipeline=pipeline,
                 delivery=delivery,
                 models=list(model or []),
-                source=source,
+                source=source or "",
                 external_id=external_id,
                 flow_md=read(flow_file, "--flow-file"),
                 api_spec_md=read(api_spec_file, "--api-spec-file"),
@@ -147,7 +157,7 @@ def submit_cmd(
 
 @job_app.command("status")
 def status_cmd(
-    job_id: str = typer.Argument(..., help="<app>:<direction_id>"),
+    job_id: str | None = typer.Argument(None, help="<app>:<direction_id>"),
     as_json: bool = typer.Option(False, "--json", help="Print one JSON object"),
     no_github: bool = typer.Option(
         False, "--no-github", help="Skip GitHub lookups (local view only)"
@@ -156,7 +166,7 @@ def status_cmd(
     """Report a job's state; PR state and merged come from GitHub."""
     from factory.jobs.status import job_status
 
-    _run(as_json, lambda: job_status(_root(), job_id, github=not no_github))
+    _run(as_json, lambda: job_status(_root(), _need_job_id(job_id), github=not no_github))
 
 
 @job_app.command("list")
@@ -182,18 +192,18 @@ def list_cmd(
 
 @job_app.command("cancel")
 def cancel_cmd(
-    job_id: str = typer.Argument(..., help="<app>:<direction_id>"),
+    job_id: str | None = typer.Argument(None, help="<app>:<direction_id>"),
     as_json: bool = typer.Option(False, "--json", help="Print one JSON object"),
 ) -> None:
     """Stop further dispatch for a job (parks its live stories; deletes nothing)."""
     from factory.jobs.status import cancel_job
 
-    _run(as_json, lambda: cancel_job(_root(), job_id))
+    _run(as_json, lambda: cancel_job(_root(), _need_job_id(job_id)))
 
 
 @job_app.command("follow")
 def follow_cmd(
-    job_id: str = typer.Argument(..., help="<app>:<direction_id>"),
+    job_id: str | None = typer.Argument(None, help="<app>:<direction_id>"),
     interval: float = typer.Option(3.0, "--interval", help="Seconds between polls"),
 ) -> None:
     """Stream a job's events as plain lines; exit 0 when the job is terminal."""
@@ -201,7 +211,7 @@ def follow_cmd(
 
     _load_env()
     try:
-        follow_job(_root(), job_id, interval=interval)
+        follow_job(_root(), _need_job_id(job_id), interval=interval)
     except JobError as exc:
         print(f"error ({exc.code}): {exc.message}", file=sys.stderr)
         raise typer.Exit(code=_EXIT_ERROR) from None

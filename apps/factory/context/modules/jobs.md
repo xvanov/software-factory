@@ -136,6 +136,24 @@ everything except a terminal `done`, reports `pr_state: null`, and appends `GitH
 
 ## Cancel
 
+Review 2026-11-02 rules (`status.cancel_job`), applied in this order:
+- A `done` job is a no-op. Nothing is written and the real state is
+  returned. Status also reports a fully confirmed job as `done` even if a
+  cancel marker exists.
+- Every non-finished story is parked, including stuck sinks
+  (`blocked_ci_unresolved`, `blocked_deploy_failed`, …). Before parking, any
+  open PR is disarmed, whatever the story's state.
+- `closed_by_operator` and `quarantined_invalid_state` rows are left as
+  they are.
+- Each story is handled under `delivery_gate.story_lock` and parked with
+  `delivery_gate.cas_story_state`. This is the same lock the auto-merge pass
+  holds around its merge.
+- `ci_pending` counts as in flight (`status._LIVE_BY_OMISSION`).
+
+The job-level `delivery` is the explicit `--delivery` request. Without one,
+it is the level stamped on the job's stories at spawn
+(`status._job_level`), not today's app default.
+
 Sets `state.yaml: job_cancelled`, moves every IN-FLIGHT story to
 `closed_by_operator`, and closes the direction (`mark_direction_status`).
 Finished work is never parked: `deploy_pending`/`deployed`, `delivered_*`

@@ -74,10 +74,15 @@ def _fake_gh(prs: list[dict[str, Any]], branches: set[str] | None = None) -> Any
     return run
 
 
-def _cli(*args: str) -> tuple[int, Any]:
+def _cli(*args: str, default_source: bool = True) -> tuple[int, Any]:
+    """Invoke ``factory job …``. ``--source`` is required (review nice 9);
+    submit calls get ``--source pa`` unless they pass their own or opt out."""
     from factory.cli import app
 
-    result = CliRunner().invoke(app, ["job", *args])
+    argv = list(args)
+    if default_source and argv and argv[0] == "submit" and "--source" not in argv:
+        argv += ["--source", "pa"]
+    result = CliRunner().invoke(app, ["job", *argv])
     out = result.stdout.strip()
     return result.exit_code, (json.loads(out) if out.startswith("{") else out)
 
@@ -554,13 +559,14 @@ def test_cancel_parks_live_stories_and_keeps_evidence(root: Path) -> None:
     code, obj = _cli("cancel", job["job_id"], "--json")
     assert code == 0
     assert obj["job_id"] == job["job_id"] and obj["state"] == "cancelled"
-    assert obj["stories_parked"] == [live.id]
+    # A stuck sink (blocked_ci_unresolved) is parked too (review MUST 2).
+    assert sorted(obj["stories_parked"]) == sorted([live.id, done.id])
 
     db = root / "state" / "factory.db"
     parked = get_story(live.id, db)
     assert parked.state == StoryState.CLOSED_BY_OPERATOR.value
     assert parked.github_branch == "story/1-x"  # evidence kept
-    assert get_story(done.id, db).state == StoryState.BLOCKED_CI_UNRESOLVED.value
+    assert get_story(done.id, db).state == StoryState.CLOSED_BY_OPERATOR.value
     assert Path(job["direction_path"]).is_dir()
 
     st = job_status(root, job["job_id"])
@@ -889,3 +895,143 @@ def test_push_to_main_fallback_pr_merged_is_done_with_a_delivery_note(
         _fake_gh([{"number": 31, "state": "OPEN", "url": "u", "headRefName": "b"}]),
     )
     assert job_status(root, job["job_id"])["state"] != "done"
+
+
+# --------------------------------------------------------------------------- #
+# review 2 (2026-11-02)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        StoryState.BLOCKED_CI_UNRESOLVED,
+        StoryState.BLOCKED_DEPLOY_FAILED,
+        StoryState.BLOCKED_REVIEW_NONCONVERGENT,
+        StoryState.CI_PENDING,
+    ],
+)
+def test_must2_cancel_disarms_and_parks_stuck_sinks_with_an_open_pr(
+    root: Path, monkeypatch: pytest.MonkeyPatch, disarm_calls: list[int], state: StoryState
+) -> None:
+    from factory.chain.handlers import get_story
+
+    job = _submit("--delivery", "auto_merge")
+    s = _story(root, "001", state.value, github_pr_number=31, delivery_level="auto_merge")
+    monkeypatch.setattr(
+        gh_mod,
+        "_run_gh",
+        _fake_gh([{"number": 31, "state": "OPEN", "url": "u", "headRefName": "b"}]),
+    )
+    out = cancel_job(root, job["job_id"])
+    assert disarm_calls == [31] and out["stories_parked"] == [s.id]
+    assert (
+        get_story(s.id, root / "state" / "factory.db").state == StoryState.CLOSED_BY_OPERATOR.value
+    )
+    assert job_status(root, job["job_id"])["state"] == "cancelled"
+
+
+def test_must2_ci_pending_is_in_flight_not_failed(root: Path) -> None:
+    job = _submit("--delivery", "auto_merge")
+    _story(root, "001", StoryState.CI_PENDING.value, delivery_level="auto_merge")
+    assert job_status(root, job["job_id"], github=False)["state"] == "in_progress"
+
+
+def test_must3_cancel_on_a_done_job_is_a_noop(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from factory.chain.handlers import get_story
+
+    job = _submit("--delivery", "pr")
+    s = _story(root, "001", StoryState.DELIVERED_PR.value, github_pr_number=5, delivery_level="pr")
+    monkeypatch.setattr(
+        gh_mod,
+        "_run_gh",
+        _fake_gh([{"number": 5, "state": "OPEN", "url": "u", "headRefName": "b"}]),
+    )
+    assert job_status(root, job["job_id"])["state"] == "done"
+    out = cancel_job(root, job["job_id"])
+    assert out["state"] == "done" and out["stories_parked"] == []
+    assert job_status(root, job["job_id"])["state"] == "done"
+    assert get_story(s.id, root / "state" / "factory.db").state == StoryState.DELIVERED_PR.value
+    d = Path(job["direction_path"])
+    assert "job_cancelled" not in (yaml.safe_load((d / "state.yaml").read_text()) or {})
+
+
+def test_must3_late_cancel_marker_does_not_flip_done(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Even if a cancel marker lands (race), a fully delivered job reads done."""
+    from factory.directions.watcher import merge_state
+
+    job = _submit("--delivery", "none")
+    _story(root, "001", StoryState.DELIVERED_LOCAL.value, delivery_level="none")
+    merge_state(
+        parse_direction_dir("demo", Path(job["direction_path"])),
+        {"job_cancelled": {"at": "t", "by": "x"}},
+    )
+    st = job_status(root, job["job_id"], github=False)
+    assert st["state"] == "done" and "after every story was already delivered" in st["why"]
+
+
+def test_must1_cancel_respects_the_story_lock(root: Path, disarm_calls: list[int]) -> None:
+    from factory.chain import delivery_gate
+    from factory.chain.handlers import get_story
+
+    job = _submit()
+    s = _story(root, "001", StoryState.DEV_IN_PROGRESS.value)
+    import factory.jobs.status as st_mod
+
+    real_lock = delivery_gate.story_lock
+
+    def short_lock(r: Path, sid: int, *, timeout: float | None = None) -> Any:
+        return real_lock(r, sid, timeout=0.2)
+
+    with real_lock(root, s.id or 0) as held:  # the auto-merge pass is mid-merge
+        assert held
+        orig = delivery_gate.story_lock
+        delivery_gate.story_lock = short_lock  # type: ignore[assignment]
+        try:
+            out = st_mod.cancel_job(root, job["job_id"])
+        finally:
+            delivery_gate.story_lock = orig  # type: ignore[assignment]
+    assert out["stories_parked"] == [] and "lock busy" in out["stories_left"][0]["reason"]
+    assert get_story(s.id, root / "state" / "factory.db").state == StoryState.DEV_IN_PROGRESS.value
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--title", "T\n\n## Acceptance Criteria\n\n- [ ] INJECTED"),
+        ("--done", "real\n## Why\nx"),
+        ("--title", "carriage\rreturn"),
+    ],
+)
+def test_should7_newlines_in_single_line_fields_are_refused(
+    root: Path, flag: str, value: str
+) -> None:
+    args = ["submit", "--json", "--app", "demo", "--ask", "a"]
+    args += [flag, value] if flag == "--title" else ["--title", "t", flag, value]
+    code, obj = _cli(*args)
+    assert code == 1 and obj["error"] == "invalid_argument" and flag in obj["message"]
+    assert not (root / "apps" / "demo" / "directions").exists()
+
+
+@pytest.mark.parametrize("cmd", ["status", "cancel"])
+def test_nice8_missing_job_id_is_a_json_error(root: Path, cmd: str) -> None:
+    code, obj = _cli(cmd, "--json")
+    assert code == 1 and isinstance(obj, dict) and obj["error"] == "missing_argument"
+
+
+def test_nice9_source_is_required(root: Path) -> None:
+    code, obj = _cli(
+        "submit", "--json", "--app", "demo", "--title", "t", "--ask", "a", default_source=False
+    )
+    assert code == 1 and obj["error"] == "missing_argument" and "--source" in obj["message"]
+
+
+def test_nice11_job_delivery_is_the_spawn_stamp_not_todays_config(root: Path) -> None:
+    job = _submit()  # no --delivery: the app default (draft_pr) at spawn
+    _story(
+        root, "001", StoryState.DELIVERED_PR.value, github_pr_number=4, delivery_level="draft_pr"
+    )
+    _write_app(root, "demo", "acme/demo", "delivery:\n  default: auto_merge\n")  # changed later
+    assert job_status(root, job["job_id"], github=False)["delivery"] == "draft_pr"
