@@ -2599,7 +2599,7 @@ def why_cmd(
 
     from factory.chain.handlers import _engine
     from factory.chain.handlers import stories_in_flight as _in_flight
-    from factory.chain.orchestrator import _DISPATCH, _build_current_state
+    from factory.chain.orchestrator import _build_current_state, _dispatch_for_story
     from factory.chain.state_machine import StoryRecord, StoryState, list_transitions_from
     from factory.settings.enforcer import can_dispatch
     from factory.settings.loader import load_settings
@@ -2627,7 +2627,7 @@ def why_cmd(
     # Project the next tick: which handler kind would fire, and would the
     # enforcer allow it?
     projection_line = "next-tick projection: (terminal — no handler dispatches from here)"
-    handler_name = _DISPATCH.get(StoryState(story.state))
+    handler_name = _dispatch_for_story(story)
     if handler_name is not None:
         # Resolve the actual job_kind the orchestrator would pass to the
         # enforcer; ``_resolve_job_kind`` handles bug-suffix routing for

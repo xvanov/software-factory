@@ -342,14 +342,23 @@ def _story_budget_breaker_reason(story: StoryRecord, caps: Any) -> str | None:
 def _dispatch_for_story(story: StoryRecord) -> str | None:
     """Pick the handler name for ``story`` given its current state.
 
-    Pure wrapper around ``_DISPATCH`` plus one branch: ``STORY_CREATED``
-    depends on ``story.chain_kind`` (tdd → sm, docs → docs_sm).
+    Pure wrapper around ``_DISPATCH`` plus two branches: ``STORY_CREATED``
+    depends on ``story.chain_kind`` (tdd → sm, docs → docs_sm), and
+    ``TESTS_GREEN`` depends on ``story.pipeline`` (chain → review, solo →
+    tech_writer).
     """
     state = StoryState(story.state)
     if state == StoryState.STORY_CREATED:
         if story.chain_kind == "docs":
             return "docs_sm"
         return "sm"
+    if state == StoryState.TESTS_GREEN:
+        # SOLO pipeline: no reviewer round-trip. Read from the spawn stamp on
+        # the row, never from live config (factory/chain/solo.py).
+        from factory.chain.solo import is_solo
+
+        if is_solo(story):
+            return "tech_writer"
     return _DISPATCH.get(state)
 
 
@@ -1078,6 +1087,13 @@ def _prune_stale_in_progress(
         target = _STALE_RECOVERY_MAP.get(story.state)
         if target is None:
             continue
+        if story.state == "tech_writer_in_progress":
+            from factory.chain.solo import is_solo
+
+            if is_solo(story):
+                # A solo story never had a reviewer verdict: re-enter where it
+                # actually came from (TESTS_GREEN dispatches tech_writer for solo).
+                target = "tests_green"
         try:
             updated_iso = story.updated_at or story.created_at
             updated_ts = _dt.fromisoformat(updated_iso).timestamp()
@@ -1091,8 +1107,12 @@ def _prune_stale_in_progress(
         # Clamp dev_retries so the recovered row gets one fresh shot
         # under whatever the current cap is, instead of insta-exhausting
         # on a stale count from a previous cap regime.
-        if from_state == "dev_in_progress" and story.dev_retries >= _max_dev_retries(root):
-            story.dev_retries = max(0, _max_dev_retries(root) - 1)
+        if from_state == "dev_in_progress":
+            from factory.chain.solo import max_dev_attempts
+
+            _cap = max_dev_attempts(story, _max_dev_retries(root))
+            if story.dev_retries >= _cap:
+                story.dev_retries = max(0, _cap - 1)
         story.error = (
             f"stale-state recovery: rolled back from {from_state!r} "
             f"(no row update for >{_STALE_THRESHOLD_SECONDS // 60} min)"

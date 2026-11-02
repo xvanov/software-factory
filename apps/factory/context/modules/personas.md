@@ -184,8 +184,11 @@ treats the directory's `*.md` glob as the registry.
   only the stamp (`handlers._route_for`). Reviewer independence is re-checked
   on the merged map and a collision is refused (`review_independence`), never
   repaired. `pipeline: auto` (or absent) takes `AppConfig.pipeline_default`
-  (`Literal["chain","solo","auto"]`, default `chain`; `auto` there = `chain`). `pipeline: solo` is refused (`pipeline_unavailable`) until a
-  production solo engine exists (`SOLO_PIPELINE_IMPLEMENTED`).
+  (`Literal["chain","solo","auto"]`, default `chain`; `auto` there = `chain`).
+  `pipeline: solo` runs the production solo engine (`factory/chain/solo.py`):
+  one long dev conversation with in-conversation gate feedback, no reviewer,
+  then the shared tech_writer → docs_enforcer → delivery → merge-gate path.
+  `SOLO_PIPELINE_IMPLEMENTED` is its kill switch.
 - Providers: any persona may use `anthropic/…`, `openrouter/…`, `openai/…`, or
   `openai_compat/…` (generic OpenAI-compatible endpoint; base URL mandatory)
   in addition to Azure/DeepSeek — the 2026-07-15 "no Anthropic" rule was

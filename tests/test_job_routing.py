@@ -8,8 +8,9 @@ Pinned here:
 * precedence job > app > routes.yaml, resolved at spawn and stamped on the story;
 * reviewer independence holds on the EFFECTIVE map and a colliding override is
   refused (``review_independence``), never repaired;
-* pipeline: auto → app default → chain; solo refused loudly while the
-  production solo engine does not exist, and gated on the oracle when it does.
+* pipeline: auto → app default → chain; solo accepted on any app (no oracle
+  requirement since 2026-11-02) and refused loudly only when the
+  ``SOLO_PIPELINE_IMPLEMENTED`` kill switch is off.
 
 No test here makes a model call.
 """
@@ -378,15 +379,18 @@ def test_bad_pipeline_is_refused() -> None:
     assert ei.value.code == "bad_pipeline"
 
 
-def test_solo_is_refused_while_the_engine_does_not_exist() -> None:
-    assert jr.SOLO_PIPELINE_IMPLEMENTED is False
+def test_solo_is_refused_when_the_kill_switch_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(jr, "SOLO_PIPELINE_IMPLEMENTED", False)
     with pytest.raises(jr.JobRoutingError) as ei:
         jr.resolve_job_routing(_cfg(oracle=True, boot=True), pipeline="solo")
     assert ei.value.code == "pipeline_unavailable"
     assert "silently run the full chain" in ei.value.message
 
 
-def test_auto_on_a_solo_default_app_is_refused_not_downgraded() -> None:
+def test_auto_on_a_solo_default_app_is_refused_not_downgraded_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(jr, "SOLO_PIPELINE_IMPLEMENTED", False)
     with pytest.raises(jr.JobRoutingError) as ei:
         jr.resolve_job_routing(_cfg(pipeline_default="solo"), pipeline="auto")
     assert ei.value.code == "pipeline_unavailable"
@@ -396,16 +400,16 @@ def test_auto_on_a_solo_default_app_is_refused_not_downgraded() -> None:
     )
 
 
-def test_solo_requires_the_oracle_once_the_engine_exists(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(jr, "SOLO_PIPELINE_IMPLEMENTED", True)
-    for cfg in (_cfg(), _cfg(oracle=True)):
-        with pytest.raises(jr.JobRoutingError) as ei:
-            jr.resolve_job_routing(cfg, pipeline="solo")
-        assert ei.value.code == "pipeline_unavailable"
-    ok = jr.resolve_job_routing(_cfg(oracle=True, boot=True), pipeline="solo")
-    assert ok.pipeline == "solo"
-    auto = jr.resolve_job_routing(_cfg(pipeline_default="solo", oracle=True, boot=True))
+def test_solo_is_available_on_any_app_without_the_oracle() -> None:
+    """Operator decision 2026-11-02: solo does NOT require the oracle."""
+    assert jr.SOLO_PIPELINE_IMPLEMENTED is True
+    for cfg in (_cfg(), _cfg(oracle=True), _cfg(oracle=True, boot=True)):
+        assert jr.resolve_job_routing(cfg, pipeline="solo").pipeline == "solo"
+    auto = jr.resolve_job_routing(_cfg(pipeline_default="solo"))
     assert (auto.pipeline, auto.pipeline_requested) == ("solo", "auto")
+    assert jr.resolve_job_routing(_cfg(pipeline_default="solo"), pipeline="chain").pipeline == (
+        "chain"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -477,9 +481,10 @@ def test_spawn_refuses_a_colliding_override_before_creating_stories(tmp_path: Pa
     assert ei.value.code == "review_independence"
 
 
-def test_spawn_refuses_solo(tmp_path: Path) -> None:
+def test_spawn_refuses_solo_when_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from factory.chain.handlers import handle_stories_spawned
 
+    monkeypatch.setattr(jr, "SOLO_PIPELINE_IMPLEMENTED", False)
     (tmp_path / "state").mkdir()
     with pytest.raises(jr.JobRoutingError) as ei:
         handle_stories_spawned(
@@ -492,17 +497,14 @@ def test_spawn_refuses_solo(tmp_path: Path) -> None:
     assert ei.value.code == "pipeline_unavailable"
 
 
-def test_spawn_stamps_solo_when_engine_and_oracle_exist(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_spawn_stamps_solo_without_the_oracle(tmp_path: Path) -> None:
     from factory.chain.handlers import handle_stories_spawned
 
-    monkeypatch.setattr(jr, "SOLO_PIPELINE_IMPLEMENTED", True)
     (tmp_path / "state").mkdir()
     stories = handle_stories_spawned(
         direction=_direction({"pipeline": "solo"}),
         pm_result=_PM,
-        app_config=_cfg(oracle=True, boot=True),
+        app_config=_cfg(),
         software_factory_root=tmp_path,
         dry_run=True,
     )

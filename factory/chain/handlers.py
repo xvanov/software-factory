@@ -59,6 +59,7 @@ from factory.chain.state_machine import (
     EVENT_SM_STARTED,
     EVENT_TECH_WRITER_DONE,
     EVENT_TECH_WRITER_STARTED,
+    IllegalTransitionError,
     StoryRecord,
     StoryState,
     advance,
@@ -1824,6 +1825,52 @@ def _max_dev_retries(software_factory_root: Path | None = None) -> int:
 # module import and risk an import cycle.
 _MAX_DEV_RETRIES = _DEFAULT_MAX_DEV_RETRIES
 
+
+def _dev_retry_cap(story: StoryRecord, software_factory_root: Path | None = None) -> int:
+    """The dev-retry cap for THIS story: the configured cap, or the solo cap.
+
+    Solo stories are capped at ``solo.SOLO_MAX_DEV_ATTEMPTS`` (3) because each
+    solo attempt is already a multi-round 5400 s conversation. Kept strictly
+    above ``_MAX_DEV_SAME_SIGNATURE`` so the early stall guard stays reachable.
+    """
+    from factory.chain.solo import max_dev_attempts
+
+    return max_dev_attempts(story, _max_dev_retries(software_factory_root))
+
+
+def _block_solo_oracle_leak(
+    story: StoryRecord,
+    leaks: list[str],
+    *,
+    db: Path,
+    software_factory_root: Path,
+) -> HandlerResult:
+    """Refuse a solo dev dispatch whose worktree holds a copy of the oracle.
+
+    B.1's coupling: a long solo horizon is more turns in which to go looking
+    for the hidden acceptance oracle, so the leak check is a BLOCKING
+    precondition. Consumes no dev retry (the dev never ran); routes to the
+    human-visible ``BLOCKED_TESTS_NEED_CLARIFICATION`` sink with the reason.
+    """
+    story.state = advance(story, EVENT_DEV_EXHAUSTED).value
+    story.error = (
+        "solo pipeline: acceptance-oracle copy found in the dev worktree "
+        f"(blocking precondition): {', '.join(leaks[:5])}"
+    )[:500]
+    persist_story(story, db)
+    log_story_event(
+        story.id,
+        "solo_oracle_leak_blocked",
+        {"leaks": leaks[:20], "dev_retries_preserved": story.dev_retries},
+        software_factory_root=software_factory_root,
+        slug_hint=story.slug,
+    )
+    return HandlerResult(
+        next_state=StoryState(story.state),
+        payload={"test_run_passed": False, "solo_oracle_leak": leaks[:20]},
+        error=story.error,
+    )
+
 # Same-failure-signature fast-escalation cap. When consecutive dev runs fail
 # with the IDENTICAL normalized failure signature (the same assertions/errors,
 # volatile bits stripped) the model is stuck on something more attempts won't
@@ -2321,6 +2368,15 @@ def handle_dev(
     conv = _settings.dev_convergence
     if dry_run or not conv.enabled:
         return result
+    from factory.chain.solo import is_solo as _is_solo
+
+    if _is_solo(story):
+        # SOLO: the continuity lives INSIDE the one long conversation (gate
+        # feedback rounds in ``sandbox_run``). Re-dispatching a FRESH sandbox in
+        # this same tick is exactly the N-fresh-conversations pattern solo
+        # removes; a red solo attempt goes back through the normal across-ticks
+        # retry path, capped by ``solo.SOLO_MAX_DEV_ATTEMPTS``.
+        return result
 
     db = db_path or (software_factory_root / "state" / "factory.db")
     loop_started_mono = _time.monotonic()
@@ -2466,6 +2522,7 @@ def _handle_dev_once(
             payload["test_run_passed"] = False
             payload["summary"] = "Dry-run dev failure: tests still red."
     else:
+        from factory.chain import solo as _solo
         from factory.chain.branch import feature_branch_name
         from factory.runner import LLMConfig, sandbox_run
 
@@ -2534,6 +2591,54 @@ def _handle_dev_once(
 
         _dev_timeout_s = _load_settings(software_factory_root).dev_convergence.dev_sandbox_timeout_s
 
+        # SOLO pipeline (factory/chain/solo.py): one long conversation with the
+        # gate's verdict fed back INTO it, a no-progress abort, and the solo
+        # brief. Read from the spawn stamp only.
+        solo_kwargs: dict[str, Any] = {}
+        if _solo.is_solo(story):
+            leaks = _solo.oracle_leak_precheck(app_config, Path(repo_path))
+            plan = _solo.checks_plan(app_config, story)
+            plan["oracle_leak_precheck"] = (
+                "not applicable (acceptance oracle disabled for this app)"
+                if leaks is None
+                else ("clean" if not leaks else f"BLOCKED: {leaks[:5]}")
+            )
+            plan["dev_attempt"] = story.dev_retries + 1
+            log_story_event(
+                story.id,
+                "solo_checks",
+                plan,
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
+            if leaks:
+                return _block_solo_oracle_leak(
+                    story, leaks, db=db, software_factory_root=software_factory_root
+                )
+            _dev_timeout_s = _solo.SOLO_DEV_WALL_CLOCK_S
+            _require_delta = bool(getattr(app_config.gates, "require_production_delta", False))
+            solo_kwargs = {
+                "gate_check": _solo.make_gate_check(
+                    repo_path=Path(repo_path),
+                    test_command=app_config.gates.test_command,
+                    branch_is_empty=lambda: _dev_produced_empty_diff(
+                        story, app_config, software_factory_root
+                    ),
+                    production_delta=(
+                        (
+                            lambda: _branch_has_production_delta(
+                                story, app_config, software_factory_root
+                            )
+                        )
+                        if _require_delta
+                        else None
+                    ),
+                ),
+                "max_gate_rounds": _solo.SOLO_MAX_GATE_ROUNDS,
+                "no_progress_abort_s": _solo.SOLO_NO_PROGRESS_ABORT_S,
+                "brief_addendum": _solo.build_solo_brief(dev_direction),
+            }
+
         run_res = asyncio.run(
             sandbox_run(
                 persona="dev",
@@ -2552,8 +2657,26 @@ def _handle_dev_once(
                 direction_id=story.direction_id,
                 wall_clock_timeout_s=_dev_timeout_s,
                 db_path=db,
+                **solo_kwargs,
             )
         )
+        if solo_kwargs:
+            # Which independent checks ran inside the conversation, and why it
+            # stopped — the evidence ``solo_checks`` promised.
+            log_story_event(
+                story.id,
+                "solo_dev_rounds",
+                {
+                    "rounds": list(getattr(run_res, "gate_rounds", []) or []),
+                    "stop_reason": getattr(run_res, "gate_stop_reason", ""),
+                    "test_run_passed": run_res.test_run_passed,
+                    "error": (run_res.error or "")[:500] or None,
+                    "cost_usd": run_res.cost_usd,
+                    "premodel_infra": bool(getattr(run_res, "premodel_infra", False)),
+                },
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
 
         # Pre-model sandbox infrastructure guard. If the sandbox died before
         # any model work (transient .venv relink → TemplateNotFound, SDK
@@ -2706,7 +2829,11 @@ def _handle_dev_once(
         # on the base branch all legitimately produce no production change, and a
         # global rule would fail every one of them. The bench is the one context
         # where the story is always "fix this bug in this repo".
-        if tests_green and bool(getattr(app_config.gates, "require_production_delta", False)):
+        if (
+            tests_green
+            and not solo_kwargs  # solo already ran it inside the conversation
+            and bool(getattr(app_config.gates, "require_production_delta", False))
+        ):
             delta = _branch_has_production_delta(story, app_config, software_factory_root)
             if delta is False:
                 tests_green = False
@@ -2796,6 +2923,12 @@ def _handle_dev_once(
             _commit_green_dev_work(story, app_config, software_factory_root)
         story.state = advance(story, EVENT_DEV_TESTS_GREEN).value
         story.dev_step_checkpoint = None
+        from factory.chain.solo import is_solo as _is_solo_green
+
+        if _is_solo_green(story):
+            # No reviewer will overwrite these: a CI-fix / enforcer finding that
+            # dev just resolved must not be re-rendered into a LATER attempt.
+            story.reviewer_result_json = None
         persist_story(story, db)
         return HandlerResult(next_state=StoryState(story.state), payload=payload)
 
@@ -2823,7 +2956,7 @@ def _handle_dev_once(
         software_factory_root=software_factory_root,
         extra={
             "retry_attempt": story.dev_retries,
-            "retry_cap": _max_dev_retries(software_factory_root),
+            "retry_cap": _dev_retry_cap(story, software_factory_root),
         },
     )
     if not dry_run:
@@ -2892,7 +3025,7 @@ def _handle_dev_once(
         same_sig_count = _consecutive_same_dev_signature(_attempts_now, _cur_sig)
     same_sig_stall = same_sig_count >= _MAX_DEV_SAME_SIGNATURE
 
-    if story.dev_retries >= _max_dev_retries(software_factory_root) or same_sig_stall:
+    if story.dev_retries >= _dev_retry_cap(story, software_factory_root) or same_sig_stall:
         # Preserve whatever dev produced so the work doesn't evaporate
         # into a stash when the next story takes the working tree. Commit
         # any uncommitted changes, push the branch to origin, and surface
@@ -3062,7 +3195,7 @@ def _handle_dev_once(
             {
                 "kind": "dev_same_signature_stall" if same_sig_stall else "dev_exhausted",
                 "retries_used": story.dev_retries,
-                "max_retries": _max_dev_retries(software_factory_root),
+                "max_retries": _dev_retry_cap(story, software_factory_root),
                 "same_signature_count": same_sig_count if same_sig_stall else None,
                 "last_test_output_tail": last_tail[-600:],
                 "suggestions": suggestions,
@@ -3129,7 +3262,7 @@ def _handle_dev_once(
             {
                 "kind": "dev_retry_observed",
                 "retries": story.dev_retries,
-                "max_retries": _max_dev_retries(software_factory_root),
+                "max_retries": _dev_retry_cap(story, software_factory_root),
                 "model_tier": story.current_model_tier,
                 "last_test_output_tail": (payload.get("summary") or "")[-600:],
                 "files_changed": payload.get("files_changed", [])[:10],
@@ -4543,8 +4676,22 @@ def handle_tech_writer(
     db_path: Path | None = None,
     fixture: dict[str, Any] | None = None,
 ) -> HandlerResult:
-    """Run the Tech-Writer persona; apply context updates to the app repo."""
+    """Run the Tech-Writer persona; apply context updates to the app repo.
+
+    Entered from ``REVIEWER_DONE`` (chain) or, for a SOLO story only, directly
+    from ``TESTS_GREEN`` (no reviewer round-trip; see factory/chain/solo.py).
+    """
     db = db_path or (software_factory_root / "state" / "factory.db")
+    if StoryState(story.state) is StoryState.TESTS_GREEN:
+        from factory.chain.solo import is_solo
+
+        if not is_solo(story):
+            # Fail SAFE: the TESTS_GREEN → tech_writer edge exists for solo
+            # stories only. A chain story must never skip its reviewer.
+            raise IllegalTransitionError(
+                f"story {story.id}: tech_writer from tests_green is solo-only "
+                f"(pipeline={getattr(story, 'pipeline', None)!r})"
+            )
     story.state = advance(story, EVENT_TECH_WRITER_STARTED).value
     persist_story(story, db)
 
@@ -6408,10 +6555,19 @@ def _open_pr_for_story(
         summary_line = "Canonical context files added/updated."
     else:
         title = f"feat({story.scope or 'app'}): {story.title}"
-        summary_line = (
-            "Code + tests written by the dev persona, approved by the reviewer "
-            "and docs-enforcer gates."
-        )
+        from factory.chain.solo import is_solo
+
+        if is_solo(story):
+            summary_line = (
+                "Code + tests written by ONE dev agent in a single long conversation "
+                "(solo pipeline: no separate reviewer); checked in-conversation by "
+                "the app's test command, then by the docs-enforcer and the merge gates."
+            )
+        else:
+            summary_line = (
+                "Code + tests written by the dev persona, approved by the reviewer "
+                "and docs-enforcer gates."
+            )
     from factory.chain.delivery_gate import stack_parent
 
     parent = stack_parent(story, Path(software_factory_root) / "state" / "factory.db")
@@ -6424,7 +6580,8 @@ def _open_pr_for_story(
         else ""
     )
     body = (
-        stack_note + f"Generated by the factory {story.chain_kind} chain for story "
+        stack_note + f"Generated by the factory {story.chain_kind} chain "
+        f"({getattr(story, 'pipeline', 'chain') or 'chain'} pipeline) for story "
         f"#{story.github_issue_number}.\n\n"
         f"Branch: `{branch}`\n"
         f"Story slug: `{story.slug}`\n"

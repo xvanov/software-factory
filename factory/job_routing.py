@@ -59,17 +59,14 @@ _PERSONAS_DIR = Path(__file__).parent / "personas"
 # therefore the missing-key degradation) silently guess.
 _MODEL_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+/\S+$")
 
-#: Whether the production chain can execute a ``solo`` story. B.1's solo mode
-#: (``b1_solo_mode_design``) has only ever been built as a BENCH arm
-#: (``bench/swebench_adapter.py`` ``solo-noreview``, which drives the chain by
-#: hand and stops at ``tests_green``). The live state machine has no
-#: ``TESTS_GREEN → tech_writer`` edge, the orchestrator always dispatches the
-#: reviewer, and the blocking oracle-leak precondition B.1 requires does not
-#: exist. Stamping ``solo`` on a story today would therefore silently run the
-#: full chain — the exact failure the job contract forbids — so every solo
-#: request is refused with ``pipeline_unavailable`` until that engine lands.
-#: Flip this ONLY in the PR that adds the engine.
-SOLO_PIPELINE_IMPLEMENTED = False
+#: Whether the production chain can execute a ``solo`` story. True since the
+#: production solo engine landed (``factory/chain/solo.py``): the
+#: ``TESTS_GREEN → tech_writer`` edge, solo dispatch in the orchestrator, one
+#: long dev conversation with in-conversation gate feedback, and the blocking
+#: oracle-leak precondition. Kept as a kill switch: set False to refuse every
+#: new solo request with ``pipeline_unavailable`` (stories already stamped solo
+#: still finish under solo — the mode is read from the row, never from here).
+SOLO_PIPELINE_IMPLEMENTED = True
 
 
 class JobRoutingError(ValueError):
@@ -279,29 +276,22 @@ def check_runtime_independence(
 def solo_refusal_reason(app_config: AppConfig) -> str | None:
     """Why ``app_config``'s app cannot run a solo story, or ``None`` if it can.
 
-    B.1's hard coupling: with no reviewer, the independent acceptance oracle is
-    the only signal the dev cannot influence, so solo needs
-    ``gates.acceptance_oracle: true`` AND an ``acceptance_boot`` recipe (the
-    gate refuses to grade without one). On top of that the production solo
-    engine must exist (``SOLO_PIPELINE_IMPLEMENTED``).
+    The B.1 design required ``gates.acceptance_oracle: true`` for solo. The
+    operator dropped that coupling on 2026-11-02: the oracle is off fleet-wide
+    and vacuous on non-web repos (``oracle_vacuity_is_webapp_shaped``), and solo
+    must be usable on any repo. A solo story's independent checks are the app's
+    test command, its required merge gates and CI; when the app DOES enable the
+    oracle it is a required merge gate and its leak check blocks every solo dev
+    dispatch (``factory/chain/solo.py``). What ran is logged per story
+    (``solo_checks``). The only remaining refusal is the engine kill switch.
     """
     if not SOLO_PIPELINE_IMPLEMENTED:
         return (
-            "solo pipeline is not implemented in the production chain (B.1 solo exists "
-            "only as the bench `solo-noreview` arm); running this job as solo would "
-            "silently run the full chain. Submit with --pipeline chain or auto."
+            "solo pipeline is disabled (job_routing.SOLO_PIPELINE_IMPLEMENTED is "
+            "False); running this job as solo would silently run the full chain. "
+            "Submit with --pipeline chain or auto."
         )
-    gates = app_config.gates
-    if not gates.acceptance_oracle:
-        return (
-            f"app {app_config.name!r} has gates.acceptance_oracle: false — solo removes "
-            "the reviewer, so the oracle is required (B.1)."
-        )
-    if gates.acceptance_boot is None:
-        return (
-            f"app {app_config.name!r} has no gates.acceptance_boot — the oracle cannot "
-            "grade, so solo would ship ungraded (B.1)."
-        )
+    del app_config  # every app can run solo; kept for the call signature
     return None
 
 
