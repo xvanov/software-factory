@@ -306,17 +306,61 @@ def _engine(db_path: Path) -> Any:
     return eng
 
 
-def persist_story(story: StoryRecord, db_path: Path) -> StoryRecord:
-    """Insert-or-update ``story`` in ``state/factory.db.stories``."""
+def persist_story(story: StoryRecord, db_path: Path, *, allow_reopen: bool = False) -> StoryRecord:
+    """Insert-or-update ``story`` in ``state/factory.db.stories``.
+
+    STALE WRITE-BACK GUARD (review 2026-11-02, N2): a handler that loaded the
+    row before ``factory job cancel`` parked it would otherwise save its stale
+    ``state`` straight over ``closed_by_operator`` — resurrecting cancelled
+    work, which the end-of-tick auto-merge then merged. A row whose COMMITTED
+    state is ``closed_by_operator`` keeps it: the in-memory state is reverted
+    (other columns are still saved — they are evidence, not control) and a
+    ``stale_writeback_blocked`` event is logged. Only an explicit operator
+    revival (``factory resume-story``) passes ``allow_reopen=True``.
+    """
     eng = _engine(db_path)
     from datetime import UTC, datetime
 
     story.updated_at = datetime.now(UTC).isoformat()
+    closed = StoryState.CLOSED_BY_OPERATOR.value
+    blocked_from: str | None = None
+    if story.id is not None and not allow_reopen and story.state != closed:
+        with Session(eng) as probe:
+            committed = probe.exec(
+                select(StoryRecord.state).where(StoryRecord.id == story.id)
+            ).first()
+        if committed == closed:
+            blocked_from = story.state
+            story.state = closed
+    if blocked_from is not None:
+        _logger.warning(
+            "story %s: blocked a stale write-back %s -> over closed_by_operator",
+            story.id,
+            blocked_from,
+        )
+        try:
+            from factory.chain.event_log import log_story_event
+
+            log_story_event(
+                story.id,
+                "stale_writeback_blocked",
+                {"attempted_state": blocked_from, "kept_state": closed},
+                software_factory_root=_root_for_db(db_path),
+                slug_hint=story.slug or "",
+            )
+        except Exception:  # noqa: BLE001 - telemetry only
+            pass
     with Session(eng) as session:
         session.add(story)
         session.commit()
         session.refresh(story)
     return story
+
+
+def _root_for_db(db_path: Path) -> Path:
+    """``<root>/state/factory.db`` → ``<root>`` (the event log lives there)."""
+    p = Path(db_path)
+    return p.parent.parent if p.parent.name == "state" else p.parent
 
 
 def get_story(story_id: int, db_path: Path) -> StoryRecord | None:

@@ -248,6 +248,12 @@ Concurrency and robustness (review 2026-11-02):
   re-reading the committed state; the write is `delivery_gate.cas_story_state`
   from `_MERGEABLE_STATES` (`MergeAction.state_committed`). `factory job
   cancel` takes the same lock. Gate evaluation itself is outside the lock.
+  A durable per-job marker (`delivery_gate.mark_job_cancelled` /
+  `is_job_cancelled`, table `job_cancellations`) is checked inside that
+  locked section and by `orchestrator._repark_cancelled_job_stories` before
+  dispatch. `handlers.persist_story` keeps a committed `closed_by_operator`
+  against a stale write-back (`stale_writeback_blocked` event) unless
+  `allow_reopen=True` (only `resume.py`). `_gh_pr_merge` has a 90 s timeout.
 * **Settle from every mergeable state.** `CI_GREEN` / `READY_FOR_MERGE` have
   `DELIVERED_BRANCH` / `DELIVERED_LOCAL` edges too; a settle that raises
   `_MAX_SETTLE_FAILURES` (3) times parks in `BLOCKED_DEPLOY_FAILED`.

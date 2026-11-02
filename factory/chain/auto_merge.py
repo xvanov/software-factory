@@ -1679,6 +1679,18 @@ def _evaluate_one_pr(
                 gates_failed=gates_failed,
                 blocking_labels=blocking_present,
             )
+        if delivery_gate.is_job_cancelled(db_path, story.app, story.direction_id):
+            # N2: the durable job-cancel marker wins over whatever a stale
+            # handler wrote back into the story row.
+            return MergeAction(
+                app=app,
+                pr_number=fixture.pr_number,
+                merged=False,
+                reason="job was cancelled (factory job cancel) — not merged",
+                gates_passed=gates_passed,
+                gates_failed=gates_failed,
+                blocking_labels=blocking_present,
+            )
         live_state = delivery_gate.current_story_state(db_path, story.id)
         if live_state is None or live_state not in _MERGEABLE_STATES:
             return MergeAction(
@@ -1710,6 +1722,10 @@ def _evaluate_one_pr(
         return action
 
 
+#: Upper bound on one ``gh pr merge`` call (it runs under the story lock).
+_GH_MERGE_TIMEOUT_S = 90
+
+
 def _gh_pr_merge(
     *,
     app_config: AppConfig,
@@ -1737,8 +1753,12 @@ def _gh_pr_merge(
         cmd.append("--auto")
     if delete_branch:
         cmd.append("--delete-branch")
+    # It runs under the per-story lock now, so it must never hang: a stuck gh
+    # would hold the lock and starve ``factory job cancel`` indefinitely.
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=_GH_MERGE_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return f"gh pr merge timed out after {_GH_MERGE_TIMEOUT_S}s"
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
         # ``--auto`` ENABLES auto-merge, which GitHub refuses when nothing
@@ -1751,8 +1771,16 @@ def _gh_pr_merge(
         ):
             direct_cmd = [c for c in cmd if c != "--auto"]
             try:
-                subprocess.run(direct_cmd, check=True, capture_output=True, text=True)
+                subprocess.run(
+                    direct_cmd,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=_GH_MERGE_TIMEOUT_S,
+                )
                 return None
+            except subprocess.TimeoutExpired:
+                return f"gh pr merge timed out after {_GH_MERGE_TIMEOUT_S}s"
             except subprocess.CalledProcessError as exc2:
                 return f"gh exit={exc2.returncode}: {(exc2.stderr or '').strip()}"
         return f"gh exit={exc.returncode}: {stderr}"

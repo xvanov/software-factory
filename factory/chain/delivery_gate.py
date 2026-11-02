@@ -654,3 +654,61 @@ def stack_parent(story: Any, db: Path) -> Any:
     except Exception as exc:  # noqa: BLE001 - stacking is an optimisation, never a blocker
         _logger.warning("stack_parent(%s) failed: %r", getattr(story, "id", None), exc)
         return None
+
+
+# --------------------------------------------------------------------------- #
+# Durable job-cancel marker (review 2026-11-02, N2)
+# --------------------------------------------------------------------------- #
+
+#: Its own table on purpose: a story row can be written back by any in-flight
+#: handler holding a stale copy (``persist_story``), so a cancel recorded ONLY
+#: on the story can be silently undone. Nothing in the chain writes this table
+#: except ``factory job cancel``.
+_CANCEL_TABLE = "job_cancellations"
+
+
+def mark_job_cancelled(db: Path, app: str, direction_id: str, *, by: str) -> None:
+    """Record that every story of ``(app, direction_id)`` is cancelled. Idempotent."""
+    import sqlite3
+    from datetime import UTC, datetime
+
+    con = sqlite3.connect(db, timeout=30)
+    try:
+        con.execute(
+            f"CREATE TABLE IF NOT EXISTS {_CANCEL_TABLE} ("
+            "app TEXT NOT NULL, direction_id TEXT NOT NULL, at TEXT NOT NULL, by TEXT, "
+            "PRIMARY KEY (app, direction_id))"
+        )
+        con.execute(
+            f"INSERT OR IGNORE INTO {_CANCEL_TABLE} (app, direction_id, at, by) VALUES (?,?,?,?)",
+            (app, str(direction_id), datetime.now(UTC).isoformat(), by),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def is_job_cancelled(db: Path, app: str, direction_id: str | None) -> bool:
+    """Was the story's job cancelled? ``False`` only when provably not: a
+    missing table or row. Any OTHER read error answers ``True`` — callers use
+    this to refuse a merge / a dispatch, and refusing is the safe side."""
+    import sqlite3
+
+    if not direction_id:
+        return False
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=30)
+    except sqlite3.Error:
+        return True
+    try:
+        row = con.execute(
+            f"SELECT 1 FROM {_CANCEL_TABLE} WHERE app = ? AND direction_id = ?",
+            (app, str(direction_id)),
+        ).fetchone()
+        return row is not None
+    except sqlite3.OperationalError as exc:
+        return "no such table" not in str(exc)
+    except sqlite3.Error:
+        return True
+    finally:
+        con.close()

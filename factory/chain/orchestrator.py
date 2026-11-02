@@ -15,6 +15,7 @@ the story for this tick; an operator can inspect via ``factory why``.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -1441,6 +1442,46 @@ def _query_issue_state(*, app_config: AppConfig, issue_number: int) -> str | Non
     return state if state in ("OPEN", "CLOSED") else None
 
 
+def _repark_cancelled_job_stories(
+    stories: list[StoryRecord], *, db: Path, root: Path
+) -> list[StoryRecord]:
+    """Drop (and re-park as ``closed_by_operator``) stories of cancelled jobs.
+
+    The durable marker is ``delivery_gate.is_job_cancelled`` (its own table,
+    written only by ``factory job cancel``). The re-park is a compare-and-set
+    under the story lock, so it never races the auto-merge pass. Finished work
+    (``deploy_pending``) is left alone, like cancel itself does. Never raises.
+    """
+    from factory.chain import delivery_gate
+
+    kept: list[StoryRecord] = []
+    for s in stories:
+        try:
+            cancelled = delivery_gate.is_job_cancelled(db, s.app, s.direction_id)
+        except Exception:  # noqa: BLE001
+            cancelled = False
+        if not cancelled or s.state == StoryState.DEPLOY_PENDING.value or s.id is None:
+            kept.append(s)
+            continue
+        with delivery_gate.story_lock(root, s.id, timeout=5) as held:
+            if held and delivery_gate.cas_story_state(
+                db,
+                s.id,
+                {s.state},
+                StoryState.CLOSED_BY_OPERATOR.value,
+                error=f"job cancelled; re-parked a write-back to {s.state}",
+            ):
+                with contextlib.suppress(Exception):
+                    log_story_event(
+                        s.id,
+                        "cancelled_job_story_reparked",
+                        {"from_state": s.state},
+                        software_factory_root=root,
+                        slug_hint=s.slug or "",
+                    )
+    return kept
+
+
 def reconcile_closed_trackers(
     db: Path,
     app: str,
@@ -2628,6 +2669,11 @@ def tick(
                 )
 
         stories = H.stories_in_flight(app, db)
+        # N2 (review 2026-11-02): never dispatch a story whose JOB was
+        # cancelled. A handler that held a stale row can have written it back
+        # to a live state after the cancel parked it; re-park it instead.
+        if not dry_run:
+            stories = _repark_cancelled_job_stories(stories, db=db, root=root)
 
         # Optional shard partitioning for safe multi-loop parallelism. Several
         # concurrent ``drive_chain`` loops each take the SAME ordered in-flight

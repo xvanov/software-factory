@@ -358,9 +358,7 @@ def plan_resume(
             f"dependency {pending} is in a permanently-dead sink. Resume those first."
         )
     elif pending:
-        plan.warnings.append(
-            f"will wait behind pending dependencies {pending} before it builds"
-        )
+        plan.warnings.append(f"will wait behind pending dependencies {pending} before it builds")
 
     plan.resets = [
         f"total_attempts {story.total_attempts} -> 0",
@@ -530,7 +528,8 @@ def apply_resume(
     story.error = None
     if plan.point in {"dev", "sm"}:
         story.dev_step_checkpoint = None
-    persist_story(story, db)
+    # An operator revival is the one legitimate way out of closed_by_operator.
+    persist_story(story, db, allow_reopen=True)
     return plan
 
 

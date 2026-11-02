@@ -1445,3 +1445,110 @@ def test_should5_stacked_pr_body_names_the_parent(
     gh = [c for c in seen if c[:3] == ["gh", "pr", "create"]][-1]
     body = gh[gh.index("--body") + 1]
     assert "Stacked on" in body and "story/1-a" in body and "PR #77" in body
+
+
+# --------------------------------------------------------------------------- #
+# N2 (verification pass 2026-11-02): stale write-back after a cancel
+# --------------------------------------------------------------------------- #
+
+
+def test_n2_stale_writeback_cannot_resurrect_a_cancelled_story(
+    am_root: Path, gates_green: None
+) -> None:
+    _write_cfg(am_root, L.AUTO_MERGE)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.DOCS_ENFORCER_CHECK, L.AUTO_MERGE)
+    stale = _reload(db, s.id)  # a handler loaded the row
+    _set_state_raw(db, s.id, StoryState.CLOSED_BY_OPERATOR.value)  # cancel parks it
+    stale.state = StoryState.PR_OPEN.value
+    stale.github_pr_number = 9
+    H.persist_story(stale, db)  # the handler's write-back
+    row = _reload(db, s.id)
+    assert row.state == StoryState.CLOSED_BY_OPERATOR.value
+    assert row.github_pr_number == 9  # evidence still saved
+    assert "stale_writeback_blocked" in _events(am_root, s)
+    merged: list[int] = []
+    fx = am.FixturePR(pr_number=9, head_sha="ab" * 20, base_branch="main", story=row)
+    am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fx],
+        db_path=db,
+        merge_fn=lambda **k: merged.append(k["pr_number"]),
+        pr_merged_query=lambda **k: bool(merged),
+    )
+    assert merged == []
+
+
+def test_n2_resume_story_may_reopen_explicitly(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.CLOSED_BY_OPERATOR, L.PR)
+    s.state = StoryState.SM_DONE.value
+    H.persist_story(s, db, allow_reopen=True)
+    assert _reload(db, s.id).state == StoryState.SM_DONE.value
+
+
+def test_n2_job_cancel_marker_blocks_the_merge_even_if_the_row_looks_mergeable(
+    am_root: Path, gates_green: None
+) -> None:
+    _write_cfg(am_root, L.AUTO_MERGE)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.AUTO_MERGE, github_pr_number=12)
+    delivery_gate.mark_job_cancelled(db, "sacrifice", "900", by="test")
+    fx = am.FixturePR(pr_number=12, head_sha="ab" * 20, base_branch="main", story=s)
+    actions = am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fx],
+        db_path=db,
+        merge_fn=_merge_must_not_run,
+        pr_merged_query=lambda **k: False,
+    )
+    assert not actions[0].merged and "cancelled" in actions[0].reason
+
+
+def test_n2_is_job_cancelled_defaults(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    _story(db, StoryState.PR_OPEN, L.PR)  # creates the DB, no marker table yet
+    assert delivery_gate.is_job_cancelled(db, "sacrifice", "900") is False
+    delivery_gate.mark_job_cancelled(db, "sacrifice", "900", by="t")
+    delivery_gate.mark_job_cancelled(db, "sacrifice", "900", by="t")  # idempotent
+    assert delivery_gate.is_job_cancelled(db, "sacrifice", "900") is True
+    assert delivery_gate.is_job_cancelled(db, "sacrifice", "901") is False
+
+
+def test_n2_orchestrator_reparks_and_skips_cancelled_job_stories(tmp_path: Path) -> None:
+    from factory.chain.orchestrator import _repark_cancelled_job_stories
+
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    live = _story(db, StoryState.SM_DONE, L.PR)
+    deploying = _story(db, StoryState.DEPLOY_PENDING, L.AUTO_MERGE, github_branch="story/2-x")
+    delivery_gate.mark_job_cancelled(db, "sacrifice", "900", by="t")
+    kept = _repark_cancelled_job_stories([live, deploying], db=db, root=root)
+    assert [k.id for k in kept] == [deploying.id]
+    assert _reload(db, live.id).state == StoryState.CLOSED_BY_OPERATOR.value
+    assert _reload(db, deploying.id).state == StoryState.DEPLOY_PENDING.value
+
+
+def test_n2_gh_pr_merge_has_a_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Any] = []
+
+    def _run(cmd: list[str], *a: Any, **k: Any) -> Any:
+        seen.append(k.get("timeout"))
+        raise subprocess.TimeoutExpired(cmd, k.get("timeout") or 0)
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    err = am._gh_pr_merge(
+        app_config=_cfg(L.AUTO_MERGE),
+        pr_number=5,
+        merge_method="squash",
+        wait_for_ci=True,
+        delete_branch=True,
+        github_client=None,
+    )
+    assert err and "timed out" in err and seen == [am._GH_MERGE_TIMEOUT_S]

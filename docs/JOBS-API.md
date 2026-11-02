@@ -82,6 +82,10 @@ How the factory enforces it (see `factory/chain/delivery_gate.py`):
 - Cancel vs. merge: the final merge / fast-forward and its `deploy_pending` write run under a
   per-story lock (`state/locks/story-<id>.lock`) that `factory job cancel` also takes, after a
   re-read of the story; a story cancelled while its gates ran is never merged or pushed.
+  Cancellation is also recorded durably per job (`job_cancellations` table, written only by
+  `factory job cancel`): the locked merge section refuses a cancelled job's story, the
+  orchestrator never dispatches one (it re-parks it), and `persist_story` refuses to move a row
+  out of `closed_by_operator` (a stale handler write-back); only `factory resume-story` may.
 - Known gap: at `none`, the factory still opens the story's GitHub ISSUE (no code is pushed).
 
 PA mode → delivery mapping (PA side owns this): plan→(not a factory job), local→none,
