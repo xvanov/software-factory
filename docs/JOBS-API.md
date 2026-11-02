@@ -195,7 +195,7 @@ sources such as `operator-*` still auto-build there): `status` reports `needs_hu
  "state": "queued|triaging|in_progress|blocked|needs_human|done|failed|cancelled",
  "terminal": bool, "pipeline", "delivery",
  "stories": [{"id", "state", "pr_url", "pr_state": "open|merged|closed|null", "branch",
-              "delivery_level"}],
+              "delivery_level", "delivery_note": "<or null>"}],
  "pr_urls": [...], "merged": bool, "cost_usd": number, "updated_at": ISO-8601 UTC,
  "why": "<one line: why blocked / what is happening, or null>"}
 ```
@@ -206,7 +206,10 @@ GitHub), `delivered_pr` (PR open or merged on GitHub; closed unmerged → `faile
 (`deploy_pending`/`deployed`): the PR is MERGED on GitHub, or for `push_to_main` (no PR) the
 default branch ON GITHUB contains the fast-forwarded commit (compare API). A PR GitHub reports
 merged counts as delivered whatever the local row says. A delivery only the local view claims
-is never `done`.
+is never `done`. A `push_to_main` job whose default branch is protected is delivered through an
+auto-merge PR instead (see delivery levels above): that story's `delivery_level` reads
+`auto_merge`, its `delivery_note` is `push_to_main_fell_back_to_pr:<why>`, and its merged PR
+makes the job `done`.
 
 State mapping, first match wins: cancel requested and no story live → `cancelled`; no stories →
 direction `created`→`queued`, `pm-validated`→`triaging`, `needs-direction`→`needs_human`,

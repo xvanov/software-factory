@@ -242,6 +242,31 @@ def _story_level(row: dict[str, Any], job_level: DeliveryLevel) -> DeliveryLevel
         return DeliveryLevel.NONE
 
 
+def _delivery_note(ctx: _Ctx, row: dict[str, Any]) -> str | None:
+    """Why this story is delivered differently from what the job asked for.
+
+    Today: a ``push_to_main`` story whose default branch requires checks or a
+    PR falls back to a ready PR at ``auto_merge`` (``auto_merge.
+    _fall_back_push_to_main_to_pr``); its event carries the reason
+    ``push_to_main_fell_back_to_pr:<why>``. Read from the story's event log
+    (a file read; the DB stays read-only). ``None`` when nothing to say."""
+    sid = row.get("id")
+    if sid is None:
+        return None
+    try:
+        from factory.chain.event_log import read_story_events
+
+        events = read_story_events(
+            int(sid), software_factory_root=ctx.root, slug_hint=str(row.get("slug") or "")
+        )
+    except Exception:  # noqa: BLE001 - a note is best-effort, never a status failure
+        return None
+    for e in reversed(events):
+        if e.get("event") == "push_to_main_fell_back_to_pr" and e.get("reason"):
+            return str(e["reason"])
+    return None
+
+
 def _merged_sha(ctx: _Ctx, row: dict[str, Any]) -> str | None:
     """``push_to_main``: the commit the fast-forward published, recorded by the
     auto-merge worker under the ``-(story.id)`` placeholder PR number."""
@@ -477,6 +502,7 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
             "pr_state": v.pr_state,
             "branch": v.row.get("github_branch"),
             "delivery_level": v.level,
+            "delivery_note": _delivery_note(ctx, v.row),
         }
         for v in views
     ]

@@ -845,3 +845,47 @@ def test_finding2_cancel_refuses_to_park_when_disarm_fails(
     assert out["stories_parked"] == []
     assert "could not disarm" in out["stories_left"][0]["reason"]
     assert get_story(s.id, root / "state" / "factory.db").state == StoryState.PR_OPEN.value
+
+
+def test_push_to_main_fallback_pr_merged_is_done_with_a_delivery_note(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Protected base: the chain fell back to an auto_merge PR. The merged PR is
+    success for the push_to_main job, and status says why it went via a PR."""
+    from factory.chain.event_log import log_story_event
+
+    job = _submit("--delivery", "push_to_main", app="legacy")
+    s = _story(
+        root,
+        "001",
+        StoryState.DEPLOYED.value,
+        app="legacy",
+        slug="p2m",
+        delivery_level="auto_merge",
+        github_pr_number=31,
+    )
+    log_story_event(
+        s.id,
+        "push_to_main_fell_back_to_pr",
+        {"reason": "push_to_main_fell_back_to_pr:main requires status checks ['ci']"},
+        software_factory_root=root,
+        slug_hint="p2m",
+    )
+    monkeypatch.setattr(
+        gh_mod,
+        "_run_gh",
+        _fake_gh([{"number": 31, "state": "MERGED", "url": "u", "headRefName": "b"}]),
+    )
+    st = job_status(root, job["job_id"])
+    assert st["state"] == "done" and st["merged"] is True
+    assert st["delivery"] == "push_to_main"
+    story = st["stories"][0]
+    assert story["delivery_level"] == "auto_merge"
+    assert story["delivery_note"].startswith("push_to_main_fell_back_to_pr:")
+    # The fallback PR still open: not done yet.
+    monkeypatch.setattr(
+        gh_mod,
+        "_run_gh",
+        _fake_gh([{"number": 31, "state": "OPEN", "url": "u", "headRefName": "b"}]),
+    )
+    assert job_status(root, job["job_id"])["state"] != "done"

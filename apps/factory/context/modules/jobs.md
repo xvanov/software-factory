@@ -123,6 +123,10 @@ from today's app config:
   branch on GitHub contains the fast-forwarded commit (`merge_actions` row
   under `-(story.id)`, checked with `GitHubView.branch_contains` — the
   compare API's `identical`/`behind`). The local row alone is never `done`.
+- A `push_to_main` story that fell back to an auto-merge PR (protected base)
+  is stamped `auto_merge`, so its merged PR is success. `stories[].delivery_note`
+  carries the fallback reason, read from the story's
+  `push_to_main_fell_back_to_pr` event (`status._delivery_note`).
 
 **Merge reality comes from GitHub, never a local flag.** If `gh` fails, the
 status uses the local view (`deploy_pending`/`deployed` = merged) for
