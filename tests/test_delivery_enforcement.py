@@ -333,17 +333,19 @@ def test_level_branch_pushes_without_pr(tmp_path: Path, enforcer_env: _Calls) ->
     assert _reload(db, s.id).github_pr_number is None
 
 
-def test_level_draft_pr_opens_draft_and_stops(tmp_path: Path, enforcer_env: _Calls) -> None:
+def test_level_draft_pr_opens_draft_and_waits_for_ci(tmp_path: Path, enforcer_env: _Calls) -> None:
+    """draft_pr opens a DRAFT PR and goes to PR_OPEN — not DELIVERED_PR: the
+    auto-merge worker watches its CI first (``_watch_ci_then_deliver``)."""
     _, db, s, res = _run_enforcer(tmp_path, L.DRAFT_PR, L.AUTO_MERGE)
-    assert res.next_state == StoryState.DELIVERED_PR
+    assert res.next_state == StoryState.PR_OPEN
     assert enforcer_env.open_pr == [{"draft": True, "will_auto_merge": False}]
     row = _reload(db, s.id)
-    assert row.github_pr_number == 4242 and row.state == StoryState.DELIVERED_PR.value
+    assert row.github_pr_number == 4242 and row.state == StoryState.PR_OPEN.value
 
 
-def test_level_pr_opens_ready_pr_and_stops(tmp_path: Path, enforcer_env: _Calls) -> None:
+def test_level_pr_opens_ready_pr_and_waits_for_ci(tmp_path: Path, enforcer_env: _Calls) -> None:
     _, _db, _s, res = _run_enforcer(tmp_path, L.PR, L.AUTO_MERGE)
-    assert res.next_state == StoryState.DELIVERED_PR
+    assert res.next_state == StoryState.PR_OPEN
     assert enforcer_env.open_pr == [{"draft": False, "will_auto_merge": False}]
 
 
@@ -438,6 +440,14 @@ def gates_green(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(am, "required_gate_labels", lambda *a, **k: [])
 
 
+@pytest.fixture
+def ci_green(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The draft_pr / pr CI watch reads a green PR (no gh)."""
+    monkeypatch.setattr(
+        am, "_query_pr_checks", lambda **_k: {"state": "passing", "failing": [], "pending": []}
+    )
+
+
 def test_draft_pr_never_merged(am_root: Path, gates_green: None) -> None:
     _write_cfg(am_root, None)
     db = am_root / "state" / "factory.db"
@@ -472,7 +482,7 @@ def disarms(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
 @pytest.mark.parametrize("level", [L.DRAFT_PR, L.PR])
 def test_non_merging_level_is_settled_never_merged(
-    am_root: Path, gates_green: None, disarms: list[int], level: L
+    am_root: Path, gates_green: None, ci_green: None, disarms: list[int], level: L
 ) -> None:
     """A mergeable-state story whose RECORDED level does not merge is settled
     to DELIVERED_PR — never merged, gh is never asked to mark anything ready,
@@ -498,7 +508,7 @@ def test_non_merging_level_is_settled_never_merged(
 
 
 def test_finding2_disarm_failure_is_recorded_and_story_still_settles(
-    am_root: Path, gates_green: None, monkeypatch: pytest.MonkeyPatch
+    am_root: Path, gates_green: None, ci_green: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(delivery_gate, "disable_auto_merge", lambda *a, **k: "gh exit=1: boom")
     _write_cfg(am_root, L.AUTO_MERGE)
@@ -1267,7 +1277,7 @@ def test_should4_non_merging_story_settles_from_every_mergeable_state(
 
 
 def test_should4_settle_failures_are_capped(
-    am_root: Path, gates_green: None, monkeypatch: pytest.MonkeyPatch
+    am_root: Path, gates_green: None, ci_green: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def _boom(**_k: Any) -> str:
         raise RuntimeError("settle exploded")

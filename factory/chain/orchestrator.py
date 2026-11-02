@@ -2176,6 +2176,15 @@ def reconcile_from_github(
         is_terminal,
     )
 
+    def _ci_watched(s: StoryRecord) -> bool:
+        from factory.chain.auto_merge import watches_ci_before_delivery
+        from factory.delivery import parse_level
+
+        try:
+            return watches_ci_before_delivery(parse_level(s.delivery_level))
+        except ValueError:
+            return False
+
     def _terminal(state_value: str | None) -> bool:
         try:
             return is_terminal(StoryState(state_value))
@@ -2271,7 +2280,9 @@ def reconcile_from_github(
                 new_state = advance(story, EVENT_MERGED)
             except IllegalTransitionError:
                 new_state = StoryState.DEPLOY_PENDING
-        elif from_state == StoryState.DELIVERED_PR.value:
+        elif from_state == StoryState.DELIVERED_PR.value or (
+            from_state in _MERGEABLE_STATES and _ci_watched(story)
+        ):
             # CLOSED-unmerged DELIVERED PR (level draft_pr / pr): the factory
             # finished and handed the PR to a human, who closed it without
             # merging — a ruling, like closing the story issue. Settle it to the
@@ -2279,6 +2290,10 @@ def reconcile_from_github(
             # and its job/direction can finish. Direct assignment (no
             # ``_TRANSITIONS`` edge — adding one would make DELIVERED_PR
             # non-terminal for ``is_terminal``); declared in the conformance model.
+            # Same ruling for a draft_pr / pr story whose PR the human closed
+            # while the factory was still watching its CI (it would have been
+            # DELIVERED_PR a tick later): closed_by_operator, not the
+            # blocked_deploy_failed attention sink.
             event = "delivered_pr_closed_unmerged"
             new_state = StoryState.CLOSED_BY_OPERATOR
         else:
@@ -2307,7 +2322,8 @@ def reconcile_from_github(
         if event == "delivered_pr_closed_unmerged":
             story.error = None
             story.last_rejection_reason = (
-                f"delivered PR #{pr_number} was closed on GitHub without merging; "
+                f"PR #{pr_number} (delivery level {story.delivery_level}, story was "
+                f"{from_state}) was closed on GitHub without merging; "
                 "settled to closed_by_operator"
             )
         if event == EVENT_PR_UNMERGEABLE:
@@ -2403,10 +2419,26 @@ def freshen_behind_prs(
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
         rows = session.exec(select(StoryRecord).where(StoryRecord.app == app)).all()
+    from factory.chain.auto_merge import watches_ci_before_delivery
+    from factory.delivery import parse_level
+
+    def _factory_may_update(s: StoryRecord) -> bool:
+        # draft_pr / pr: the PR is the HUMAN's deliverable — the factory does
+        # not write a base merge into it while it watches its CI (it never did
+        # once the story was DELIVERED_PR either), and a merge-in would restart
+        # the very CI run being watched.
+        try:
+            return not watches_ci_before_delivery(parse_level(s.delivery_level))
+        except ValueError:
+            return True
+
     candidates = [
         s
         for s in rows
-        if s.github_pr_number and s.github_pr_number > 0 and s.state in _MERGEABLE_STATES
+        if s.github_pr_number
+        and s.github_pr_number > 0
+        and s.state in _MERGEABLE_STATES
+        and _factory_may_update(s)
     ]
 
     refreshed: list[tuple[str, int]] = []

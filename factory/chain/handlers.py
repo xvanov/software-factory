@@ -36,7 +36,6 @@ from factory.chain.state_machine import (
     DELIVERED_UNMERGED_STATES,
     EVENT_DELIVERED_BRANCH,
     EVENT_DELIVERED_LOCAL,
-    EVENT_DELIVERED_PR,
     EVENT_DEV_EXHAUSTED,
     EVENT_DEV_STARTED,
     EVENT_DEV_TESTS_GREEN,
@@ -5842,12 +5841,14 @@ def handle_docs_enforcer(
             if opened is not None:
                 story.github_pr_number = opened
                 payload["pr_number"] = opened
-            if not level.merges:
-                delivered_event = EVENT_DELIVERED_PR
-                delivered_detail = {
-                    "pr_number": opened,
-                    "draft": level is DeliveryLevel.DRAFT_PR,
-                }
+            # ``draft_pr`` / ``pr`` do NOT stop here any more (2026-11-02,
+            # template-probe PR #18: a red ``docker build`` was never fed back
+            # because the story was DELIVERED_PR the moment the PR opened).
+            # They continue to PR_OPEN like ``auto_merge``, and the auto-merge
+            # worker WATCHES the PR's CI — feeding a red run back to dev, at
+            # most ``_MAX_CI_FIX_CYCLES`` times — before settling the story to
+            # DELIVERED_PR. It never merges them and never marks a draft
+            # ready (``auto_merge._watch_ci_then_deliver``).
             delivery_failure = f"gh pr create failed for branch {story.github_branch!r}"
         if delivery_ok:
             story.pr_create_retries = 0

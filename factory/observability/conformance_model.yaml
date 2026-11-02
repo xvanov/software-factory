@@ -195,8 +195,16 @@ allowed_direct_writes:
   - writer: auto_merge._handle_ci_failure
     to: [reviewer_requested_changes]
     why: >-
+      Historical writer name of the CI-fix re-dispatch (before it moved into
+      `_redispatch_ci_fix`, 2026-11-02); kept so recorded state-write history
+      stays conformant.
+  - writer: auto_merge._redispatch_ci_fix
+    to: [reviewer_requested_changes]
+    why: >-
       A red CI run routes the story back into the dev loop; reachable from any
-      post-PR state.
+      post-PR state. Shared by the auto_merge CI loop (`_handle_ci_failure`)
+      and the draft_pr / pr CI watch (`_watch_ci_then_deliver`), both capped
+      at `_MAX_CI_FIX_CYCLES`.
   - writer: auto_merge._handle_pr_conflict_rebuild
     to: [reviewer_requested_changes]
     why: >-

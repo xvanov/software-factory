@@ -25,6 +25,7 @@ import contextlib
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2807,6 +2808,96 @@ def _continue_hold_episode(
         pass
 
 
+def _redispatch_ci_fix(
+    *,
+    story: StoryRecord,
+    pr_number: int,
+    logs: str,
+    signature: str,
+    attempt: int,
+    db: Path,
+    root: Path,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Send a red CI run back to dev: the failing log becomes a reviewer-style
+    finding, the story re-enters at ``REVIEWER_REQUESTED_CHANGES`` and a
+    ``ci_fix_redispatch`` event (the cap counter) is logged.
+
+    Shared by the auto-merge CI loop (``_handle_ci_failure``) and the
+    ``draft_pr`` / ``pr`` CI watch (``_watch_ci_then_deliver``) so both feed the
+    dev the SAME finding shape and count against the SAME
+    ``_MAX_CI_FIX_CYCLES``. The dev's fix reaches the PR via
+    ``handlers._push_fix_to_existing_pr`` when the story comes back round
+    through ``handle_docs_enforcer``.
+    """
+    from factory.chain.event_log import log_story_event
+    from factory.chain.handlers import persist_story
+
+    digest = logs.strip() or (
+        "(no CI log digest could be fetched; inspect the GitHub Actions run "
+        f"for PR #{pr_number} directly)"
+    )
+    # Emit a well-formed finding DICT (not a bare string): every downstream
+    # consumer — runner._build_initial_message, _findings_signature,
+    # _append_reviewer_history, _render_reviewer_history_section — indexes
+    # findings with ``f.get(...)``. A string element crashed the dev
+    # re-dispatch ("'str' object has no attribute 'get'"), silently breaking
+    # this entire CI-failure feedback loop.
+    finding = {
+        "severity": "high",
+        "criterion": "ci",
+        "location": f"GitHub Actions CI (PR #{pr_number})",
+        "what": (
+            f"Real GitHub Actions CI failed on PR #{pr_number}. Fix the exact "
+            f"failure it reported below — do not just re-run or ignore it:\n\n{digest}"
+        ),
+    }
+    reviewer_payload = {
+        "findings": [finding],
+        "source": "ci_failure",
+        "summary": "Real GitHub Actions CI failed; fix the exact failure it reported.",
+    }
+
+    # Re-entry point: REVIEWER_REQUESTED_CHANGES (not DEV_IN_PROGRESS) is the
+    # correct target — ``DEV_IN_PROGRESS`` has no entry in the orchestrator's
+    # per-state dispatch table (it's the transient "handler is actively
+    # running" state that ``handle_dev`` itself transitions into and out of
+    # within a single invocation; see ``orchestrator._DISPATCH``). Setting
+    # the state directly to DEV_IN_PROGRESS would strand the story with no
+    # handler ever picking it up again. REVIEWER_REQUESTED_CHANGES dispatches
+    # to "dev" on the next tick AND is the exact existing path that feeds
+    # ``story.reviewer_result_json`` into ``handle_dev``'s reviewer_findings
+    # (see ``handlers._handle_dev_once``) — precisely the plumbing this
+    # re-dispatch needs to reuse.
+    story.reviewer_result_json = json.dumps(reviewer_payload)
+    story.state = StoryState.REVIEWER_REQUESTED_CHANGES.value
+    # Reset BOTH counters (mirror _recover_blocked_stories). A CI-fix redispatch
+    # hits an already-approved story whose reviewer_cycles may be near
+    # _MAX_REVIEW_CYCLES; without resetting it, the follow-up review pass could
+    # trip BLOCKED_REVIEW_NONCONVERGENT on the first non-approving pass and
+    # mislabel a CI-only hiccup as review non-convergence.
+    story.dev_retries = 0
+    story.reviewer_cycles = 0
+    persist_story(story, db)
+
+    try:
+        log_story_event(
+            story.id,
+            "ci_fix_redispatch",
+            {
+                "pr_number": pr_number,
+                "attempt": attempt,
+                "cap": _MAX_CI_FIX_CYCLES,
+                "failure_signature": signature,
+                **(extra or {}),
+            },
+            software_factory_root=root,
+            slug_hint=story.slug,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _handle_ci_failure(
     *,
     story: StoryRecord,
@@ -2863,7 +2954,6 @@ def _handle_ci_failure(
     the sandbox — see ``handlers._handle_dev_once``) and returns ``True``.
     """
     from factory.chain.event_log import log_story_event, read_story_events
-    from factory.chain.handlers import persist_story
 
     if story.state not in _MERGEABLE_STATES:
         # Defensive: callers already guard on this, but never re-dispatch a
@@ -2991,68 +3081,15 @@ def _handle_ci_failure(
             _escalate("identical_failure_signature")
             return _park("identical_failure_signature")
 
-    digest = logs.strip() or (
-        "(no CI log digest could be fetched; inspect the GitHub Actions run "
-        f"for PR #{pr_number} directly)"
+    _redispatch_ci_fix(
+        story=story,
+        pr_number=pr_number,
+        logs=logs,
+        signature=signature,
+        attempt=len(prior_redispatches) + 1,
+        db=db,
+        root=root,
     )
-    # Emit a well-formed finding DICT (not a bare string): every downstream
-    # consumer — runner._build_initial_message, _findings_signature,
-    # _append_reviewer_history, _render_reviewer_history_section — indexes
-    # findings with ``f.get(...)``. A string element crashed the dev
-    # re-dispatch ("'str' object has no attribute 'get'"), silently breaking
-    # this entire CI-failure feedback loop.
-    finding = {
-        "severity": "high",
-        "criterion": "ci",
-        "location": f"GitHub Actions CI (PR #{pr_number})",
-        "what": (
-            f"Real GitHub Actions CI failed on PR #{pr_number}. Fix the exact "
-            f"failure it reported below — do not just re-run or ignore it:\n\n{digest}"
-        ),
-    }
-    reviewer_payload = {
-        "findings": [finding],
-        "source": "ci_failure",
-        "summary": "Real GitHub Actions CI failed; fix the exact failure it reported.",
-    }
-
-    # Re-entry point: REVIEWER_REQUESTED_CHANGES (not DEV_IN_PROGRESS) is the
-    # correct target — ``DEV_IN_PROGRESS`` has no entry in the orchestrator's
-    # per-state dispatch table (it's the transient "handler is actively
-    # running" state that ``handle_dev`` itself transitions into and out of
-    # within a single invocation; see ``orchestrator._DISPATCH``). Setting
-    # the state directly to DEV_IN_PROGRESS would strand the story with no
-    # handler ever picking it up again. REVIEWER_REQUESTED_CHANGES dispatches
-    # to "dev" on the next tick AND is the exact existing path that feeds
-    # ``story.reviewer_result_json`` into ``handle_dev``'s reviewer_findings
-    # (see ``handlers._handle_dev_once``) — precisely the plumbing this
-    # re-dispatch needs to reuse.
-    story.reviewer_result_json = json.dumps(reviewer_payload)
-    story.state = StoryState.REVIEWER_REQUESTED_CHANGES.value
-    # Reset BOTH counters (mirror _recover_blocked_stories). A CI-fix redispatch
-    # hits an already-approved story whose reviewer_cycles may be near
-    # _MAX_REVIEW_CYCLES; without resetting it, the follow-up review pass could
-    # trip BLOCKED_REVIEW_NONCONVERGENT on the first non-approving pass and
-    # mislabel a CI-only hiccup as review non-convergence.
-    story.dev_retries = 0
-    story.reviewer_cycles = 0
-    persist_story(story, db)
-
-    try:
-        log_story_event(
-            story.id,
-            "ci_fix_redispatch",
-            {
-                "pr_number": pr_number,
-                "attempt": len(prior_redispatches) + 1,
-                "cap": _MAX_CI_FIX_CYCLES,
-                "failure_signature": signature,
-            },
-            software_factory_root=root,
-            slug_hint=story.slug,
-        )
-    except Exception:  # noqa: BLE001
-        pass
     return "redispatched"
 
 
@@ -3426,8 +3463,16 @@ def _settle_non_merging_story(
     root: Path,
     db: Path,
     reason: str,
+    ci_note: str | None = None,
 ) -> str:
     """Bring a merge-capable story whose level does NOT merge to its level's end.
+
+    ``ci_note`` (set by ``_watch_ci_then_deliver``) says the PR is delivered
+    WITHOUT a green CI — red after the CI-fix cap, or no verdict in time. It is
+    recorded on the ``delivered`` event (``factory job status`` reads it as the
+    story's ``delivery_note``) and in ``error``; never in
+    ``last_rejection_reason`` (that would list the story in ``factory inbox``
+    as stuck, and it is not: the PR is the deliverable).
 
     Reached when (a) a ``push_to_main`` fast-forward was refused and the story
     falls back to ``pr``, or (b) a story whose RECORDED level does not merge
@@ -3500,12 +3545,15 @@ def _settle_non_merging_story(
     else:
         event = EVENT_DELIVERED_LOCAL
     story.state = advance(story, event).value
-    story.error = (
-        f"delivery {level.value}: could not disarm GitHub auto-merge on PR "
-        f"#{story.github_pr_number} — {disarm_err}"
-        if disarm_err
-        else None
-    )
+    errors = []
+    if disarm_err:
+        errors.append(
+            f"delivery {level.value}: could not disarm GitHub auto-merge on PR "
+            f"#{story.github_pr_number} — {disarm_err}"
+        )
+    if ci_note:
+        errors.append(ci_note)
+    story.error = "; ".join(errors) or None
     persist_story(story, db)
     log_story_event(
         story.id,
@@ -3515,11 +3563,312 @@ def _settle_non_merging_story(
             "state": story.state,
             "pr_number": story.github_pr_number,
             "reason": reason,
+            **({"ci_note": ci_note} if ci_note else {}),
         },
         software_factory_root=root,
         slug_hint=story.slug,
     )
     return f"delivery {level.value}: never merged by the factory — {reason}; story -> {story.state}"
+
+
+# --------------------------------------------------------------------------- #
+# draft_pr / pr: watch the PR's CI (and feed a red run back to dev) BEFORE
+# the story is settled to DELIVERED_PR.
+# --------------------------------------------------------------------------- #
+
+#: How long a ``draft_pr`` / ``pr`` story waits for its PR's checks to finish
+#: before it is delivered anyway, with a "CI did not finish" note. The same
+#: window ``factory job status`` waits on a just-opened PR (``jobs.status.
+#: CI_WAIT_S``), so the two never disagree about when "waiting" is over.
+DELIVERY_CI_WAIT_S = 2 * 60 * 60
+
+#: A PR with NO checks at all: GitHub registers workflow runs a few seconds to
+#: a minute after a push, so "no checks" is only believed after this grace —
+#: then the story is delivered with a "no CI reported" note (a repo with no CI
+#: must not wait the full ``DELIVERY_CI_WAIT_S``).
+DELIVERY_NO_CHECKS_GRACE_S = 10 * 60
+
+#: A red verdict read within this long of the watch starting is not acted on:
+#: right after a fix push GitHub can still report the PREVIOUS head's checks,
+#: and acting on that stale red would burn a CI-fix cycle on a fixed failure
+#: (and then trip the identical-signature guard). Ticks are minutes apart, so
+#: this costs at most one tick.
+DELIVERY_CI_RED_MIN_AGE_S = 90
+
+#: Logged once per wait (per PR head the dev hands over): the watch's clock.
+EVENT_CI_WATCH_STARTED = "delivery_ci_watch_started"
+
+
+def watches_ci_before_delivery(level: DeliveryLevel | None) -> bool:
+    """True for the levels whose PR's CI is watched before ``DELIVERED_PR``."""
+    return level in (DeliveryLevel.DRAFT_PR, DeliveryLevel.PR)
+
+
+def _query_pr_checks(*, app_config: AppConfig, pr_number: int) -> dict[str, Any] | None:
+    """The PR's CI rollup over ALL its checks: ``{"state", "failing",
+    "pending"}`` with ``state`` in ``passing`` / ``failing`` / ``pending`` /
+    ``none``; ``None`` when GitHub could not be read.
+
+    ALL checks, not just required ones (``_query_ci_state`` reads
+    ``--required``): a ``draft_pr`` / ``pr`` repo often has no branch
+    protection at all, and the human the PR is handed to reads every check.
+    Same reducer ``factory job status`` uses (``jobs.github.summarize_checks``),
+    so the watch and the status report agree on what "red" means.
+    """
+    import subprocess
+
+    from factory.jobs.github import summarize_checks
+
+    if pr_number <= 0:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                app_config.repo,
+                "--json",
+                "statusCheckRollup",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        rows = (json.loads(proc.stdout or "{}") or {}).get("statusCheckRollup") or []
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(rows, list):
+        return None
+    return summarize_checks(rows)
+
+
+def _ci_watch_window(
+    events: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], float | None]:
+    """``(prior ci_fix_redispatch events, start of the current wait)``.
+
+    Both are scoped to events AFTER the latest ``story_resumed`` (the
+    ``_handle_ci_failure`` precedent: an operator resume resets the CI-fix
+    budget). The current wait is the first ``delivery_ci_watch_started`` after
+    the latest redispatch — each fix the dev hands back gets a fresh clock.
+    """
+    resume_idx = max(
+        (i for i, e in enumerate(events) if e.get("event") == "story_resumed"), default=-1
+    )
+    scoped = events[resume_idx + 1 :]
+    redispatches = [e for e in scoped if e.get("event") == "ci_fix_redispatch"]
+    last_fix_idx = max(
+        (i for i, e in enumerate(scoped) if e.get("event") == "ci_fix_redispatch"), default=-1
+    )
+    start: float | None = None
+    for e in scoped[last_fix_idx + 1 :]:
+        if e.get("event") == EVENT_CI_WATCH_STARTED:
+            start = _parse_event_ts(e.get("ts"))
+            if start is not None:
+                break
+    return redispatches, start
+
+
+def _watch_ci_then_deliver(
+    *,
+    story: StoryRecord,
+    fixture: FixturePR,
+    level: DeliveryLevel,
+    cfg: AppConfig,
+    app: str,
+    root: Path,
+    db: Path,
+    checks_query: Any = None,
+    log_fetch: Any = None,
+    now_fn: Any = None,
+) -> MergeAction:
+    """``draft_pr`` / ``pr``: wait for the PR's CI, fix a red run, THEN deliver.
+
+    The same loop ``auto_merge`` stories get (``_handle_ci_failure``), minus
+    the merge and minus the give-up close-and-park:
+
+    * green → ``_settle_non_merging_story`` → ``DELIVERED_PR`` (never merged,
+      never marked ready — a draft stays a draft; any armed auto-merge is
+      disarmed there).
+    * red → the failing log goes to dev via ``_redispatch_ci_fix`` (story →
+      ``REVIEWER_REQUESTED_CHANGES``); the fix is pushed to the SAME PR by
+      ``handle_docs_enforcer`` and the story comes back here at PR_OPEN. At
+      most ``_MAX_CI_FIX_CYCLES`` re-dispatches, and none when the dev's last
+      fix reproduced the identical failure signature.
+    * red after that, or no verdict within ``DELIVERY_CI_WAIT_S`` (or no checks
+      at all after ``DELIVERY_NO_CHECKS_GRACE_S``) → still ``DELIVERED_PR`` —
+      the PR exists and IS the requested deliverable — but with a ``ci_note``
+      on the ``delivered`` event that ``factory job status`` shows. Unlike
+      auto_merge's exhaustion path the PR is NEVER closed: a human asked for
+      it.
+    * pending → nothing is written; re-checked next tick.
+
+    Every state write happens under ``delivery_gate.story_lock`` after a
+    re-read of the committed state and of the durable job-cancel marker, so a
+    ``factory job cancel`` landing mid-wait wins (the cancel re-park, not this
+    function, owns the row then). Never raises.
+    """
+    from factory.chain.event_log import log_story_event, read_story_events
+
+    pr = fixture.pr_number
+    now = float((now_fn or time.time)())
+
+    def _act(reason: str) -> MergeAction:
+        return MergeAction(app=app, pr_number=pr, merged=False, reason=reason)
+
+    sid = story.id
+    if sid is None:
+        return _act("story has no id; CI watch skipped")
+    if delivery_gate.is_job_cancelled(db, story.app, story.direction_id):
+        return _act("job was cancelled (factory job cancel) — CI watch stopped, not delivered")
+
+    try:
+        events = read_story_events(sid, software_factory_root=root, slug_hint=story.slug)
+    except Exception:  # noqa: BLE001 - an unreadable stream starts a fresh wait
+        events = []
+    prior, start = _ci_watch_window(events)
+    if start is None:
+        start = now
+        with contextlib.suppress(Exception):
+            log_story_event(
+                sid,
+                EVENT_CI_WATCH_STARTED,
+                {"pr_number": pr, "level": level.value, "ci_fix_cycles": len(prior)},
+                software_factory_root=root,
+                slug_hint=story.slug,
+            )
+    age = max(0.0, now - start)
+
+    try:
+        ci = (checks_query or _query_pr_checks)(app_config=cfg, pr_number=pr)
+    except Exception:  # noqa: BLE001 - unreadable == unknown == keep waiting (bounded)
+        ci = None
+    if not isinstance(ci, dict):
+        ci = {}
+    ci_state = ci.get("state")
+    failing = [str(n) for n in (ci.get("failing") or [])][:5]
+    pending = [str(n) for n in (ci.get("pending") or [])][:5]
+    if (
+        ci_state == "failing"
+        and failing
+        and {n.lower() for n in failing} == {_MAIN_GREEN_CHECK_NAME}
+    ):
+        # E6 environment guard: ``main-green`` red ALONE means MAIN is red, not
+        # this PR (the ``_CI_STATE_HOLD`` rule). Never send the dev after it —
+        # wait like a pending run (bounded by ``DELIVERY_CI_WAIT_S``).
+        ci_state = "pending"
+        pending = [f"{_MAIN_GREEN_CHECK_NAME} (main is red)"]
+
+    def _locked(write: Any) -> MergeAction:
+        """Run ``write`` under the story lock, after re-checking cancel/state."""
+        with delivery_gate.story_lock(root, sid) as held:
+            if not held:
+                return _act("story lock busy (job cancel in progress?) — re-checked next tick")
+            if delivery_gate.is_job_cancelled(db, story.app, story.direction_id):
+                return _act("job was cancelled (factory job cancel) — not delivered")
+            live = delivery_gate.current_story_state(db, sid)
+            if live is None or live not in _MERGEABLE_STATES:
+                return _act(f"story state changed to {live!r} during the CI watch — left alone")
+            story.state = live
+            action: MergeAction = write()
+            _record_merge_action(action, fixture.head_sha, db)
+            return action
+
+    def _deliver(reason: str, note: str | None) -> MergeAction:
+        def _write() -> MergeAction:
+            try:
+                detail = _settle_non_merging_story(
+                    story=story,
+                    level=level,
+                    app_config=cfg,
+                    root=root,
+                    db=db,
+                    reason=reason,
+                    ci_note=note,
+                )
+            except Exception as exc:  # noqa: BLE001 - never merge on a settle error
+                detail = _bound_settle_failures(
+                    story, root, db, f"{reason}; settle failed: {exc!r}"
+                )
+            return _act(detail)
+
+        return _locked(_write)
+
+    if ci_state == "passing":
+        return _deliver(f"CI green on PR #{pr}", None)
+
+    if ci_state == "none":
+        if age < DELIVERY_NO_CHECKS_GRACE_S:
+            return _act(f"waiting for CI on PR #{pr}: no checks reported yet")
+        return _deliver(
+            f"no CI checks on PR #{pr}",
+            f"CI: no checks reported on PR #{pr} within "
+            f"{DELIVERY_NO_CHECKS_GRACE_S // 60} min — delivered without a CI verdict",
+        )
+
+    if ci_state == "failing":
+        if age < DELIVERY_CI_RED_MIN_AGE_S:
+            return _act(f"CI red on PR #{pr} but the watch just started; re-checked next tick")
+        names = ", ".join(failing) or "unnamed check"
+        if len(prior) >= _MAX_CI_FIX_CYCLES:
+            return _deliver(
+                f"CI red on PR #{pr} after the CI-fix cap",
+                f"CI is RED on PR #{pr} ({names}) after {len(prior)} CI-fix "
+                f"cycle(s) (cap {_MAX_CI_FIX_CYCLES}) — delivered for a human to fix",
+            )
+        try:
+            logs = str((log_fetch or _fetch_ci_failure_logs)(app_config=cfg, pr_number=pr) or "")
+        except Exception:  # noqa: BLE001
+            logs = ""
+        signature = _ci_failure_signature(logs)
+        last_sig = prior[-1].get("failure_signature") if prior else None
+        if signature and last_sig is not None and signature == last_sig:
+            return _deliver(
+                f"CI red on PR #{pr}: the last fix reproduced the identical failure",
+                f"CI is RED on PR #{pr} ({names}): the dev's last CI fix reproduced "
+                f"the identical failure ({len(prior)} CI-fix cycle(s)) — delivered for "
+                "a human to fix",
+            )
+
+        def _redispatch() -> MergeAction:
+            _redispatch_ci_fix(
+                story=story,
+                pr_number=pr,
+                logs=logs,
+                signature=signature,
+                attempt=len(prior) + 1,
+                db=db,
+                root=root,
+                extra={"level": level.value, "failing": failing},
+            )
+            return _act(
+                f"CI red on PR #{pr} ({names}); re-dispatched to dev with the CI log "
+                f"(CI-fix {len(prior) + 1}/{_MAX_CI_FIX_CYCLES}) before delivery"
+            )
+
+        return _locked(_redispatch)
+
+    # pending, or GitHub unreadable: wait, bounded.
+    if age >= DELIVERY_CI_WAIT_S:
+        what = f"still pending: {', '.join(pending)}" if pending else "CI state unreadable"
+        return _deliver(
+            f"CI did not finish on PR #{pr} in time",
+            f"CI did not finish on PR #{pr} within {DELIVERY_CI_WAIT_S // 3600}h "
+            f"({what}) — delivered without a CI verdict",
+        )
+    return _act(
+        f"waiting for CI on PR #{pr}"
+        + (f" ({', '.join(pending)})" if pending else " (state unknown)")
+        + "; delivered once it reports"
+    )
 
 
 #: Prefix of the reason recorded when ``push_to_main`` falls back to a PR.
@@ -3784,8 +4133,16 @@ def auto_merge_tick(
     merge_commit_sha_provider: Any = None,
     fast_forward_fn: Any = None,
     push_to_main_preflight_fn: Any = None,
+    pr_checks_query: Any = None,
+    ci_log_fetch: Any = None,
 ) -> list[MergeAction]:
     """Single pass of the auto-merge worker against ``app``.
+
+    ``draft_pr`` / ``pr`` stories with a PR are not settled on sight: their
+    PR's CI is WATCHED first (``_watch_ci_then_deliver``) — a red run goes
+    back to dev (≤ ``_MAX_CI_FIX_CYCLES``), green or exhausted settles to
+    ``DELIVERED_PR``. ``pr_checks_query`` / ``ci_log_fetch`` are its test
+    seams (default ``_query_pr_checks`` / ``_fetch_ci_failure_logs``).
 
     DELIVERY LEVELS (``factory/chain/delivery_gate.py``): a story is merged
     only when its recorded level is ``auto_merge`` (``gh pr merge``) or
@@ -3925,6 +4282,27 @@ def auto_merge_tick(
             ).all()
         for db_story in mergeable_stories:
             pr_no = db_story.github_pr_number
+            if (
+                pr_no is not None
+                and pr_no > 0
+                and watches_ci_before_delivery(
+                    delivery_gate.story_level(db_story, cfg, root, db, persist=not dry_run)
+                )
+            ):
+                # draft_pr / pr: only the CI watch acts on this story, and it
+                # reads the PR's checks itself. Skip the gh head/files/draft
+                # queries and, above all, ``_story_worktree`` — it merges the
+                # base into the story worktree, a local merge commit the next
+                # CI-fix push would then publish onto the human's PR.
+                fixtures.append(
+                    FixturePR(
+                        pr_number=int(pr_no),
+                        head_sha=f"local-{db_story.id}",
+                        base_branch=cfg.default_branch or "main",
+                        story=db_story,
+                    )
+                )
+                continue
             if (pr_no is None or pr_no <= 0) and delivery_gate.story_level(
                 db_story, cfg, root, db, persist=not dry_run
             ) is DeliveryLevel.PUSH_TO_MAIN:
@@ -4034,6 +4412,32 @@ def auto_merge_tick(
 
     actions: list[MergeAction] = []
     for f in fixtures:
+        # draft_pr / pr CI WATCH — before the draft guard below (a draft_pr
+        # story's PR IS a draft, and its CI still has to be watched; the watch
+        # never merges and never marks it ready). Real-run, real PRs, live
+        # stories only; everything else keeps the paths below.
+        if (
+            not dry_run
+            and f.story is not None
+            and f.pr_number > 0
+            and f.story.state in _MERGEABLE_STATES
+        ):
+            w_level = delivery_gate.story_level(f.story, cfg, root, db, persist=True)
+            if w_level is not None and watches_ci_before_delivery(w_level):
+                actions.append(
+                    _watch_ci_then_deliver(
+                        story=f.story,
+                        fixture=f,
+                        level=w_level,
+                        cfg=cfg,
+                        app=app,
+                        root=root,
+                        db=db,
+                        checks_query=pr_checks_query,
+                        log_fetch=ci_log_fetch,
+                    )
+                )
+                continue
         # DELIVERY-LEVEL GUARD — before the hold, the CI-failure loop and the
         # gate evaluation, because every one of those can act on a PR (re-run
         # checks, re-dispatch dev, close it, merge it). A draft PR is never
