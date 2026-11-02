@@ -37,6 +37,7 @@ from factory.app_config import (
     load_app_config,
     targets_factory_repo,
 )
+from factory.chain import delivery_gate
 from factory.chain.gates.evaluator import (  # noqa: F401 - ALL_GATE_LABELS re-exported
     ALL_GATE_LABELS,
     LOOP4_REQUIRED_GATE_LABELS,
@@ -45,6 +46,7 @@ from factory.chain.gates.evaluator import (  # noqa: F401 - ALL_GATE_LABELS re-e
     required_gate_labels,
 )
 from factory.chain.state_machine import StoryRecord, StoryState
+from factory.delivery import DeliveryLevel
 
 # Labels that, when present, BLOCK merge regardless of gate status.
 BLOCKING_LABELS: frozenset[str] = frozenset(
@@ -394,6 +396,10 @@ class MergeAction:
     # caller terminally supersedes the story (``SUPERSEDED_BY_SIBLING``) and
     # closes its PR so it can never merge a redundant second interpretation.
     superseded_by_sibling: bool = False
+    # Delivery level ``push_to_main`` only: the fast-forward of the default
+    # branch was REFUSED (not a fast-forward, push rejected, HEAD moved). The
+    # caller falls back to level ``pr`` — opens a ready PR, never merges it.
+    push_to_main_refused: bool = False
 
 
 @dataclass
@@ -413,6 +419,8 @@ class FixturePR:
     ci_state: str | None = "success"
     story: StoryRecord | None = None
     repo_root: Path | None = None
+    # GitHub's draft flag. A draft PR is NEVER merged by this worker.
+    is_draft: bool = False
 
 
 # ``merge_actions`` columns added after the table shipped. SQLModel's
@@ -1158,8 +1166,17 @@ def _evaluate_one_pr(
     db_path: Path | None = None,
     sibling_shipped_query: Any = None,
     merge_commit_sha_provider: Any = None,
+    push_to_main: bool = False,
+    fast_forward_fn: Any = None,
 ) -> MergeAction:
     """Decide if a PR should be merged; merge it in real-run.
+
+    ``push_to_main=True`` (delivery level ``push_to_main``): the story has NO
+    PR — ``fixture.pr_number`` is the ``-(story.id)`` placeholder and
+    ``fixture.head_sha`` the worktree commit. The SAME gate set runs; on a pass
+    the default branch is fast-forwarded by ``fast_forward_fn`` (default
+    ``delivery_gate.fast_forward_default_branch``) instead of ``gh pr merge``.
+    A refused fast-forward returns ``push_to_main_refused=True``.
 
     Branches on ``story.chain_kind``:
 
@@ -1249,7 +1266,10 @@ def _evaluate_one_pr(
     # shape), and there is no stable per-commit key to cap without a real PR.
     gate_block_tracked = (
         not dry_run
-        and fixture.pr_number > 0
+        # push_to_main has no PR but a REAL head sha, so the per-commit cap
+        # works for it too — without it a gate-red story would re-run the
+        # whole gate set every tick forever.
+        and (fixture.pr_number > 0 or push_to_main)
         and story is not None
         and story.id is not None
     )
@@ -1431,7 +1451,7 @@ def _evaluate_one_pr(
     # -56", observed live 2026-07-18) and the failure terminally blocked the
     # story. Record an auditable no-PR decision instead; the story needs PR
     # (re-)creation, not a merge.
-    if fixture.pr_number <= 0:
+    if fixture.pr_number <= 0 and not push_to_main:
         return MergeAction(
             app=app,
             pr_number=fixture.pr_number,
@@ -1492,6 +1512,36 @@ def _evaluate_one_pr(
             pr_number=fixture.pr_number,
             merged=True,
             reason=reason,
+            gates_passed=gates_passed,
+            gates_failed=gates_failed,
+            blocking_labels=blocking_present,
+        )
+
+    if push_to_main:
+        # Gates passed + no blockers, no PR: fast-forward the default branch to
+        # the exact commit the gates evaluated. Never force; any doubt refuses.
+        ff = fast_forward_fn or delivery_gate.fast_forward_default_branch
+        ff_ok, ff_detail = ff(
+            worktree=fixture.repo_root,
+            base=fixture.base_branch,
+            expected_sha=fixture.head_sha,
+        )
+        if not ff_ok:
+            return MergeAction(
+                app=app,
+                pr_number=fixture.pr_number,
+                merged=False,
+                reason=f"push_to_main refused: {ff_detail}",
+                gates_passed=gates_passed,
+                gates_failed=gates_failed,
+                blocking_labels=blocking_present,
+                push_to_main_refused=True,
+            )
+        return MergeAction(
+            app=app,
+            pr_number=fixture.pr_number,
+            merged=True,
+            reason=f"push_to_main: fast-forwarded {fixture.base_branch} to {ff_detail[:12]}",
             gates_passed=gates_passed,
             gates_failed=gates_failed,
             blocking_labels=blocking_present,
@@ -3146,6 +3196,87 @@ def _handle_pr_conflict_rebuild(
     return "rebuild_redispatched"
 
 
+def _settle_non_merging_story(
+    *,
+    story: StoryRecord,
+    level: DeliveryLevel,
+    app_config: AppConfig,
+    root: Path,
+    db: Path,
+    reason: str,
+) -> str:
+    """Bring a merge-capable story whose level does NOT merge to its level's end.
+
+    Reached when (a) a ``push_to_main`` fast-forward was refused and the story
+    falls back to ``pr``, or (b) the app's ceiling was LOWERED below
+    ``auto_merge`` while the story sat in a mergeable state. Never merges,
+    never marks a draft ready. A story with no PR yet gets one opened (draft
+    for ``draft_pr``); a failure is retried by the next tick, bounded by
+    ``handlers._MAX_PR_CREATE_RETRIES`` and then parked at
+    ``BLOCKED_DEPLOY_FAILED``. Returns a one-line description for the
+    ``MergeAction``. Real-run only.
+    """
+    from factory.chain.event_log import log_story_event
+    from factory.chain.handlers import (
+        _MAX_PR_CREATE_RETRIES,
+        _open_pr_for_story,
+        persist_story,
+    )
+    from factory.chain.state_machine import (
+        EVENT_DELIVERED_BRANCH,
+        EVENT_DELIVERED_LOCAL,
+        EVENT_DELIVERED_PR,
+        advance,
+    )
+
+    has_pr = story.github_pr_number is not None and story.github_pr_number > 0
+    if has_pr or level in (DeliveryLevel.DRAFT_PR, DeliveryLevel.PR):
+        if not has_pr:
+            opened = _open_pr_for_story(
+                story,
+                app_config,
+                root,
+                draft=level is DeliveryLevel.DRAFT_PR,
+                will_auto_merge=False,
+            )
+            if opened is None:
+                story.pr_create_retries += 1
+                msg = (
+                    f"delivery {level.value}: gh pr create failed "
+                    f"(attempt {story.pr_create_retries}/{_MAX_PR_CREATE_RETRIES}) — {reason}"
+                )
+                if story.pr_create_retries >= _MAX_PR_CREATE_RETRIES:
+                    story.state = StoryState.BLOCKED_DEPLOY_FAILED.value
+                    msg += " — retries exhausted, parked for human action"
+                story.error = msg
+                story.last_rejection_reason = msg
+                persist_story(story, db)
+                return msg
+            story.github_pr_number = opened
+            story.pr_create_retries = 0
+        event = EVENT_DELIVERED_PR
+    elif level is DeliveryLevel.BRANCH:
+        event = EVENT_DELIVERED_BRANCH
+    else:
+        event = EVENT_DELIVERED_LOCAL
+    story.state = advance(story, event).value
+    story.error = None
+    persist_story(story, db)
+    log_story_event(
+        story.id,
+        delivery_gate.EVENT_DELIVERED,
+        {
+            "level": level.value,
+            "state": story.state,
+            "pr_number": story.github_pr_number,
+            "reason": reason,
+        },
+        software_factory_root=root,
+        slug_hint=story.slug,
+    )
+    return f"delivery {level.value}: never merged by the factory — {reason}; story -> {story.state}"
+
+
 def auto_merge_tick(
     software_factory_root: Path,
     app: str,
@@ -3163,8 +3294,16 @@ def auto_merge_tick(
     merge_fn: Any = None,
     pr_merged_query: Any = None,
     merge_commit_sha_provider: Any = None,
+    fast_forward_fn: Any = None,
 ) -> list[MergeAction]:
     """Single pass of the auto-merge worker against ``app``.
+
+    DELIVERY LEVELS (``factory/chain/delivery_gate.py``): a story is merged
+    only when its recorded level is ``auto_merge`` (``gh pr merge``) or
+    ``push_to_main`` (gates, then a fast-forward of the default branch via
+    ``fast_forward_fn``). Any other level — and any DRAFT PR — is never merged
+    and never marked ready; a mergeable-state story at such a level is settled
+    to its ``DELIVERED_*`` end state instead.
 
     ``self_edit_gate`` / ``patch_provider`` / ``escalate`` are injection seams
     for the chain-side factory self-edit staging gate (``_evaluate_self_edit_gate``);
@@ -3293,6 +3432,31 @@ def auto_merge_tick(
             ).all()
         for db_story in mergeable_stories:
             pr_no = db_story.github_pr_number
+            if (pr_no is None or pr_no <= 0) and delivery_gate.story_level(
+                db_story, cfg, root, db, persist=not dry_run
+            ) is DeliveryLevel.PUSH_TO_MAIN:
+                # push_to_main: NO PR by design. Provenance comes from the
+                # story worktree itself — the exact commit the gates will run
+                # against and the fast-forward will publish — never from gh
+                # and never a synthetic ``local-N`` (which the oracle
+                # provenance gate rightly refuses).
+                p2m_root = _story_worktree(root, app, db_story)
+                p2m_head, p2m_files = delivery_gate.worktree_head_and_files(
+                    p2m_root, cfg.default_branch or "main"
+                )
+                fixtures.append(
+                    FixturePR(
+                        pr_number=-(db_story.id or 0),
+                        head_sha=p2m_head or f"local-{db_story.id}",
+                        base_branch=cfg.default_branch or "main",
+                        labels=[],
+                        files_changed=p2m_files or [],
+                        ci_state=None,
+                        story=db_story,
+                        repo_root=p2m_root,
+                    )
+                )
+                continue
             if pr_no is None:
                 # Docs chain may reach PR_OPEN in dry-run without a real
                 # PR number; synthesize a placeholder so the worker still
@@ -3355,6 +3519,7 @@ def auto_merge_tick(
             story_row = rows[0] if rows else None
             fixtures.append(
                 FixturePR(
+                    is_draft=bool(getattr(pr, "draft", False)),
                     pr_number=int(pr.number),
                     head_sha=str(pr.head.sha),
                     base_branch=str(pr.base.ref),
@@ -3368,6 +3533,43 @@ def auto_merge_tick(
 
     actions: list[MergeAction] = []
     for f in fixtures:
+        # DELIVERY-LEVEL GUARD — before the hold, the CI-failure loop and the
+        # gate evaluation, because every one of those can act on a PR (re-run
+        # checks, re-dispatch dev, close it, merge it). A draft PR is never
+        # touched; a story whose recorded level does not merge is settled to
+        # its DELIVERED_* end state and never merged.
+        if f.is_draft:
+            actions.append(
+                MergeAction(
+                    app=app,
+                    pr_number=f.pr_number,
+                    merged=False,
+                    reason="draft PR: never merged or marked ready by the factory",
+                )
+            )
+            continue
+        f_level = (
+            delivery_gate.story_level(f.story, cfg, root, db, persist=not dry_run)
+            if f.story is not None
+            else None
+        )
+        if f_level is not None and not f_level.merges:
+            reason = f"delivery level {f_level.value}: never merged by the factory"
+            if not dry_run and f.story is not None and f.story.state in _MERGEABLE_STATES:
+                try:
+                    reason = _settle_non_merging_story(
+                        story=f.story,
+                        level=f_level,
+                        app_config=cfg,
+                        root=root,
+                        db=db,
+                        reason="app delivery ceiling is below auto_merge",
+                    )
+                except Exception as exc:  # noqa: BLE001 - never merge on a settle error
+                    reason = f"{reason}; settle failed: {exc!r}"
+            actions.append(MergeAction(app=app, pr_number=f.pr_number, merged=False, reason=reason))
+            continue
+        is_p2m = f_level is DeliveryLevel.PUSH_TO_MAIN and f.pr_number <= 0
         # E6 STAGE 2 — ENVIRONMENT HOLD (main is red). Checked BEFORE the
         # CI-failure loop AND before ``_evaluate_one_pr``, because both of the
         # downstream sinks would destroy the queue on a red main:
@@ -3516,8 +3718,36 @@ def auto_merge_tick(
             pr_merged_query=pr_merged_query,
             db_path=db,
             merge_commit_sha_provider=merge_commit_sha_provider,
+            push_to_main=is_p2m,
+            fast_forward_fn=fast_forward_fn,
         )
         _record_merge_action(action, f.head_sha, db)
+        if action.push_to_main_refused and not dry_run and f.story is not None:
+            # FAIL SAFE: a refused fast-forward behaves as level ``pr`` — the
+            # work is offered as a ready PR and never merged by the factory.
+            # The downgrade is recorded on the story so it cannot flip back.
+            try:
+                prev = f.story.delivery_level
+                f.story.delivery_level = DeliveryLevel.PR.value
+                from factory.chain.event_log import log_story_event
+
+                log_story_event(
+                    f.story.id,
+                    delivery_gate.EVENT_LOWERED,
+                    {"from": prev, "to": DeliveryLevel.PR.value, "reason": action.reason},
+                    software_factory_root=root,
+                    slug_hint=f.story.slug,
+                )
+                action.reason = _settle_non_merging_story(
+                    story=f.story,
+                    level=DeliveryLevel.PR,
+                    app_config=cfg,
+                    root=root,
+                    db=db,
+                    reason=action.reason,
+                )
+            except Exception as exc:  # noqa: BLE001 - the story stays unmerged either way
+                action.reason = f"{action.reason}; pr fallback failed: {exc!r}"
         # A factory self-edit refused by the chain-side staging gate: the live
         # factory was never touched. Sink the story to a blocked/attention state
         # so the worker stops retrying it and an operator (or the FMS) picks it

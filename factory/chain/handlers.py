@@ -28,8 +28,15 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from factory import diff_paths as _diff_paths
 from factory.app_config import AppConfig
+from factory.chain.delivery_gate import EVENT_DELIVERED as DELIVERY_EVENT_DELIVERED
+from factory.chain.delivery_gate import commit_local_work
+from factory.chain.delivery_gate import story_level as delivery_story_level
 from factory.chain.event_log import log_story_event
 from factory.chain.state_machine import (
+    DELIVERED_UNMERGED_STATES,
+    EVENT_DELIVERED_BRANCH,
+    EVENT_DELIVERED_LOCAL,
+    EVENT_DELIVERED_PR,
     EVENT_DEV_EXHAUSTED,
     EVENT_DEV_STARTED,
     EVENT_DEV_TESTS_GREEN,
@@ -61,6 +68,7 @@ from factory.chain.step_events import emit_chain_step
 from factory.chain.worktree import ensure_worktree_for_story
 from factory.context.enforcer import format_violation_comment, scan_pr_diff
 from factory.context.updater import ContextUpdate, apply_context_updates
+from factory.delivery import DeliveryLevel
 from factory.directions.parser import Direction, list_direction_dirs, parse_direction_dir
 from factory.model_router import max_output_tokens_for, route
 from factory.runtime_state import effective_deploy_enabled
@@ -252,6 +260,11 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     # S4 (019 fail-silent audit) — see StoryRecord.pr_create_retries.
     # Pre-existing rows gain it as 0; none is retroactively parked.
     "pr_create_retries": "INTEGER NOT NULL DEFAULT 0",
+    # Per-story delivery level (see StoryRecord.delivery_level). Pre-existing
+    # rows gain NULL and are resolved + recorded on first touch by
+    # ``delivery_gate.story_level`` — a legacy app resolves to auto_merge, so
+    # no in-flight story changes behaviour.
+    "delivery_level": "TEXT",
 }
 
 
@@ -336,6 +349,8 @@ def stories_in_flight(app: str, db_path: Path) -> list[StoryRecord]:
         StoryState.SUPERSEDED_BY_SIBLING.value,
         # Operator-closed: terminal, worktree prunable, never in-flight.
         StoryState.CLOSED_BY_OPERATOR.value,
+        # Delivery-level end states: the factory's part is done.
+        *DELIVERED_UNMERGED_STATES,
     }
     # DEPLOY_PENDING is INTENTIONALLY in-flight so the orchestrator's
     # _DISPATCH picks it up for handle_deploy.
@@ -570,6 +585,13 @@ def handle_stories_spawned(
                 points=dd_points,
                 estimated_seconds=dd_estimated_seconds,
             )
+            # Resolve + record the delivery level ONCE, here, so it cannot drift
+            # mid-flight (see factory.chain.delivery_gate).
+            from factory.chain.delivery_gate import log_spawn_level, record_spawn_level
+
+            _dl_level, _dl_info = record_spawn_level(
+                story, app_config, direction, software_factory_root
+            )
             # Dry-run is a pure preview: build the would-be StoryRecord for
             # the returned list but never persist it or author its oracle —
             # a persisted dry-run story is a live dispatchable artifact (the
@@ -577,6 +599,7 @@ def handle_stories_spawned(
             # stories that the tick then executed).
             if not dry_run:
                 persist_story(story, db)
+                log_spawn_level(story, _dl_info, software_factory_root)
                 _author_acceptance_oracle(
                     story,
                     direction,
@@ -822,10 +845,18 @@ def handle_stories_spawned(
             points=points,
             estimated_seconds=estimated_seconds,
         )
+        # Resolve + record the delivery level ONCE, here, so it cannot drift
+        # mid-flight (see factory.chain.delivery_gate).
+        from factory.chain.delivery_gate import log_spawn_level, record_spawn_level
+
+        _dl_level, _dl_info = record_spawn_level(
+            story, app_config, direction, software_factory_root
+        )
         # Dry-run is a pure preview: never persist the story or author its
         # oracle (see the dual-draft branch above and the 2026-07-20 incident).
         if not dry_run:
             persist_story(story, db)
+            log_spawn_level(story, _dl_info, software_factory_root)
             _author_acceptance_oracle(
                 story,
                 direction,
@@ -2863,15 +2894,24 @@ def _handle_dev_once(
                     )
                 head_proc = _git(target_repo, "rev-parse", "HEAD")
                 commit_sha = head_proc.stdout.strip() or None
-                push_proc = _git(
-                    target_repo,
-                    "push",
-                    "-u",
-                    "origin",
-                    story.github_branch or "HEAD",
-                    check=False,
-                )
-                commit_pushed = push_proc.returncode == 0
+                # Delivery level ``none`` never pushes — not even a WIP
+                # preservation push. The commit above keeps the work on the
+                # local story branch, which is exactly what ``none`` promises.
+                _may_push = delivery_story_level(
+                    story, app_config, software_factory_root, db
+                ).pushes
+                if _may_push:
+                    push_proc = _git(
+                        target_repo,
+                        "push",
+                        "-u",
+                        "origin",
+                        story.github_branch or "HEAD",
+                        check=False,
+                    )
+                    commit_pushed = push_proc.returncode == 0
+                else:
+                    payload["dev_exhausted_push_skipped"] = "delivery_level_none"
                 # Emit git signals — best-effort.
                 try:
                     from factory.manager.signals import write_git_event as _wge
@@ -2885,14 +2925,15 @@ def _handle_dev_once(
                             result="ok",
                             software_factory_root=software_factory_root,
                         )
-                    _wge(
-                        kind="push",
-                        story_id=story.id,
-                        worktree_path=str(target_repo),
-                        result="ok" if commit_pushed else "error",
-                        error=None if commit_pushed else "push failed",
-                        software_factory_root=software_factory_root,
-                    )
+                    if _may_push:
+                        _wge(
+                            kind="push",
+                            story_id=story.id,
+                            worktree_path=str(target_repo),
+                            result="ok" if commit_pushed else "error",
+                            error=None if commit_pushed else "push failed",
+                            software_factory_root=software_factory_root,
+                        )
                 except Exception:  # noqa: BLE001
                     pass
             except Exception as commit_exc:
@@ -5467,14 +5508,73 @@ def handle_docs_enforcer(
                 software_factory_root=software_factory_root,
                 slug_hint=story.slug,
             )
-        opened = _open_pr_for_story(story, app_config, software_factory_root)
-        if opened is not None:
-            story.github_pr_number = opened
+        # DELIVERY LEVEL (factory/chain/delivery_gate.py). Resolved from the
+        # value RECORDED at spawn — never re-derived from today's config, so a
+        # raised ceiling cannot escalate this story. ``auto_merge`` is the
+        # unchanged legacy path below.
+        level = delivery_story_level(story, app_config, software_factory_root, db)
+        payload["delivery_level"] = level.value
+        delivered_event: str | None = None
+        delivered_detail: dict[str, Any] = {}
+        if level is DeliveryLevel.NONE:
+            # Commit, never push, never open a PR.
+            try:
+                wt = _writing_worktree(app_config, software_factory_root, story)
+                local_sha, local_err = commit_local_work(wt, story)
+            except Exception as exc:  # noqa: BLE001 - routed into the bounded retry below
+                local_sha, local_err = None, repr(exc)[:300]
+            delivery_ok = local_sha is not None
+            delivered_event = EVENT_DELIVERED_LOCAL
+            delivered_detail = {"commit_sha": local_sha, "branch": story.github_branch}
+            delivery_failure = f"local commit failed: {local_err}"
+        elif level in (DeliveryLevel.BRANCH, DeliveryLevel.PUSH_TO_MAIN):
+            # Push the branch, open NO PR. ``push_to_main`` then continues to
+            # PR_OPEN (with no PR) so the auto-merge worker runs the full gate
+            # set and fast-forwards the default branch.
+            delivery_ok = _push_story_branch(story, app_config, software_factory_root)
+            if level is DeliveryLevel.BRANCH:
+                delivered_event = EVENT_DELIVERED_BRANCH
+                delivered_detail = {"branch": story.github_branch}
+            delivery_failure = f"git push failed for branch {story.github_branch!r}"
+        else:
+            opened = _open_pr_for_story(
+                story,
+                app_config,
+                software_factory_root,
+                draft=level is DeliveryLevel.DRAFT_PR,
+                will_auto_merge=level.merges,
+            )
+            delivery_ok = opened is not None
+            if opened is not None:
+                story.github_pr_number = opened
+                payload["pr_number"] = opened
+            if not level.merges:
+                delivered_event = EVENT_DELIVERED_PR
+                delivered_detail = {
+                    "pr_number": opened,
+                    "draft": level is DeliveryLevel.DRAFT_PR,
+                }
+            delivery_failure = f"gh pr create failed for branch {story.github_branch!r}"
+        if delivery_ok:
             story.pr_create_retries = 0
             story.error = None
             story.last_rejection_reason = None
             persist_story(story, db)
-            payload["pr_number"] = opened
+            if delivered_event is not None:
+                # The story reached the END of its delivery level. Terminal:
+                # nothing downstream (auto-merge, deploy, tracker closing) may
+                # act on it — a human owns the next step.
+                story.state = advance(story, delivered_event).value
+                persist_story(story, db)
+                log_story_event(
+                    story.id,
+                    DELIVERY_EVENT_DELIVERED,
+                    {"level": level.value, "state": story.state, **delivered_detail},
+                    software_factory_root=software_factory_root,
+                    slug_hint=story.slug,
+                )
+                payload["delivered"] = story.state
+                return HandlerResult(next_state=StoryState(story.state), payload=payload)
         else:
             # S4 (019 fail-silent audit): this USED TO fall through to
             # EVENT_DOCS_ENFORCER_PASS anyway — the story advanced to
@@ -5492,7 +5592,7 @@ def handle_docs_enforcer(
             # forever; past that it parks at BLOCKED_DEPLOY_FAILED.
             story.pr_create_retries += 1
             reason = (
-                f"gh pr create failed for branch {story.github_branch!r} "
+                f"{delivery_failure} "
                 f"(attempt {story.pr_create_retries}/{_MAX_PR_CREATE_RETRIES}); "
                 "see state/events/git.ndjson for the git_op error"
             )
@@ -5509,6 +5609,7 @@ def handle_docs_enforcer(
                 "pr_create_failed",
                 {
                     "branch": story.github_branch,
+                    "delivery_level": level.value,
                     "retries": story.pr_create_retries,
                     "exhausted": story.pr_create_retries >= _MAX_PR_CREATE_RETRIES,
                 },
@@ -6110,10 +6211,148 @@ def _strip_own_added_fixable_lint(
                 _run(["git", "checkout", "HEAD", "--", f])
 
 
-def _open_pr_for_story(
+def _sync_and_push_story_branch(
+    target_repo: Path, base: str, branch: str, app_config: AppConfig
+) -> None:
+    """Re-merge base, prune-fetch, autoformat, then ``--force-with-lease`` push
+    the story branch. Raises ``subprocess.CalledProcessError`` /
+    ``TimeoutExpired`` / ``FileNotFoundError`` when the PUSH fails (the earlier
+    steps are best-effort). Shared by ``_open_pr_for_story`` and the
+    PR-less delivery levels (``branch`` / ``push_to_main``) via
+    ``_push_story_branch``, so every level pushes exactly the same way.
+    """
+    import subprocess
+
+    # Sync with the base before pushing. Sibling stories merge
+    # continuously, so a branch cut earlier in the day is stale by PR
+    # time and its PR arrives conflicted (three operator hand-merges on
+    # 2026-06-11). A clean auto-merge here keeps the PR mergeable; on
+    # conflict we abort and proceed — the PR opens conflicted and a
+    # human resolves it (never silently auto-resolve). Best-effort: a
+    # fetch/merge failure must not block PR creation.
+    try:
+        subprocess.run(
+            ["git", "fetch", "origin", base],
+            cwd=str(target_repo),
+            check=False,
+            capture_output=True,
+            timeout=60,
+        )
+        base_merge = subprocess.run(
+            ["git", "merge", "--no-edit", f"origin/{base}"],
+            cwd=str(target_repo),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if base_merge.returncode != 0:
+            subprocess.run(
+                ["git", "merge", "--abort"],
+                cwd=str(target_repo),
+                check=False,
+                capture_output=True,
+                timeout=60,
+            )
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+    # Refresh + PRUNE remote-tracking refs before the lease push. If the
+    # feature branch was deleted on origin since this worktree last
+    # fetched (e.g. an operator closed a conflicted PR with
+    # --delete-branch), the stale local tracking ref makes
+    # --force-with-lease reject with "stale info" and PR creation
+    # silently fails (story 56, 2026-07-18). A plain single-branch fetch
+    # does NOT remove the stale ref — only --prune does.
+    subprocess.run(
+        ["git", "fetch", "--prune", "origin"],
+        cwd=str(target_repo),
+        check=False,
+        capture_output=True,
+        timeout=120,
+    )
+    # Auto-format the story's own changed .py files (ruff --fix + format)
+    # and commit any fixes BEFORE pushing. Trivial lint/format nits (import
+    # sort, missing trailing newline) that the dev persona leaves would
+    # otherwise fail GitHub's required lint check — which the chain's
+    # pre-merge gates (tests-green / smoke / staging) do NOT cover — and,
+    # via the auto-merge-enabled path, strand the story at deploy_pending
+    # (found 2026-07-21 on the first factory self-edit, PR #57). Best-effort
+    # and scoped to changed files, so it never reformats unrelated code and
+    # never blocks PR creation.
+    _autoformat_changed_py_before_pr(target_repo, base, app_config)
+    # Push the branch; gh pr create needs an upstream ref.
+    # --force-with-lease: story branches are factory-owned and single-
+    # writer, and origin may hold STALE commits from abandoned earlier
+    # attempts (pre-rewrite runs pushed work-preservation commits). The
+    # locally approved state is authoritative; a plain push gets a
+    # non-fast-forward rejection against that stale history (story 5,
+    # 2026-06-11). The lease still aborts if origin moved unexpectedly
+    # since our last fetch.
+    subprocess.run(
+        ["git", "push", "--force-with-lease", "-u", "origin", str(branch)],
+        cwd=str(target_repo),
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+
+def _push_story_branch(
     story: StoryRecord, app_config: AppConfig, software_factory_root: Path
+) -> bool:
+    """Push the story branch WITHOUT opening a PR (delivery levels ``branch``
+    and ``push_to_main``). Returns True on success; failures are swallowed and
+    reported as False (the caller's bounded retry handles them)."""
+    import subprocess
+
+    target_repo = _writing_worktree(app_config, software_factory_root, story)
+    base = app_config.default_branch or "main"
+    try:
+        _sync_and_push_story_branch(target_repo, base, str(story.github_branch), app_config)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        try:
+            from factory.manager.signals import write_git_event as _wge_err
+
+            _wge_err(
+                kind="push",
+                story_id=story.id,
+                worktree_path=str(target_repo),
+                result="error",
+                error=repr(exc),
+                software_factory_root=software_factory_root,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+    try:
+        from factory.manager.signals import write_git_event as _wge
+
+        _wge(
+            kind="push",
+            story_id=story.id,
+            worktree_path=str(target_repo),
+            result="ok",
+            software_factory_root=software_factory_root,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def _open_pr_for_story(
+    story: StoryRecord,
+    app_config: AppConfig,
+    software_factory_root: Path,
+    *,
+    draft: bool = False,
+    will_auto_merge: bool = True,
 ) -> int | None:
     """Push the feature branch and open a PR via the ``gh`` CLI (both chains).
+
+    ``draft=True`` opens a DRAFT PR (delivery level ``draft_pr``); nothing in
+    the factory ever marks it ready. ``will_auto_merge=False`` (levels
+    ``draft_pr`` / ``pr``, and a refused ``push_to_main``) changes only the
+    PR body, so a human reading it is not told a merge worker will land it.
 
     Returns the PR number on success, ``None`` on any failure. Failures are
     swallowed — the chain still transitions to ``PR_OPEN`` and the operator
@@ -6145,82 +6384,17 @@ def _open_pr_for_story(
         f"Branch: `{branch}`\n"
         f"Story slug: `{story.slug}`\n"
         f"Direction: `{story.direction_id}`\n\n"
-        f"{summary_line} The end-of-tick auto-merge worker merges this PR "
-        f"when its gates pass (factory_settings.yaml::auto_merge)."
+        + (
+            f"{summary_line} The end-of-tick auto-merge worker merges this PR "
+            f"when its gates pass (factory_settings.yaml::auto_merge)."
+            if will_auto_merge
+            else f"{summary_line} Delivery level `{story.delivery_level}`: the factory "
+            f"will NOT {'mark this PR ready or ' if draft else ''}merge it — "
+            f"a human owns the next step."
+        )
     )
     try:
-        # Sync with the base before opening the PR. Sibling stories merge
-        # continuously, so a branch cut earlier in the day is stale by PR
-        # time and its PR arrives conflicted (three operator hand-merges on
-        # 2026-06-11). A clean auto-merge here keeps the PR mergeable; on
-        # conflict we abort and proceed — the PR opens conflicted and a
-        # human resolves it (never silently auto-resolve). Best-effort: a
-        # fetch/merge failure must not block PR creation.
-        try:
-            subprocess.run(
-                ["git", "fetch", "origin", base],
-                cwd=str(target_repo),
-                check=False,
-                capture_output=True,
-                timeout=60,
-            )
-            base_merge = subprocess.run(
-                ["git", "merge", "--no-edit", f"origin/{base}"],
-                cwd=str(target_repo),
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if base_merge.returncode != 0:
-                subprocess.run(
-                    ["git", "merge", "--abort"],
-                    cwd=str(target_repo),
-                    check=False,
-                    capture_output=True,
-                    timeout=60,
-                )
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-
-        # Refresh + PRUNE remote-tracking refs before the lease push. If the
-        # feature branch was deleted on origin since this worktree last
-        # fetched (e.g. an operator closed a conflicted PR with
-        # --delete-branch), the stale local tracking ref makes
-        # --force-with-lease reject with "stale info" and PR creation
-        # silently fails (story 56, 2026-07-18). A plain single-branch fetch
-        # does NOT remove the stale ref — only --prune does.
-        subprocess.run(
-            ["git", "fetch", "--prune", "origin"],
-            cwd=str(target_repo),
-            check=False,
-            capture_output=True,
-            timeout=120,
-        )
-        # Auto-format the story's own changed .py files (ruff --fix + format)
-        # and commit any fixes BEFORE pushing. Trivial lint/format nits (import
-        # sort, missing trailing newline) that the dev persona leaves would
-        # otherwise fail GitHub's required lint check — which the chain's
-        # pre-merge gates (tests-green / smoke / staging) do NOT cover — and,
-        # via the auto-merge-enabled path, strand the story at deploy_pending
-        # (found 2026-07-21 on the first factory self-edit, PR #57). Best-effort
-        # and scoped to changed files, so it never reformats unrelated code and
-        # never blocks PR creation.
-        _autoformat_changed_py_before_pr(target_repo, base, app_config)
-        # Push the branch; gh pr create needs an upstream ref.
-        # --force-with-lease: story branches are factory-owned and single-
-        # writer, and origin may hold STALE commits from abandoned earlier
-        # attempts (pre-rewrite runs pushed work-preservation commits). The
-        # locally approved state is authoritative; a plain push gets a
-        # non-fast-forward rejection against that stale history (story 5,
-        # 2026-06-11). The lease still aborts if origin moved unexpectedly
-        # since our last fetch.
-        subprocess.run(
-            ["git", "push", "--force-with-lease", "-u", "origin", str(branch)],
-            cwd=str(target_repo),
-            check=True,
-            capture_output=True,
-            timeout=60,
-        )
+        _sync_and_push_story_branch(target_repo, base, str(branch), app_config)
         # Emit push signal — best-effort.
         try:
             from factory.manager.signals import write_git_event as _wge
@@ -6250,6 +6424,7 @@ def _open_pr_for_story(
                 title,
                 "--body",
                 body,
+                *(["--draft"] if draft else []),
             ],
             cwd=str(target_repo),
             check=True,
@@ -6477,7 +6652,17 @@ def handle_deploy(
             next_state=StoryState(story.state),
             error=f"handle_deploy called from non-deploy_pending state {story.state!r}",
         )
-    if story.github_pr_number is None:
+    # ``push_to_main`` lands with NO PR: the auto-merge worker recorded the
+    # fast-forward's merge_actions row under the story's placeholder number
+    # ``-(story.id)``, so the deploy keys off that instead of skipping.
+    deploy_pr_key = story.github_pr_number
+    if (
+        deploy_pr_key is None
+        and story.delivery_level == DeliveryLevel.PUSH_TO_MAIN.value
+        and story.id is not None
+    ):
+        deploy_pr_key = -story.id
+    if deploy_pr_key is None:
         # No PR number means we can't deploy a specific SHA; treat as skip.
         story.state = advance(story, EVENT_DEPLOY_SKIPPED).value
         story.error = "deploy_skipped_no_pr_number"
@@ -6516,14 +6701,14 @@ def handle_deploy(
     # story stays in DEPLOY_PENDING (recoverable) when the SHA isn't
     # there yet. Otherwise we'd advance to deploy_in_progress, leaving
     # the chain with no way to resume that PR's deploy.
-    merged_sha = _lookup_merged_sha(story.app, story.github_pr_number, db)
+    merged_sha = _lookup_merged_sha(story.app, deploy_pr_key, db)
     if merged_sha is None:
         # Allow dry-run a fallback so unit tests that don't seed a
         # merge_actions row can still exercise the success/failure paths.
         if dry_run:
             merged_sha = "pending-sha"
         else:
-            err = f"merge SHA not recorded for PR {story.github_pr_number}"
+            err = f"merge SHA not recorded for PR {deploy_pr_key}"
             story.error = err
             persist_story(story, db)
             return HandlerResult(
@@ -6537,7 +6722,7 @@ def handle_deploy(
 
     action = deploy_post_merge(
         story.app,
-        story.github_pr_number,
+        deploy_pr_key,
         merged_sha,
         software_factory_root,
         dry_run=dry_run,

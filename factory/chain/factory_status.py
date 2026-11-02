@@ -62,6 +62,10 @@ _TERMINAL_STATES = {
     "superseded_by_sibling",
     # Operator-closed sink — terminal, never in-flight.
     "closed_by_operator",
+    # Delivery-level end states — terminal, never in-flight.
+    "delivered_local",
+    "delivered_branch",
+    "delivered_pr",
 }
 
 _BLOCKED_STATES = {

@@ -35,6 +35,7 @@ from factory.chain.ci_health import CiHealthResult, main_ci_health_tick
 from factory.chain.detector_watch import DetectorWatchResult, detector_watch_tick
 from factory.chain.event_log import log_story_event
 from factory.chain.state_machine import (
+    DELIVERED_UNMERGED_STATES,
     DEP_DEFER_CAP_REASON_PREFIX,
     EVENT_BUDGET_EXCEEDED,
     StoryRecord,
@@ -432,6 +433,10 @@ _NON_CAP_COUNTING_STATES = {
     StoryState.BLOCKED_DEPENDENCY_UNMET.value,
     # Operator-closed sink (terminal). The human ruled; it must not hold a slot.
     StoryState.CLOSED_BY_OPERATOR.value,
+    # Delivery-level end states (terminal): the factory's part is done.
+    StoryState.DELIVERED_LOCAL.value,
+    StoryState.DELIVERED_BRANCH.value,
+    StoryState.DELIVERED_PR.value,
     # Passive transition states — no agent is actively running; the story
     # is simply waiting for the orchestrator to dispatch the next handler
     # on the next tick. Counting these against the cap deadlocks any
@@ -721,6 +726,14 @@ _PENDING_HUMAN_STATES: frozenset[str] = frozenset(
         # behind one is waiting on a human — and it must stay revivable rather
         # than be treated as a definitive dead end.
         StoryState.BLOCKED_UNDERSPECIFIED.value,
+        # Delivery-level end states: the work is finished but NOT on the
+        # default branch — a human merges (or discards) it. A dependent behind
+        # one is waiting on that human, so it is capped-then-surfaced rather
+        # than abandoned, and closing the story issue settles it to
+        # closed_by_operator like any other pending-human row.
+        StoryState.DELIVERED_LOCAL.value,
+        StoryState.DELIVERED_BRANCH.value,
+        StoryState.DELIVERED_PR.value,
     }
 )
 
@@ -1472,6 +1485,9 @@ def reconcile_closed_trackers(
     candidates = [
         s for s in rows if _awaits_human(s) and s.github_issue_number and s.github_issue_number > 0
     ]
+    # Delivered-unmerged rows can accumulate while they wait on a human; check
+    # them LAST so they never starve the per-tick budget of genuine blocks.
+    candidates.sort(key=lambda s: s.state in DELIVERED_UNMERGED_STATES)
 
     settled: list[tuple[str, str, str]] = []
     checked = 0
@@ -1910,6 +1926,12 @@ def reconcile_from_github(
         # settled.
         if state_value == StoryState.BLOCKED_CI_UNRESOLVED.value:
             return False
+        # SAME exception for ``delivered_pr``: the factory left the PR open for a
+        # human (delivery level draft_pr / pr). When that human merges it, merge
+        # reality must flow into DEPLOY_PENDING exactly like an auto-merge. A
+        # CLOSED-unmerged delivered PR is a no-op below (not a mergeable state).
+        if state_value == StoryState.DELIVERED_PR.value:
+            return False
         return _terminal(state_value) or state_value == StoryState.DEPLOY_PENDING.value
 
     # Candidates: EVERY non-settled story that carries a real PR — NOT just the
@@ -1931,6 +1953,9 @@ def reconcile_from_github(
         for s in all_rows
         if s.github_pr_number and s.github_pr_number > 0 and not _settled(s.state)
     ]
+    # Delivered PRs wait on a human and can accumulate; query them LAST so they
+    # never starve the per-tick ``max_reconcile`` budget of live stories.
+    candidates.sort(key=lambda s: s.state == StoryState.DELIVERED_PR.value)
 
     reconciled: list[tuple[str, str, str]] = []
     checked = 0

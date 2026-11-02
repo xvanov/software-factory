@@ -168,7 +168,7 @@ open its own PR later and ship a second interpretation to main (direction
 
 ### Terminal sinks
 
-Nine states have no outgoing transition (`is_terminal()` returns True) and
+Twelve states have no outgoing transition (`is_terminal()` returns True) and
 are absent from `_DISPATCH` and `auto_merge._MERGEABLE_STATES`:
 
 | State | Set by | Recovery |
@@ -183,6 +183,53 @@ are absent from `_DISPATCH` and `auto_merge._MERGEABLE_STATES`:
 | `BLOCKED_DEPENDENCY_UNMET` | dependency-deadlock OR dependency-deferral cap (see below) | deadlock: `factory resume-story`; cap: automatic once blockers move |
 | `QUARANTINED_INVALID_STATE` | `factory.manager.recovery` playbook `quarantine-invalid-enum-story` | operator repairs root cause, then `factory resume-story` |
 | `CLOSED_BY_OPERATOR` | `orchestrator.reconcile_closed_trackers` (direct assignment) | operator re-opens tracker issue, then `factory resume-story` |
+| `DELIVERED_LOCAL` | `EVENT_DELIVERED_LOCAL` — delivery level `none` | n/a — success at that level; the work is committed on the local `story/<n>-<slug>` branch, never pushed |
+| `DELIVERED_BRANCH` | `EVENT_DELIVERED_BRANCH` — delivery level `branch` | n/a — success at that level; branch pushed, no PR |
+| `DELIVERED_PR` | `EVENT_DELIVERED_PR` — level `draft_pr` / `pr`, or a refused `push_to_main` | n/a — a human merges; `reconcile_from_github` then routes it to `DEPLOY_PENDING` |
+
+### Delivery levels (how far finished work goes)
+
+Each story carries `StoryRecord.delivery_level` (`none < branch < draft_pr <
+pr < auto_merge < push_to_main`, vocabulary in `factory/delivery.py`). It is
+resolved ONCE at spawn (`handle_stories_spawned` →
+`delivery_gate.record_spawn_level`: app `delivery.max`/`default` + the
+direction's `delivery:` frontmatter, clamped to the ceiling, garbage → `none`)
+and logged as a `delivery_level_resolved` story event. Every later decision
+reads it through `delivery_gate.story_level()`, which may LOWER it (app
+ceiling lowered mid-flight; `push_to_main` on a factory self-edit → `pr`,
+because a direct push would skip the staging gate) and records that as
+`delivery_level_lowered`, but never raises it. Rows that predate the column
+resolve on first touch: legacy app (no `delivery` block) → `auto_merge`
+(unchanged); anything undeterminable → `none`.
+
+Enforcement sites:
+
+* `handlers.handle_docs_enforcer` (the PR-open site): `none` →
+  `delivery_gate.commit_local_work`, `DELIVERED_LOCAL`; `branch` →
+  `_push_story_branch`, `DELIVERED_BRANCH`; `draft_pr`/`pr` →
+  `_open_pr_for_story(draft=…, will_auto_merge=False)`, `DELIVERED_PR`;
+  `auto_merge` → unchanged (`PR_OPEN`); `push_to_main` → `_push_story_branch`,
+  `PR_OPEN` with NO PR. Push/PR failures share the `pr_create_retries` cap.
+* `handlers._handle_dev_once` dev-exhausted WIP preservation: commits always,
+  pushes only when the level pushes.
+* `auto_merge.auto_merge_tick`: a guard at the top of the per-PR loop (before
+  the main-green hold, the CI-failure re-dispatch and gate evaluation) skips
+  draft PRs and settles any mergeable story whose level does not merge
+  (`_settle_non_merging_story` → `DELIVERED_*`). `push_to_main` stories are
+  synthesised from the worktree (`delivery_gate.worktree_head_and_files`, real
+  head sha, `pr_number = -(story.id)`), run the same gate set, and
+  `delivery_gate.fast_forward_default_branch` pushes the gated commit to the
+  default branch — non-force, refused unless it is a genuine fast-forward of
+  the exact gated sha. A refusal records the downgrade to `pr`, opens a ready
+  PR and ends in `DELIVERED_PR`.
+* `handlers.handle_deploy`: a `push_to_main` story deploys the sha recorded
+  under `-(story.id)` instead of skipping for "no PR number".
+
+`DELIVERED_*` are in `_NON_CAP_COUNTING_STATES` and `_PENDING_HUMAN_STATES`
+(dependents are capped-then-surfaced, closing the story issue settles to
+`CLOSED_BY_OPERATOR`), shown in `factory inbox`, and deliberately NOT in
+`tracker_issue._RESOLVED_STORY_STATES` — unmerged work never closes its story
+issue or direction tracker.
 
 ### Dependency ordering and the deferral cap
 
@@ -269,6 +316,10 @@ dispatch state by hand.
   assignment (these transitions are not in `_TRANSITIONS`); owns
   `_MERGEABLE_STATES`, `_MAX_CI_FIX_CYCLES = 3`, `_handle_ci_failure`, and
   the `BLOCKED_CI_UNRESOLVED` / `BLOCKED_DEPLOY_FAILED` sink assignments.
+* `factory/chain/delivery_gate.py` — per-story delivery level: spawn
+  resolution (`record_spawn_level`), the drift-proof read (`story_level`), and
+  the git side of `none` (`commit_local_work`) and `push_to_main`
+  (`fast_forward_default_branch`, `worktree_head_and_files`).
 * `factory/chain/event_log.py` — `log_story_event()` /
   `read_story_events()`. Append-only JSONL at
   `state/logs/<story_id:04d>-<slug>.log`, one file per story so `factory why`

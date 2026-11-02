@@ -232,6 +232,46 @@ class StoryState(StrEnum):
     # rule: every BLOCKED_* transition records a reason) and in a
     # ``dev_declared_underspecified`` story event.
     BLOCKED_UNDERSPECIFIED = "blocked_underspecified"
+    # DELIVERY-LEVEL END STATES (``factory/delivery.py``, ``docs/JOBS-API.md``).
+    # A story whose recorded ``delivery_level`` stops short of merging ends in
+    # one of these once every chain gate up to the PR has passed:
+    #
+    #   * ``DELIVERED_LOCAL``  — level ``none``: the work is COMMITTED on the
+    #     story branch (``story/<n>-<slug>``) in the factory's per-story worktree
+    #     and NEVER pushed. The branch lives in the app's source checkout, so it
+    #     survives the worktree pruner (which removes the directory, not the ref).
+    #   * ``DELIVERED_BRANCH`` — level ``branch``: the branch is pushed to origin;
+    #     no PR was opened.
+    #   * ``DELIVERED_PR``     — level ``draft_pr`` / ``pr``: a PR is open (draft
+    #     or ready, per ``delivery_level``); the factory never marks a draft ready
+    #     and never merges either. Also where a ``push_to_main`` story lands when
+    #     the fast-forward is refused (fail safe: it behaves as ``pr``).
+    #
+    # All three are TERMINAL (no outgoing transition → ``is_terminal`` True,
+    # ``_dispatch_for_story`` returns None), absent from
+    # ``auto_merge._MERGEABLE_STATES`` and ``_AUTO_RECOVERABLE_STATES``, in
+    # ``_NON_CAP_COUNTING_STATES``, and in ``orchestrator._PENDING_HUMAN_STATES``:
+    # the factory's job is done but the change is NOT on the default branch, so
+    # a human owns the next step. They are deliberately NOT in
+    # ``tracker_issue._RESOLVED_STORY_STATES`` — merge reality is GitHub, and an
+    # unmerged change must not close its story issue or its direction's tracker.
+    # ``reconcile_from_github`` keeps watching ``DELIVERED_PR`` so a human merge
+    # flows into ``DEPLOY_PENDING`` exactly like an auto-merge would.
+    DELIVERED_LOCAL = "delivered_local"
+    DELIVERED_BRANCH = "delivered_branch"
+    DELIVERED_PR = "delivered_pr"
+
+
+# The delivery-level end states, as raw strings for allowlists that compare
+# ``StoryRecord.state`` values. ONE definition so the in-flight / cap / inbox /
+# progress sets can never disagree about them.
+DELIVERED_UNMERGED_STATES: frozenset[str] = frozenset(
+    {
+        StoryState.DELIVERED_LOCAL.value,
+        StoryState.DELIVERED_BRANCH.value,
+        StoryState.DELIVERED_PR.value,
+    }
+)
 
 
 class StoryRecord(SQLModel, table=True):
@@ -404,6 +444,14 @@ class StoryRecord(SQLModel, table=True):
     # until this counter hits ``handlers._MAX_PR_CREATE_RETRIES``, at which
     # point it's parked in ``BLOCKED_DEPLOY_FAILED``. Reset to 0 on success.
     pr_create_retries: int = 0
+    # The story's delivery level (``factory.delivery.DeliveryLevel`` value),
+    # resolved ONCE at spawn from the app ceiling + the direction's
+    # ``delivery:`` frontmatter and recorded here so it cannot drift mid-flight:
+    # a later config change may LOWER it (de-escalation is always safe) but can
+    # never raise it. ``None`` only on rows that predate per-story recording;
+    # ``factory.chain.delivery_gate.story_level`` resolves and records those on
+    # first touch.
+    delivery_level: str | None = None
 
 
 # Event names — strings the chain emits when a handler completes.
@@ -434,6 +482,10 @@ EVENT_DOCS_ENFORCER_FAIL = "docs_enforcer_fail"
 # ``_MAX_PR_CREATE_RETRIES``-th consecutive time — park the story instead of
 # retrying forever. See ``StoryRecord.pr_create_retries``.
 EVENT_PR_CREATE_EXHAUSTED = "pr_create_exhausted"
+# Delivery-level end events (see ``StoryState.DELIVERED_*``).
+EVENT_DELIVERED_LOCAL = "delivered_local"
+EVENT_DELIVERED_BRANCH = "delivered_branch"
+EVENT_DELIVERED_PR = "delivered_pr"
 # Docs chain events.
 EVENT_DOCS_SM_STARTED = "docs_sm_started"
 EVENT_DOCS_SM_DONE = "docs_sm_done"
@@ -556,6 +608,17 @@ _TRANSITIONS: dict[tuple[StoryState, str], StoryState] = {
     # ---- Docs chain (chain_kind == "docs") ----
     # Skips the TDD red→green loop. Onboarder produces canonical doc files
     # in one sandbox pass; the enforcer + PR open path is shared with TDD.
+    (StoryState.DOCS_ENFORCER_CHECK, EVENT_DELIVERED_LOCAL): StoryState.DELIVERED_LOCAL,
+    (StoryState.DOCS_ENFORCER_CHECK, EVENT_DELIVERED_BRANCH): StoryState.DELIVERED_BRANCH,
+    (StoryState.DOCS_ENFORCER_CHECK, EVENT_DELIVERED_PR): StoryState.DELIVERED_PR,
+    # A merge-capable story whose level turns out not to merge (a refused
+    # push_to_main fast-forward, or an app ceiling lowered mid-flight) settles
+    # here from wherever the auto-merge worker holds it.
+    (StoryState.PR_OPEN, EVENT_DELIVERED_PR): StoryState.DELIVERED_PR,
+    (StoryState.CI_GREEN, EVENT_DELIVERED_PR): StoryState.DELIVERED_PR,
+    (StoryState.READY_FOR_MERGE, EVENT_DELIVERED_PR): StoryState.DELIVERED_PR,
+    (StoryState.PR_OPEN, EVENT_DELIVERED_BRANCH): StoryState.DELIVERED_BRANCH,
+    (StoryState.PR_OPEN, EVENT_DELIVERED_LOCAL): StoryState.DELIVERED_LOCAL,
     (StoryState.STORY_CREATED, EVENT_DOCS_SM_STARTED): StoryState.DOCS_SM_IN_PROGRESS,
     (StoryState.DOCS_SM_IN_PROGRESS, EVENT_DOCS_SM_DONE): StoryState.DOCS_SM_DONE,
     (

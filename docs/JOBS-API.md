@@ -29,6 +29,30 @@ apps with no `delivery` block behave exactly as today (`auto_merge`).
 The PA always sends `--delivery` explicitly, chosen from what the operator asked for; the app
 default applies only when a job omits it.
 
+How the factory enforces it (see `factory/chain/delivery_gate.py`):
+
+- The level is resolved ONCE when the job's story is spawned and recorded on the story
+  (`StoryRecord.delivery_level` + a `delivery_level_resolved` event). Later app-config edits
+  never change an in-flight story's level. An unknown/unreadable level resolves to `none`.
+- Every level runs the same chain (dev, review, tech_writer, docs enforcer) up to the point
+  where work would leave the factory. Story end states, all terminal:
+  `none` → `delivered_local` (committed on the local `story/<n>-<slug>` branch, nothing
+  pushed); `branch` → `delivered_branch`; `draft_pr` / `pr` → `delivered_pr` (with the PR
+  number); `auto_merge` / `push_to_main` → `deployed` (via `deploy_pending`).
+- `push_to_main` runs the full merge gate set against the worktree commit, then pushes that
+  exact commit to the default branch without force. If that is not a fast-forward (or the push
+  is rejected) it falls back to `pr`: the story's level is recorded as `pr`, a ready PR is
+  opened, and the story ends in `delivered_pr`. Factory self-edits (`apps/factory`) are always
+  treated as `pr` instead of `push_to_main`, because they must pass the PR staging gate.
+- A `delivered_pr` story whose PR a human merges is picked up by the factory's GitHub
+  reconciliation and continues to `deploy_pending` → `deployed` like any merged work. The
+  `delivered_*` states never close the story's GitHub issue or the direction's tracker
+  (the change is not on the default branch yet).
+- Known gap: at `none`, the factory still opens the story's GitHub ISSUE (no code is pushed).
+
+PA mode → delivery mapping (PA side owns this): plan→(not a factory job), local→none,
+branch→branch, mr→draft_pr, full→draft_pr.
+
 ## Pipelines
 
 `chain` (PM→SM→dev→reviewer→gates), `solo` (single dev agent + gates, B.1 solo mode), `auto`

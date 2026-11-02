@@ -1,0 +1,633 @@
+"""Delivery-level ENFORCEMENT across the chain (``factory/chain/delivery_gate.py``).
+
+``tests/test_delivery_levels.py`` pins the pure vocabulary/clamp rules. This file
+pins what each level actually DOES to finished work:
+
+* spawn resolves + records the level once (clamped to the app ceiling; garbage
+  fails safe to ``none``; a legacy app stays ``auto_merge``);
+* a later ceiling raise cannot escalate an in-flight story, a lowering can;
+* ``handle_docs_enforcer`` (the PR-open site) per level: ``none`` commits and
+  never pushes, ``branch`` pushes without a PR, ``draft_pr`` / ``pr`` open a
+  draft / ready PR and stop, ``auto_merge`` is unchanged, ``push_to_main``
+  pushes and reaches PR_OPEN with no PR;
+* ``auto_merge_tick`` never merges a draft PR nor a story whose level does not
+  merge, fast-forwards the default branch for ``push_to_main`` (real git,
+  local bare origin), and on a refused fast-forward falls back to ``pr``.
+
+No network: gh is never invoked (PR opening is monkeypatched or ``subprocess``
+is faked); git runs only against repos under ``tmp_path``.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import pytest
+from sqlmodel import Session, create_engine, select
+
+from factory.app_config import AppConfig
+from factory.chain import auto_merge as am
+from factory.chain import handlers as H
+from factory.chain.delivery_gate import (
+    fast_forward_default_branch,
+    resolve_for_direction,
+    story_level,
+)
+from factory.chain.event_log import read_story_events
+from factory.chain.state_machine import (
+    DELIVERED_UNMERGED_STATES,
+    StoryRecord,
+    StoryState,
+    is_terminal,
+)
+from factory.delivery import DeliveryConfig
+from factory.delivery import DeliveryLevel as L
+from factory.directions.parser import Direction
+
+# --------------------------------------------------------------------------- #
+# helpers
+# --------------------------------------------------------------------------- #
+
+
+def _git(cwd: Path, *args: str) -> str:
+    proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True)
+    return proc.stdout.strip()
+
+
+def _repo_with_origin(tmp_path: Path) -> tuple[Path, Path]:
+    """A bare ``origin`` with one commit on ``main`` and a clone of it."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", "-b", "main", str(origin))
+    seed = tmp_path / "seed"
+    _git(tmp_path, "clone", str(origin), str(seed))
+    for k, v in (("user.email", "t@t"), ("user.name", "t"), ("commit.gpgsign", "false")):
+        _git(seed, "config", k, v)
+    (seed / "README.md").write_text("seed\n")
+    _git(seed, "add", "README.md")
+    _git(seed, "commit", "-m", "seed")
+    _git(seed, "push", "origin", "HEAD:main")
+    wt = tmp_path / "wt"
+    _git(tmp_path, "clone", str(origin), str(wt))
+    for k, v in (("user.email", "t@t"), ("user.name", "t"), ("commit.gpgsign", "false")):
+        _git(wt, "config", k, v)
+    return origin, wt
+
+
+def _cfg(level: L | None) -> AppConfig:
+    if level is None:
+        return AppConfig(name="sacrifice", repo="o/r")  # legacy: no delivery block
+    return AppConfig(name="sacrifice", repo="o/r", delivery=DeliveryConfig(max=level))
+
+
+def _direction(fm: dict[str, Any]) -> Direction:
+    return Direction(
+        id="900",
+        slug="x",
+        title="X",
+        type_tag=None,
+        why=None,
+        has_flow=False,
+        has_api_spec=False,
+        acceptance=[],
+        explore_tag=False,
+        artifacts_paths=[],
+        app="sacrifice",
+        status="pm-validated",
+        raw_frontmatter={"title": "X", **fm},
+        raw_body="# X",
+    )
+
+
+def _root(tmp_path: Path) -> Path:
+    (tmp_path / "state").mkdir(exist_ok=True)
+    return tmp_path
+
+
+def _story(db: Path, state: StoryState, level: L | None, **kw: Any) -> StoryRecord:
+    return H.persist_story(
+        StoryRecord(
+            direction_id="900",
+            app="sacrifice",
+            title="t",
+            slug="t",
+            scope="backend",
+            state=state.value,
+            github_branch=kw.pop("github_branch", "story/1-t"),
+            delivery_level=None if level is None else level.value,
+            **kw,
+        ),
+        db,
+    )
+
+
+def _reload(db: Path, sid: int | None) -> StoryRecord:
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        return ses.exec(select(StoryRecord).where(StoryRecord.id == sid)).one()
+
+
+def _events(root: Path, story: StoryRecord) -> list[str]:
+    assert story.id is not None
+    return [
+        str(e.get("event"))
+        for e in read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# resolution: spawn, clamp, fail-safe, no mid-flight escalation
+# --------------------------------------------------------------------------- #
+
+
+def test_spawn_records_clamped_level(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A job asking for MORE than the app ceiling is clamped, and the clamp is
+    recorded on the story and in its event log."""
+    monkeypatch.setattr(H, "_author_acceptance_oracle", lambda *a, **k: None)
+    root = _root(tmp_path)
+    stories = H.handle_stories_spawned(
+        _direction({"delivery": "push_to_main"}),
+        {"child_stories": [{"title": "do x", "scope": "backend"}], "confidence": 0.9},
+        _cfg(L.DRAFT_PR),
+        root,
+        dry_run=False,
+    )
+    assert len(stories) == 1
+    s = _reload(root / "state" / "factory.db", stories[0].id)
+    assert s.delivery_level == L.DRAFT_PR.value
+    ev = read_story_events(s.id or 0, software_factory_root=root, slug_hint=s.slug)
+    resolved = [e for e in ev if e.get("event") == "delivery_level_resolved"]
+    assert resolved and resolved[0].get("clamped") is True
+    assert resolved[0].get("requested") == "push_to_main"
+
+
+def test_legacy_app_spawns_auto_merge() -> None:
+    level, info = resolve_for_direction(_cfg(None), _direction({}))
+    assert level is L.AUTO_MERGE
+    assert info["app_opted_in"] is False
+
+
+def test_garbage_request_fails_safe_to_none() -> None:
+    level, info = resolve_for_direction(_cfg(L.AUTO_MERGE), _direction({"delivery": "yolo"}))
+    assert level is L.NONE
+    assert "fail_safe" in info["reason"]
+
+
+def test_resolution_error_fails_safe_to_none() -> None:
+    level, info = resolve_for_direction(object(), _direction({}))
+    assert level is L.NONE
+    assert "fail_safe" in info["reason"]
+
+
+def test_raised_ceiling_never_escalates_in_flight(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.DEV_IN_PROGRESS, L.PR)
+    # Operator raises the app ceiling to push_to_main mid-flight.
+    assert story_level(s, _cfg(L.PUSH_TO_MAIN), root, db) is L.PR
+    assert _reload(db, s.id).delivery_level == L.PR.value
+
+
+def test_lowered_ceiling_de_escalates_and_is_recorded(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.DEV_IN_PROGRESS, L.AUTO_MERGE)
+    assert story_level(s, _cfg(L.BRANCH), root, db) is L.BRANCH
+    assert _reload(db, s.id).delivery_level == L.BRANCH.value
+    assert "delivery_level_lowered" in _events(root, s)
+
+
+def test_unrecorded_legacy_row_resolves_to_today(tmp_path: Path) -> None:
+    """A row that predates per-story recording in an app that never opted in
+    keeps today's behaviour — legacy in-flight work is unchanged."""
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, None)
+    assert story_level(s, _cfg(None), root, db) is L.AUTO_MERGE
+    assert _reload(db, s.id).delivery_level == L.AUTO_MERGE.value
+
+
+def test_unrecorded_row_in_opted_in_app_without_direction_is_none(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, None)
+    assert story_level(s, _cfg(L.AUTO_MERGE), root, db) is L.NONE
+
+
+def test_unreadable_recorded_level_is_none(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, None)
+    s.delivery_level = "merge-it-all"
+    assert story_level(s, _cfg(L.AUTO_MERGE), root, db) is L.NONE
+
+
+def test_dry_run_resolution_writes_nothing(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, None)
+    story_level(s, _cfg(None), root, db, persist=False)
+    assert _reload(db, s.id).delivery_level is None
+    assert "delivery_level_resolved" not in _events(root, s)
+
+
+def test_factory_self_edit_push_to_main_lowered_to_pr(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PUSH_TO_MAIN)
+    cfg = AppConfig(
+        name="factory",
+        repo=am.FACTORY_REPO,
+        delivery=DeliveryConfig(max=L.PUSH_TO_MAIN),
+    )
+    assert story_level(s, cfg, root, db) is L.PR
+
+
+def test_delivered_states_are_terminal() -> None:
+    for st in DELIVERED_UNMERGED_STATES:
+        assert is_terminal(StoryState(st))
+
+
+# --------------------------------------------------------------------------- #
+# handle_docs_enforcer — the PR-open site
+# --------------------------------------------------------------------------- #
+
+
+class _Calls:
+    def __init__(self) -> None:
+        self.open_pr: list[dict[str, Any]] = []
+        self.push: int = 0
+
+
+@pytest.fixture
+def enforcer_env(monkeypatch: pytest.MonkeyPatch) -> _Calls:
+    calls = _Calls()
+    monkeypatch.setattr(H, "_changed_files_for_story", lambda *a, **k: ["src/a.py"])
+    monkeypatch.setattr(H, "_residual_lint_for_story", lambda *a, **k: None)
+
+    def _open(*_a: Any, **k: Any) -> int:
+        calls.open_pr.append(k)
+        return 4242
+
+    def _push(*_a: Any, **_k: Any) -> bool:
+        calls.push += 1
+        return True
+
+    monkeypatch.setattr(H, "_open_pr_for_story", _open)
+    monkeypatch.setattr(H, "_push_story_branch", _push)
+    return calls
+
+
+def _run_enforcer(tmp_path: Path, level: L | None, cfg_level: L | None) -> tuple:
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.TECH_WRITER_DONE, level)
+    res = H.handle_docs_enforcer(s, _cfg(cfg_level), root, dry_run=False, db_path=db)
+    return root, db, s, res
+
+
+def test_level_none_commits_locally_never_pushes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enforcer_env: _Calls
+) -> None:
+    origin, wt = _repo_with_origin(tmp_path)
+    _git(wt, "checkout", "-b", "story/1-t")
+    (wt / "feature.py").write_text("x = 1\n")  # uncommitted work
+    monkeypatch.setattr(H, "_writing_worktree", lambda *a, **k: wt)
+
+    root, db, s, res = _run_enforcer(tmp_path, L.NONE, L.AUTO_MERGE)
+
+    assert res.next_state == StoryState.DELIVERED_LOCAL
+    assert enforcer_env.open_pr == [] and enforcer_env.push == 0
+    # The work is COMMITTED on the local story branch...
+    assert _git(wt, "status", "--porcelain") == ""
+    assert "feature.py" in _git(wt, "show", "--name-only", "--format=", "HEAD")
+    # ...and nothing reached origin.
+    assert _git(origin, "branch", "--list", "story/1-t") == ""
+    assert _reload(db, s.id).state == StoryState.DELIVERED_LOCAL.value
+    assert "delivered" in _events(root, s)
+
+
+def test_level_branch_pushes_without_pr(tmp_path: Path, enforcer_env: _Calls) -> None:
+    _, db, s, res = _run_enforcer(tmp_path, L.BRANCH, L.AUTO_MERGE)
+    assert res.next_state == StoryState.DELIVERED_BRANCH
+    assert enforcer_env.push == 1 and enforcer_env.open_pr == []
+    assert _reload(db, s.id).github_pr_number is None
+
+
+def test_level_draft_pr_opens_draft_and_stops(tmp_path: Path, enforcer_env: _Calls) -> None:
+    _, db, s, res = _run_enforcer(tmp_path, L.DRAFT_PR, L.AUTO_MERGE)
+    assert res.next_state == StoryState.DELIVERED_PR
+    assert enforcer_env.open_pr == [{"draft": True, "will_auto_merge": False}]
+    row = _reload(db, s.id)
+    assert row.github_pr_number == 4242 and row.state == StoryState.DELIVERED_PR.value
+
+
+def test_level_pr_opens_ready_pr_and_stops(tmp_path: Path, enforcer_env: _Calls) -> None:
+    _, _db, _s, res = _run_enforcer(tmp_path, L.PR, L.AUTO_MERGE)
+    assert res.next_state == StoryState.DELIVERED_PR
+    assert enforcer_env.open_pr == [{"draft": False, "will_auto_merge": False}]
+
+
+def test_legacy_app_auto_merge_unchanged(tmp_path: Path, enforcer_env: _Calls) -> None:
+    """No delivery block, no recorded level: exactly today's path to PR_OPEN."""
+    _, db, s, res = _run_enforcer(tmp_path, None, None)
+    assert res.next_state == StoryState.PR_OPEN
+    assert enforcer_env.open_pr == [{"draft": False, "will_auto_merge": True}]
+    assert _reload(db, s.id).delivery_level == L.AUTO_MERGE.value
+
+
+def test_level_push_to_main_pushes_and_reaches_pr_open_without_pr(
+    tmp_path: Path, enforcer_env: _Calls
+) -> None:
+    _, db, s, res = _run_enforcer(tmp_path, L.PUSH_TO_MAIN, L.PUSH_TO_MAIN)
+    assert res.next_state == StoryState.PR_OPEN
+    assert enforcer_env.push == 1 and enforcer_env.open_pr == []
+    assert _reload(db, s.id).github_pr_number is None
+
+
+def test_branch_push_failure_is_bounded_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enforcer_env: _Calls
+) -> None:
+    monkeypatch.setattr(H, "_push_story_branch", lambda *a, **k: False)
+    _, db, s, res = _run_enforcer(tmp_path, L.BRANCH, L.AUTO_MERGE)
+    assert res.next_state == StoryState.DOCS_ENFORCER_CHECK
+    row = _reload(db, s.id)
+    assert row.pr_create_retries == 1 and "git push failed" in (row.error or "")
+
+
+def test_open_pr_draft_flag_reaches_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real ``_open_pr_for_story`` passes ``--draft`` for draft_pr and
+    never for an auto-merge PR (gh faked at the subprocess boundary)."""
+    seen: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], *a: Any, **k: Any) -> subprocess.CompletedProcess[str]:
+        seen.append(list(cmd))
+        out = "https://github.com/o/r/pull/77\n" if cmd[:3] == ["gh", "pr", "create"] else ""
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(H, "_writing_worktree", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(H, "_autoformat_changed_py_before_pr", lambda *a, **k: None)
+    s = StoryRecord(
+        direction_id="9",
+        app="sacrifice",
+        title="t",
+        slug="t",
+        scope="b",
+        github_branch="story/1-t",
+        delivery_level="draft_pr",
+    )
+    assert (
+        H._open_pr_for_story(s, _cfg(L.DRAFT_PR), tmp_path, draft=True, will_auto_merge=False) == 77
+    )
+    gh = [c for c in seen if c[:3] == ["gh", "pr", "create"]]
+    assert gh and "--draft" in gh[-1]
+    assert "will NOT mark this PR ready or merge it" in gh[-1][gh[-1].index("--body") + 1]
+    seen.clear()
+    assert H._open_pr_for_story(s, _cfg(None), tmp_path) == 77
+    gh = [c for c in seen if c[:3] == ["gh", "pr", "create"]]
+    assert gh and "--draft" not in gh[-1]
+    assert not any(c[:3] == ["gh", "pr", "ready"] for c in seen)
+
+
+# --------------------------------------------------------------------------- #
+# auto_merge_tick
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def am_root(tmp_path: Path) -> Path:
+    root = _root(tmp_path)
+    (root / "apps" / "sacrifice").mkdir(parents=True)
+    return root
+
+
+def _write_cfg(root: Path, level: L | None) -> None:
+    body = "name: sacrifice\nrepo: o/r\n"
+    if level is not None:
+        body += f"delivery:\n  max: {level.value}\n"
+    (root / "apps" / "sacrifice" / "config.yaml").write_text(body, encoding="utf-8")
+
+
+def _merge_must_not_run(**_kw: Any) -> str | None:
+    raise AssertionError("gh pr merge must never run for this story")
+
+
+@pytest.fixture
+def gates_green(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(am, "evaluate_all_gates", lambda *a, **k: {})
+    monkeypatch.setattr(am, "required_gate_labels", lambda *a, **k: [])
+
+
+def test_draft_pr_never_merged(am_root: Path, gates_green: None) -> None:
+    _write_cfg(am_root, None)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.AUTO_MERGE, github_pr_number=7)
+    fx = am.FixturePR(pr_number=7, head_sha="ab" * 20, base_branch="main", story=s, is_draft=True)
+    actions = am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fx],
+        db_path=db,
+        merge_fn=_merge_must_not_run,
+        pr_merged_query=lambda **k: False,
+    )
+    assert len(actions) == 1 and not actions[0].merged
+    assert "draft" in actions[0].reason
+    assert _reload(db, s.id).state == StoryState.PR_OPEN.value
+
+
+@pytest.mark.parametrize("level", [L.DRAFT_PR, L.PR])
+def test_non_merging_level_is_settled_never_merged(
+    am_root: Path, gates_green: None, level: L
+) -> None:
+    """A mergeable-state story whose level does not merge (e.g. the ceiling was
+    lowered mid-flight) is settled to DELIVERED_PR — never merged, and gh is
+    never asked to mark anything ready."""
+    _write_cfg(am_root, level)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.AUTO_MERGE, github_pr_number=8)
+    fx = am.FixturePR(pr_number=8, head_sha="cd" * 20, base_branch="main", story=s)
+    actions = am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fx],
+        db_path=db,
+        merge_fn=_merge_must_not_run,
+        pr_merged_query=lambda **k: False,
+    )
+    assert not actions[0].merged
+    row = _reload(db, s.id)
+    assert row.state == StoryState.DELIVERED_PR.value
+    assert row.delivery_level == level.value
+
+
+def test_legacy_auto_merge_story_still_merges(am_root: Path, gates_green: None) -> None:
+    _write_cfg(am_root, None)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, None, github_pr_number=9)
+    merged: list[int] = []
+
+    def _merge(**kw: Any) -> None:
+        merged.append(kw["pr_number"])
+        return None
+
+    fx = am.FixturePR(pr_number=9, head_sha="ef" * 20, base_branch="main", story=s)
+    actions = am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fx],
+        db_path=db,
+        merge_fn=_merge,
+        pr_merged_query=lambda **k: False,
+        wait_for_ci=False,
+    )
+    assert merged == [9] and actions[0].merged
+    assert _reload(db, s.id).state == StoryState.DEPLOY_PENDING.value
+
+
+def _p2m_fixture(s: StoryRecord, wt: Path) -> am.FixturePR:
+    return am.FixturePR(
+        pr_number=-(s.id or 0),
+        head_sha=_git(wt, "rev-parse", "HEAD"),
+        base_branch="main",
+        ci_state=None,
+        story=s,
+        repo_root=wt,
+    )
+
+
+def test_push_to_main_fast_forwards_default_branch(
+    am_root: Path, tmp_path: Path, gates_green: None
+) -> None:
+    _write_cfg(am_root, L.PUSH_TO_MAIN)
+    origin, wt = _repo_with_origin(tmp_path)
+    _git(wt, "checkout", "-b", "story/1-t")
+    (wt / "f.py").write_text("y = 2\n")
+    _git(wt, "add", "f.py")
+    _git(wt, "commit", "-m", "work")
+    head = _git(wt, "rev-parse", "HEAD")
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PUSH_TO_MAIN)
+
+    actions = am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[_p2m_fixture(s, wt)],
+        db_path=db,
+        merge_fn=_merge_must_not_run,
+    )
+    assert actions[0].merged, actions[0].reason
+    assert _git(origin, "rev-parse", "main") == head
+    assert _reload(db, s.id).state == StoryState.DEPLOY_PENDING.value
+    # The deploy can find the fast-forward's sha under the placeholder number.
+    assert H._lookup_merged_sha("sacrifice", -(s.id or 0), db) == head
+
+
+def test_push_to_main_refused_falls_back_to_pr(
+    am_root: Path, tmp_path: Path, gates_green: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_cfg(am_root, L.PUSH_TO_MAIN)
+    origin, wt = _repo_with_origin(tmp_path)
+    # main moves on origin AFTER the story branched: no longer a fast-forward.
+    other = tmp_path / "other"
+    _git(tmp_path, "clone", str(origin), str(other))
+    for k, v in (("user.email", "t@t"), ("user.name", "t")):
+        _git(other, "config", k, v)
+    (other / "z.txt").write_text("z\n")
+    _git(other, "add", "z.txt")
+    _git(other, "commit", "-m", "elsewhere")
+    _git(other, "push", "origin", "HEAD:main")
+    origin_main_before = _git(origin, "rev-parse", "main")
+    _git(wt, "checkout", "-b", "story/1-t")
+    (wt / "f.py").write_text("y = 2\n")
+    _git(wt, "add", "f.py")
+    _git(wt, "commit", "-m", "work")
+
+    opened: list[dict[str, Any]] = []
+
+    def _open(*_a: Any, **k: Any) -> int:
+        opened.append(k)
+        return 555
+
+    monkeypatch.setattr(H, "_open_pr_for_story", _open)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PUSH_TO_MAIN)
+
+    actions = am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[_p2m_fixture(s, wt)],
+        db_path=db,
+        merge_fn=_merge_must_not_run,
+    )
+    assert not actions[0].merged
+    assert "push_to_main refused" in actions[0].reason
+    assert _git(origin, "rev-parse", "main") == origin_main_before  # untouched
+    row = _reload(db, s.id)
+    assert row.state == StoryState.DELIVERED_PR.value
+    assert row.github_pr_number == 555 and row.delivery_level == L.PR.value
+    assert opened == [{"draft": False, "will_auto_merge": False}]
+
+
+def test_fast_forward_refuses_when_head_moved(tmp_path: Path) -> None:
+    _, wt = _repo_with_origin(tmp_path)
+    ok, why = fast_forward_default_branch(worktree=wt, base="main", expected_sha="0" * 40)
+    assert not ok and "not the gated commit" in why
+
+
+# --------------------------------------------------------------------------- #
+# merge reality: a human merging a delivered PR flows into deploy
+# --------------------------------------------------------------------------- #
+
+
+def _q(value: str):
+    def _query(*, app_config: AppConfig, pr_number: int) -> str | None:
+        return value
+
+    return _query
+
+
+def test_human_merge_of_delivered_pr_reconciles_to_deploy_pending(tmp_path: Path) -> None:
+    from factory.chain.orchestrator import reconcile_from_github
+
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.DELIVERED_PR, L.PR, github_pr_number=31)
+    out = reconcile_from_github(
+        db, "sacrifice", cfg=_cfg(L.PR), root=root, query_pr_state=_q("MERGED")
+    )
+    assert out and out[0][2] == StoryState.DEPLOY_PENDING.value
+    assert _reload(db, s.id).state == StoryState.DEPLOY_PENDING.value
+
+
+def test_closed_delivered_pr_is_left_alone(tmp_path: Path) -> None:
+    from factory.chain.orchestrator import reconcile_from_github
+
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.DELIVERED_PR, L.DRAFT_PR, github_pr_number=32)
+    out = reconcile_from_github(
+        db, "sacrifice", cfg=_cfg(L.PR), root=root, query_pr_state=_q("CLOSED")
+    )
+    assert out == []
+    assert _reload(db, s.id).state == StoryState.DELIVERED_PR.value
+
+
+def test_delivered_states_never_close_tracker_issues() -> None:
+    """Merge reality: unmerged work must not close its story issue / tracker."""
+    from factory.directions.tracker_issue import _RESOLVED_STORY_STATES
+
+    assert not (DELIVERED_UNMERGED_STATES & _RESOLVED_STORY_STATES)
+
+
+def test_delivered_states_hold_no_concurrency_slot_and_await_a_human() -> None:
+    from factory.chain.orchestrator import _NON_CAP_COUNTING_STATES, _PENDING_HUMAN_STATES
+
+    assert DELIVERED_UNMERGED_STATES <= _NON_CAP_COUNTING_STATES
+    assert DELIVERED_UNMERGED_STATES <= _PENDING_HUMAN_STATES

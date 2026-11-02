@@ -395,7 +395,17 @@ def _adapter_conformance_breach(ctx: _AdapterCtx) -> list[Firing]:
 # an orphan yet — the detector returns every naming-convention match; this
 # adapter is what turns that raw candidate list into actual orphan firings.
 _WORKTREE_ORPHAN_DB_STATES = frozenset(
-    {"missing", "deployed", "closed_by_operator", "superseded_by_sibling"}
+    {
+        "missing",
+        "deployed",
+        "closed_by_operator",
+        "superseded_by_sibling",
+        # Delivery-level end states: the worktree is no longer used (the
+        # ``none`` level's work lives on the local branch, not the directory).
+        "delivered_local",
+        "delivered_branch",
+        "delivered_pr",
+    }
 )
 
 

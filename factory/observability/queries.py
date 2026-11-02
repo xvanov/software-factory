@@ -175,6 +175,10 @@ _TERMINAL_STATES_FOR_PROGRESS = {
     "superseded_by_sibling",
     # Operator-closed stories are settled; they must not hold a direction open.
     "closed_by_operator",
+    # Delivery-level end states: the factory finished its part.
+    "delivered_local",
+    "delivered_branch",
+    "delivered_pr",
 }
 
 # Stories in these states are out-of-band and should NOT contribute to
@@ -190,6 +194,10 @@ _NOT_IN_FLIGHT_STATES = {
     "blocked_deploy_failed",
     # Dual-draft loser sink — terminal (abandoned); not in flight.
     "superseded_by_sibling",
+    # Delivery-level end states — terminal; not in flight.
+    "delivered_local",
+    "delivered_branch",
+    "delivered_pr",
 }
 
 
