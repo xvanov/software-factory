@@ -1383,23 +1383,37 @@ def test_solo_cap_keeps_the_stall_guard_reachable_even_if_configured_low() -> No
         assert solo.max_dev_attempts(s, configured) > _MAX_DEV_SAME_SIGNATURE
 
 
-def test_green_solo_story_reaches_the_331_delivery_gate(temp_root: Path) -> None:
+def test_green_solo_story_reaches_the_331_delivery_gate(
+    temp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """With #331 merged: a solo story that finished tech_writer goes through
-    handle_docs_enforcer — the delivery-level enforcement site — and ends in a
-    delivery outcome, exactly like a chain story."""
-    from factory.chain.handlers import handle_docs_enforcer
+    handle_docs_enforcer — the delivery-level enforcement site — and ends in
+    #331's delivery outcome, exactly like a chain story. REAL run at level
+    ``none`` (commit locally, never push), so nothing leaves the temp repo."""
+    from factory.chain.handlers import _writing_worktree, handle_docs_enforcer
 
     db = temp_root / "state" / "factory.db"
-    story = _story_at(StoryState.TESTS_GREEN, temp_root, delivery_level="none")
+    story = _story_at(
+        StoryState.TESTS_GREEN,
+        temp_root,
+        delivery_level="none",
+        github_branch="story/1-z",
+    )
     app = _app(temp_root)
     handle_tech_writer(story, app, temp_root, dry_run=True, db_path=db)
     after = get_story(story.id or 0, db)
     assert after is not None and orch._dispatch_for_story(after) == "docs_enforcer"
-    res = handle_docs_enforcer(
-        after, app, temp_root, dry_run=True, db_path=db, pr_files=["src/feature.py"]
-    )
+    wt = _writing_worktree(app, temp_root, after)
+    (wt / "feature.py").write_text("y = 2\n", encoding="utf-8")
+    # As the solo dev handler does on green: commit exactly the graded tree.
+    handlers_module._commit_green_dev_work(after, app, temp_root, repo=wt)
+
+    def _no_push(*a: Any, **k: Any) -> Any:
+        raise AssertionError("level none must never push or open a PR")
+
+    monkeypatch.setattr(handlers_module, "_open_pr_for_story", _no_push)
+    res = handle_docs_enforcer(after, app, temp_root, dry_run=False, db_path=db)
     final = get_story(story.id or 0, db)
     assert final is not None
-    # delivery_level "none" = commit locally, never push: #331's DELIVERED_LOCAL.
     assert final.state == StoryState.DELIVERED_LOCAL.value, (final.state, res)
     assert final.reviewer_cycles == 0
