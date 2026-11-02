@@ -1076,3 +1076,68 @@ def test_n2_cancel_noop_on_done_job_writes_no_marker(
     _story(root, "001", StoryState.DELIVERED_LOCAL.value, delivery_level="none")
     assert cancel_job(root, job["job_id"], github=False)["state"] == "done"
     assert not delivery_gate.is_job_cancelled(root / "state" / "factory.db", "demo", "001")
+
+
+# --------------------------------------------------------------------------- #
+# CI of delivered PRs (E2E template-probe:005, 2026-11-02)
+# --------------------------------------------------------------------------- #
+
+
+def _gh_with_ci(rollup: list[dict[str, Any]]) -> Any:
+    base = _fake_gh([{"number": 5, "state": "OPEN", "url": "u5", "headRefName": "b"}])
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["pr", "view"] and "statusCheckRollup" in args:
+            return subprocess.CompletedProcess(
+                args, 0, json.dumps({"statusCheckRollup": rollup}), ""
+            )
+        return base(args)
+
+    return run
+
+
+_RUN = {"__typename": "CheckRun", "name": "lint"}
+
+
+@pytest.mark.parametrize(
+    ("rollup", "age_s", "state", "why_has"),
+    [
+        ([{**_RUN, "status": "COMPLETED", "conclusion": "SUCCESS"}], 0, "done", None),
+        ([{**_RUN, "status": "COMPLETED", "conclusion": "FAILURE"}], 0, "done", "CI failing: lint"),
+        (
+            [{**_RUN, "status": "IN_PROGRESS", "conclusion": ""}],
+            60,
+            "in_progress",
+            "waiting for its CI",
+        ),
+        ([{**_RUN, "status": "IN_PROGRESS", "conclusion": ""}], 3 * 3600, "done", None),
+    ],
+)
+def test_delivered_pr_reports_ci(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rollup: list[dict[str, Any]],
+    age_s: int,
+    state: str,
+    why_has: str | None,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    job = _submit("--delivery", "draft_pr")
+    s = _story(
+        root, "001", StoryState.DELIVERED_PR.value, github_pr_number=5, delivery_level="draft_pr"
+    )
+    eng = create_engine(f"sqlite:///{root / 'state' / 'factory.db'}")
+    with Session(eng) as ses:
+        row = ses.get(StoryRecord, s.id)
+        assert row is not None
+        row.updated_at = datetime.now(UTC) - timedelta(seconds=age_s)
+        ses.add(row)
+        ses.commit()
+    monkeypatch.setattr(gh_mod, "_run_gh", _gh_with_ci(rollup))
+    st = job_status(root, job["job_id"])
+    assert st["state"] == state, st["why"]
+    assert st["stories"][0]["ci"]["state"] in ("passing", "failing", "pending")
+    if why_has:
+        assert why_has in (st["why"] or "")
+    assert "GitHub unavailable" not in (st["why"] or "")

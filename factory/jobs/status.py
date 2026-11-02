@@ -77,6 +77,9 @@ JOB_STATES: tuple[str, ...] = (
 )
 TERMINAL_JOB_STATES: frozenset[str] = frozenset({"done", "failed", "cancelled"})
 
+# How long a delivered job stays ``in_progress`` waiting for its PR's CI.
+CI_WAIT_S = 2 * 60 * 60
+
 #: ``state.yaml`` key ``factory job cancel`` writes.
 CANCEL_KEY = "job_cancelled"
 
@@ -528,6 +531,41 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
             f": {v.note}" if v.note else _story_reason(v.row)
         )
 
+    # CI of every still-open PR: "delivered" means the PR exists, not that its
+    # checks pass — say so, so the caller never reports a red PR as done-and-good.
+    ci_by_story: dict[Any, dict[str, Any] | None] = {}
+    for v in views:
+        if gh is not None and v.pr_number and v.pr_state == "open":
+            ci_by_story[v.row.get("id")] = gh.ci(v.pr_number)
+    red = [
+        (v.pr_number, ci_by_story[v.row.get("id")])
+        for v in views
+        if (ci_by_story.get(v.row.get("id")) or {}).get("state") == "failing"
+    ]
+    # A just-opened PR's CI has not finished yet: "done" now would end the
+    # caller's watch (and its notification) before the verdict exists. Wait,
+    # but at most CI_WAIT_S after the story's last update — a check that never
+    # reports must not keep a job open forever.
+    if state == "done":
+        now = datetime.now(UTC)
+        waiting = []
+        for v in views:
+            ci = ci_by_story.get(v.row.get("id")) or {}
+            if ci.get("state") != "pending" or not v.row.get("updated_at"):
+                continue
+            last = datetime.fromisoformat(_latest_ts([v.row.get("updated_at")]))
+            if (now - last).total_seconds() < CI_WAIT_S:
+                waiting.append((v.pr_number, ci))
+        if waiting:
+            n, ci = waiting[0]
+            state = "in_progress"
+            why = f"PR #{n} is open; waiting for its CI ({', '.join(ci.get('pending', [])[:5])})"
+    if red:
+        ci_note = "; ".join(
+            f"PR #{n} CI failing: {', '.join(c['failing'][:5])}" for n, c in red if c
+        )
+        why = f"{why}; {ci_note}" if why else ci_note
+
     if gh is not None and gh.errors:
         note = "GitHub unavailable, local view: " + gh.errors[0]
         why = f"{why}; {note}" if why else note
@@ -541,6 +579,7 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
             "branch": v.row.get("github_branch"),
             "delivery_level": v.level,
             "delivery_note": _delivery_note(ctx, v.row),
+            "ci": ci_by_story.get(v.row.get("id")),
         }
         for v in views
     ]

@@ -427,6 +427,66 @@ A4_MAX_MODIFIED_FILES_PER_DIRECTION = 6
 A4_MAX_ITERATIONS_PER_DIRECTION = 400
 
 
+def _collapse_child_stories(
+    direction: Any, child_stories: list[dict[str, Any]], sums: dict[str, int]
+) -> dict[str, Any]:
+    """Merge PM's slices into ONE story covering the whole direction.
+
+    Used by the A4 single-story rule and by every solo job.
+    """
+    merged_rationale = "\n\n".join(
+        str(c.get("rationale") or "").strip()
+        for c in child_stories
+        if str(c.get("rationale") or "").strip()
+    )
+    # Scope: the modal implementation scope. ``docs``/``test`` never win — an
+    # AC-carrying direction is by definition graded on app behaviour, and three
+    # personas consume scope (module-doc pointer, task_scope, the commit title),
+    # so inheriting whatever slice the PM happened to list first is a coin flip
+    # on a load-bearing value.
+    impl_scopes = [
+        str(c.get("scope") or "").strip()
+        for c in child_stories
+        if str(c.get("scope") or "").strip() not in ("", "docs", "test")
+    ]
+    # Deterministic tie-break: by count, then alphabetically — ``max(set(...),
+    # key=count)`` varies with PYTHONHASHSEED on ties.
+    scope = (
+        sorted(set(impl_scopes), key=lambda s: (-impl_scopes.count(s), s))[0]
+        if impl_scopes
+        else "backend"
+    )
+    # Points: the SUM (the one story does all the slices' work), snapped up to
+    # the next Fibonacci value so EBS baselines keyed on (persona, points)
+    # aren't poisoned by a 2-point label on 3 slices of work.
+    raw_points = 0
+    for c in child_stories:
+        try:
+            raw_points += int(c.get("points"))
+        except (TypeError, ValueError):
+            pass
+    points = next((f for f in (1, 2, 3, 5, 8, 13) if f >= raw_points), 13)
+    return {
+        # The direction's own title, not the first slice's.
+        "title": direction.title or child_stories[0].get("title") or "story",
+        "scope": scope,
+        # ``docs`` only when EVERY slice is docs (a pure-docs solo job stays a
+        # docs story). Otherwise ``tdd``, never inherited by position: an
+        # AC-carrying direction on the docs chain (no dev, gates skipped)
+        # wedges unmergeably.
+        "chain_kind": (
+            "docs"
+            if child_stories
+            and all(str(c.get("chain_kind") or "tdd") == "docs" for c in child_stories)
+            else "tdd"
+        ),
+        "points": points,
+        "rationale": merged_rationale
+        or "Single story covering every acceptance criterion of the direction.",
+        **dict(sums),
+    }
+
+
 _SLUG_RE = re.compile(r"[^A-Za-z0-9]+")
 
 
@@ -555,9 +615,16 @@ def handle_stories_spawned(
             except Exception:  # noqa: BLE001 - telemetry only, never fail spawn
                 pass
 
+    # A SOLO job is one agent doing the whole job in one conversation and
+    # delivering ONE change (operator decision 2026-11-02): it never fans out
+    # into competing drafts or stacked slices. Observed live 2026-11-02: job
+    # template-probe:005 (solo) was split by PM into 4 stacked stories / 4
+    # draft PRs, each re-containing its parent's diff.
+    solo_job = routing.pipeline == "solo"
+
     # Phase 7: dual-draft branch — spawn two interpretation stories,
     # regardless of how many child_stories the PM emitted.
-    if should_spawn_dual_draft(direction, pm_result):
+    if not solo_job and should_spawn_dual_draft(direction, pm_result):
         interpretations = produce_interpretations(
             direction,
             pm_result,
@@ -712,7 +779,8 @@ def handle_stories_spawned(
     from factory.chain.acceptance import acceptance_expected_for
 
     if (
-        len(child_stories) > 1
+        not solo_job
+        and len(child_stories) > 1
         and app_config.gates.single_story_per_ac_direction
         and acceptance_expected_for(app_config, direction)
     ):
@@ -791,56 +859,47 @@ def handle_stories_spawned(
                 pass
 
         if fits:
-            merged_rationale = "\n\n".join(
-                str(c.get("rationale") or "").strip()
-                for c in child_stories
-                if str(c.get("rationale") or "").strip()
-            )
-            # Scope: the modal implementation scope. ``docs``/``test`` never
-            # win — an AC-carrying direction is by definition graded on app
-            # behaviour, and three personas consume scope (module-doc pointer,
-            # task_scope, the commit title), so inheriting whatever slice the
-            # PM happened to list first is a coin flip on a load-bearing value.
-            impl_scopes = [
-                str(c.get("scope") or "").strip()
-                for c in child_stories
-                if str(c.get("scope") or "").strip() not in ("", "docs", "test")
-            ]
-            # Deterministic tie-break: by count, then alphabetically —
-            # ``max(set(...), key=count)`` varies with PYTHONHASHSEED on ties,
-            # and one-backend-one-frontend ties are the common shape.
-            scope = (
-                sorted(set(impl_scopes), key=lambda s: (-impl_scopes.count(s), s))[0]
-                if impl_scopes
-                else "backend"
-            )
-            # Points: the SUM (the one story does all the slices' work),
-            # snapped up to the next Fibonacci value so EBS baselines keyed on
-            # (persona, points) aren't poisoned by a 2-point label on 3 slices
-            # of work.
-            raw_points = 0
+            child_stories = [_collapse_child_stories(direction, child_stories, sums)]
+
+    if solo_job and len(child_stories) > 1:
+        # Solo: always ONE story, whatever PM's slicing and whatever its size
+        # estimates. A4's size ceilings exist for the chain's 1800 s dev
+        # horizon; the solo conversation is bounded by its own wall clock,
+        # no-progress abort and spend cap instead. Estimates a child omits are
+        # left out of the sums (they are telemetry here, not a gate).
+        solo_sums: dict[str, int] = {}
+        for key in (
+            "estimated_new_files",
+            "estimated_modified_files",
+            "estimated_sandbox_iterations",
+        ):
+            vals = []
             for c in child_stories:
                 try:
-                    raw_points += int(c.get("points"))
+                    vals.append(max(0, int(c.get(key))))
                 except (TypeError, ValueError):
                     pass
-            points = next((f for f in (1, 2, 3, 5, 8, 13) if f >= raw_points), 13)
-            collapsed: dict[str, Any] = {
-                # The direction's own title, not the first slice's — a story
-                # named "happy-path smoke test" under-describes work the
-                # oracle grades against every criterion.
-                "title": direction.title or child_stories[0].get("title") or "story",
-                "scope": scope,
-                # NEVER inherited: an AC-carrying direction cannot be a docs
-                # story (the docs chain has no dev and skips the very gates
-                # the oracle rides on — it would wedge unmergeably).
-                "chain_kind": "tdd",
-                "points": points,
-                "rationale": merged_rationale
-                or "Single story covering every acceptance criterion of the direction.",
-                **{k: v for k, v in sums.items()},
-            }
-            child_stories = [collapsed]
+            if vals:
+                solo_sums[key] = sum(vals)
+        if not dry_run:
+            try:
+                from factory.manager.signals import write_event
+
+                write_event(
+                    "chain_steps",
+                    {
+                        "event": "solo_story_collapsed",
+                        "app": direction.app,
+                        "direction_id": direction.id or direction.slug,
+                        "pm_child_count": len(child_stories),
+                        "summed_estimates": solo_sums,
+                        "dropped_titles": [str(c.get("title") or "") for c in child_stories[1:]],
+                    },
+                    software_factory_root=software_factory_root,
+                )
+            except Exception:  # noqa: BLE001 - telemetry only, never fail spawn
+                pass
+        child_stories = [_collapse_child_stories(direction, child_stories, solo_sums)]
 
     for child in child_stories:
         slug = _slug_of(child.get("title") or "story")
@@ -1875,6 +1934,7 @@ def _block_solo_oracle_leak(
         error=story.error,
     )
 
+
 # Same-failure-signature fast-escalation cap. When consecutive dev runs fail
 # with the IDENTICAL normalized failure signature (the same assertions/errors,
 # volatile bits stripped) the model is stuck on something more attempts won't
@@ -2637,6 +2697,33 @@ def _handle_dev_once(
             )
             _require_delta = _solo.requires_production_delta(app_config)
             _base = app_config.default_branch or "main"
+            _static = _solo.static_gate_commands(app_config)
+            _static_baseline = _solo.static_gate_baseline(Path(repo_path), _base, _static)
+            if _static:
+                log_story_event(
+                    story.id,
+                    "solo_static_baseline",
+                    {
+                        "commands": dict(_static),
+                        # True = green on base; null = unknown (blocks);
+                        # list = files already flagged on base.
+                        "base": {
+                            k: (sorted(v) if isinstance(v, (set, frozenset)) else v)
+                            for k, v in _static_baseline.items()
+                        },
+                    },
+                    software_factory_root=software_factory_root,
+                    slug_hint=story.slug,
+                )
+            _brief = _solo.build_solo_brief(dev_direction)
+            if _static:
+                _brief = (
+                    (_brief or "")
+                    + "\n\n## The repo's own checks\n\nThe repo's CI also runs these. "
+                    "Run them before you finish and fix what YOUR change breaks "
+                    "(do not reformat or fix unrelated files):\n\n"
+                    + "\n".join(f"- {n}: `{c}`" for n, c in _static)
+                )
             solo_kwargs = {
                 "gate_check": _solo.make_gate_check(
                     repo_path=Path(repo_path),
@@ -2649,10 +2736,12 @@ def _handle_dev_once(
                         if _require_delta
                         else None
                     ),
+                    static_gates=_static,
+                    static_baseline=_static_baseline,
                 ),
                 "max_gate_rounds": _solo.SOLO_MAX_GATE_ROUNDS,
                 "no_progress_abort_s": _solo.SOLO_NO_PROGRESS_ABORT_S,
-                "brief_addendum": _solo.build_solo_brief(dev_direction),
+                "brief_addendum": _brief,
                 "spend_cap_usd": _spend_cap,
             }
 

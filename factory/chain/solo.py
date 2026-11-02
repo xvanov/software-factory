@@ -36,6 +36,7 @@ checks gate a given story is logged on its event stream as ``solo_checks``.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -243,6 +244,8 @@ def make_gate_check(
     test_command: str | None,
     branch_is_empty: Any,
     production_delta: Any | None = None,
+    static_gates: list[tuple[str, str]] | None = None,
+    static_baseline: dict[str, Any] | None = None,
 ) -> Any:
     """Build the ``gate_check`` callable ``sandbox_run`` runs between rounds.
 
@@ -257,8 +260,23 @@ def make_gate_check(
     3. ``production_delta`` (only when the app sets
        ``gates.require_production_delta``) — the branch has a non-test change.
        Same True/False/None contract.
+    4. ``static_gates`` — the app's own lint / format-check / type-check
+       commands (``gates.lint_command`` etc.), the same ones its CI runs.
+       ``static_baseline[name]`` is the base commit's result (see
+       :func:`static_gate_baseline`): ``True`` green, ``None`` unknown, or the
+       frozenset of file paths the check flagged on the base. Red now BLOCKS
+       when the base was green or unknown (fail safe), and when the base was
+       red but the tree's output names a file the base's did not (a NEW
+       finding) or names no file at all (something else broke). Only a red
+       whose findings are all pre-existing passes — the dev must not be sent
+       to fix unrelated files, but must not add to them either. Observed live
+       2026-11-02: job template-probe:005 shipped 4 PRs whose CI failed
+       ``format:check`` because only the test command ran in-conversation.
     """
     from factory.runner import _run_pytest
+
+    _static = list(static_gates or [])
+    _baseline = dict(static_baseline or {})
 
     def _check() -> GateVerdict:
         checks: list[dict[str, Any]] = []
@@ -332,11 +350,169 @@ def make_gate_check(
                     "reason": "present" if delta is True else "unknown (fail open)",
                 }
             )
+        for name, cmd in _static:
+            ok, sout = _run_pytest(Path(repo_path), test_command=cmd)
+            base = _baseline.get(name)
+            if ok:
+                checks.append({"name": name, "passed": True, "reason": "green"})
+                continue
+            new_findings: list[str] = []
+            if isinstance(base, (set, frozenset)):
+                now = finding_paths(sout, Path(repo_path))
+                new_findings = sorted(now - set(base))
+                if now and not new_findings:
+                    checks.append(
+                        {
+                            "name": name,
+                            "passed": True,
+                            "reason": (
+                                f"red, but only on {len(now)} file(s) already flagged "
+                                "on the base commit (not blocking)"
+                            ),
+                        }
+                    )
+                    continue
+                why = (
+                    f"it flags file(s) the base commit did not: {', '.join(new_findings[:10])}"
+                    if new_findings
+                    else "it fails in a way the base commit did not (no file named)"
+                )
+            elif base is True:
+                why = "it passed on the base commit"
+            else:
+                why = "the base commit's result is unknown, so any failure blocks"
+            checks.append({"name": name, "passed": False, "reason": f"red on your tree; {why}"})
+            return GateVerdict(
+                passed=False,
+                reason=(
+                    f"tests are green but the repo's {name} check (`{cmd}`) fails on "
+                    f"your working tree — {why}. The repo's CI runs it. Fix what your "
+                    "change broke (e.g. run the formatter on the files you changed, fix "
+                    "the lint/type errors); do not touch unrelated files."
+                ),
+                output=sout,
+                checks=checks,
+            )
         return GateVerdict(
             passed=True, reason="all in-conversation checks green", output=out, checks=checks
         )
 
+    # The runner's hard backstop adds this on top of its own grading grace, so
+    # the extra commands cannot push a final grading round past it (a timed-out
+    # run loses its spend record and file list).
+    setattr(_check, "extra_grace_s", static_gate_grace_s(_static))  # noqa: B010
     return _check
+
+
+STATIC_GATE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("lint", "lint_command"),
+    ("format_check", "format_check_command"),
+    ("type_check", "type_check_command"),
+)
+
+
+def static_gate_commands(app_config: Any) -> list[tuple[str, str]]:
+    """The app's configured lint / format / type commands, in a fixed order."""
+    gates = getattr(app_config, "gates", None)
+    out: list[tuple[str, str]] = []
+    for name, field_name in STATIC_GATE_FIELDS:
+        cmd = str(getattr(gates, field_name, "") or "").strip()
+        if cmd:
+            out.append((name, cmd))
+    return out
+
+
+_FINDING_RE = re.compile(
+    r"(?<![\w@.+/-])((?:[\w@.+-]+/)*[\w@.+-]+\.(?:[cm]?[jt]sx?|py|pyi|md|mdx|json|ya?ml|css|scss|html|vue|svelte|go|rs|rb|java|kt|swift|toml|sql|prisma))(?=[\s:(\[,]|$)"
+)
+
+
+def finding_paths(output: str, root: Path) -> frozenset[str]:
+    """Repo-relative-looking file paths a lint/format/type tool named.
+
+    Absolute paths under ``root`` are made relative (eslint prints absolute
+    paths); other absolute paths and anything under ``node_modules`` are
+    dropped (toolchain noise, not findings). Comparison is between two runs of
+    the SAME command, so a tool's own path style (tsc prints paths relative to
+    its package) only has to be consistent with itself.
+    """
+    import os
+
+    root_s = os.path.realpath(str(root)).rstrip("/") + "/"
+    raw_root = str(root).rstrip("/") + "/"
+    out: set[str] = set()
+    for line in output.splitlines():
+        line = re.sub(r"\x1b\[[0-9;]*m", "", line)
+        for tok in re.findall(r"\S+", line):
+            for prefix in (root_s, raw_root):
+                if prefix in tok:
+                    tok = tok.split(prefix, 1)[1]
+            for m in _FINDING_RE.finditer(tok):
+                p = m.group(1)
+                if p.startswith("/") or "node_modules" in p or p.startswith(".."):
+                    continue
+                out.add(p.lstrip("./") if p.startswith("./") else p)
+    return frozenset(out)
+
+
+def static_gate_baseline(
+    repo: Path, base_branch: str, gates: list[tuple[str, str]]
+) -> dict[str, Any]:
+    """Run each static gate on a throwaway checkout of the merge-base.
+
+    Per gate: ``True`` = green on the base; ``None`` = could not tell (no
+    merge-base, checkout failed, the command could not run, or it went red
+    without naming any file — e.g. the dependency install failed); otherwise
+    the frozenset of file paths it flagged on the base. Never touches
+    ``repo``'s working tree.
+    """
+    import shutil
+    import tempfile
+
+    from factory.runner import _run_pytest
+
+    if not gates:
+        return {}
+    mb = _merge_base(repo, base_branch)
+    if mb is None:
+        return {name: None for name, _ in gates}
+    tmp = Path(tempfile.mkdtemp(prefix="solo-baseline-"))
+    wt = tmp / "base"
+    try:
+        rc, _ = _git_ro(repo, "worktree", "add", "--detach", str(wt), mb)
+        if rc != 0:
+            return {name: None for name, _ in gates}
+        result: dict[str, Any] = {}
+        for name, cmd in gates:
+            ok, out = _run_pytest(wt, test_command=cmd)
+            if ok:
+                result[name] = True
+                continue
+            # Red is only usable as a baseline when it names what it flagged.
+            # A red that could not run, or names no file (a failed npm ci /
+            # prisma generate, a crash), says nothing about the base: unknown,
+            # which BLOCKS later — never "already red", which would wave the
+            # dev's breakage through.
+            found = (
+                frozenset()
+                if out.startswith("test_command invocation failed")
+                else finding_paths(out, wt)
+            )
+            result[name] = found or None
+        return result
+    finally:
+        _git_ro(repo, "worktree", "remove", "--force", str(wt))
+        shutil.rmtree(tmp, ignore_errors=True)
+        _git_ro(repo, "worktree", "prune")
+
+
+def static_gate_grace_s(gates: list[tuple[str, str]]) -> int:
+    """Extra hard-backstop headroom the static checks need per grading round."""
+    return STATIC_GATE_TIMEOUT_S * len(gates)
+
+
+#: ``runner._run_pytest``'s per-command timeout, which each static check uses.
+STATIC_GATE_TIMEOUT_S = 600
 
 
 # --------------------------------------------------------------------------- #
@@ -457,6 +633,7 @@ def checks_plan(app_config: Any, story: Any) -> dict[str, Any]:
     in_conv = ["test_command", "non_empty_change"]
     if requires_production_delta(app_config):
         in_conv.append("production_delta")
+    in_conv.extend(name for name, _ in static_gate_commands(app_config))
     return {
         "pipeline": SOLO,
         "reviewer": "skipped (solo pipeline)",
@@ -484,6 +661,10 @@ __all__ = [
     "SOLO_NO_PROGRESS_ABORT_S",
     "build_solo_brief",
     "checks_plan",
+    "finding_paths",
+    "static_gate_baseline",
+    "static_gate_grace_s",
+    "static_gate_commands",
     "is_solo",
     "make_gate_check",
     "max_dev_attempts",
