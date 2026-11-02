@@ -2616,7 +2616,7 @@ def _handle_dev_once(
                     story, leaks, db=db, software_factory_root=software_factory_root
                 )
             _dev_timeout_s = _solo.SOLO_DEV_WALL_CLOCK_S
-            _require_delta = bool(getattr(app_config.gates, "require_production_delta", False))
+            _require_delta = _solo.requires_production_delta(app_config)
             solo_kwargs = {
                 "gate_check": _solo.make_gate_check(
                     repo_path=Path(repo_path),

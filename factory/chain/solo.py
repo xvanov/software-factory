@@ -81,6 +81,11 @@ def is_solo(story: Any) -> bool:
     return (getattr(story, "pipeline", "chain") or "chain") == SOLO
 
 
+def requires_production_delta(app_config: Any) -> bool:
+    """Whether the app asks for a non-test change (``gates.require_production_delta``)."""
+    return bool(getattr(getattr(app_config, "gates", None), "require_production_delta", False))
+
+
 def max_dev_attempts(story: Any, configured_cap: int) -> int:
     """The dev-retry cap that applies to ``story``.
 
@@ -296,7 +301,7 @@ def checks_plan(app_config: Any, story: Any) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - telemetry only
         required = [f"<unavailable: {exc!r}>"[:200]]
     in_conv = ["test_command", "non_empty_change"]
-    if bool(getattr(gates, "require_production_delta", False)):
+    if requires_production_delta(app_config):
         in_conv.append("production_delta")
     return {
         "pipeline": SOLO,
@@ -329,4 +334,5 @@ __all__ = [
     "make_gate_check",
     "max_dev_attempts",
     "oracle_leak_precheck",
+    "requires_production_delta",
 ]
