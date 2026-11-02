@@ -2616,6 +2616,14 @@ def _handle_dev_once(
                     story, leaks, db=db, software_factory_root=software_factory_root
                 )
             _dev_timeout_s = _solo.SOLO_DEV_WALL_CLOCK_S
+            _spend_cap, _spend_basis = _solo.spend_cap_for(story, software_factory_root, db)
+            log_story_event(
+                story.id,
+                "solo_spend_cap",
+                {"spend_cap_usd": _spend_cap, **_spend_basis},
+                software_factory_root=software_factory_root,
+                slug_hint=story.slug,
+            )
             _require_delta = _solo.requires_production_delta(app_config)
             solo_kwargs = {
                 "gate_check": _solo.make_gate_check(
@@ -2637,6 +2645,7 @@ def _handle_dev_once(
                 "max_gate_rounds": _solo.SOLO_MAX_GATE_ROUNDS,
                 "no_progress_abort_s": _solo.SOLO_NO_PROGRESS_ABORT_S,
                 "brief_addendum": _solo.build_solo_brief(dev_direction),
+                "spend_cap_usd": _spend_cap,
             }
 
         run_res = asyncio.run(
@@ -2672,6 +2681,8 @@ def _handle_dev_once(
                     "test_run_passed": run_res.test_run_passed,
                     "error": (run_res.error or "")[:500] or None,
                     "cost_usd": run_res.cost_usd,
+                    "spend_cap_usd": solo_kwargs.get("spend_cap_usd"),
+                    "spend_cap_hit_usd": getattr(run_res, "spend_cap_hit_usd", None),
                     "premodel_infra": bool(getattr(run_res, "premodel_infra", False)),
                 },
                 software_factory_root=software_factory_root,

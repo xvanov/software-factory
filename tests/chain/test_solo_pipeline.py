@@ -764,3 +764,267 @@ def test_a_pause_that_lands_during_grading_is_not_lost(
     assert fake_sdk.instances[0].runs == 1
     assert res.gate_stop_reason == "wall_clock"
     assert len(res.gate_rounds) == 1 and res.test_run_passed is False
+
+
+# --------------------------------------------------------------------------- #
+# Mid-conversation spend cap
+# --------------------------------------------------------------------------- #
+
+
+def test_spend_cap_pauses_the_run_and_grades(tmp_path: Path, fake_sdk: type[_Conv]) -> None:
+    """Live cost 0.5 crosses a 0.25 cap mid-run: pause, grade, record why."""
+    fake_sdk.script = [_block_until_paused]
+    t0 = time.monotonic()
+    res = _sandbox(tmp_path, _seq(RED), max_gate_rounds=3, spend_cap_usd=0.25)
+    assert time.monotonic() - t0 < 8
+    assert fake_sdk.instances[0].paused.is_set()
+    assert res.gate_stop_reason == "spend_cap"
+    assert res.spend_cap_hit_usd == pytest.approx(0.5)
+    assert len(res.gate_rounds) == 1 and res.test_run_passed is False
+    assert res.cost_usd == pytest.approx(0.5)
+
+
+def test_spend_cap_crossed_between_polls_stops_before_the_next_round(
+    tmp_path: Path, fake_sdk: type[_Conv], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner_module, "_WATCHDOG_POLL_S", 100.0)  # watchdog never polls
+    fake_sdk.script = [_write("a.py"), _write("b.py")]
+    res = _sandbox(tmp_path, _seq(RED), max_gate_rounds=3, spend_cap_usd=0.4)
+    assert fake_sdk.instances[0].runs == 1
+    assert res.gate_stop_reason == "spend_cap"
+
+
+def test_green_beats_the_spend_cap(tmp_path: Path, fake_sdk: type[_Conv]) -> None:
+    """A tree that is green when graded ships; the cap only stops more spend."""
+    fake_sdk.script = [_write("a.py")]
+    res = _sandbox(tmp_path, _seq(GREEN), max_gate_rounds=3, spend_cap_usd=0.1)
+    assert res.test_run_passed is True and res.gate_stop_reason == "green"
+
+
+def test_spend_cap_for_takes_the_tighter_of_story_and_daily(temp_root: Path) -> None:
+    db = temp_root / "state" / "factory.db"
+    story = _story_at(StoryState.SM_DONE, temp_root)
+    runner_module._record_run(
+        persona="dev",
+        model="m",
+        mode="sandbox",
+        tokens_in=1,
+        tokens_out=1,
+        cost_usd=2.0,
+        success=False,
+        story_path=None,
+        repo_path=None,
+        error=None,
+        db_path=db,
+        story_id=story.id,
+    )
+    from factory.settings.loader import load_settings
+
+    caps = load_settings(temp_root).caps
+    cap, basis = solo.spend_cap_for(story, temp_root, db)
+    expected = min(caps.per_story_spend_usd - 2.0, caps.daily_spend_usd - 2.0)
+    assert cap == pytest.approx(max(0.0, expected))
+    assert basis["story_spent_usd"] == pytest.approx(2.0)
+
+
+def test_spend_cap_for_fails_safe_to_zero(temp_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import factory.settings.loader as loader
+
+    def _boom(*a: Any, **k: Any) -> Any:
+        raise OSError("settings unreadable")
+
+    monkeypatch.setattr(loader, "load_settings", _boom)
+    story = _story_at(StoryState.SM_DONE, temp_root)
+    cap, basis = solo.spend_cap_for(story, temp_root, temp_root / "state" / "factory.db")
+    assert cap == 0.0 and "fail-safe" in basis["reason"]
+
+
+def test_solo_dispatch_passes_the_spend_cap_and_logs_it(
+    temp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = temp_root / "state" / "factory.db"
+    story = _story_at(StoryState.SM_DONE, temp_root)
+    seen: dict[str, Any] = {}
+
+    async def _capped(*args: Any, **kwargs: Any) -> RunResult:
+        seen.update(kwargs)
+        return RunResult(
+            success=False,
+            files_changed=["a"],
+            test_run_passed=False,
+            summary="x",
+            error="spend cap",
+            cost_usd=3.0,
+            tokens_out=5,
+            gate_stop_reason="spend_cap",
+            spend_cap_hit_usd=3.0,
+        )
+
+    monkeypatch.setattr(runner_module, "sandbox_run", _capped, raising=True)
+    monkeypatch.setattr(handlers_module, "route", lambda *a, **kw: "azure/gpt-5.4")
+    handle_dev(story, _app(temp_root), temp_root, dry_run=False, db_path=db)
+    assert isinstance(seen["spend_cap_usd"], float)
+    after = get_story(story.id or 0, db)
+    assert after is not None
+    assert _events(after, temp_root, "solo_spend_cap")[0]["spend_cap_usd"] == seen["spend_cap_usd"]
+    rounds = _events(after, temp_root, "solo_dev_rounds")[0]
+    assert rounds["stop_reason"] == "spend_cap" and rounds["spend_cap_hit_usd"] == 3.0
+
+
+# --------------------------------------------------------------------------- #
+# Incremental ledger: a killed tick never loses spend
+# --------------------------------------------------------------------------- #
+
+
+def _rows(db: Path) -> list[Run]:
+    with Session(_engine(db)) as s:
+        return list(s.exec(select(Run)).all())
+
+
+def test_spend_is_on_the_ledger_while_the_run_is_still_going(
+    tmp_path: Path, fake_sdk: type[_Conv], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner_module, "_LEDGER_CHECKPOINT_S", 0.02)
+    db = tmp_path / "state" / "factory.db"
+    seen_mid_run: list[tuple[int, float, str | None]] = []
+
+    def _observe_ledger(conv: _Conv) -> None:
+        _write("a.py")(conv)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            rows = _rows(db) if db.exists() else []
+            if rows:
+                seen_mid_run.append((len(rows), float(rows[0].cost_usd), rows[0].error))
+                return
+            time.sleep(0.02)
+
+    fake_sdk.script = [_observe_ledger]
+    res = _sandbox(tmp_path, _seq(GREEN), max_gate_rounds=3)
+    # Mid-run: a provisional row carrying real spend existed — this is what a
+    # systemd kill at that instant would have left behind.
+    assert seen_mid_run and seen_mid_run[0][0] == 1
+    assert seen_mid_run[0][1] == pytest.approx(0.5)
+    assert seen_mid_run[0][2] == runner_module._PROVISIONAL_RUN_ERROR
+    # Final: the SAME single row, finalised — never a double count.
+    rows = _rows(db)
+    assert len(rows) == 1
+    assert rows[0].error is None and rows[0].success is True
+    assert rows[0].cost_usd == pytest.approx(res.cost_usd)
+
+
+def test_record_run_finalises_the_provisional_row_in_place(tmp_path: Path) -> None:
+    db = tmp_path / "state" / "factory.db"
+    rid = runner_module._upsert_provisional_run(
+        None,
+        db_path=db,
+        persona="dev",
+        model="m",
+        tokens_in=10,
+        tokens_out=5,
+        cached_input_tokens=0,
+        cost_usd=1.0,
+        duration_s=1.0,
+        story_path=None,
+        repo_path=None,
+        story_id=7,
+        model_tier="standard",
+        direction_id="1",
+        app="a",
+    )
+    # Cost only moves up on a checkpoint.
+    assert (
+        runner_module._upsert_provisional_run(
+            rid,
+            db_path=db,
+            persona="dev",
+            model="m",
+            tokens_in=20,
+            tokens_out=9,
+            cached_input_tokens=0,
+            cost_usd=1.7,
+            duration_s=2.0,
+            story_path=None,
+            repo_path=None,
+            story_id=7,
+            model_tier="standard",
+            direction_id="1",
+            app="a",
+        )
+        == rid
+    )
+    assert [r.cost_usd for r in _rows(db)] == [pytest.approx(1.7)]
+    runner_module._record_run(
+        persona="dev",
+        model="m",
+        mode="sandbox",
+        tokens_in=20,
+        tokens_out=9,
+        cost_usd=1.8,
+        success=False,
+        story_path=None,
+        repo_path=None,
+        error="red",
+        db_path=db,
+        story_id=7,
+        update_row_id=rid,
+    )
+    rows = _rows(db)
+    assert len(rows) == 1 and rows[0].id == rid
+    assert rows[0].cost_usd == pytest.approx(1.8) and rows[0].error == "red"
+
+
+def test_chain_runs_write_no_provisional_row(
+    tmp_path: Path, fake_sdk: type[_Conv], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner_module, "_run_pytest", lambda repo, test_command=None: (True, "ok"))
+    monkeypatch.setattr(runner_module, "_LEDGER_CHECKPOINT_S", 0.0)
+    fake_sdk.script = [_write("a.py")]
+    _sandbox(tmp_path, None)
+    rows = _rows(tmp_path / "state" / "factory.db")
+    assert len(rows) == 1 and rows[0].error is None
+
+
+# --------------------------------------------------------------------------- #
+# Tick budget: never start a solo run the tick cannot finish
+# --------------------------------------------------------------------------- #
+
+
+def test_solo_dev_is_deferred_when_the_tick_cannot_fit_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("FACTORY_TICK_BUDGET_S", raising=False)
+    s = StoryRecord(direction_id="1", app="a", title="t", slug="s", pipeline="solo")
+    c = StoryRecord(direction_id="1", app="a", title="t", slug="s")
+    needed = (
+        solo.SOLO_DEV_WALL_CLOCK_S
+        + runner_module._GATE_GRADING_GRACE_S
+        + (orch._SOLO_TICK_MARGIN_S)
+    )
+    budget = orch._DEFAULT_TICK_BUDGET_S
+    assert budget >= needed, "a fresh tick must be able to run one solo conversation"
+    assert orch._solo_tick_budget_shortfall(s, 0.0, now_mono=0.0) is None
+    late = budget - needed + 1
+    reason = orch._solo_tick_budget_shortfall(s, 0.0, now_mono=late)
+    assert reason is not None and "deferred to the next tick" in reason
+    assert orch._solo_tick_budget_shortfall(c, 0.0, now_mono=late) is None  # chain untouched
+    monkeypatch.setenv("FACTORY_TICK_BUDGET_S", "60")
+    assert orch._solo_tick_budget_shortfall(s, 0.0, now_mono=0.0) is not None
+
+
+def test_the_tick_checks_the_budget_before_dispatching_dev() -> None:
+    import inspect
+
+    src = inspect.getsource(orch.tick)
+    i = src.index("_solo_tick_budget_shortfall(")
+    assert 'handler_name == "dev"' in src[i - 200 : i]
+    assert "summary.deferred.append" in src[i : i + 400]
+    # It runs before the handler is invoked.
+    assert i < src.index("_invoke_handler(")
+
+
+def test_tick_budget_default_matches_the_systemd_unit() -> None:
+    unit = Path(__file__).resolve().parents[2] / "scripts" / "systemd" / "factory-tick@.service"
+    if not unit.exists():
+        pytest.skip("tick unit not in repo")
+    assert "TimeoutStartSec=3h" in unit.read_text(encoding="utf-8")
+    assert orch._DEFAULT_TICK_BUDGET_S == 3 * 3600

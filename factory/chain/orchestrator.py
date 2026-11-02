@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -337,6 +338,46 @@ def _story_budget_breaker_reason(story: StoryRecord, caps: Any) -> str | None:
             f"total_spend_usd={story.total_spend_usd:.4f} >= per_story_spend_usd={per_story_spend}"
         )
     return None
+
+
+#: Wall-clock budget (seconds) of ONE tick process. Must match the systemd
+#: unit's ``TimeoutStartSec`` (``factory-tick@.service``: 3h). Override with
+#: env ``FACTORY_TICK_BUDGET_S``.
+_DEFAULT_TICK_BUDGET_S = 3 * 3600
+#: Headroom a solo dev dispatch needs on top of the conversation's own wall
+#: clock + grading backstop: worktree prep, commit, the post-run bookkeeping.
+_SOLO_TICK_MARGIN_S = 600
+
+
+def _tick_budget_s() -> float:
+    try:
+        return float(os.environ.get("FACTORY_TICK_BUDGET_S") or _DEFAULT_TICK_BUDGET_S)
+    except ValueError:
+        return float(_DEFAULT_TICK_BUDGET_S)
+
+
+def _solo_tick_budget_shortfall(
+    story: StoryRecord, tick_started_mono: float, *, now_mono: float | None = None
+) -> str | None:
+    """Why a solo dev dispatch must wait for the next tick, or None to go.
+
+    Chain stories are never deferred here (their 1800 s attempts are the
+    status quo this guard does not change).
+    """
+    from factory.chain.solo import SOLO_DEV_WALL_CLOCK_S, is_solo
+    from factory.runner import _GATE_GRADING_GRACE_S
+
+    if not is_solo(story):
+        return None
+    now = time.monotonic() if now_mono is None else now_mono
+    remaining = _tick_budget_s() - (now - tick_started_mono)
+    needed = SOLO_DEV_WALL_CLOCK_S + _GATE_GRADING_GRACE_S + _SOLO_TICK_MARGIN_S
+    if remaining >= needed:
+        return None
+    return (
+        f"solo dev needs {needed:.0f}s of tick wall clock, {max(0.0, remaining):.0f}s "
+        "left in this tick — deferred to the next tick"
+    )
 
 
 def _dispatch_for_story(story: StoryRecord) -> str | None:
@@ -2443,6 +2484,7 @@ def tick(
     """
     root = Path(software_factory_root)
     db = db_path or (root / "state" / "factory.db")
+    _tick_started_mono = time.monotonic()
 
     # Dry-run isolation: when the caller did not pass an explicit ``db_path``
     # (i.e. the CLI is hitting the production state DB), copy the live DB to
@@ -2928,6 +2970,25 @@ def tick(
                     summary.handler_runs.append((story.slug, from_state, story.state))
                     summary.stories_blocked += 1
                     break
+
+                # SOLO tick-budget guard. Dispatch is serial and the systemd tick
+                # is killed at ``TimeoutStartSec``; a solo dev conversation may
+                # legitimately run SOLO_DEV_WALL_CLOCK_S + the grading backstop.
+                # Starting one that cannot finish inside what is left of this
+                # tick would be killed mid-run. Defer it to the next tick instead
+                # (no state change, nothing spent).
+                if handler_name == "dev" and not dry_run:
+                    _solo_defer = _solo_tick_budget_shortfall(story, _tick_started_mono)
+                    if _solo_defer is not None:
+                        summary.deferred.append((story.slug, _solo_defer))
+                        log_story_event(
+                            story.id,
+                            "solo_dev_deferred_tick_budget",
+                            {"reason": _solo_defer},
+                            software_factory_root=root,
+                            slug_hint=story.slug,
+                        )
+                        break
 
                 # Dependency-ordering gate. A story does not build until every
                 # lower-id story in its own direction is deployed (id order ==

@@ -98,6 +98,62 @@ def max_dev_attempts(story: Any, configured_cap: int) -> int:
     return max(1, min(int(configured_cap), SOLO_MAX_DEV_ATTEMPTS))
 
 
+def spend_cap_for(
+    story: Any, software_factory_root: Path, db_path: Path
+) -> tuple[float | None, dict[str, Any]]:
+    """The live spend cap for ONE solo conversation, plus how it was derived.
+
+    ``min(per_story_spend_usd - this story's ledger spend,
+    daily_spend_usd - today's ledger spend)`` over whichever caps are set
+    (> 0). The orchestrator's breakers only run BETWEEN dispatches; a 5400 s
+    conversation could otherwise blow through both inside one dispatch. The
+    watchdog pauses the run and the tree is graded when its live cost reaches
+    this. ``None`` = no cap configured. Fail SAFE: if the caps or the ledger
+    cannot be read, the cap is 0.0 (the run is paused at its first spend and
+    graded) rather than unbounded.
+    """
+    try:
+        from factory.settings.loader import load_settings
+        from factory.settings.spend import today_spend_usd
+
+        caps = load_settings(software_factory_root).caps
+        per_story = float(getattr(caps, "per_story_spend_usd", 0.0) or 0.0)
+        daily = float(getattr(caps, "daily_spend_usd", 0.0) or 0.0)
+        basis: dict[str, Any] = {"per_story_spend_usd": per_story, "daily_spend_usd": daily}
+        candidates: list[float] = []
+        if per_story > 0:
+            story_spent = _story_ledger_spend(getattr(story, "id", None), db_path)
+            basis["story_spent_usd"] = round(story_spent, 4)
+            candidates.append(per_story - story_spent)
+        if daily > 0:
+            today = today_spend_usd(software_factory_root, db_path=db_path)
+            basis["today_spent_usd"] = round(today, 4)
+            candidates.append(daily - today)
+        if not candidates:
+            return None, basis
+        cap = max(0.0, min(candidates))
+        basis["cap_usd"] = round(cap, 4)
+        return cap, basis
+    except Exception as exc:  # noqa: BLE001 - fail safe: a cap we cannot compute is 0
+        return 0.0, {"cap_usd": 0.0, "reason": f"cap unreadable, fail-safe 0: {exc!r}"[:300]}
+
+
+def _story_ledger_spend(story_id: int | None, db_path: Path) -> float:
+    if story_id is None:
+        return 0.0
+    from sqlmodel import Session, select
+
+    from factory.runner import Run, _engine
+
+    with Session(_engine(db_path)) as session:
+        return float(
+            sum(
+                float(r.cost_usd or 0.0)
+                for r in session.exec(select(Run).where(Run.story_id == story_id)).all()
+            )
+        )
+
+
 # --------------------------------------------------------------------------- #
 # Brief
 # --------------------------------------------------------------------------- #
@@ -335,4 +391,5 @@ __all__ = [
     "max_dev_attempts",
     "oracle_leak_precheck",
     "requires_production_delta",
+    "spend_cap_for",
 ]

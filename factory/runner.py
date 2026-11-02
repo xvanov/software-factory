@@ -601,6 +601,8 @@ class RunResult:
     # ``no_progress_between_rounds`` | ``wall_clock`` | ``no_time`` | ``""``
     # (no gate loop ran).
     gate_stop_reason: str = ""
+    # Live cost at which the spend cap paused the run (None = cap not hit).
+    spend_cap_hit_usd: float | None = None
 
 
 @dataclass
@@ -717,6 +719,7 @@ def _record_run(
     usage_reliable: bool | None = None,
     software_factory_root: Path | None = None,
     started_at: str | None = None,
+    update_row_id: int | None = None,
 ) -> None:
     ended_at = datetime.now(UTC).isoformat()
     redacted_error = redact_secrets(error) if error is not None else None
@@ -750,7 +753,14 @@ def _record_run(
 
     engine = _engine(db_path)
     with Session(engine) as session:
+        existing = session.get(Run, update_row_id) if update_row_id is not None else None
+        if existing is not None:
+            # Finalise the provisional row this run has been checkpointing into
+            # (``_upsert_provisional_run``) instead of adding a second row.
+            session.delete(existing)
+            session.flush()
         row = Run(
+            id=existing.id if existing is not None else None,
             ts=ended_at,
             persona=persona,
             model=model,
@@ -818,6 +828,72 @@ def _record_run(
         )
     except Exception:  # noqa: BLE001
         pass
+
+
+_PROVISIONAL_RUN_ERROR = "in progress (provisional spend checkpoint; final row pending)"
+
+
+def _upsert_provisional_run(
+    row_id: int | None,
+    *,
+    db_path: Path | None,
+    persona: str,
+    model: str,
+    tokens_in: int,
+    tokens_out: int,
+    cached_input_tokens: int,
+    cost_usd: float,
+    duration_s: float,
+    story_path: str | None,
+    repo_path: str | None,
+    story_id: int | None,
+    model_tier: str | None,
+    direction_id: str | None,
+    app: str | None,
+) -> int | None:
+    """Insert (``row_id`` None) or update the in-flight ``runs`` row.
+
+    The row is a normal ``runs`` row (``success=False``, ``premodel_infra=False``,
+    ``error`` = :data:`_PROVISIONAL_RUN_ERROR`), so every reader that sums
+    ``runs.cost_usd`` — the per-story breaker, the daily/hourly caps, ``factory
+    audit`` — sees in-flight spend, and a process killed mid-run leaves its spend
+    on the ledger. Cost only ever moves UP (the SDK counters are cumulative).
+    """
+    engine = _engine(db_path)
+    with Session(engine) as session:
+        row = session.get(Run, row_id) if row_id is not None else None
+        if row is None:
+            row = Run(
+                ts=datetime.now(UTC).isoformat(),
+                persona=persona,
+                model=model,
+                mode="sandbox",
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost_usd=cost_usd,
+                success=False,
+                story_path=story_path,
+                repo_path=repo_path,
+                error=_PROVISIONAL_RUN_ERROR,
+                duration_s=duration_s,
+                story_id=story_id,
+                model_tier=model_tier,
+                direction_id=direction_id,
+                app=app,
+                cached_input_tokens=cached_input_tokens,
+                premodel_infra=False,
+                usage_reliable=None,
+            )
+        else:
+            row.tokens_in = max(int(row.tokens_in or 0), tokens_in)
+            row.tokens_out = max(int(row.tokens_out or 0), tokens_out)
+            row.cached_input_tokens = max(int(row.cached_input_tokens or 0), cached_input_tokens)
+            row.cost_usd = max(float(row.cost_usd or 0.0), cost_usd)
+            row.duration_s = duration_s
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return row.id
 
 
 # --------------------------------------------------------------------------- #
@@ -1867,6 +1943,9 @@ _GATE_ROUND_TIME_RESERVE = 0.85
 _GATE_GRADING_GRACE_S = 900
 #: Watchdog poll interval (seconds). Module-level so tests can shrink it.
 _WATCHDOG_POLL_S = 5.0
+#: How often (seconds) a gate-loop run checkpoints its live spend into the
+#: ledger (plus after every gate round). Bounds what a SIGKILL can lose.
+_LEDGER_CHECKPOINT_S = 60.0
 #: Cap on the evidence tail sent back into the conversation per round.
 _GATE_FEEDBACK_OUTPUT_CAP = 6000
 
@@ -2049,8 +2128,13 @@ async def sandbox_run(
     max_gate_rounds: int = 1,
     no_progress_abort_s: int | None = None,
     brief_addendum: str | None = None,
+    spend_cap_usd: float | None = None,
 ) -> RunResult:
     """Run a persona inside an OpenHands SDK sandbox against ``repo_path``.
+
+    ``spend_cap_usd`` (solo): the watchdog pauses the conversation and the tree
+    is graded once the conversation's live cost reaches it (stop reason
+    ``spend_cap``).
 
     ``gate_check`` (solo pipeline) switches on the in-conversation gate loop —
     see the "In-conversation gate loop" block above ``_ended_on_prose``. When
@@ -2126,12 +2210,26 @@ async def sandbox_run(
     def _elapsed() -> float:
         return round(time.monotonic() - _t0, 3)
 
+    # Provisional-ledger state (see "INCREMENTAL LEDGER" below). Defined here,
+    # before ``_record``, because the early-exit paths call ``_record`` first.
+    _ledger: dict[str, Any] = {"id": None, "final": False}
+    _ledger_lock = threading.Lock()
+
     def _record(**kw: Any) -> None:
-        """Thin wrapper that injects started_at + software_factory_root."""
+        """Thin wrapper that injects started_at + software_factory_root.
+
+        With an incremental ledger (solo) the final write UPDATES the
+        provisional row the run has been checkpointing into, and marks the
+        ledger final so a still-running watchdog cannot overwrite it.
+        """
+        with _ledger_lock:
+            _ledger["final"] = True
+            row_id = _ledger["id"]
         _record_run(
             **kw,
             started_at=_started_at,
             software_factory_root=software_factory_root,
+            update_row_id=row_id,
         )
 
     if dry_run:
@@ -2466,7 +2564,81 @@ async def sandbox_run(
     # In-conversation gate loop state (solo). ``rounds``/``verdict``/``stop`` are
     # written by ``_gate_loop``; the two abort flags by ``_watchdog``.
     _gate_state: dict[str, Any] = {"rounds": [], "verdict": None, "stop": ""}
-    _watchdog_wanted = gate_check is not None or no_progress_abort_s is not None
+    _watchdog_wanted = (
+        gate_check is not None or no_progress_abort_s is not None or spend_cap_usd is not None
+    )
+    # Watchdog flag -> the stop reason it produces. Any set flag means "stop
+    # now and grade the tree as it stands".
+    _STOP_FLAGS = (
+        ("spend_cap_hit", "spend_cap"),
+        ("soft_deadline_hit", "wall_clock"),
+        ("no_progress_abort", "no_progress_first_write"),
+    )
+
+    def _stopped() -> str | None:
+        for flag, reason in _STOP_FLAGS:
+            if _gate_state.get(flag):
+                return reason
+        return None
+
+    # INCREMENTAL LEDGER (solo). A provisional ``runs`` row is written as soon
+    # as the conversation has spent anything and updated every
+    # ``_LEDGER_CHECKPOINT_S`` and after every gate round, so a process killed
+    # mid-run (systemd ``TimeoutStartSec``, OOM, SIGKILL) has still booked what
+    # it spent. Every final ``_record`` UPDATES that same row — one row per
+    # conversation, never a double count.
+    # (``_ledger`` / ``_ledger_lock`` are defined above ``_record``.)
+    _incremental_ledger = gate_check is not None
+
+    def _live_cost() -> tuple[int, int, int, float] | None:
+        conv = _live_conversation.get("conv")
+        if conv is None:
+            return None
+        try:
+            stats = conv.conversation_stats.get_combined_metrics()
+            tok = stats.accumulated_token_usage
+            return (
+                int(getattr(tok, "prompt_tokens", 0) or 0),
+                int(getattr(tok, "completion_tokens", 0) or 0),
+                int(getattr(tok, "cache_read_tokens", 0) or 0),
+                float(getattr(stats, "accumulated_cost", 0.0) or 0.0),
+            )
+        except Exception:  # noqa: BLE001 - telemetry only
+            return None
+
+    def _checkpoint_spend() -> None:
+        """Upsert the provisional ledger row from live usage. Never raises."""
+        if not _incremental_ledger:
+            return
+        live = _live_cost()
+        if live is None:
+            return
+        t_in, t_out, t_cached, cost = live
+        if t_out <= 0 and cost <= 0.0:
+            return  # nothing spent yet: keep pre-model infra row-free
+        try:
+            with _ledger_lock:
+                if _ledger["final"]:
+                    return
+                _ledger["id"] = _upsert_provisional_run(
+                    _ledger["id"],
+                    db_path=db_path,
+                    persona=persona,
+                    model=llm_config.model,
+                    tokens_in=t_in,
+                    tokens_out=t_out,
+                    cached_input_tokens=t_cached,
+                    cost_usd=cost,
+                    duration_s=_elapsed(),
+                    story_path=str(story_path),
+                    repo_path=str(repo_path),
+                    story_id=story_id,
+                    model_tier=difficulty,
+                    direction_id=direction_id,
+                    app=app,
+                )
+        except Exception:  # noqa: BLE001 - a checkpoint must never break a run
+            _log.warning("provisional ledger checkpoint failed", exc_info=True)
     # Starting fingerprint for the no-first-write abort. Taken BEFORE the
     # conversation exists so a write in the first second still counts.
     _start_fp: dict[str, str | None] = {
@@ -2535,10 +2707,13 @@ async def sandbox_run(
             return (t_in, t_out, t_cached, cost, last_msg, recent, finish_msg)
         finally:
             _watchdog_stop.set()
+            if _watchdog_thread is not None:
+                _watchdog_thread.join(timeout=5)
             conversation.close()
 
     def _watchdog(conversation: Any, stop: threading.Event) -> None:
-        """Pause the conversation on no-first-write or on the soft wall clock.
+        """Pause the conversation on no-first-write, the soft wall clock, or the
+        spend cap; and checkpoint spend into the ledger as the run proceeds.
 
         Runs in its own daemon thread. ``pause()`` is documented thread-safe
         and takes effect between agent steps, so ``run()`` returns and the gate
@@ -2548,8 +2723,19 @@ async def sandbox_run(
         """
         try:
             first_write_checked = no_progress_abort_s is None or _start_fp.get("fp") is None
+            last_checkpoint = 0.0
             while not stop.wait(_WATCHDOG_POLL_S):
-                if _gate_state.get("no_progress_abort") or _gate_state.get("soft_deadline_hit"):
+                if _incremental_ledger and _elapsed() - last_checkpoint >= _LEDGER_CHECKPOINT_S:
+                    last_checkpoint = _elapsed()
+                    _checkpoint_spend()
+                if spend_cap_usd is not None and not _stopped():
+                    live = _live_cost()
+                    if live is not None and live[3] >= float(spend_cap_usd):
+                        _gate_state["spend_cap_hit"] = True
+                        _gate_state["spend_cap_cost_usd"] = round(live[3], 4)
+                        conversation.pause()
+                        continue
+                if _stopped():
                     # Keep re-asserting the pause until the run ends: a pause
                     # that lands between a gate check and the next ``run()``
                     # would otherwise be lost when ``run()`` resumes.
@@ -2593,14 +2779,19 @@ async def sandbox_run(
                     "elapsed_s": _elapsed(),
                 }
             )
+            _checkpoint_spend()
             if verdict.passed:
                 _gate_state["stop"] = "green"
                 return
-            if _gate_state.get("no_progress_abort"):
-                _gate_state["stop"] = "no_progress_first_write"
-                return
-            if _gate_state.get("soft_deadline_hit"):
-                _gate_state["stop"] = "wall_clock"
+            # Spend cap re-checked here too (the watchdog polls; a round can
+            # cross the cap between polls).
+            if spend_cap_usd is not None and not _stopped():
+                live = _live_cost()
+                if live is not None and live[3] >= float(spend_cap_usd):
+                    _gate_state["spend_cap_hit"] = True
+                    _gate_state["spend_cap_cost_usd"] = round(live[3], 4)
+            if _stopped():
+                _gate_state["stop"] = _stopped()
                 return
             if rnd >= rounds:
                 _gate_state["stop"] = "rounds_exhausted"
@@ -2612,24 +2803,20 @@ async def sandbox_run(
                 _gate_state["stop"] = "no_time"
                 return
             prev_fp = fp
-            if _gate_state.get("no_progress_abort") or _gate_state.get("soft_deadline_hit"):
+            if _stopped():
                 # The watchdog fired DURING this round's grading: the verdict
                 # above is the grade; do not start another round.
-                _gate_state["stop"] = (
-                    "wall_clock"
-                    if _gate_state.get("soft_deadline_hit")
-                    else "no_progress_first_write"
-                )
+                _gate_state["stop"] = _stopped()
                 return
             conversation.send_message(_render_gate_feedback(verdict, rnd, rounds))
             _run_turn(conversation)
 
     def _run_turn(conversation: Any) -> None:
         """``run()`` plus the prose-ending rescue, on the SAME conversation."""
-        if _gate_state.get("no_progress_abort") or _gate_state.get("soft_deadline_hit"):
+        if _stopped():
             return  # never (re)start a run the watchdog has stopped
         conversation.run()
-        if _gate_state.get("no_progress_abort") or _gate_state.get("soft_deadline_hit"):
+        if _stopped():
             return
         # A turn that ended on prose is not a finished attempt — see
         # ``_ended_on_prose``. Continue the SAME conversation so the whole
@@ -2638,7 +2825,7 @@ async def sandbox_run(
         for _cont in range(_MAX_PROSE_CONTINUATIONS):
             if not _ended_on_prose(conversation, persona):
                 break
-            if _gate_state.get("no_progress_abort") or _gate_state.get("soft_deadline_hit"):
+            if _stopped():
                 break
             # RESERVE WALL CLOCK. The continuation borrows the SAME
             # ``asyncio.wait_for`` budget as the original run, and
@@ -2910,6 +3097,7 @@ async def sandbox_run(
         prose_continuations=int(_prose_continuations.get("n", 0)),
         gate_rounds=list(_gate_state.get("rounds") or []),
         gate_stop_reason=str(_gate_state.get("stop") or ""),
+        spend_cap_hit_usd=_gate_state.get("spend_cap_cost_usd"),
     )
 
 
