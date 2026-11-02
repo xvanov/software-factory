@@ -149,41 +149,114 @@ Sharpened 2026-11-02 (`factory/job_routing.py`):
 --ask-file <path> | --ask <text> required; the ask, in the requester's words + context (markdown)
 --done <text>                    repeatable; acceptance criteria (one per flag)
 --pipeline chain|solo|auto       default auto
---delivery <level>               optional request (clamped, see above)
+--delivery <level>               optional; any level incl. push_to_main (no ceiling, see above)
 --model <persona>=<model_id>     repeatable; per-job route override
---source <name>                  default "pa"; recorded on the direction
+--source <name>                  REQUIRED (no default); recorded on the direction; pa|human
+                                 are auto-approved (see Approval)
 --external-id <id>               the PA's run id; idempotency key per (source, external-id):
                                  a resubmit returns the existing job, does not create a second
+--flow-file <path>               optional (added v1.1): becomes the direction's flow.md
+--api-spec-file <path>           optional (added v1.1): becomes the direction's api_spec.md
 ```
-Creates an OPERATOR-sourced (pre-approved) direction so auto_pm_sync triages it on the next tick.
+Creates a direction (pre-approved for `--source pa|human`, see Approval below) so auto_pm_sync triages it on the next tick.
 Success: `{"job_id": "<app>:<direction_id>", "app": "...", "direction_id": "...",
 "direction_path": "...", "pipeline": "...", "delivery": "<effective>",
-"delivery_requested": "<or null>", "created": true|false}`
+"delivery_requested": "<or null>", "created": true|false, "warnings": ["..."]}`
+
+`pipeline` is the RESOLVED pipeline (`auto` → app default, else `chain`); the frontmatter keeps
+the request. `warnings` (added v1.1, may be empty) — most importantly: the factory's backpressure
+gate needs a `flow.md`, an `api_spec.md` or an explore tag. A job with none of them is created but
+pm-sync deterministically marks it needs-direction, so `status` reports `needs_human`. Pass
+`--flow-file` (numbered user steps) or `--api-spec-file` (METHOD /path → status) to avoid that.
+A resubmit (`created: false`) returns the ORIGINAL job; the new flags are ignored.
+
+`--title`, `--source`, `--external-id` and each `--done` must be single lines: a CR/LF is refused
+with `invalid_argument` (it would inject sections into `direction.md`). A missing positional
+job id on `status`/`cancel` is a `missing_argument` JSON error under `--json`.
+
+Validation errors (`{"error": code, ...}`, exit 1): `missing_argument`, `invalid_argument`,
+`unknown_app`, `unknown_repo`, `ambiguous_repo`, `app_repo_mismatch`, `invalid_delivery`,
+`file_unreadable`, plus the routing refusals above, which submit gets from
+`factory.job_routing.resolve_job_routing` unchanged: `bad_pipeline`, `pipeline_unavailable`,
+`bad_model_flag`, `unknown_persona`, `bad_model_id` (a bare id with no `<provider>/` prefix),
+`bad_models`, `review_independence`. Unexpected failures: `internal`, exit 2. Routing warnings
+(e.g. a provider key not set here) are passed through in `warnings`.
+
+A job IS a direction: `apps/<app>/directions/<id>-<slug>/`, frontmatter keys `source`,
+`external_id`, `pipeline` (as requested), `delivery` (as requested, or null), `models` (the
+job's own `persona → <provider>/<model>` map) — exactly the keys spawn's
+`job_routing.resolve_for_direction` reads.
+
+Approval: only `--source pa` and `--source human` are auto-approved. Those jobs get a signed
+`operator_approval` record (and `pa` is also allowlisted as delegated operator intent, so a lost
+`state.yaml` does not strand it). Any OTHER source's job is written WITHOUT an approval record
+and waits under the normal approval policy (`factory.directions.approval`; human-prefixed
+sources such as `operator-*` still auto-build there): `status` reports `needs_human` and
+`warnings` names the `factory approve-direction <id> --app <app>` command.
 
 ### `factory job status <job_id> --json`
 ```
 {"job_id", "app", "title", "source", "external_id",
  "state": "queued|triaging|in_progress|blocked|needs_human|done|failed|cancelled",
  "terminal": bool, "pipeline", "delivery",
- "stories": [{"id", "state", "pr_url", "pr_state": "open|merged|closed|null", "branch"}],
+ "stories": [{"id", "state", "pr_url", "pr_state": "open|merged|closed|null", "branch",
+              "delivery_level", "delivery_note": "<or null>"}],
  "pr_urls": [...], "merged": bool, "cost_usd": number, "updated_at": ISO-8601 UTC,
  "why": "<one line: why blocked / what is happening, or null>"}
 ```
-`done` = every story reached its delivery level's end (merged for auto_merge/push_to_main,
-PR open for pr/draft_pr, branch pushed for branch, committed for none). Truth comes from
-GitHub where it can (merge reality), per the factory's own guardrail.
+`done` = every story reached its delivery level's end. The level is the one the chain STAMPED on
+each story at spawn (`stories[].delivery_level`), never recomputed from today's app config, and
+the end state is the chain's own: `delivered_local` (none), `delivered_branch` (branch exists on
+GitHub), `delivered_pr` (PR open or merged on GitHub; closed unmerged → `failed`), or merged
+(`deploy_pending`/`deployed`): the PR is MERGED on GitHub, or for `push_to_main` (no PR) the
+default branch ON GITHUB contains the fast-forwarded commit (compare API). A PR GitHub reports
+merged counts as delivered whatever the local row says. A delivery only the local view claims
+is never `done`. A `push_to_main` job whose default branch is protected is delivered through an
+auto-merge PR instead (see delivery levels above): that story's `delivery_level` reads
+`auto_merge`, its `delivery_note` is `push_to_main_fell_back_to_pr:<why>`, and its merged PR
+makes the job `done`.
 
-### `factory job list --json [--source pa] [--active]`
-`{"jobs": [<status object>, ...]}`
+State mapping, first match wins: cancel requested and no story live → `cancelled`; no stories →
+direction `created`→`queued`, `pm-validated`→`triaging`, `needs-direction`→`needs_human`,
+`closed`→`failed`; all stories delivered AND GitHub confirmed it → `done` (a delivery only the
+local view claims stays `in_progress` with a `why`, never a terminal verdict from a local flag); any story in a pending-human sink →
+`needs_human`; any story live → `in_progress` (`blocked` if the factory is halted/paused or every
+live story is waiting on a dependency); else `failed`. Dual-draft losers are ignored. If `gh`
+fails, PR fields fall back to the local view (`pr_state: null`) and `why` says
+`GitHub unavailable, local view: …`. `--no-github` (added v1.1) skips GitHub on purpose.
+
+### `factory job list --json [--source pa] [--active] [--app <app>] [--no-github]`
+`{"jobs": [<status object>, ...]}` — one `gh pr list` per repo, however many jobs.
 
 ### `factory job follow <job_id>`
-Human-readable, NOT JSON. Streams the job's events (story transitions, handler runs, gate
+Human-readable, NOT JSON (`--interval <s>`, default 3). Streams the job's events (story transitions, handler runs, gate
 results, PR links, cost) as they happen, and exits 0 when the job is terminal. This is what a
 termhub session runs so the user can "walk into" a factory job.
 
 ### `factory job cancel <job_id> --json`
 Stops further dispatch for the job's stories (park/close), never deletes evidence.
-`{"job_id", "state": "cancelled"}`
+`{"job_id", "state": "cancelled", "stories_parked": [<story id>, ...],
+"stories_left": [{"id", "state", "reason"}, ...]}`
+
+A job that is already `done` is NOT cancelled: cancel is a no-op returning
+`{"job_id", "state": "done", "stories_parked": [], "stories_left": [], "why"}` and writes
+nothing (a cancel cannot un-deliver work). And `status` reports a fully delivered and
+GitHub-confirmed job as `done` even if a cancel marker landed late, with a `why` saying so.
+
+Otherwise every story that is not finished moves to `closed_by_operator`. That covers in-flight
+stories and also the stuck sinks (`blocked_ci_unresolved`, `blocked_deploy_failed`,
+`blocked_review_nonconvergent`, …). The direction is closed. FINISHED work is left alone:
+`deploy_pending`/`deployed` (merged), `delivered_*`, the superseded dual-draft loser, and any
+story whose PR GitHub reports merged. Every remaining story with an OPEN PR has GitHub
+auto-merge disarmed (`gh pr merge --disable-auto`) before it is parked, whatever its state.
+Open PRs are NOT closed. Each story is handled under the same per-story lock the auto-merge pass
+holds around a merge: it is re-read inside the lock and parked with a compare-and-set. So a
+cancel can never be overwritten by a merge, nor a merge by a cancel. Fail safe: lock busy,
+GitHub unable to say whether the PR merged, or a failed disarm → that story is not parked and is
+listed in `stories_left` with the reason; re-run cancel. Idempotent. Cancel first records a
+durable per-job marker; an in-flight handler that later writes a stale state back cannot reopen
+a parked story, and the orchestrator re-parks any story of a cancelled job instead of
+dispatching it.
 
 ### `factory app add --json`
 ```

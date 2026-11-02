@@ -24,6 +24,9 @@ scanner personas:
 
 * human-filed (``operator*``, ``cli*``, ``user*``, ``human*``) → auto-builds,
   exactly as before. The human path is not slowed down at all.
+* delegated-human (exactly ``pa``, the personal assistant, which only files
+  what its human already approved) → auto-builds. See
+  ``_DELEGATED_HUMAN_SOURCES``.
 * deterministic, externally-triggered detectors (``ci-health``,
   ``flake-quarantine``, ``github``/``github_issue`` intake of a *user-filed*
   issue) → auto-builds. These are not opinions: a required check went red, a
@@ -57,6 +60,21 @@ SCHEDULED_SOURCE_PREFIX = "scheduled-"
 #: Sources whose *family* is a human. Prefix-matched because operators tag
 #: free-form suffixes in practice (``operator-loop3``, ``cli-tell``, …).
 _HUMAN_SOURCE_PREFIXES: tuple[str, ...] = ("operator", "cli", "user", "human")
+
+#: Sources that act for a human by DELEGATION. Exact match, deliberately.
+#:
+#: ``pa`` is the personal assistant (``factory job submit --source pa``, see
+#: ``docs/JOBS-API.md``). It is not a scanner persona with opinions about what
+#: the factory should build next: the PA only submits a job after the human
+#: approved that exact plan in the PA's own approval step, so its filing IS
+#: operator intent, relayed. Treating it as machine-filed would make every
+#: PA job sit in ``factory inbox`` waiting for a second, redundant yes.
+#: ``factory job submit`` additionally writes a signed ``operator_approval``
+#: record for ``pa`` and ``human`` jobs only (any other ``--source`` waits for
+#: approval like any machine filer); this allowlist entry is what keeps a
+#: PA job buildable even if that ``state.yaml`` record is lost and only the
+#: ``directions`` row's ``source`` survives (D018: ``state.yaml`` is gitignored).
+_DELEGATED_HUMAN_SOURCES: frozenset[str] = frozenset({"pa"})
 
 #: Non-human sources that may still auto-build: deterministic detectors whose
 #: trigger is an objective external fact, not an LLM's opinion about what the
@@ -120,6 +138,8 @@ def requires_operator_approval(direction: Direction) -> bool:
         # Fail SAFE: we cannot prove a human asked for this.
         return True
     if source.startswith(_HUMAN_SOURCE_PREFIXES):
+        return False
+    if source in _DELEGATED_HUMAN_SOURCES:
         return False
     if source in _DETERMINISTIC_SOURCES:
         return False
