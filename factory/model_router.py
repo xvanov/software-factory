@@ -34,7 +34,14 @@ _log = logging.getLogger(__name__)
 
 # Model-id prefix → env var holding that provider's API key. Single source of
 # truth — ``factory.runner._provider_env_key`` delegates here.
+#
+# ``openai_compat/<model>`` is the generic OpenAI-compatible endpoint (vLLM,
+# LM Studio, Together, a self-hosted gateway, …): key in
+# ``OPENAI_COMPAT_API_KEY``, endpoint in ``OPENAI_COMPAT_API_BASE`` (REQUIRED —
+# see ``provider_base_url``). It is sent to LiteLLM as ``openai/<model>`` with
+# that base URL; the ``openai_compat/`` id is what runs/costs record.
 _PROVIDER_ENV_KEYS: tuple[tuple[str, str], ...] = (
+    ("openai_compat/", "OPENAI_COMPAT_API_KEY"),
     ("openrouter/", "OPENROUTER_API_KEY"),
     ("deepseek/", "DEEPSEEK_API_KEY"),
     ("anthropic/", "ANTHROPIC_API_KEY"),
@@ -56,12 +63,64 @@ def provider_env_key(model: str) -> str | None:
     return None
 
 
+# Optional base-URL env var per prefix (LiteLLM's own default endpoint is used
+# when unset), EXCEPT ``openai_compat/`` where it is mandatory: with no base URL
+# LiteLLM would send that key to api.openai.com, which is a credential leak, not
+# a degradation. Azure prefixes are absent on purpose — the runner owns their
+# two-surface base-URL/api-version resolution.
+_PROVIDER_BASE_ENV: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("openai_compat/", ("OPENAI_COMPAT_API_BASE",)),
+    ("openrouter/", ("OPENROUTER_API_BASE",)),
+    ("anthropic/", ("ANTHROPIC_API_BASE", "ANTHROPIC_BASE_URL")),
+    ("openai/", ("OPENAI_API_BASE", "OPENAI_BASE_URL")),
+)
+_REQUIRED_BASE_PREFIXES = ("openai_compat/",)
+
+
+def provider_base_url(model: str) -> str | None:
+    """Return the configured base URL for ``model``'s provider, or ``None``.
+
+    ``None`` means "use LiteLLM's default endpoint for this provider". Azure ids
+    always return ``None`` here; ``factory.runner`` resolves those itself.
+    """
+    for prefix, env_names in _PROVIDER_BASE_ENV:
+        if model.startswith(prefix):
+            for env_name in env_names:
+                value = os.environ.get(env_name, "").strip()
+                if value:
+                    return value
+            return None
+    return None
+
+
+def wire_model_id(model: str) -> str:
+    """The model id actually handed to LiteLLM / the OpenHands ``LLM``.
+
+    Identity for every prefix except ``openai_compat/x`` → ``openai/x`` (LiteLLM
+    speaks the OpenAI wire protocol to any base URL under ``openai/``). Run
+    records keep the LOGICAL id so cost/audit attribution names the endpoint
+    that was really used, not api.openai.com.
+    """
+    if model.startswith("openai_compat/"):
+        return "openai/" + model[len("openai_compat/") :]
+    return model
+
+
+def provider_ready(model: str) -> bool:
+    """Public: is everything ``model``'s provider needs present in the env?"""
+    return _provider_key_available(model)
+
+
 def _provider_key_available(model: str) -> bool:
     """True when the provider key for ``model`` is present and non-empty.
 
     Unknown prefixes return True — the runner owns final key resolution and
-    error reporting; the router only degrades *known-missing* providers.
+    error reporting; the router only degrades *known-missing* providers. A
+    provider whose base URL is mandatory (``openai_compat/``) also counts as
+    unavailable without it.
     """
+    if model.startswith(_REQUIRED_BASE_PREFIXES) and provider_base_url(model) is None:
+        return False
     env_name = provider_env_key(model)
     if env_name is None:
         return True
@@ -252,30 +311,71 @@ def route(persona: str, difficulty: str = "standard", *, routes_path: Path | Non
             # mapping exists but neither difficulty nor standard present — fall through
 
     if resolved is not None:
-        if (
-            isinstance(fallback, str)
-            and fallback != resolved
-            and not _provider_key_available(resolved)
-            and _provider_key_available(fallback)
-        ):
-            if (persona, resolved) not in _KEY_FALLBACK_WARNED:
-                _KEY_FALLBACK_WARNED.add((persona, resolved))
-                _log.warning(
-                    "route(%s): provider key %s for %r is not set — "
-                    "degrading to fallback %r until the key is provisioned",
-                    persona,
-                    provider_env_key(resolved),
-                    resolved,
-                    fallback,
-                )
-            return fallback
-        return resolved
+        return _degrade_if_key_missing(persona, resolved, fallback)
     if isinstance(fallback, str):
         return fallback
     raise KeyError(
         f"No route configured for persona={persona!r} difficulty={difficulty!r} "
         f"under provider={provider!r} and no fallback set"
     )
+
+
+def _degrade_if_key_missing(persona: str, resolved: str, fallback: str | None) -> str:
+    """Key-aware degradation shared by ``route`` and per-app/per-job overrides.
+
+    If ``resolved``'s provider is not provisioned but ``fallback``'s is, return
+    the fallback (warn once per persona+model); otherwise return ``resolved``.
+    """
+    if (
+        isinstance(fallback, str)
+        and fallback != resolved
+        and not _provider_key_available(resolved)
+        and _provider_key_available(fallback)
+    ):
+        if (persona, resolved) not in _KEY_FALLBACK_WARNED:
+            _KEY_FALLBACK_WARNED.add((persona, resolved))
+            _log.warning(
+                "route(%s): provider key %s for %r is not set — "
+                "degrading to fallback %r until the key is provisioned",
+                persona,
+                provider_env_key(resolved),
+                resolved,
+                fallback,
+            )
+        return fallback
+    return resolved
+
+
+def route_with_overrides(
+    persona: str,
+    difficulty: str = "standard",
+    overrides: dict[str, str] | None = None,
+    *,
+    routes_path: Path | None = None,
+) -> str:
+    """``route()``, but a per-app/per-job override map wins when it names ``persona``.
+
+    ``overrides`` keys are ``<persona>`` or ``<persona>.<difficulty>`` (the
+    latter wins). Overrides go through the same key-aware degradation as
+    routes.yaml entries: a missing provider key degrades to the active block's
+    fallback with a warning, never a crash. Independence of the override map is
+    validated at submit/spawn by ``factory.job_routing``, not here — by the
+    time a handler asks for a model the map was already accepted.
+    """
+    if overrides:
+        chosen = overrides.get(f"{persona}.{difficulty}") or overrides.get(persona)
+        if isinstance(chosen, str) and chosen.strip():
+            data = _load_routes(routes_path)
+            _, fallback = _routes_section_for(_active_provider(data), data)
+            return _degrade_if_key_missing(persona, chosen.strip(), fallback)
+    return route(persona, difficulty, routes_path=routes_path)
+
+
+def configured_route_map(*, routes_path: Path | None = None) -> dict[str, Any]:
+    """The ACTIVE provider's raw routes block (persona → id or tier mapping)."""
+    data = _load_routes(routes_path)
+    section, _ = _routes_section_for(_active_provider(data), data)
+    return dict(section)
 
 
 def all_known_personas(*, routes_path: Path | None = None) -> list[str]:

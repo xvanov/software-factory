@@ -121,6 +121,7 @@ def produce_interpretations(
     *,
     dry_run: bool = False,
     text_run: Any = None,
+    model_overrides: dict[str, str] | None = None,
 ) -> list[Interpretation]:
     """Produce 2 interpretations of ``direction``.
 
@@ -179,9 +180,14 @@ def produce_interpretations(
     # provider (Azure or direct) is honored at the call site rather than at
     # ``text_run`` resolution time. Imported lazily to keep this module's
     # import graph minimal in tests.
-    from factory.model_router import route
+    from factory.model_router import route_with_overrides
 
-    raw = text_run("analyst", prompt, model_id=route("analyst"), schema=schema)
+    raw = text_run(
+        "analyst",
+        prompt,
+        model_id=route_with_overrides("analyst", "standard", model_overrides),
+        schema=schema,
+    )
     out: list[Interpretation] = []
     for entry in raw.get("interpretations", [])[:2]:
         out.append(

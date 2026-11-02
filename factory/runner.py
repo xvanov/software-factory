@@ -920,6 +920,16 @@ def _resolve_api_key(cfg: LLMConfig) -> str | None:
     from factory.providers.azure_foundry import ensure_bootstrapped
 
     ensure_bootstrapped()
+    from factory.model_router import provider_base_url
+
+    if (
+        cfg.model.startswith("openai_compat/")
+        and not cfg.base_url
+        and provider_base_url(cfg.model) is None
+    ):
+        # No endpoint = LiteLLM would send this key to api.openai.com. Refuse
+        # (the callers turn ``None`` into a recorded pre-model infra failure).
+        return None
     if cfg.api_key:
         return cfg.api_key
     env_key = _provider_env_key(cfg.model)
@@ -2115,9 +2125,19 @@ async def sandbox_run(
         api_version = os.environ.get("AZURE_API_VERSION") or os.environ.get(
             "AZURE_FOUNDRY_API_VERSION"
         )
+    else:
+        # anthropic/, openrouter/, openai/, openai_compat/: an optional (for
+        # openai_compat, mandatory — enforced in _resolve_api_key) endpoint
+        # from the env. The sandbox runs in-process (LocalWorkspace), so the
+        # key and base URL reach the OpenHands LLM through these kwargs.
+        from factory.model_router import provider_base_url
+
+        base_url = base_url or provider_base_url(llm_config.model)
+
+    from factory.model_router import wire_model_id
 
     llm_kwargs: dict[str, Any] = {
-        "model": llm_config.model,
+        "model": wire_model_id(llm_config.model),
         "api_key": SecretStr(api_key),
         "base_url": base_url,
         "usage_id": f"factory:{persona}",
@@ -2758,6 +2778,12 @@ def text_run(
         api_version = os.environ.get("AZURE_API_VERSION") or os.environ.get(
             "AZURE_FOUNDRY_API_VERSION"
         )
+    elif effective_base_url is None:
+        from factory.model_router import provider_base_url
+
+        effective_base_url = provider_base_url(model_id)
+
+    from factory.model_router import wire_model_id
 
     # A caller-supplied role list wins, EXCEPT in JSON mode, which owns the
     # message shape (the schema instruction is appended to the sole user turn).
@@ -2816,7 +2842,7 @@ def text_run(
 
     for attempt in range(1, _MAX_OUTPUT_RETRIES + 1):
         kwargs: dict[str, Any] = {
-            "model": model_id,
+            "model": wire_model_id(model_id),
             "messages": wire_messages,
             "api_key": resolved_key,
         }

@@ -542,6 +542,7 @@ def _llm_author(
     spend of every acceptance-authoring call was attributed to whatever cwd the
     process happened to have, i.e. invisible to ``factory audit``.
     """
+    from factory.job_routing import override_for_story
     from factory.model_router import route
     from factory.runner import _read_persona_prompt, text_run
 
@@ -558,7 +559,7 @@ def _llm_author(
     result = text_run(
         persona=persona,
         prompt=full_prompt,
-        model_id=route(persona),
+        model_id=override_for_story(story, persona) or route(persona),
         schema=_ACCEPTANCE_SCHEMA,
         max_tokens=4096,
         story_id=story.id,

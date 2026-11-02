@@ -380,6 +380,7 @@ def _call_pm_persona(
     direction: Direction,
     app_repo_path: Path,
     software_factory_root: Path,
+    model_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Real LLM call. Returns the parsed PM JSON result.
 
@@ -410,7 +411,16 @@ def _call_pm_persona(
         "---\n\n"
         "Return the JSON object for this direction. No prose outside the JSON."
     )
-    model_id = route(persona)
+    # Per-job/app override (job > app > routes.yaml), already validated by
+    # ``resolve_for_direction`` in the caller.
+    if model_overrides and (
+        model_overrides.get(f"{persona}.standard") or model_overrides.get(persona)
+    ):
+        from factory.model_router import route_with_overrides
+
+        model_id = route_with_overrides(persona, "standard", model_overrides)
+    else:
+        model_id = route(persona)
 
     feedback: str | None = None
     last_result: dict[str, Any] | None = None
@@ -618,6 +628,42 @@ def pm_sync(
                 summary.needs_direction += 1
                 continue
 
+            # Per-job routing (operator decision 2026-11-02): refuse a bad
+            # ``models``/``pipeline`` request BEFORE spending a PM call on it.
+            # ``handle_stories_spawned`` re-resolves (and binds) at spawn.
+            from factory.job_routing import JobRoutingError, resolve_for_direction
+
+            try:
+                job_routing = resolve_for_direction(
+                    direction, app_config or AppConfig(name=app, repo="<dry-run>")
+                )
+            except JobRoutingError as routing_exc:
+                if not dry_run:
+                    merge_state(
+                        direction,
+                        {
+                            "job_routing_error": {
+                                "code": routing_exc.code,
+                                "message": routing_exc.message,
+                            },
+                            "missing": ["job_routing"],
+                        },
+                    )
+                    mark_direction_status(
+                        direction,
+                        "needs-direction",
+                        by="factory.chain.pm_sync",
+                        details={"missing": ["job_routing"], "code": routing_exc.code},
+                    )
+                summary.needs_direction += 1
+                summary.errors.append(
+                    (
+                        direction.id or direction.slug,
+                        f"job-routing[{routing_exc.code}]: {routing_exc.message}",
+                    )
+                )
+                continue
+
             # Backpressure is sufficient — invoke PM persona (or fixture).
             # Dry-run stays a pure preview: no PM LLM call, no state.yaml
             # write, no runs row, no GitHub issue — it only computes what the
@@ -625,7 +671,9 @@ def pm_sync(
             if dry_run:
                 pm_result = _dry_run_pm_result(direction, validation)
             else:
-                pm_result = _call_pm_persona(direction, app_repo_path, root)
+                pm_result = _call_pm_persona(
+                    direction, app_repo_path, root, job_routing.model_overrides
+                )
                 merge_state(direction, {"pm_result": pm_result})
                 assert app_config is not None and github_client is not None
                 # Some-vacuous-some-positive (Flow A step 4): triage proceeds,
