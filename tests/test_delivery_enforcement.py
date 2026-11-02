@@ -220,11 +220,17 @@ def test_unrecorded_legacy_row_resolves_to_today(tmp_path: Path) -> None:
     assert _reload(db, s.id).delivery_level == L.AUTO_MERGE.value
 
 
-def test_unrecorded_row_in_opted_in_app_without_direction_is_none(tmp_path: Path) -> None:
+@pytest.mark.parametrize("app_default", [L.NONE, L.PR, L.AUTO_MERGE])
+def test_nice11_unrecorded_row_backfills_the_pre_existing_default(
+    tmp_path: Path, app_default: L
+) -> None:
+    """A NULL level predates stamping, so it ran under the pre-existing default
+    (auto_merge) — today's app default must not change in-flight work."""
     root = _root(tmp_path)
     db = root / "state" / "factory.db"
     s = _story(db, StoryState.PR_OPEN, None)
-    assert story_level(s, _cfg(L.AUTO_MERGE), root, db) is L.NONE
+    assert story_level(s, _cfg(app_default), root, db) is L.AUTO_MERGE
+    assert _reload(db, s.id).delivery_level == L.AUTO_MERGE.value
 
 
 def test_unreadable_recorded_level_is_none(tmp_path: Path) -> None:
@@ -1105,3 +1111,337 @@ def test_delivered_rows_are_not_in_flight(tmp_path: Path) -> None:
     for i, st in enumerate(sorted(DELIVERED_UNMERGED_STATES)):
         _story(db, StoryState(st), L.PR, github_branch=f"story/{i}-x")
     assert H.stories_in_flight("sacrifice", db) == []
+
+
+# --------------------------------------------------------------------------- #
+# review 2 (2026-11-02): cancel vs. merge race; settle edges
+# --------------------------------------------------------------------------- #
+
+
+def _set_state_raw(db: Path, sid: int | None, state: str) -> None:
+    import sqlite3
+
+    con = sqlite3.connect(db)
+    con.execute("UPDATE stories SET state=? WHERE id=?", (state, sid))
+    con.commit()
+    con.close()
+
+
+def test_must1_cancel_landing_mid_gates_blocks_the_fast_forward(
+    am_root: Path, tmp_path: Path, gates_green: None
+) -> None:
+    _write_cfg(am_root, L.PUSH_TO_MAIN)
+    origin, wt = _repo_with_origin(tmp_path)
+    _git(wt, "checkout", "-b", "story/1-t")
+    (wt / "f.py").write_text("y = 2\n")
+    _git(wt, "add", "f.py")
+    _git(wt, "commit", "-m", "work")
+    main_before = _git(origin, "rev-parse", "main")
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PUSH_TO_MAIN)
+
+    def _preflight_then_cancel(_c: Any, _b: str) -> tuple[str, str]:
+        _set_state_raw(db, s.id, StoryState.CLOSED_BY_OPERATOR.value)  # another process
+        return delivery_gate.PREFLIGHT_OK, "green"
+
+    actions = am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[_p2m_fixture(s, wt)],
+        db_path=db,
+        merge_fn=_merge_must_not_run,
+        push_to_main_preflight_fn=_preflight_then_cancel,
+    )
+    assert not actions[0].merged and "changed" in actions[0].reason
+    assert _git(origin, "rev-parse", "main") == main_before
+    assert _reload(db, s.id).state == StoryState.CLOSED_BY_OPERATOR.value
+
+
+def test_must1_cancel_landing_mid_gates_blocks_the_pr_merge(
+    am_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_cfg(am_root, L.AUTO_MERGE)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.AUTO_MERGE, github_pr_number=9)
+
+    def _gates(*_a: Any, **_k: Any) -> dict[str, Any]:
+        _set_state_raw(db, s.id, StoryState.CLOSED_BY_OPERATOR.value)
+        return {}
+
+    monkeypatch.setattr(am, "evaluate_all_gates", _gates)
+    monkeypatch.setattr(am, "required_gate_labels", lambda *a, **k: [])
+    fx = am.FixturePR(pr_number=9, head_sha="ab" * 20, base_branch="main", story=s)
+    am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fx],
+        db_path=db,
+        merge_fn=_merge_must_not_run,
+        pr_merged_query=lambda **k: False,
+    )
+    assert _reload(db, s.id).state == StoryState.CLOSED_BY_OPERATOR.value
+
+
+def test_must1_merge_waits_out_a_held_story_lock(am_root: Path, gates_green: None) -> None:
+    """While cancel holds the story lock the pass does not merge (fail safe)."""
+    _write_cfg(am_root, L.AUTO_MERGE)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.AUTO_MERGE, github_pr_number=10)
+    fx = am.FixturePR(pr_number=10, head_sha="cd" * 20, base_branch="main", story=s)
+    import factory.chain.delivery_gate as dg
+
+    orig = dg.STORY_LOCK_TIMEOUT_S
+    try:
+        dg.STORY_LOCK_TIMEOUT_S = 0.2
+        with dg.story_lock(am_root, s.id or 0) as held:
+            assert held
+            actions = am.auto_merge_tick(
+                am_root,
+                "sacrifice",
+                dry_run=False,
+                fixture_prs=[fx],
+                db_path=db,
+                merge_fn=_merge_must_not_run,
+                pr_merged_query=lambda **k: False,
+            )
+    finally:
+        dg.STORY_LOCK_TIMEOUT_S = orig
+    assert not actions[0].merged and "lock busy" in actions[0].reason
+    assert _reload(db, s.id).state == StoryState.PR_OPEN.value
+
+
+def test_must1_successful_merge_commits_deploy_pending_by_cas(
+    am_root: Path, gates_green: None
+) -> None:
+    _write_cfg(am_root, L.AUTO_MERGE)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.AUTO_MERGE, github_pr_number=11)
+    fx = am.FixturePR(pr_number=11, head_sha="ef" * 20, base_branch="main", story=s)
+    actions = am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fx],
+        db_path=db,
+        merge_fn=lambda **k: None,
+        wait_for_ci=False,
+    )
+    assert actions[0].merged and actions[0].state_committed
+    assert _reload(db, s.id).state == StoryState.DEPLOY_PENDING.value
+
+
+def test_cas_story_state_refuses_a_changed_row(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.CLOSED_BY_OPERATOR, L.PR)
+    assert not delivery_gate.cas_story_state(
+        db, s.id or 0, {StoryState.PR_OPEN.value}, StoryState.DEPLOY_PENDING.value
+    )
+    assert _reload(db, s.id).state == StoryState.CLOSED_BY_OPERATOR.value
+
+
+@pytest.mark.parametrize("state", [StoryState.CI_GREEN, StoryState.READY_FOR_MERGE])
+@pytest.mark.parametrize(
+    ("level", "end"),
+    [(L.BRANCH, StoryState.DELIVERED_BRANCH), (L.NONE, StoryState.DELIVERED_LOCAL)],
+)
+def test_should4_non_merging_story_settles_from_every_mergeable_state(
+    am_root: Path, gates_green: None, state: StoryState, level: L, end: StoryState
+) -> None:
+    _write_cfg(am_root, level)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, state, level)
+    fx = am.FixturePR(pr_number=-(s.id or 0), head_sha="local-1", base_branch="main", story=s)
+    acts = am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        fixture_prs=[fx],
+        db_path=db,
+        merge_fn=_merge_must_not_run,
+    )
+    assert "settle failed" not in acts[0].reason, acts[0].reason
+    assert _reload(db, s.id).state == end.value
+
+
+def test_should4_settle_failures_are_capped(
+    am_root: Path, gates_green: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _boom(**_k: Any) -> str:
+        raise RuntimeError("settle exploded")
+
+    monkeypatch.setattr(am, "_settle_non_merging_story", _boom)
+    _write_cfg(am_root, L.PR)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PR, github_pr_number=44)
+    for _ in range(am._MAX_SETTLE_FAILURES):
+        fx = am.FixturePR(
+            pr_number=44, head_sha="aa" * 20, base_branch="main", story=_reload(db, s.id)
+        )
+        am.auto_merge_tick(
+            am_root,
+            "sacrifice",
+            dry_run=False,
+            fixture_prs=[fx],
+            db_path=db,
+            merge_fn=_merge_must_not_run,
+        )
+    row = _reload(db, s.id)
+    assert row.state == StoryState.BLOCKED_DEPLOY_FAILED.value
+    assert "delivery_settle_failed" in (row.last_rejection_reason or "")
+
+
+@pytest.mark.parametrize(
+    ("pr_state", "settled"), [("MERGED", False), (None, False), ("OPEN", True), ("CLOSED", True)]
+)
+def test_should6_closed_issue_does_not_settle_a_merged_delivered_pr(
+    tmp_path: Path, pr_state: str | None, settled: bool
+) -> None:
+    from factory.chain.orchestrator import reconcile_closed_trackers
+
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    s = _story(db, StoryState.DELIVERED_PR, L.PR, github_pr_number=51, github_issue_number=61)
+    out = reconcile_closed_trackers(
+        db,
+        "sacrifice",
+        cfg=_cfg(L.PR),
+        root=root,
+        query_issue_state=lambda **k: "CLOSED",
+        query_pr_state=lambda **k: pr_state,
+    )
+    want = StoryState.CLOSED_BY_OPERATOR if settled else StoryState.DELIVERED_PR
+    assert _reload(db, s.id).state == want.value
+    assert bool(out) is settled
+
+
+def test_nice10_db_synthesized_fixture_reads_the_draft_flag(
+    am_root: Path, gates_green: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The DB-story path (no injected fixtures) asks GitHub for isDraft."""
+    _write_cfg(am_root, L.AUTO_MERGE)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.AUTO_MERGE, github_pr_number=71)
+    monkeypatch.setattr(am, "_query_pr_is_draft", lambda **k: True)
+    monkeypatch.setattr(am, "_query_pr_head_sha", lambda **k: "ab" * 20)
+    monkeypatch.setattr(am, "_query_pr_files_changed", lambda **k: ["a.py"])
+    monkeypatch.setattr(am, "_query_ci_state", lambda **k: "success")
+    actions = am.auto_merge_tick(
+        am_root,
+        "sacrifice",
+        dry_run=False,
+        db_path=db,
+        merge_fn=_merge_must_not_run,
+        pr_merged_query=lambda **k: False,
+    )
+    assert actions and "draft" in actions[0].reason
+    assert _reload(db, s.id).state == StoryState.PR_OPEN.value
+
+
+def test_nice10_query_pr_is_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+    for out, want in (("true\n", True), ("false\n", False), ("??", None)):
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, _o=out, **k: subprocess.CompletedProcess(a, 0, _o, "")
+        )
+        assert am._query_pr_is_draft(app_config=_cfg(L.PR), pr_number=3) is want
+
+
+def test_nice12_push_to_main_hold_caps_at_24h_and_falls_back_to_a_pr(
+    am_root: Path, gates_red: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    opened: list[dict[str, Any]] = []
+
+    def _open(*_a: Any, **k: Any) -> int:
+        opened.append(k)
+        return 881
+
+    monkeypatch.setattr(H, "_open_pr_for_story", _open)
+    _write_cfg(am_root, L.PUSH_TO_MAIN)
+    db = am_root / "state" / "factory.db"
+    s = _story(db, StoryState.PR_OPEN, L.PUSH_TO_MAIN)
+    hold = lambda c, b: (delivery_gate.PREFLIGHT_HOLD, "main is red")  # noqa: E731
+    _p2m_tick(am_root, db, s.id, "a" * 40, push_to_main_preflight_fn=hold)
+    reason = _reload(db, s.id).last_rejection_reason or ""
+    assert "held since" in reason and _reload(db, s.id).state == StoryState.PR_OPEN.value
+    # Age the episode past the cap.
+    old = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
+    am._set_hold_reason(
+        _reload(db, s.id), db, f"{am._HOLD_REASON_PREFIX} push_to_main held since {old} — red"
+    )
+    _p2m_tick(am_root, db, s.id, "a" * 40, push_to_main_preflight_fn=hold)
+    row = _reload(db, s.id)
+    assert row.state == StoryState.DELIVERED_PR.value
+    assert row.delivery_level == L.PR.value and row.github_pr_number == 881
+    assert opened == [{"draft": False, "will_auto_merge": False}]
+    assert not (row.last_rejection_reason or "").startswith(am._HOLD_REASON_PREFIX)
+    assert gates_red == []
+
+
+def test_should5_stack_parent_only_for_non_merging_dependents(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    first = _story(db, StoryState.DELIVERED_PR, L.PR, github_branch="story/1-a", github_pr_number=5)
+    second = _story(db, StoryState.STORY_CREATED, L.PR, github_branch="story/2-b")
+    p = delivery_gate.stack_parent(second, db)
+    assert p is not None and p.id == first.id
+    merging = _story(db, StoryState.STORY_CREATED, L.AUTO_MERGE, github_branch="story/3-c")
+    assert delivery_gate.stack_parent(merging, db) is None
+
+
+@pytest.mark.parametrize("pushed", [False, True])
+def test_should5_dependent_worktree_is_cut_from_the_delivered_siblings_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pushed: bool
+) -> None:
+    import factory.app_config as app_config_mod
+
+    origin, src = _repo_with_origin(tmp_path)
+    _git(src, "checkout", "-b", "story/1-a")
+    (src / "a.py").write_text("A = 1\n")
+    _git(src, "add", "a.py")
+    _git(src, "commit", "-m", "sibling work")
+    if pushed:
+        _git(src, "push", "origin", "story/1-a")
+        _git(src, "checkout", "main")
+        _git(src, "branch", "-D", "story/1-a")  # only the remote copy remains
+    else:
+        _git(src, "checkout", "main")  # level none: the branch is local only
+    monkeypatch.setattr(app_config_mod, "resolve_app_repo_path", lambda *a, **k: src)
+    (tmp_path / "f").mkdir()
+    root = _root(tmp_path / "f")
+    db = root / "state" / "factory.db"
+    level = L.BRANCH if pushed else L.NONE
+    end = StoryState.DELIVERED_BRANCH if pushed else StoryState.DELIVERED_LOCAL
+    _story(db, end, level, github_branch="story/1-a", github_issue_number=1)
+    dep = _story(db, StoryState.SM_DONE, level, github_branch="story/2-b", github_issue_number=2)
+    wt = H._writing_worktree(_cfg(level), root, dep)
+    assert (wt / "a.py").read_text() == "A = 1\n"
+    from factory.chain.branch import feature_branch_name
+
+    assert _git(wt, "rev-parse", "--abbrev-ref", "HEAD") == feature_branch_name(2, dep.slug)
+
+
+def test_should5_stacked_pr_body_names_the_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], *a: Any, **k: Any) -> subprocess.CompletedProcess[str]:
+        seen.append(list(cmd))
+        out = "https://github.com/o/r/pull/78\n" if cmd[:3] == ["gh", "pr", "create"] else ""
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    root = _root(tmp_path)
+    db = root / "state" / "factory.db"
+    _story(db, StoryState.DELIVERED_PR, L.PR, github_branch="story/1-a", github_pr_number=77)
+    dep = _story(db, StoryState.DOCS_ENFORCER_CHECK, L.PR, github_branch="story/2-b")
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(H, "_writing_worktree", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(H, "_autoformat_changed_py_before_pr", lambda *a, **k: None)
+    assert H._open_pr_for_story(dep, _cfg(L.PR), root, will_auto_merge=False) == 78
+    gh = [c for c in seen if c[:3] == ["gh", "pr", "create"]][-1]
+    body = gh[gh.index("--body") + 1]
+    assert "Stacked on" in body and "story/1-a" in body and "PR #77" in body

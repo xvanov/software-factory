@@ -13,14 +13,16 @@ things the CHAIN needs on top of that:
    :func:`story_level`, so editing the app's default mid-flight never changes a
    story already in flight. The only later adjustments are fail-safe ones
    (an unreadable recorded value → ``none``; ``push_to_main`` on a factory
-   self-edit → ``pr``), recorded as ``delivery_level_lowered``.
+   self-edit → ``pr``), recorded as ``delivery_level_lowered``. A row with
+   NO recorded level predates stamping and is backfilled (first touch) with
+   the pre-existing default, ``auto_merge``.
 
 2. **Fail safe.** Anything that cannot be determined resolves to ``none`` — the
    most restrictive level that still preserves the work (it is committed
    locally, never thrown away) — and the reason is logged. The one exception is
-   a row that predates per-story recording in an app that never opted into a
-   ``delivery`` block: that resolves to today's behaviour (``auto_merge``), so
-   shipping this module changes nothing for in-flight legacy work.
+   a row that predates per-story recording: it was spawned under the
+   pre-existing default and resolves to that (``auto_merge``), so shipping
+   this module changes nothing for in-flight legacy work.
 
 3. **The git side of the non-PR levels.** :func:`commit_local_work` (``none``)
    and :func:`fast_forward_default_branch` (``push_to_main``). Branch pushing
@@ -44,8 +46,10 @@ Where each level is enforced (keep in sync with
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -134,28 +138,19 @@ def log_spawn_level(story: Any, info: dict[str, Any], root: Path) -> None:
 def _resolve_unrecorded(
     story: Any, app_config: Any, root: Path
 ) -> tuple[DeliveryLevel, dict[str, Any]]:
-    """A row with no recorded level — it predates per-story recording."""
-    try:
-        from factory.chain.handlers import find_direction_for_story
+    """A row with no recorded level — it predates per-story stamping.
 
-        direction = find_direction_for_story(story, root)
-    except Exception as exc:  # noqa: BLE001
-        return DeliveryLevel.NONE, {
-            "level": DeliveryLevel.NONE.value,
-            "reason": f"direction_unreadable_fail_safe_none: {exc!r}"[:300],
-        }
-    if direction is not None:
-        return resolve_for_direction(app_config, direction)
-    if not _app_opted_in(app_config):
-        # Legacy app, legacy row, no direction on disk: nothing could have asked
-        # for less than today's behaviour.
-        return LEGACY_DEFAULT, {
-            "level": LEGACY_DEFAULT.value,
-            "reason": "legacy_app_direction_missing_today_behaviour",
-        }
-    return DeliveryLevel.NONE, {
-        "level": DeliveryLevel.NONE.value,
-        "reason": "direction_missing_fail_safe_none",
+    Review 2026-11-02 (nice 11): every such row was spawned BEFORE delivery
+    levels were enforced, i.e. under the pre-existing default, ``auto_merge``
+    — whatever its direction says today and whatever the app's default is
+    now. Re-deriving it from a direction or config edited later would change
+    the outcome of work already in flight (the in-flight-drift this module
+    exists to prevent), and the old ``none`` fallback silently stopped legacy
+    PRs from merging. So the backfill is the pre-existing default, recorded.
+    """
+    return LEGACY_DEFAULT, {
+        "level": LEGACY_DEFAULT.value,
+        "reason": "predates_per_story_stamping_pre_existing_default",
     }
 
 
@@ -506,3 +501,156 @@ def push_to_main_preflight(app_config: Any, base: str, *, run: Any = None) -> tu
         return PREFLIGHT_OK, f"{base} unprotected and green"
     except Exception as exc:  # noqa: BLE001 - fail safe: hold, never push on a guess
         return PREFLIGHT_HOLD, f"preflight error: {exc!r}"[:300]
+
+
+# --------------------------------------------------------------------------- #
+# Per-story lock + compare-and-set state writes (cancel vs. merge race)
+# --------------------------------------------------------------------------- #
+
+#: How long a writer waits for another writer's story lock. Both holders keep
+#: it only around a short critical section (re-read → merge/push → state
+#: write, or re-read → disarm → park), never around gate evaluation.
+STORY_LOCK_TIMEOUT_S = 120.0
+
+
+def _story_lock_path(root: Path, story_id: int) -> Path:
+    return Path(root) / "state" / "locks" / f"story-{int(story_id)}.lock"
+
+
+@contextlib.contextmanager
+def story_lock(root: Path, story_id: int, *, timeout: float | None = None) -> Iterator[bool]:
+    """Cross-process exclusive lock for ONE story's terminal decisions.
+
+    Adversarial review 2026-11-02 (MUST 1): the auto-merge pass loaded a story,
+    ran gates for minutes, and then merged / fast-forwarded and wrote
+    ``deploy_pending`` from that stale copy — over a ``closed_by_operator``
+    that ``factory job cancel`` wrote in between. Both sides now take this
+    lock around their critical section and RE-READ the row inside it, so one
+    of them always sees the other's result.
+
+    Yields ``True`` when held, ``False`` on timeout (the caller must then NOT
+    act — fail safe). ``flock`` on a per-story file under ``state/locks/``;
+    released when the block exits (or the process dies).
+    """
+    import fcntl
+    import time
+
+    path = _story_lock_path(root, story_id)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = path.open("a+")
+    except OSError as exc:
+        _logger.warning("story %s: cannot open lock file %s: %r", story_id, path, exc)
+        yield False
+        return
+    held = False
+    try:
+        wait = STORY_LOCK_TIMEOUT_S if timeout is None else timeout
+        deadline = time.monotonic() + max(0.0, wait)
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held = True
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.2)
+        yield held
+    finally:
+        if held:
+            with contextlib.suppress(OSError):
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+def current_story_state(db: Path, story_id: int) -> str | None:
+    """The story's state as committed RIGHT NOW (fresh session, no cache)."""
+    from sqlmodel import Session, create_engine
+
+    from factory.chain.state_machine import StoryRecord
+
+    with Session(create_engine(f"sqlite:///{db}", echo=False)) as session:
+        row = session.get(StoryRecord, story_id)
+        return None if row is None else row.state
+
+
+def cas_story_state(
+    db: Path,
+    story_id: int,
+    expected: frozenset[str] | set[str],
+    new_state: str,
+    **fields: Any,
+) -> bool:
+    """Set ``state = new_state`` (plus ``fields``) ONLY if the committed state
+    is still one of ``expected``. Returns whether it wrote.
+
+    Goes through the ORM (so ``observability.state_trace`` sees the write) and
+    is atomic with respect to every other writer that holds
+    :func:`story_lock` for this story — which is what the cancel and merge
+    paths do. A writer that sees ``False`` lost the race and must not act as
+    if its transition happened.
+    """
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session, create_engine
+
+    from factory.chain.state_machine import StoryRecord
+
+    with Session(create_engine(f"sqlite:///{db}", echo=False)) as session:
+        row = session.get(StoryRecord, story_id)
+        if row is None or row.state not in expected:
+            return False
+        row.state = new_state
+        for key, value in fields.items():
+            setattr(row, key, value)
+        if hasattr(row, "updated_at"):
+            row.updated_at = datetime.now(UTC).isoformat()
+        session.add(row)
+        session.commit()
+        return True
+
+
+# --------------------------------------------------------------------------- #
+# Stacking dependents on delivered siblings (review 2026-11-02, SHOULD 5)
+# --------------------------------------------------------------------------- #
+
+
+def stack_parent(story: Any, db: Path) -> Any:
+    """The sibling a non-merging story should build ON, or ``None``.
+
+    Below ``auto_merge`` an earlier sibling's work ends DELIVERED (a local
+    commit, a pushed branch, or an open PR) and never reaches the default
+    branch, so a dependent cut from the default branch would not see it. The
+    parent is the highest-id lower sibling of the same direction in a
+    ``delivered_*`` state that has a branch. Only for a story whose own
+    stamped level does not merge (a merging story keeps the strict
+    deploy-ordering). Never raises.
+    """
+    try:
+        from sqlmodel import Session, create_engine, select
+
+        from factory.chain.state_machine import DELIVERED_UNMERGED_STATES, StoryRecord
+
+        lvl = parse_level(getattr(story, "delivery_level", None))
+        if lvl is None or lvl.merges or getattr(story, "id", None) is None:
+            return None
+        with Session(create_engine(f"sqlite:///{db}", echo=False)) as session:
+            rows = session.exec(
+                select(StoryRecord).where(
+                    StoryRecord.app == story.app,
+                    StoryRecord.direction_id == story.direction_id,
+                )
+            ).all()
+        parents = [
+            r
+            for r in rows
+            if r.id is not None
+            and r.id < story.id
+            and r.state in DELIVERED_UNMERGED_STATES
+            and r.github_branch
+        ]
+        return max(parents, key=lambda r: r.id or 0) if parents else None
+    except Exception as exc:  # noqa: BLE001 - stacking is an optimisation, never a blocker
+        _logger.warning("stack_parent(%s) failed: %r", getattr(story, "id", None), exc)
+        return None

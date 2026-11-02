@@ -21,6 +21,7 @@ without network.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
@@ -400,6 +401,10 @@ class MergeAction:
     # branch was REFUSED (not a fast-forward, push rejected, HEAD moved). The
     # caller falls back to level ``pr`` — opens a ready PR, never merges it.
     push_to_main_refused: bool = False
+    # The merged story's DEPLOY_PENDING write already happened, as a
+    # compare-and-set under the story lock (``_evaluate_one_pr``); the tick
+    # must not write the state again from its own (possibly stale) copy.
+    state_committed: bool = False
 
 
 @dataclass
@@ -1552,105 +1557,157 @@ def _evaluate_one_pr(
             blocking_labels=blocking_present,
         )
 
-    if push_to_main:
-        # Gates passed + no blockers, no PR: fast-forward the default branch to
-        # the exact commit the gates evaluated. Never force; any doubt refuses.
-        ff = fast_forward_fn or delivery_gate.fast_forward_default_branch
-        ff_ok, ff_detail = ff(
-            worktree=fixture.repo_root,
-            base=fixture.base_branch,
-            expected_sha=fixture.head_sha,
+    def _do_merge() -> MergeAction:
+        if push_to_main:
+            # Gates passed + no blockers, no PR: fast-forward the default branch to
+            # the exact commit the gates evaluated. Never force; any doubt refuses.
+            ff = fast_forward_fn or delivery_gate.fast_forward_default_branch
+            ff_ok, ff_detail = ff(
+                worktree=fixture.repo_root,
+                base=fixture.base_branch,
+                expected_sha=fixture.head_sha,
+            )
+            if not ff_ok:
+                return MergeAction(
+                    app=app,
+                    pr_number=fixture.pr_number,
+                    merged=False,
+                    reason=f"push_to_main refused: {ff_detail}",
+                    gates_passed=gates_passed,
+                    gates_failed=gates_failed,
+                    blocking_labels=blocking_present,
+                    push_to_main_refused=True,
+                )
+            return MergeAction(
+                app=app,
+                pr_number=fixture.pr_number,
+                merged=True,
+                reason=f"push_to_main: fast-forwarded {fixture.base_branch} to {ff_detail[:12]}",
+                gates_passed=gates_passed,
+                gates_failed=gates_failed,
+                blocking_labels=blocking_present,
+            )
+
+        # Gates passed + no blockers. Merge.
+        merge_err = merge_fn(
+            app_config=app_config,
+            pr_number=fixture.pr_number,
+            merge_method=merge_method,
+            wait_for_ci=wait_for_ci,
+            delete_branch=delete_branch_after_merge,
+            github_client=github_client,
         )
-        if not ff_ok:
+        if merge_err is not None:
             return MergeAction(
                 app=app,
                 pr_number=fixture.pr_number,
                 merged=False,
-                reason=f"push_to_main refused: {ff_detail}",
+                reason=f"gh merge failed: {merge_err}",
                 gates_passed=gates_passed,
                 gates_failed=gates_failed,
                 blocking_labels=blocking_present,
-                push_to_main_refused=True,
             )
+
+        # CRITICAL: ``merged`` must reflect a REAL GitHub merge, not merely that a
+        # merge was requested. With ``wait_for_ci=False`` ``gh pr merge`` (no
+        # ``--auto``) merges SYNCHRONOUSLY, so success == merged. With
+        # ``wait_for_ci=True`` the shell-out used ``--auto``, which only ENABLES
+        # auto-merge and returns 0 immediately WITHOUT merging when required checks
+        # are still pending — so we must QUERY GitHub's authoritative state and only
+        # claim a merge if the PR actually merged now (e.g. checks were already
+        # green so ``--auto`` merged immediately). If it is NOT merged yet, return a
+        # NON-merged action flagged ``auto_merge_enabled`` so the caller leaves the
+        # story in ``_MERGEABLE_STATES`` (reconcile + the CI-failure loop keep
+        # watching it) instead of stranding it at ``deploy_pending``.
+        if wait_for_ci:
+            try:
+                really_merged = bool(
+                    pr_merged_query(
+                        app_config=app_config,
+                        pr_number=fixture.pr_number,
+                        github_client=github_client,
+                    )
+                )
+            except Exception:  # noqa: BLE001 - fail-safe: cannot confirm → not merged
+                really_merged = False
+            if not really_merged:
+                return MergeAction(
+                    app=app,
+                    pr_number=fixture.pr_number,
+                    merged=False,
+                    reason="auto-merge enabled; awaiting required checks",
+                    gates_passed=gates_passed,
+                    gates_failed=gates_failed,
+                    blocking_labels=blocking_present,
+                    auto_merge_enabled=True,
+                )
+
+        _record_self_edit_commit_if_applicable(
+            app_config=app_config,
+            fixture=fixture,
+            root=software_factory_root,
+            merge_commit_sha_provider=merge_commit_sha_provider,
+        )
         return MergeAction(
             app=app,
             pr_number=fixture.pr_number,
             merged=True,
-            reason=f"push_to_main: fast-forwarded {fixture.base_branch} to {ff_detail[:12]}",
+            reason=reason,
             gates_passed=gates_passed,
             gates_failed=gates_failed,
             blocking_labels=blocking_present,
         )
 
-    # Gates passed + no blockers. Merge.
-    merge_err = merge_fn(
-        app_config=app_config,
-        pr_number=fixture.pr_number,
-        merge_method=merge_method,
-        wait_for_ci=wait_for_ci,
-        delete_branch=delete_branch_after_merge,
-        github_client=github_client,
-    )
-    if merge_err is not None:
-        return MergeAction(
-            app=app,
-            pr_number=fixture.pr_number,
-            merged=False,
-            reason=f"gh merge failed: {merge_err}",
-            gates_passed=gates_passed,
-            gates_failed=gates_failed,
-            blocking_labels=blocking_present,
-        )
-
-    # CRITICAL: ``merged`` must reflect a REAL GitHub merge, not merely that a
-    # merge was requested. With ``wait_for_ci=False`` ``gh pr merge`` (no
-    # ``--auto``) merges SYNCHRONOUSLY, so success == merged. With
-    # ``wait_for_ci=True`` the shell-out used ``--auto``, which only ENABLES
-    # auto-merge and returns 0 immediately WITHOUT merging when required checks
-    # are still pending — so we must QUERY GitHub's authoritative state and only
-    # claim a merge if the PR actually merged now (e.g. checks were already
-    # green so ``--auto`` merged immediately). If it is NOT merged yet, return a
-    # NON-merged action flagged ``auto_merge_enabled`` so the caller leaves the
-    # story in ``_MERGEABLE_STATES`` (reconcile + the CI-failure loop keep
-    # watching it) instead of stranding it at ``deploy_pending``.
-    if wait_for_ci:
-        try:
-            really_merged = bool(
-                pr_merged_query(
-                    app_config=app_config,
-                    pr_number=fixture.pr_number,
-                    github_client=github_client,
-                )
-            )
-        except Exception:  # noqa: BLE001 - fail-safe: cannot confirm → not merged
-            really_merged = False
-        if not really_merged:
+    # MUST 1 (adversarial review 2026-11-02): the gates above can run for
+    # minutes against the ``story`` loaded at the start of the pass. A
+    # ``factory job cancel`` (another process) may have parked the row in the
+    # meantime. So the irreversible part — the fast-forward / merge AND the
+    # DEPLOY_PENDING write — runs under the per-story lock cancel also takes,
+    # after a RE-READ of the committed state, and the state write is a
+    # compare-and-set from the mergeable states. A storyless / unpersisted
+    # fixture has nothing to race with and keeps the old path.
+    if story is None or story.id is None or db_path is None or software_factory_root is None:
+        return _do_merge()
+    with delivery_gate.story_lock(software_factory_root, story.id) as held:
+        if not held:
             return MergeAction(
                 app=app,
                 pr_number=fixture.pr_number,
                 merged=False,
-                reason="auto-merge enabled; awaiting required checks",
+                reason="story lock busy (job cancel in progress?) — not merged; re-evaluated next tick",
                 gates_passed=gates_passed,
                 gates_failed=gates_failed,
                 blocking_labels=blocking_present,
-                auto_merge_enabled=True,
             )
+        live_state = delivery_gate.current_story_state(db_path, story.id)
+        if live_state is None or live_state not in _MERGEABLE_STATES:
+            return MergeAction(
+                app=app,
+                pr_number=fixture.pr_number,
+                merged=False,
+                reason=(
+                    f"story state changed to {live_state!r} while gates ran "
+                    "(e.g. job cancelled) — not merged"
+                ),
+                gates_passed=gates_passed,
+                gates_failed=gates_failed,
+                blocking_labels=blocking_present,
+            )
+        action = _do_merge()
+        if action.merged:
+            from factory.chain.state_machine import EVENT_MERGED, advance
 
-    _record_self_edit_commit_if_applicable(
-        app_config=app_config,
-        fixture=fixture,
-        root=software_factory_root,
-        merge_commit_sha_provider=merge_commit_sha_provider,
-    )
-    return MergeAction(
-        app=app,
-        pr_number=fixture.pr_number,
-        merged=True,
-        reason=reason,
-        gates_passed=gates_passed,
-        gates_failed=gates_failed,
-        blocking_labels=blocking_present,
-    )
+            story.state = live_state
+            try:
+                target = advance(story, EVENT_MERGED).value
+            except Exception:  # noqa: BLE001 - no edge: leave it to reconcile
+                target = None
+            if target is not None and delivery_gate.cas_story_state(
+                db_path, story.id, _MERGEABLE_STATES, target
+            ):
+                story.state = target
+                action.state_committed = True
+        return action
 
 
 def _gh_pr_merge(
@@ -1800,6 +1857,29 @@ def _pr_terminally_unmergeable(
     mergeable = str(data.get("mergeable", "")).upper()
     merge_status = str(data.get("mergeStateStatus", "")).upper()
     return state in ("CLOSED", "MERGED") or mergeable == "CONFLICTING" or merge_status == "DIRTY"
+
+
+def _query_pr_is_draft(*, app_config: AppConfig, pr_number: int) -> bool | None:
+    """GitHub's draft flag for ``pr_number`` (``gh pr view --json isDraft``);
+    ``None`` on any failure. A draft PR is never merged by the factory."""
+    import subprocess
+
+    if pr_number <= 0:
+        return False
+    cmd = [
+        "gh", "pr", "view", str(pr_number), "--repo", app_config.repo,
+        "--json", "isDraft", "-q", ".isDraft",
+    ]  # fmt: skip
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    out = (proc.stdout or "").strip().lower()
+    if out in ("true", "false"):
+        return out == "true"
+    return None
 
 
 def _query_pr_head_sha(*, app_config: AppConfig, pr_number: int) -> str | None:
@@ -3268,6 +3348,48 @@ def _handle_pr_conflict_rebuild(
     return "rebuild_redispatched"
 
 
+#: Consecutive settle failures before the story parks for a human (SHOULD 4).
+_MAX_SETTLE_FAILURES = 3
+
+
+def _bound_settle_failures(story: StoryRecord, root: Path, db: Path, reason: str) -> str:
+    """Count a failed settle; on the ``_MAX_SETTLE_FAILURES``-th park the story
+    in ``BLOCKED_DEPLOY_FAILED`` so a broken settle cannot be retried (and
+    silently swallowed) every tick forever. Never raises."""
+    from factory.chain.event_log import log_story_event, read_story_events
+
+    if story.id is None:
+        return reason
+    try:
+        log_story_event(
+            story.id,
+            "delivery_settle_failed",
+            {"reason": reason[:300]},
+            software_factory_root=root,
+            slug_hint=story.slug,
+        )
+        events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+        resume_idx = max(
+            (i for i, e in enumerate(events) if e.get("event") == "story_resumed"), default=-1
+        )
+        n = sum(1 for e in events[resume_idx + 1 :] if e.get("event") == "delivery_settle_failed")
+        if n >= _MAX_SETTLE_FAILURES and story.id is not None:
+            msg = f"delivery_settle_failed x{n}: {reason[:200]}"
+            if delivery_gate.cas_story_state(
+                db,
+                story.id,
+                _MERGEABLE_STATES,
+                StoryState.BLOCKED_DEPLOY_FAILED.value,
+                last_rejection_reason=msg,
+                error=msg,
+            ):
+                story.state = StoryState.BLOCKED_DEPLOY_FAILED.value
+                return f"{reason}; parked after {n} failed settles"
+    except Exception:  # noqa: BLE001 - bookkeeping only
+        pass
+    return reason
+
+
 def _settle_non_merging_story(
     *,
     story: StoryRecord,
@@ -3471,6 +3593,71 @@ def _fall_back_push_to_main_to_pr(
     return action
 
 
+#: How long a ``push_to_main`` story may sit in the main-green hold before it
+#: falls back to a ready PR for a human (nice 12, review 2026-11-02).
+_P2M_HOLD_CAP_SECONDS = 24 * 3600
+_P2M_HOLD_SINCE_RE = re.compile(r"push_to_main held since (\S+) —")
+
+
+def _p2m_hold_since(reason: str | None) -> Any:
+    """The hold episode's start parsed from the story's hold reason, or None."""
+    from datetime import UTC, datetime
+
+    if not reason or not reason.startswith(_HOLD_REASON_PREFIX):
+        return None
+    m = _P2M_HOLD_SINCE_RE.search(reason)
+    if not m:
+        return None
+    try:
+        dt = datetime.fromisoformat(m.group(1))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _p2m_hold_exhausted_to_pr(
+    *,
+    story: StoryRecord,
+    fixture: FixturePR,
+    app: str,
+    cfg: AppConfig,
+    root: Path,
+    db: Path,
+    since: Any,
+    why: str,
+) -> MergeAction:
+    """Hold cap reached: re-stamp the story at ``pr`` and settle it to
+    ``DELIVERED_PR`` (a ready PR, never merged by the factory)."""
+    from factory.chain.event_log import log_story_event
+
+    reason = (
+        f"{P2M_FALLBACK_REASON_PREFIX}held since {since.isoformat()} "
+        f"(over {_P2M_HOLD_CAP_SECONDS // 3600}h): {why}"
+    )
+    prev = story.delivery_level
+    story.delivery_level = DeliveryLevel.PR.value
+    _set_hold_reason(story, db, None)
+    with contextlib.suppress(Exception):
+        log_story_event(
+            story.id, EVENT_P2M_FELL_BACK, {"reason": reason, "level": "pr"},
+            software_factory_root=root, slug_hint=story.slug,
+        )  # fmt: skip
+        log_story_event(
+            story.id, delivery_gate.EVENT_LOWERED,
+            {"from": prev, "to": DeliveryLevel.PR.value, "reason": reason},
+            software_factory_root=root, slug_hint=story.slug,
+        )  # fmt: skip
+    try:
+        detail = _settle_non_merging_story(
+            story=story, level=DeliveryLevel.PR, app_config=cfg, root=root, db=db, reason=reason
+        )
+    except Exception as exc:  # noqa: BLE001 - never merge on a settle error
+        detail = _bound_settle_failures(story, root, db, f"{reason}; settle failed: {exc!r}")
+    action = MergeAction(app=app, pr_number=fixture.pr_number, merged=False, reason=detail)
+    _record_merge_action(action, fixture.head_sha, db)
+    return action
+
+
 def _push_to_main_preflight_gate(
     *,
     story: StoryRecord,
@@ -3517,8 +3704,28 @@ def _push_to_main_preflight_gate(
             story=story, fixture=fixture, app=app, cfg=cfg, root=root, db=db, why=detail
         )
 
-    # HOLD (anything not OK/REFUSE is a hold — fail safe).
-    hold_reason = f"{_HOLD_REASON_PREFIX} push_to_main held — {detail}"
+    # HOLD (anything not OK/REFUSE is a hold — fail safe). The episode start
+    # is carried IN the reason ("held since <iso>") so it survives the detail
+    # changing tick to tick, without a new column.
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+    since = _p2m_hold_since(story.last_rejection_reason) or now
+    if (now - since).total_seconds() >= _P2M_HOLD_CAP_SECONDS:
+        # Nice 12 (review 2026-11-02): a hold that never ends is an invisible
+        # stall. After the cap, hand the work to a human as a ready PR (level
+        # pr) instead of waiting on main forever.
+        return _p2m_hold_exhausted_to_pr(
+            story=story,
+            fixture=fixture,
+            app=app,
+            cfg=cfg,
+            root=root,
+            db=db,
+            since=since,
+            why=detail,
+        )
+    hold_reason = f"{_HOLD_REASON_PREFIX} push_to_main held since {since.isoformat()} — {detail}"
     if story.last_rejection_reason != hold_reason:
         _set_hold_reason(story, db, hold_reason)
         story.last_rejection_reason = hold_reason
@@ -3736,7 +3943,14 @@ def auto_merge_tick(
             # from what dry-run/no-PR fixtures already looked like.
             resolved_head_sha: str | None = None
             resolved_files: list[str] | None = None
+            # Draft guard on THIS path too (review 2026-11-02, nice 10): the
+            # gh-list path reads ``pr.draft``, but DB-synthesized fixtures
+            # defaulted to "not a draft". Unknown → not a draft: GitHub itself
+            # refuses to merge (or arm auto-merge on) a draft PR, so this guard
+            # is defense in depth and a gh hiccup must not freeze the queue.
+            resolved_draft = False
             if pr_no > 0:
+                resolved_draft = bool(_query_pr_is_draft(app_config=cfg, pr_number=int(pr_no)))
                 resolved_head_sha = _query_pr_head_sha(app_config=cfg, pr_number=int(pr_no))
                 resolved_files = _query_pr_files_changed(app_config=cfg, pr_number=int(pr_no))
             # Point command gates (smoke-green boots the PR's OWN code) at
@@ -3746,6 +3960,7 @@ def auto_merge_tick(
             # (observed 2026-07-18).
             fixtures.append(
                 FixturePR(
+                    is_draft=resolved_draft,
                     pr_number=int(pr_no),
                     # The honest ``local-<id>`` placeholder — NEVER a
                     # fabricated hex string — when there is no real PR or gh
@@ -3825,6 +4040,7 @@ def auto_merge_tick(
                     )
                 except Exception as exc:  # noqa: BLE001 - never merge on a settle error
                     reason = f"{reason}; settle failed: {exc!r}"
+                    reason = _bound_settle_failures(f.story, root, db, reason)
             actions.append(MergeAction(app=app, pr_number=f.pr_number, merged=False, reason=reason))
             continue
         is_p2m = f_level is DeliveryLevel.PUSH_TO_MAIN and f.pr_number <= 0
@@ -4124,23 +4340,20 @@ def auto_merge_tick(
                         )
                     ).all()
                 story = rows[0] if rows else None
-            if story is not None and story.state in _MERGEABLE_STATES:
+            if story is not None and (action.state_committed or story.state in _MERGEABLE_STATES):
                 from factory.chain.state_machine import EVENT_MERGED, advance
 
                 try:
-                    new_state = advance(story, EVENT_MERGED)
-                    story.state = new_state.value
-                    eng = _engine(db)
-                    with Session(eng) as session:
-                        session.add(story)
-                        session.commit()
-                        # Refresh while the session is still open so
-                        # ``story``'s attributes stay readable afterwards
-                        # (commit() expires them; without this, the
-                        # sibling-cleanup read below raises
-                        # DetachedInstanceError once the ``with`` block
-                        # exits and the session closes).
-                        session.refresh(story)
+                    if not action.state_committed:
+                        # Storyless-fixture / legacy path. Still a
+                        # compare-and-set: never write over a state another
+                        # process (job cancel) committed meanwhile.
+                        new_state = advance(story, EVENT_MERGED)
+                        if story.id is not None and not delivery_gate.cas_story_state(
+                            db, story.id, _MERGEABLE_STATES, new_state.value
+                        ):
+                            raise RuntimeError("story left the mergeable states; not overwritten")
+                        story.state = new_state.value
                 except Exception:
                     # State-machine refusal is non-fatal here — the deploy
                     # queue entry still drives the work; the story will be

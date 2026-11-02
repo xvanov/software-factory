@@ -621,6 +621,13 @@ _TRANSITIONS: dict[tuple[StoryState, str], StoryState] = {
     (StoryState.READY_FOR_MERGE, EVENT_DELIVERED_PR): StoryState.DELIVERED_PR,
     (StoryState.PR_OPEN, EVENT_DELIVERED_BRANCH): StoryState.DELIVERED_BRANCH,
     (StoryState.PR_OPEN, EVENT_DELIVERED_LOCAL): StoryState.DELIVERED_LOCAL,
+    # Every mergeable state must be able to settle to every level's end, or a
+    # non-merging story parked in CI_GREEN / READY_FOR_MERGE raised
+    # IllegalTransitionError on every tick (adversarial review 2026-11-02).
+    (StoryState.CI_GREEN, EVENT_DELIVERED_BRANCH): StoryState.DELIVERED_BRANCH,
+    (StoryState.CI_GREEN, EVENT_DELIVERED_LOCAL): StoryState.DELIVERED_LOCAL,
+    (StoryState.READY_FOR_MERGE, EVENT_DELIVERED_BRANCH): StoryState.DELIVERED_BRANCH,
+    (StoryState.READY_FOR_MERGE, EVENT_DELIVERED_LOCAL): StoryState.DELIVERED_LOCAL,
     (StoryState.STORY_CREATED, EVENT_DOCS_SM_STARTED): StoryState.DOCS_SM_IN_PROGRESS,
     (StoryState.DOCS_SM_IN_PROGRESS, EVENT_DOCS_SM_DONE): StoryState.DOCS_SM_DONE,
     (

@@ -117,6 +117,9 @@ def _writing_worktree(
     from factory.app_config import resolve_app_repo_path
 
     source_repo = resolve_app_repo_path(app_config, software_factory_root)
+    from factory.chain.delivery_gate import stack_parent
+
+    parent = stack_parent(story, Path(software_factory_root) / "state" / "factory.db")
     wt = ensure_worktree_for_story(
         source_repo,
         software_factory_root=software_factory_root,
@@ -124,6 +127,7 @@ def _writing_worktree(
         story_id=story.github_issue_number,
         slug=story.slug,
         base_branch=app_config.default_branch or "main",
+        stack_on=parent.github_branch if parent is not None else None,
     )
 
     # Refresh the worktree against the CURRENT base before the writing handler
@@ -707,18 +711,14 @@ def handle_stories_spawned(
                     "chain_steps",
                     {
                         "event": (
-                            "story_split_collapsed"
-                            if fits
-                            else "direction_not_single_story_sized"
+                            "story_split_collapsed" if fits else "direction_not_single_story_sized"
                         ),
                         "app": direction.app,
                         "direction_id": direction.id or direction.slug,
                         "pm_child_count": len(child_stories),
                         "summed_estimates": sums,
                         "dropped_titles": (
-                            [str(c.get("title") or "") for c in child_stories[1:]]
-                            if fits
-                            else []
+                            [str(c.get("title") or "") for c in child_stories[1:]] if fits else []
                         ),
                         "estimates_complete": estimates_complete,
                         "reason": (
@@ -1335,13 +1335,9 @@ def handle_sm(
                 # earns it again. The story must also actually be in the
                 # query result (an empty result proves nothing).
                 others_live = [
-                    s
-                    for s in sibs
-                    if s.id != story.id and not is_terminal(StoryState(s.state))
+                    s for s in sibs if s.id != story.id and not is_terminal(StoryState(s.state))
                 ]
-                ac_single_story = (
-                    any(s.id == story.id for s in sibs) and not others_live
-                )
+                ac_single_story = any(s.id == story.id for s in sibs) and not others_live
     except Exception:  # noqa: BLE001 - no stamp is the recoverable direction
         ac_single_story = False
 
@@ -1767,9 +1763,7 @@ def _max_dev_retries(software_factory_root: Path | None = None) -> int:
         from factory.settings.loader import load_settings
 
         root = software_factory_root or Path(__file__).resolve().parent.parent.parent
-        configured = int(
-            getattr(load_settings(root).direction_defaults, "max_dev_retries", 0) or 0
-        )
+        configured = int(getattr(load_settings(root).direction_defaults, "max_dev_retries", 0) or 0)
     except Exception:  # noqa: BLE001 - an unreadable settings file must not unbound the cap
         return _DEFAULT_MAX_DEV_RETRIES
     if configured <= _MAX_DEV_SAME_SIGNATURE:
@@ -1877,6 +1871,7 @@ def _tail_shows_test_results(tail: str) -> bool:
     if _TEST_NODE_RESULT_RE.search(text):
         return True
     return bool(_TEST_ASSERTION_RE.search(text))
+
 
 # ImpossibleBench escape hatch (arXiv 2510.20270, ICLR 2026). The marker the
 # dev persona emits to declare a story unsatisfiable AS WRITTEN instead of
@@ -2667,12 +2662,8 @@ def _handle_dev_once(
         # on the base branch all legitimately produce no production change, and a
         # global rule would fail every one of them. The bench is the one context
         # where the story is always "fix this bug in this repo".
-        if tests_green and bool(
-            getattr(app_config.gates, "require_production_delta", False)
-        ):
-            delta = _branch_has_production_delta(
-                story, app_config, software_factory_root
-            )
+        if tests_green and bool(getattr(app_config.gates, "require_production_delta", False)):
+            delta = _branch_has_production_delta(story, app_config, software_factory_root)
             if delta is False:
                 tests_green = False
                 log_story_event(
@@ -2786,7 +2777,10 @@ def _handle_dev_once(
         to_state=story.state,
         outcome="retried",
         software_factory_root=software_factory_root,
-        extra={"retry_attempt": story.dev_retries, "retry_cap": _max_dev_retries(software_factory_root)},
+        extra={
+            "retry_attempt": story.dev_retries,
+            "retry_cap": _max_dev_retries(software_factory_root),
+        },
     )
     if not dry_run:
         # Capture rich cross-retry memory: the file diff + test tail are
@@ -2836,9 +2830,7 @@ def _handle_dev_once(
         # "no comparable evidence" from "we forgot to stamp it".
         attempt_record["test_results_seen"] = _tail_shows_test_results(_tail)
         attempt_record["failure_signature"] = (
-            _failure_signature_from_tail(_tail)
-            if attempt_record["test_results_seen"]
-            else ""
+            _failure_signature_from_tail(_tail) if attempt_record["test_results_seen"] else ""
         )
         story.dev_attempts_json = json.dumps(prior[-5:])
 
@@ -3820,16 +3812,16 @@ def _branch_has_production_delta(
 def _story_authored_paths(worktree: Path, base_ref: str) -> set[str] | None:
     """Paths whose CONTENT this branch changed since ``base_ref``.
 
-Measured by ``git diff --numstat``, not ``--diff-filter``: git reports a pure
-    MODE change as ``M`` (modified), so no filter letter separates it — only the
-    line counts do, and a mode-only change is ``0\t0\tpath``. That distinction is
-    load-bearing here: the bench's 0444 test-file lock injects
-    ``100755 -> 100644`` flips the dev cannot revert, and they were the single
-    largest consumer of reviewer attention in sweep 2 (9 of 40 findings).
+    Measured by ``git diff --numstat``, not ``--diff-filter``: git reports a pure
+        MODE change as ``M`` (modified), so no filter letter separates it — only the
+        line counts do, and a mode-only change is ``0\t0\tpath``. That distinction is
+        load-bearing here: the bench's 0444 test-file lock injects
+        ``100755 -> 100644`` flips the dev cannot revert, and they were the single
+        largest consumer of reviewer attention in sweep 2 (9 of 40 findings).
 
-    Returns ``None`` when git cannot answer, which the caller reads as "no scope
-    information available" and leaves the file list untouched — narrowing on a
-    failed read would silently disable the detector.
+        Returns ``None`` when git cannot answer, which the caller reads as "no scope
+        information available" and leaves the file list untouched — narrowing on a
+        failed read would silently disable the detector.
     """
     try:
         from factory.chain.branch import _run_git
@@ -3846,9 +3838,7 @@ Measured by ``git diff --numstat``, not ``--diff-filter``: git reports a pure
         # story's only touched test file was renamed, the veto is fully disabled
         # for that story. ``--no-renames`` emits the old and new paths as separate
         # rows, and the new path carries the added lines.
-        out = _run_git(
-            worktree, "diff", "--numstat", "--no-renames", base_ref
-        ).stdout
+        out = _run_git(worktree, "diff", "--numstat", "--no-renames", base_ref).stdout
     except Exception:  # noqa: BLE001 — an unreadable diff must not disable the scan
         return None
     authored: set[str] = set()
@@ -6378,8 +6368,19 @@ def _open_pr_for_story(
             "Code + tests written by the dev persona, approved by the reviewer "
             "and docs-enforcer gates."
         )
+    from factory.chain.delivery_gate import stack_parent
+
+    parent = stack_parent(story, Path(software_factory_root) / "state" / "factory.db")
+    stack_note = (
+        f"**Stacked on** `{parent.github_branch}`"
+        + (f" (PR #{parent.github_pr_number})" if parent.github_pr_number else "")
+        + ": this branch was cut from that earlier, unmerged story of the same job, so "
+        "this PR's diff includes its changes. Merge that one first.\n\n"
+        if parent is not None
+        else ""
+    )
     body = (
-        f"Generated by the factory {story.chain_kind} chain for story "
+        stack_note + f"Generated by the factory {story.chain_kind} chain for story "
         f"#{story.github_issue_number}.\n\n"
         f"Branch: `{branch}`\n"
         f"Story slug: `{story.slug}`\n"

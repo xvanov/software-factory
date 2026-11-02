@@ -200,8 +200,8 @@ wins outright — there is NO per-app ceiling — else the app's
 adjustments are fail-safe ones (an unreadable value → `none`; `push_to_main`
 on a factory self-edit → `pr`, because a direct push would skip the staging
 gate), recorded as `delivery_level_lowered`. Rows that predate the column
-resolve on first touch: legacy app (no `delivery` block) → `auto_merge`
-(unchanged); anything undeterminable → `none`.
+resolve on first touch to the pre-existing default, `auto_merge`, whatever
+the app's default is now (they were spawned before levels were enforced).
 
 Enforcement sites:
 
@@ -239,6 +239,30 @@ Enforcement sites:
   `pr`, opens a ready PR and ends in `DELIVERED_PR`.
 * `handlers.handle_deploy`: a `push_to_main` story deploys the sha recorded
   under `-(story.id)` instead of skipping for "no PR number".
+
+Concurrency and robustness (review 2026-11-02):
+
+* **Cancel vs. merge.** `_evaluate_one_pr` runs the irreversible tail (the
+  fast-forward / `gh pr merge` and the `DEPLOY_PENDING` write) under
+  `delivery_gate.story_lock` (a per-story `flock` in `state/locks/`), after
+  re-reading the committed state; the write is `delivery_gate.cas_story_state`
+  from `_MERGEABLE_STATES` (`MergeAction.state_committed`). `factory job
+  cancel` takes the same lock. Gate evaluation itself is outside the lock.
+* **Settle from every mergeable state.** `CI_GREEN` / `READY_FOR_MERGE` have
+  `DELIVERED_BRANCH` / `DELIVERED_LOCAL` edges too; a settle that raises
+  `_MAX_SETTLE_FAILURES` (3) times parks in `BLOCKED_DEPLOY_FAILED`.
+* **Push_to_main hold cap.** The hold reason carries `held since <iso>`;
+  after `_P2M_HOLD_CAP_SECONDS` (24 h) the story falls back to level `pr`
+  (`_p2m_hold_exhausted_to_pr` → `DELIVERED_PR`).
+* **Draft guard on the DB-fixture path.** `_query_pr_is_draft` sets
+  `FixturePR.is_draft`; unknown → not a draft (GitHub refuses to merge drafts).
+* **Stacking.** `delivery_gate.stack_parent` picks the latest `DELIVERED_*`
+  lower sibling for a non-merging story; `_writing_worktree` passes its branch
+  as `ensure_worktree_for_story(stack_on=…)` (local branch first, then
+  `origin/<branch>`) and `_open_pr_for_story` notes `Stacked on …` in the body.
+* **Closed issue vs. merged delivered PR.** `reconcile_closed_trackers` only
+  settles a `DELIVERED_PR` row when its PR is OPEN or CLOSED on GitHub; MERGED
+  (or unknown) is left for `reconcile_from_github` to deploy.
 
 `DELIVERED_*` are in `_NON_CAP_COUNTING_STATES` and `_PENDING_HUMAN_STATES`
 (dependents are capped-then-surfaced, closing the story issue settles to

@@ -33,7 +33,9 @@ How the factory enforces it (see `factory/chain/delivery_gate.py`):
 
 - The level is resolved ONCE when the job's story is spawned and recorded on the story
   (`StoryRecord.delivery_level` + a `delivery_level_resolved` event). Later app-config edits
-  never change an in-flight story's level. An unknown/unreadable level resolves to `none`.
+  never change an in-flight story's level. An unknown/unreadable level resolves to `none`. A
+  story with NO recorded level predates stamping and is backfilled with the pre-existing
+  default, `auto_merge`.
 - Every level runs the same chain (dev, review, tech_writer, docs enforcer) up to the point
   where work would leave the factory. Story end states, all terminal:
   `none` → `delivered_local` (committed on the local `story/<n>-<slug>` branch, nothing
@@ -53,6 +55,9 @@ How the factory enforces it (see `factory/chain/delivery_gate.py`):
     `push_to_main_fell_back_to_pr:<why>`, and `factory job status` reports it per story as
     `delivery_note`. When that PR merges, the push_to_main job is `done`. If opening the PR
     fails twice, the story parks in `blocked_deploy_failed`.
+  - a hold is capped at 24 h: after that the story falls back to level `pr` (a ready PR for a
+    human, ending `delivered_pr`), recorded the same way (`push_to_main_fell_back_to_pr:held
+    since …`).
   Then it runs the full merge gate set against the worktree commit and pushes that exact
   commit to the default branch without force. Gate failures are capped at 3 per STORY (not per
   commit), then the story parks in `blocked_ci_unresolved`. If the push is not a fast-forward
@@ -71,8 +76,12 @@ How the factory enforces it (see `factory/chain/delivery_gate.py`):
   closed by the factory's hourly issue hygiene.
 - Multi-story jobs below `auto_merge`: a later story does not wait for an earlier sibling to
   deploy (it never will without a human); a sibling in `delivered_*` satisfies the ordering.
-  Stories are NOT stacked — each builds from the default branch, not from its sibling's
-  unmerged branch.
+  The later story is STACKED: its branch is cut from the latest delivered sibling's branch (the
+  local branch at `none`, `origin/<branch>` once pushed), so it builds on that work. Its PR still
+  targets the default branch and its body says `Stacked on <branch> (PR #n)` — merge in order.
+- Cancel vs. merge: the final merge / fast-forward and its `deploy_pending` write run under a
+  per-story lock (`state/locks/story-<id>.lock`) that `factory job cancel` also takes, after a
+  re-read of the story; a story cancelled while its gates ran is never merged or pushed.
 - Known gap: at `none`, the factory still opens the story's GitHub ISSUE (no code is pushed).
 
 PA mode → delivery mapping (PA side owns this): plan→(not a factory job), local→none,

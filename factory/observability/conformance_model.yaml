@@ -31,6 +31,8 @@ version: 1
 # direct-assignment writers below have no event at all.
 legal_edges:
   - {from: ci_green, to: blocked_deploy_failed}
+  - {from: ci_green, to: delivered_branch}
+  - {from: ci_green, to: delivered_local}
   - {from: ci_green, to: delivered_pr}
   - {from: ci_green, to: deploy_pending}
   - {from: deploy_pending, to: blocked_deploy_failed}
@@ -65,6 +67,8 @@ legal_edges:
   - {from: pr_open, to: delivered_pr}
   - {from: pr_open, to: deploy_pending}
   - {from: ready_for_merge, to: blocked_deploy_failed}
+  - {from: ready_for_merge, to: delivered_branch}
+  - {from: ready_for_merge, to: delivered_local}
   - {from: ready_for_merge, to: delivered_pr}
   - {from: ready_for_merge, to: deploy_pending}
   - {from: reviewer_done, to: blocked_budget_exceeded}
@@ -171,6 +175,14 @@ allowed_direct_writes:
       `gh pr create` failed `_MAX_PR_CREATE_RETRIES` times; it parks for a
       human, same sink and cap as the docs enforcer's PR-create exhaustion.
       Its DELIVERED_* settles go through `advance()` and classify as edges.
+  - writer: delivery_gate.cas_story_state
+    to: [deploy_pending, blocked_deploy_failed, closed_by_operator]
+    from: [pr_open, ci_green, ready_for_merge, ci_pending, dev_in_progress, dev_retry, tests_green, reviewer_in_progress, reviewer_done, reviewer_requested_changes, tech_writer_in_progress, tech_writer_done, docs_enforcer_check, story_created, sm_in_progress, sm_done, blocked_ci_unresolved, blocked_deploy_failed, blocked_review_nonconvergent, blocked_budget_exceeded, blocked_tests_need_clarification, blocked_underspecified, blocked_dependency_unmet]
+    why: >-
+      Compare-and-set state write used under the per-story lock: the merge
+      pass committing DEPLOY_PENDING after a merge, a settle that failed
+      `_MAX_SETTLE_FAILURES` times parking in BLOCKED_DEPLOY_FAILED, and
+      `factory job cancel` parking in-flight work as CLOSED_BY_OPERATOR.
   - writer: auto_merge._fall_back_push_to_main_to_pr
     to: [blocked_deploy_failed]
     from: [pr_open, ci_green, ready_for_merge]

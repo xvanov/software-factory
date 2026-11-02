@@ -1449,8 +1449,16 @@ def reconcile_closed_trackers(
     root: Path,
     max_reconcile: int = _MAX_RECONCILE_PER_TICK,
     query_issue_state: Callable[..., str | None] = _query_issue_state,
+    query_pr_state: Callable[..., str | None] | None = None,
 ) -> list[tuple[str, str, str]]:
     """Settle pending-human stories whose tracker ISSUE the operator has closed.
+
+    DELIVERED_PR exception (review 2026-11-02, SHOULD 6): a human merging a
+    delivered PR usually closes its story issue too ("Closes #n"). Settling
+    that row to CLOSED_BY_OPERATOR here would strand a MERGED change before
+    ``reconcile_from_github`` routes it to deploy. So a ``delivered_pr`` row is
+    only settled when GitHub says its PR is NOT merged (OPEN or CLOSED);
+    MERGED or unknown → skipped, left for ``reconcile_from_github``.
 
     The companion to ``reconcile_from_github``. That pass makes the local DB agree
     with GitHub about **PR** state; this one makes it agree about whether the work
@@ -1530,6 +1538,16 @@ def reconcile_closed_trackers(
             story.state = live_state
 
         checked += 1
+        if (
+            story.state == StoryState.DELIVERED_PR.value
+            and story.github_pr_number
+            and story.github_pr_number > 0
+        ):
+            pr_query = query_pr_state or _query_pr_state
+            pr_state = pr_query(app_config=cfg, pr_number=story.github_pr_number)
+            if pr_state not in ("OPEN", "CLOSED"):
+                # MERGED → reconcile_from_github deploys it; None → unknown.
+                continue
         issue_state = query_issue_state(app_config=cfg, issue_number=issue_number)
         if issue_state != "CLOSED":
             # OPEN → the work is still wanted; None → unknown. Never settle on
