@@ -228,7 +228,9 @@ auto-merge PR instead (see delivery levels above): that story's `delivery_level`
 `auto_merge`, its `delivery_note` is `push_to_main_fell_back_to_pr:<why>`, and its merged PR
 makes the job `done`.
 
-`done` says the delivery exists, NOT that its CI is green. For every still-OPEN PR the status
+While any delivered PR's CI is still `pending` the job stays `in_progress` (`why`: `PR #N is
+open; waiting for its CI (…)`), for at most 2 h after the story's last update. After that, or
+once CI finishes, `done` says the delivery exists, NOT that its CI is green. For every still-OPEN PR the status
 reads the PR's check rollup into `stories[].ci` (`null` when the PR is not open or GitHub could
 not be asked), and any failing PR is named in `why` (`PR #N CI failing: <checks>`). A caller
 reporting a job to a human must surface a failing `ci`.
