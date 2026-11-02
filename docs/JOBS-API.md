@@ -103,13 +103,18 @@ Sharpened 2026-11-02 (`factory/job_routing.py`):
   --pipeline-default`.
 - Resolved ONCE at story spawn and stamped on the story (`StoryRecord.pipeline`); editing the
   direction or app config afterwards does not change an in-flight story.
-- **`solo` is refused today** with `{"error": "pipeline_unavailable"}` — at submit and again at
-  spawn. B.1 solo exists only as a bench arm; the production chain cannot yet skip the
-  reviewer, so accepting `solo` would silently run `chain`. An `auto` job on an app whose
-  `pipeline_default` is `solo` is refused the same way (never downgraded to chain). Once the
-  engine lands, `solo` additionally requires the app to have `gates.acceptance_oracle: true`
-  AND a `gates.acceptance_boot` recipe (B.1: with no reviewer, the oracle is the only signal
-  the dev cannot influence); otherwise `pipeline_unavailable`.
+- **`solo` is accepted** (production engine: `factory/chain/solo.py`). A solo story runs
+  SM → ONE dev conversation (5400 s wall clock, up to 3 in-conversation gate rounds, a
+  no-progress abort, ≤ 3 dev attempts) → tech-writer → docs-enforcer → the story's delivery
+  level → the SAME merge gates and CI as `chain`. Only the reviewer round-trip is removed.
+  The acceptance oracle is NOT required: when the app enables it, it is a required merge gate
+  and its leak check blocks every solo dev dispatch; otherwise the independent checks are
+  the test command, the merge gates and CI. Each story logs what gated it (`solo_checks`,
+  `solo_dev_rounds` events). `job_routing.SOLO_PIPELINE_IMPLEMENTED = False` is the kill
+  switch (new solo requests → `pipeline_unavailable`; in-flight solo stories still finish
+  as solo).
+  The factory's own app (`apps/factory`) refuses solo with `pipeline_unavailable` unless its
+  `config.yaml` sets `solo_allowed: true` (a reviewer-less self-edit is an operator decision).
 
 ## Model overrides
 

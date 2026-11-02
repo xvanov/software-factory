@@ -540,6 +540,15 @@ _TRANSITIONS: dict[tuple[StoryState, str], StoryState] = {
     ): StoryState.BLOCKED_UNDERSPECIFIED,
     (StoryState.DEV_RETRY, EVENT_DEV_UNDERSPECIFIED): StoryState.BLOCKED_UNDERSPECIFIED,
     (StoryState.TESTS_GREEN, EVENT_REVIEWER_STARTED): StoryState.REVIEWER_IN_PROGRESS,
+    # SOLO pipeline (``factory/chain/solo.py``): the ONE new edge B.1 needs. A
+    # story stamped ``pipeline: solo`` at spawn skips the reviewer round-trip and
+    # goes straight from green to the tech-writer, then the shared docs-enforcer /
+    # delivery / merge-gate path. No new StoryState, so every derived state set
+    # (terminal, metered, mergeable, recoverable, progress ordinals) is
+    # unchanged. Chain stories never take it: ``orchestrator._dispatch_for_story``
+    # only routes TESTS_GREEN → tech_writer for solo rows, and
+    # ``handlers.handle_tech_writer`` refuses TESTS_GREEN for a non-solo row.
+    (StoryState.TESTS_GREEN, EVENT_TECH_WRITER_STARTED): StoryState.TECH_WRITER_IN_PROGRESS,
     (StoryState.REVIEWER_IN_PROGRESS, EVENT_REVIEWER_APPROVE): StoryState.REVIEWER_DONE,
     (
         StoryState.REVIEWER_IN_PROGRESS,

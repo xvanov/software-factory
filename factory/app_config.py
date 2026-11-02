@@ -304,10 +304,16 @@ class AppConfig(BaseModel):
     models: dict[str, str] = Field(default_factory=dict)
     # The pipeline a job runs when it does not name one (or names ``auto``).
     # ``auto`` here resolves to ``chain``. Stamped on the story at spawn.
-    # ``solo`` is refused at submit/spawn until the production solo engine
-    # exists — see ``job_routing.SOLO_PIPELINE_IMPLEMENTED``. Set by
+    # ``solo`` = one long-horizon dev agent, no reviewer (``factory/chain/solo.py``);
+    # ``job_routing.SOLO_PIPELINE_IMPLEMENTED`` is its kill switch. Set by
     # ``factory app set --pipeline-default``; see docs/JOBS-API.md.
     pipeline_default: PipelineName = "chain"
+    # Explicit opt-in for ``pipeline: solo`` on the factory's OWN repo
+    # (``apps/factory``). Solo removes the reviewer; a self-edit with no
+    # reviewer needs an operator decision, so solo is refused
+    # (``pipeline_unavailable``) for the factory app unless this is true.
+    # Ignored for every other app.
+    solo_allowed: bool = False
     # The delivery level a job gets when it does not request one. There is no
     # per-app ceiling: a job's requested level wins. Absent = today's
     # behaviour (auto_merge). See factory/delivery.py.

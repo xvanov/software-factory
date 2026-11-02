@@ -91,6 +91,7 @@ legal_edges:
   - {from: tech_writer_in_progress, to: tech_writer_done}
   - {from: tests_green, to: blocked_budget_exceeded}
   - {from: tests_green, to: reviewer_in_progress}
+  - {from: tests_green, to: tech_writer_in_progress}
 
 # Sanctioned writers that bypass `advance()` on purpose. Each sets
 # `story.state` directly because its source state is "any in-flight state", so

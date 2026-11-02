@@ -214,7 +214,6 @@ def test_submit_resolves_repo_to_app(root: Path) -> None:
         (["--app", "demo", "--model", "reviewer"], "bad_model_flag"),
         # A bare id without a provider/ prefix is refused at submit (#332).
         (["--app", "demo", "--model", "reviewer=gpt-5.4"], "bad_model_id"),
-        (["--app", "demo", "--pipeline", "solo"], "pipeline_unavailable"),
         (["--app", "demo", "--repo", "acme/legacy"], "app_repo_mismatch"),
         ([], "missing_argument"),
     ],
@@ -264,9 +263,24 @@ def test_every_delivery_level_is_accepted_no_ceiling(root: Path, level: str) -> 
 def test_pipeline_auto_uses_app_config_pipeline_default(root: Path) -> None:
     _write_app(root, "auto-app", "acme/auto", "pipeline_default: auto\n")
     assert _submit(app="auto-app")["pipeline"] == "chain"  # app-level auto = chain (v1)
+    # The production solo engine exists (#333): an app default of solo is honoured.
     _write_app(root, "solo-app", "acme/solo", "pipeline_default: solo\n")
-    code, obj = _cli("submit", "--json", "--app", "solo-app", "--title", "t", "--ask", "a")
-    assert code == 1 and obj["error"] == "pipeline_unavailable"
+    assert _submit(app="solo-app")["pipeline"] == "solo"
+
+
+def test_solo_is_accepted_except_on_the_factory_without_opt_in(root: Path) -> None:
+    """#333: solo is accepted on any app; the factory's OWN repo needs an
+    explicit ``solo_allowed: true`` (a reviewer-less self-edit is an operator
+    decision), else ``pipeline_unavailable``."""
+    assert _submit("--pipeline", "solo")["pipeline"] == "solo"
+    _write_app(root, "factory", "xvanov/software-factory")
+    code, obj = _cli(
+        "submit", "--json", "--app", "factory", "--title", "t", "--ask", "a", "--pipeline", "solo"
+    )
+    assert code != 0 and obj["error"] == "pipeline_unavailable"
+    assert "solo_allowed" in obj["message"]
+    _write_app(root, "factory", "xvanov/software-factory", "solo_allowed: true\n")
+    assert _submit("--pipeline", "solo", app="factory")["pipeline"] == "solo"
 
 
 def test_finding9_pipeline_and_models_land_in_frontmatter_for_routing(root: Path) -> None:

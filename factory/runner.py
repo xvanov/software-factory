@@ -38,7 +38,9 @@ import contextlib
 import json
 import logging
 import os
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -591,6 +593,34 @@ class RunResult:
     # aggregator silently treats "unknown" as "free" (measured on the live
     # ledger: 1016 text runs with output tokens but zero recorded cost).
     usage_reliable: bool | None = None
+    # In-conversation gate rounds (solo pipeline only; empty for every other
+    # caller). One dict per gate check: ``{round, passed, reason, elapsed_s}``.
+    gate_rounds: list[dict[str, Any]] = field(default_factory=list)
+    # Why the in-conversation gate loop stopped: ``green`` |
+    # ``rounds_exhausted`` | ``no_progress_first_write`` |
+    # ``no_progress_between_rounds`` | ``wall_clock`` | ``no_time`` | ``""``
+    # (no gate loop ran).
+    gate_stop_reason: str = ""
+    # Live cost at which the spend cap paused the run (None = cap not hit).
+    spend_cap_hit_usd: float | None = None
+
+
+@dataclass
+class GateVerdict:
+    """What an in-conversation gate check concluded about the working tree.
+
+    ``reason`` is the one-line WHY, written for the dev — it is sent back into
+    the same conversation on a red round and becomes ``RunResult.error``, so a
+    gate's real reason always reaches the actor it rejected (the
+    ``gates_speak_a_language_the_dev_cannot_decode`` lesson). ``output`` is the
+    evidence tail (test output). ``checks`` lists every check that ran, in
+    order, as ``{name, passed, reason}``.
+    """
+
+    passed: bool
+    reason: str
+    output: str = ""
+    checks: list[dict[str, Any]] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -689,6 +719,7 @@ def _record_run(
     usage_reliable: bool | None = None,
     software_factory_root: Path | None = None,
     started_at: str | None = None,
+    update_row_id: int | None = None,
 ) -> None:
     ended_at = datetime.now(UTC).isoformat()
     redacted_error = redact_secrets(error) if error is not None else None
@@ -722,7 +753,27 @@ def _record_run(
 
     engine = _engine(db_path)
     with Session(engine) as session:
+        existing = session.get(Run, update_row_id) if update_row_id is not None else None
+        if existing is not None:
+            # Finalise the provisional row this run has been checkpointing into
+            # (``_upsert_provisional_run``) instead of adding a second row.
+            # NEVER lower booked spend: a final write whose usage read failed
+            # (an exception path with no live snapshot) would otherwise erase
+            # spend the ledger already holds. The SDK counters are cumulative,
+            # so max() is the true floor. Booked spend also means the model DID
+            # work: such a row is never pre-model infra.
+            tokens_in = max(tokens_in, int(existing.tokens_in or 0))
+            tokens_out = max(tokens_out, int(existing.tokens_out or 0))
+            cost_usd = max(cost_usd, float(existing.cost_usd or 0.0))
+            cached_input_tokens = max(
+                int(cached_input_tokens or 0), int(existing.cached_input_tokens or 0)
+            )
+            if float(existing.cost_usd or 0.0) > 0.0 or int(existing.tokens_out or 0) > 0:
+                premodel_infra = False
+            session.delete(existing)
+            session.flush()
         row = Run(
+            id=existing.id if existing is not None else None,
             ts=ended_at,
             persona=persona,
             model=model,
@@ -790,6 +841,72 @@ def _record_run(
         )
     except Exception:  # noqa: BLE001
         pass
+
+
+_PROVISIONAL_RUN_ERROR = "in progress (provisional spend checkpoint; final row pending)"
+
+
+def _upsert_provisional_run(
+    row_id: int | None,
+    *,
+    db_path: Path | None,
+    persona: str,
+    model: str,
+    tokens_in: int,
+    tokens_out: int,
+    cached_input_tokens: int,
+    cost_usd: float,
+    duration_s: float,
+    story_path: str | None,
+    repo_path: str | None,
+    story_id: int | None,
+    model_tier: str | None,
+    direction_id: str | None,
+    app: str | None,
+) -> int | None:
+    """Insert (``row_id`` None) or update the in-flight ``runs`` row.
+
+    The row is a normal ``runs`` row (``success=False``, ``premodel_infra=False``,
+    ``error`` = :data:`_PROVISIONAL_RUN_ERROR`), so every reader that sums
+    ``runs.cost_usd`` — the per-story breaker, the daily/hourly caps, ``factory
+    audit`` — sees in-flight spend, and a process killed mid-run leaves its spend
+    on the ledger. Cost only ever moves UP (the SDK counters are cumulative).
+    """
+    engine = _engine(db_path)
+    with Session(engine) as session:
+        row = session.get(Run, row_id) if row_id is not None else None
+        if row is None:
+            row = Run(
+                ts=datetime.now(UTC).isoformat(),
+                persona=persona,
+                model=model,
+                mode="sandbox",
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost_usd=cost_usd,
+                success=False,
+                story_path=story_path,
+                repo_path=repo_path,
+                error=_PROVISIONAL_RUN_ERROR,
+                duration_s=duration_s,
+                story_id=story_id,
+                model_tier=model_tier,
+                direction_id=direction_id,
+                app=app,
+                cached_input_tokens=cached_input_tokens,
+                premodel_infra=False,
+                usage_reliable=None,
+            )
+        else:
+            row.tokens_in = max(int(row.tokens_in or 0), tokens_in)
+            row.tokens_out = max(int(row.tokens_out or 0), tokens_out)
+            row.cached_input_tokens = max(int(row.cached_input_tokens or 0), cached_input_tokens)
+            row.cost_usd = max(float(row.cost_usd or 0.0), cost_usd)
+            row.duration_s = duration_s
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return row.id
 
 
 # --------------------------------------------------------------------------- #
@@ -1811,6 +1928,119 @@ _TERMINAL_MARKERS: dict[str, tuple[str, ...]] = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# In-conversation gate loop (solo pipeline)
+# --------------------------------------------------------------------------- #
+#
+# A caller that passes ``gate_check`` to ``sandbox_run`` gets ONE continuous
+# conversation in which the gate's verdict is fed back to the dev: run → check
+# → (red) send the reason + evidence into the SAME conversation → run → check
+# … up to ``max_gate_rounds``. Every round keeps the full context; nothing is
+# summarised across a conversation boundary. Three things stop it early:
+#
+# * NO PROGRESS, FIRST WRITE: a watchdog pauses the conversation if the working
+#   tree is byte-identical to its starting state ``no_progress_abort_s`` into
+#   the run. Measured on the 2026-08-11 replay: ``vyper-4801``'s three chain
+#   attempts made zero file writes in 6,341 s / $13.50 (every call a ``view``).
+# * NO PROGRESS, BETWEEN ROUNDS: a feedback round that changed nothing in the
+#   tree is not converging; stop instead of sending the same verdict again.
+# * WALL CLOCK: the watchdog pauses the conversation at ``wall_clock_timeout_s``
+#   (a SOFT deadline) so the tree is still GRADED; ``asyncio.wait_for`` gets
+#   ``_GATE_GRADING_GRACE_S`` on top as the hard backstop for a stalled call.
+
+#: Fraction of the wall clock that must remain before another feedback round is
+#: started (same rationale as ``_PROSE_CONTINUATION_TIME_RESERVE``).
+_GATE_ROUND_TIME_RESERVE = 0.85
+#: Hard-backstop headroom past the soft wall clock: time for the in-flight LLM
+#: call to return after ``pause()`` and for the final grading to run.
+_GATE_GRADING_GRACE_S = 900
+#: Watchdog poll interval (seconds). Module-level so tests can shrink it.
+_WATCHDOG_POLL_S = 5.0
+#: How often (seconds) a gate-loop run checkpoints its live spend into the
+#: ledger (plus after every gate round). Bounds what a SIGKILL can lose.
+_LEDGER_CHECKPOINT_S = 60.0
+#: Cap on the evidence tail sent back into the conversation per round.
+_GATE_FEEDBACK_OUTPUT_CAP = 6000
+
+
+def _worktree_fingerprint(repo_path: Path) -> str | None:
+    """A cheap content fingerprint of ``repo_path``'s working tree, or None.
+
+    HEAD sha + porcelain status + the tracked diff + (size, mtime_ns) of every
+    untracked file. Two equal fingerprints mean "nothing was written between the
+    two reads". ``None`` (git failed) means unknown — callers must never treat
+    unknown as "no progress" (fail OPEN: an abort on no evidence throws work
+    away).
+    """
+    import hashlib
+    import subprocess as _sp
+
+    def _git(*args: str) -> str | None:
+        try:
+            proc = _sp.run(
+                ["git", *args],
+                cwd=str(repo_path),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except Exception:  # noqa: BLE001 - unknown, not "no progress"
+            return None
+        return proc.stdout if proc.returncode == 0 else None
+
+    head = _git("rev-parse", "HEAD")
+    status = _git("status", "--porcelain=v1", "-uall")
+    diff = _git("diff", "HEAD")
+    if head is None or status is None or diff is None:
+        return None
+    h = hashlib.sha256()
+    h.update(head.encode())
+    h.update(status.encode())
+    h.update(diff.encode(errors="replace"))
+    for line in status.splitlines():
+        if line.startswith("?? "):
+            rel = line[3:].strip().strip('"')
+            try:
+                st = (Path(repo_path) / rel).stat()
+                h.update(f"{rel}:{st.st_size}:{st.st_mtime_ns}".encode())
+            except OSError:
+                h.update(f"{rel}:gone".encode())
+    return h.hexdigest()
+
+
+def _render_gate_feedback(verdict: GateVerdict, round_no: int, max_rounds: int) -> str:
+    """The message sent back into the SAME conversation after a red gate round."""
+    lines = [
+        f"GATE RESULT — round {round_no}/{max_rounds}: NOT GREEN.",
+        "",
+        f"Reason: {verdict.reason}",
+    ]
+    if verdict.checks:
+        lines.append("")
+        lines.append("Checks that ran (in order):")
+        for c in verdict.checks:
+            mark = "PASS" if c.get("passed") else "FAIL"
+            lines.append(f"- [{mark}] {c.get('name')}: {c.get('reason', '')}")
+    if verdict.output.strip():
+        lines += [
+            "",
+            "Evidence (tail):",
+            "```",
+            verdict.output[-_GATE_FEEDBACK_OUTPUT_CAP:].rstrip(),
+            "```",
+        ]
+    remaining = max(0, max_rounds - round_no)
+    lines += [
+        "",
+        "This check is run by the factory, outside your control, on the working "
+        "tree exactly as you left it. Fix the cause (do not weaken or delete tests "
+        "to make it pass), re-run the test command yourself, and end with the "
+        "terminal line your instructions require. Gate checks left in this "
+        f"conversation: {remaining}. A round that changes nothing ends the run.",
+    ]
+    return "\n".join(lines)
+
+
 def _ended_on_prose(conversation: Any, persona: str) -> bool:
     """Did this run stop mid-thought instead of on a decision?
 
@@ -1907,8 +2137,24 @@ async def sandbox_run(
     app: str | None = None,
     direction_id: str | None = None,
     wall_clock_timeout_s: int | None = None,
+    gate_check: Callable[[], GateVerdict] | None = None,
+    max_gate_rounds: int = 1,
+    no_progress_abort_s: int | None = None,
+    brief_addendum: str | None = None,
+    spend_cap_usd: float | None = None,
 ) -> RunResult:
     """Run a persona inside an OpenHands SDK sandbox against ``repo_path``.
+
+    ``spend_cap_usd`` (solo): the watchdog pauses the conversation and the tree
+    is graded once the conversation's live cost reaches it (stop reason
+    ``spend_cap``).
+
+    ``gate_check`` (solo pipeline) switches on the in-conversation gate loop —
+    see the "In-conversation gate loop" block above ``_ended_on_prose``. When
+    set, the final grade IS the last gate verdict (not a separate
+    ``_run_pytest``), ``RunResult.error`` carries the gate's real reason, and
+    ``wall_clock_timeout_s`` becomes a soft deadline that still grades the
+    tree. ``brief_addendum`` is appended to the initial message.
 
     ``wall_clock_timeout_s`` overrides the module-level
     ``_SANDBOX_WALL_CLOCK_TIMEOUT_S`` (env ``FACTORY_SANDBOX_TIMEOUT_S``,
@@ -1945,6 +2191,8 @@ async def sandbox_run(
         prior_attempts=prior_attempts,
         reviewer_findings=reviewer_findings,
     )
+    if brief_addendum:
+        initial_user_text = f"{initial_user_text.rstrip()}\n\n---\n\n{brief_addendum.strip()}\n"
 
     # Log prompt telemetry HERE — the moment the initial message exists and
     # before any failure path, mirroring the ``text_run`` site. Until this
@@ -1975,12 +2223,26 @@ async def sandbox_run(
     def _elapsed() -> float:
         return round(time.monotonic() - _t0, 3)
 
+    # Provisional-ledger state (see "INCREMENTAL LEDGER" below). Defined here,
+    # before ``_record``, because the early-exit paths call ``_record`` first.
+    _ledger: dict[str, Any] = {"id": None, "final": False}
+    _ledger_lock = threading.Lock()
+
     def _record(**kw: Any) -> None:
-        """Thin wrapper that injects started_at + software_factory_root."""
+        """Thin wrapper that injects started_at + software_factory_root.
+
+        With an incremental ledger (solo) the final write UPDATES the
+        provisional row the run has been checkpointing into, and marks the
+        ledger final so a still-running watchdog cannot overwrite it.
+        """
+        with _ledger_lock:
+            _ledger["final"] = True
+            row_id = _ledger["id"]
         _record_run(
             **kw,
             started_at=_started_at,
             software_factory_root=software_factory_root,
+            update_row_id=row_id,
         )
 
     if dry_run:
@@ -2312,6 +2574,112 @@ async def sandbox_run(
         except Exception:  # noqa: BLE001 - memory capture must never break teardown
             return "", [], ""
 
+    # In-conversation gate loop state (solo). ``rounds``/``verdict``/``stop`` are
+    # written by ``_gate_loop``; the two abort flags by ``_watchdog``.
+    _gate_state: dict[str, Any] = {"rounds": [], "verdict": None, "stop": ""}
+    _watchdog_wanted = (
+        gate_check is not None or no_progress_abort_s is not None or spend_cap_usd is not None
+    )
+    # Watchdog flag -> the stop reason it produces. Any set flag means "stop
+    # now and grade the tree as it stands".
+    _STOP_FLAGS = (
+        ("spend_cap_hit", "spend_cap"),
+        ("soft_deadline_hit", "wall_clock"),
+        ("no_progress_abort", "no_progress_first_write"),
+    )
+
+    def _stopped() -> str | None:
+        for flag, reason in _STOP_FLAGS:
+            if _gate_state.get(flag):
+                return reason
+        return None
+
+    # INCREMENTAL LEDGER (solo). A provisional ``runs`` row is written as soon
+    # as the conversation has spent anything and updated every
+    # ``_LEDGER_CHECKPOINT_S`` and after every gate round, so a process killed
+    # mid-run (systemd ``TimeoutStartSec``, OOM, SIGKILL) has still booked what
+    # it spent. Every final ``_record`` UPDATES that same row — one row per
+    # conversation, never a double count.
+    # (``_ledger`` / ``_ledger_lock`` are defined above ``_record``.)
+    _incremental_ledger = gate_check is not None
+
+    def _live_cost() -> tuple[int, int, int, float] | None:
+        conv = _live_conversation.get("conv")
+        if conv is None:
+            return None
+        try:
+            stats = conv.conversation_stats.get_combined_metrics()
+            tok = stats.accumulated_token_usage
+            return (
+                int(getattr(tok, "prompt_tokens", 0) or 0),
+                int(getattr(tok, "completion_tokens", 0) or 0),
+                int(getattr(tok, "cache_read_tokens", 0) or 0),
+                float(getattr(stats, "accumulated_cost", 0.0) or 0.0),
+            )
+        except Exception:  # noqa: BLE001 - telemetry only
+            return None
+
+    def _merge_checkpointed_usage() -> None:
+        """Raise ``_partial_usage`` to what the provisional ledger row already
+        booked. A failure path whose live snapshot read failed must not report
+        less than was checkpointed — that would erase spend AND turn a real
+        attempt into a free pre-model infra retry."""
+        with _ledger_lock:
+            booked = {k: _ledger.get(k) for k in ("tokens_in", "tokens_out", "cached", "cost")}
+        if not booked.get("tokens_out") and not booked.get("cost"):
+            return
+        for k, v in booked.items():
+            if v is not None and v > (_partial_usage.get(k) or 0):
+                _partial_usage[k] = v
+        if "reliable" not in _usage_meta:
+            _usage_meta["reliable"] = False  # a floor from checkpoints, not a final read
+
+    def _checkpoint_spend() -> None:
+        """Upsert the provisional ledger row from live usage. Never raises."""
+        if not _incremental_ledger:
+            return
+        live = _live_cost()
+        if live is None:
+            return
+        t_in, t_out, t_cached, cost = live
+        if t_out <= 0 and cost <= 0.0:
+            return  # nothing spent yet: keep pre-model infra row-free
+        try:
+            with _ledger_lock:
+                if _ledger["final"]:
+                    return
+                for _k, _v in (
+                    ("tokens_in", t_in),
+                    ("tokens_out", t_out),
+                    ("cached", t_cached),
+                    ("cost", cost),
+                ):
+                    _ledger[_k] = max(_ledger.get(_k, 0) or 0, _v)
+                _ledger["id"] = _upsert_provisional_run(
+                    _ledger["id"],
+                    db_path=db_path,
+                    persona=persona,
+                    model=llm_config.model,
+                    tokens_in=t_in,
+                    tokens_out=t_out,
+                    cached_input_tokens=t_cached,
+                    cost_usd=cost,
+                    duration_s=_elapsed(),
+                    story_path=str(story_path),
+                    repo_path=str(repo_path),
+                    story_id=story_id,
+                    model_tier=difficulty,
+                    direction_id=direction_id,
+                    app=app,
+                )
+        except Exception:  # noqa: BLE001 - a checkpoint must never break a run
+            _log.warning("provisional ledger checkpoint failed", exc_info=True)
+    # Starting fingerprint for the no-first-write abort. Taken BEFORE the
+    # conversation exists so a write in the first second still counts.
+    _start_fp: dict[str, str | None] = {
+        "fp": _worktree_fingerprint(Path(repo_path)) if no_progress_abort_s else None
+    }
+
     def _do_run() -> tuple[int, int, int, float, str, list[dict[str, Any]], str]:
         # ``Conversation`` is a factory that returns LocalConversation/RemoteConversation
         # depending on the workspace type. Treat as Any for mypy purposes.
@@ -2334,40 +2702,18 @@ async def sandbox_run(
         # interrupted by the wall clock, and the timeout handler needs a handle
         # on this object to recover what was spent.
         _live_conversation["conv"] = conversation
+        _watchdog_stop = threading.Event()
+        _watchdog_thread: threading.Thread | None = None
+        if _watchdog_wanted:
+            _watchdog_thread = threading.Thread(
+                target=_watchdog, args=(conversation, _watchdog_stop), daemon=True
+            )
+            _watchdog_thread.start()
         try:
             conversation.send_message(initial_user_text)
-            conversation.run()
-            # A turn that ended on prose is not a finished attempt — see
-            # ``_ended_on_prose``. Continue the SAME conversation so the whole
-            # context (and the sandbox's working tree) survives; a fresh attempt
-            # would re-read the repo from scratch and consume a dev retry.
-            for _cont in range(_MAX_PROSE_CONTINUATIONS):
-                if not _ended_on_prose(conversation, persona):
-                    break
-                # RESERVE WALL CLOCK. The continuation borrows the SAME
-                # ``asyncio.wait_for`` budget as the original run, and
-                # ``max_iteration_per_run`` resets on every ``run()`` — so a nudge
-                # gets a fresh 600-iteration budget and no time of its own.
-                #
-                # Measured on the live sacrifice trajectories: the ONE run that
-                # would have been nudged (story 178) had already burned 1663 s of
-                # its 1800 s, and 9 of the last 60 live dev runs exceeded 1200 s.
-                # If the wall clock fires mid-continuation the TimeoutError path
-                # returns ``test_run_passed=False, files_changed=[]`` and the
-                # chain's test command NEVER RUNS — so a tree that may have been
-                # green is never graded, a dev retry is burned, the
-                # ``files_touched`` retry memory is lost, and the resulting
-                # timeout tail carries no test results, which means the stall
-                # guard cannot catch the repeat either. The rescue would have
-                # manufactured a worse failure than the one it fixed.
-                if _elapsed() > _PROSE_CONTINUATION_TIME_RESERVE * (
-                    wall_clock_timeout_s or _SANDBOX_WALL_CLOCK_TIMEOUT_S
-                ):
-                    _prose_continuations["skipped_no_time"] = 1
-                    break
-                _prose_continuations["n"] = _cont + 1
-                conversation.send_message(_PROSE_CONTINUATION_NUDGE)
-                conversation.run()
+            _run_turn(conversation)
+            if gate_check is not None:
+                _gate_loop(conversation)
             stats = conversation.conversation_stats.get_combined_metrics()
             tok = stats.accumulated_token_usage
             t_in = int(getattr(tok, "prompt_tokens", 0) or 0)
@@ -2395,7 +2741,153 @@ async def sandbox_run(
             last_msg, recent, finish_msg = _extract_conversation_memory(conversation)
             return (t_in, t_out, t_cached, cost, last_msg, recent, finish_msg)
         finally:
+            _watchdog_stop.set()
+            if _watchdog_thread is not None:
+                _watchdog_thread.join(timeout=5)
             conversation.close()
+
+    def _watchdog(conversation: Any, stop: threading.Event) -> None:
+        """Pause the conversation on no-first-write, the soft wall clock, or the
+        spend cap; and checkpoint spend into the ledger as the run proceeds.
+
+        Runs in its own daemon thread. ``pause()`` is documented thread-safe
+        and takes effect between agent steps, so ``run()`` returns and the gate
+        loop grades the tree as it stands. Every failure is swallowed: a
+        watchdog that crashes must leave the run exactly as it would have been
+        without one (the hard ``wait_for`` backstop still applies).
+        """
+        first_write_checked = no_progress_abort_s is None or _start_fp.get("fp") is None
+        last_checkpoint = 0.0
+        while not stop.wait(_WATCHDOG_POLL_S):
+            # One iteration's failure (a transient ``pause()`` / stats / git
+            # error) must NOT end the watchdog: that would silently stop the
+            # spend cap and the soft deadline for the rest of the run. Log and
+            # keep looping; a stop flag already set re-asserts ``pause()`` on
+            # the next poll, which is the retry.
+            try:
+                if _incremental_ledger and _elapsed() - last_checkpoint >= _LEDGER_CHECKPOINT_S:
+                    last_checkpoint = _elapsed()
+                    _checkpoint_spend()
+                if _stopped():
+                    conversation.pause()
+                    continue
+                if spend_cap_usd is not None:
+                    live = _live_cost()
+                    if live is not None and live[3] >= float(spend_cap_usd):
+                        _gate_state["spend_cap_hit"] = True
+                        _gate_state["spend_cap_cost_usd"] = round(live[3], 4)
+                        conversation.pause()
+                        continue
+                el = _elapsed()
+                if not first_write_checked and el >= float(no_progress_abort_s or 0):
+                    first_write_checked = True
+                    now_fp = _worktree_fingerprint(Path(repo_path))
+                    if now_fp is not None and now_fp == _start_fp.get("fp"):
+                        _gate_state["no_progress_abort"] = True
+                        conversation.pause()
+                        continue
+                if gate_check is not None and el >= float(effective_wall_clock_timeout_s):
+                    _gate_state["soft_deadline_hit"] = True
+                    conversation.pause()
+            except Exception:  # noqa: BLE001 - keep watching; never break a run
+                _log.warning("sandbox watchdog iteration failed; retrying", exc_info=True)
+
+    def _gate_loop(conversation: Any) -> None:
+        """Grade, feed the verdict back, repeat — inside ONE conversation."""
+        assert gate_check is not None
+        prev_fp: str | None = None
+        rounds = max(1, int(max_gate_rounds))
+        for rnd in range(1, rounds + 1):
+            fp = _worktree_fingerprint(Path(repo_path))
+            try:
+                verdict = gate_check()
+            except Exception as exc:  # noqa: BLE001 - a crashed check is NOT green
+                verdict = GateVerdict(
+                    passed=False,
+                    reason=f"gate check crashed (treated as red): {exc!r}"[:500],
+                )
+            _gate_state["verdict"] = verdict
+            _gate_state["rounds"].append(
+                {
+                    "round": rnd,
+                    "passed": bool(verdict.passed),
+                    "reason": verdict.reason[:500],
+                    "checks": list(verdict.checks),
+                    "elapsed_s": _elapsed(),
+                }
+            )
+            _checkpoint_spend()
+            if verdict.passed:
+                _gate_state["stop"] = "green"
+                return
+            # Spend cap re-checked here too (the watchdog polls; a round can
+            # cross the cap between polls).
+            if spend_cap_usd is not None and not _stopped():
+                live = _live_cost()
+                if live is not None and live[3] >= float(spend_cap_usd):
+                    _gate_state["spend_cap_hit"] = True
+                    _gate_state["spend_cap_cost_usd"] = round(live[3], 4)
+            if _stopped():
+                _gate_state["stop"] = _stopped()
+                return
+            if rnd >= rounds:
+                _gate_state["stop"] = "rounds_exhausted"
+                return
+            if prev_fp is not None and fp is not None and fp == prev_fp:
+                _gate_state["stop"] = "no_progress_between_rounds"
+                return
+            if _elapsed() > _GATE_ROUND_TIME_RESERVE * effective_wall_clock_timeout_s:
+                _gate_state["stop"] = "no_time"
+                return
+            prev_fp = fp
+            if _stopped():
+                # The watchdog fired DURING this round's grading: the verdict
+                # above is the grade; do not start another round.
+                _gate_state["stop"] = _stopped()
+                return
+            conversation.send_message(_render_gate_feedback(verdict, rnd, rounds))
+            _run_turn(conversation)
+
+    def _run_turn(conversation: Any) -> None:
+        """``run()`` plus the prose-ending rescue, on the SAME conversation."""
+        if _stopped():
+            return  # never (re)start a run the watchdog has stopped
+        conversation.run()
+        if _stopped():
+            return
+        # A turn that ended on prose is not a finished attempt — see
+        # ``_ended_on_prose``. Continue the SAME conversation so the whole
+        # context (and the sandbox's working tree) survives; a fresh attempt
+        # would re-read the repo from scratch and consume a dev retry.
+        for _cont in range(_MAX_PROSE_CONTINUATIONS):
+            if not _ended_on_prose(conversation, persona):
+                break
+            if _stopped():
+                break
+            # RESERVE WALL CLOCK. The continuation borrows the SAME
+            # ``asyncio.wait_for`` budget as the original run, and
+            # ``max_iteration_per_run`` resets on every ``run()`` — so a nudge
+            # gets a fresh 600-iteration budget and no time of its own.
+            #
+            # Measured on the live sacrifice trajectories: the ONE run that
+            # would have been nudged (story 178) had already burned 1663 s of
+            # its 1800 s, and 9 of the last 60 live dev runs exceeded 1200 s.
+            # If the wall clock fires mid-continuation the TimeoutError path
+            # returns ``test_run_passed=False, files_changed=[]`` and the
+            # chain's test command NEVER RUNS — so a tree that may have been
+            # green is never graded, a dev retry is burned, the
+            # ``files_touched`` retry memory is lost, and the resulting
+            # timeout tail carries no test results, which means the stall
+            # guard cannot catch the repeat either. The rescue would have
+            # manufactured a worse failure than the one it fixed.
+            if _elapsed() > _PROSE_CONTINUATION_TIME_RESERVE * (
+                wall_clock_timeout_s or _SANDBOX_WALL_CLOCK_TIMEOUT_S
+            ):
+                _prose_continuations["skipped_no_time"] = 1
+                break
+            _prose_continuations["n"] = _prose_continuations.get("n", 0) + 1
+            conversation.send_message(_PROSE_CONTINUATION_NUDGE)
+            conversation.run()
 
     # Write a ``live_handlers`` heartbeat row so the TUI can see what's
     # mid-flight. The context manager removes the row on exit regardless
@@ -2429,7 +2921,10 @@ async def sandbox_run(
                 # exits. The TimeoutError is handled distinctly below.
             ) = await asyncio.wait_for(
                 loop.run_in_executor(None, _do_run),
-                timeout=effective_wall_clock_timeout_s,
+                # With a gate loop the wall clock is a SOFT deadline enforced by
+                # the watchdog (pause + grade); this is the hard backstop.
+                timeout=effective_wall_clock_timeout_s
+                + (_GATE_GRADING_GRACE_S if gate_check is not None else 0),
             )
     except TimeoutError:
         err = (
@@ -2457,6 +2952,7 @@ async def sandbox_run(
         # A stalled-before-any-call sandbox still reports zero here, so genuine
         # infra keeps its free retry.
         _snapshot_live_usage()
+        _merge_checkpointed_usage()
         _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
         _cost = float(_partial_usage.get("cost", 0.0) or 0.0)
         model_did_work = _t_out > 0 or _cost > 0.0
@@ -2502,6 +2998,8 @@ async def sandbox_run(
             self_summary=_extract_self_summary(_t_last_msg, _t_finish),
             premodel_infra=not model_did_work,
             usage_reliable=_usage_meta.get("reliable") if model_did_work else None,
+            gate_rounds=list(_gate_state.get("rounds") or []),
+            gate_stop_reason="hard_timeout" if gate_check is not None else "",
         )
     except Exception as exc:
         err = f"sandbox run raised: {exc!r}"
@@ -2520,6 +3018,7 @@ async def sandbox_run(
         # with ``_partial_usage`` empty, because that holder is only written
         # once ``run()`` returns. Recover from the live conversation first.
         _snapshot_live_usage()
+        _merge_checkpointed_usage()
         _x_last_msg, _x_calls, _x_finish = _snapshot_live_memory()
         _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
         _cost = float(_partial_usage.get("cost", 0.0) or 0.0)
@@ -2564,6 +3063,8 @@ async def sandbox_run(
             self_summary=_extract_self_summary(_x_last_msg, _x_finish),
             premodel_infra=not model_did_work,
             usage_reliable=_usage_meta.get("reliable") if model_did_work else None,
+            gate_rounds=list(_gate_state.get("rounds") or []),
+            gate_stop_reason="crashed" if gate_check is not None else "",
         )
 
     # Response-side observability: copy the full OpenHands trajectory out to
@@ -2583,7 +3084,18 @@ async def sandbox_run(
     )
 
     files_changed = _scan_repo_for_changed_files(Path(repo_path))
-    test_passed, test_out = _run_pytest(Path(repo_path), test_command=test_command)
+    _final_verdict = _gate_state.get("verdict")
+    run_error: str | None
+    if gate_check is not None and isinstance(_final_verdict, GateVerdict):
+        # The gate loop ended on a check of the tree as it stands — that check
+        # IS the grade. Its reason (not a generic literal) becomes the error, so
+        # the next attempt's prompt says WHY it was red.
+        test_passed = bool(_final_verdict.passed)
+        test_out = _final_verdict.output or _final_verdict.reason
+        run_error = None if test_passed else (_final_verdict.reason or "gate not green after run")
+    else:
+        test_passed, test_out = _run_pytest(Path(repo_path), test_command=test_command)
+        run_error = None if test_passed else "tests not green after run"
     self_summary = _extract_self_summary(last_assistant_message, finish_message)
 
     _record(
@@ -2596,7 +3108,7 @@ async def sandbox_run(
         success=test_passed,
         story_path=str(story_path),
         repo_path=str(repo_path),
-        error=None if test_passed else "tests not green after run",
+        error=run_error,
         db_path=db_path,
         duration_s=_elapsed(),
         story_id=story_id,
@@ -2615,13 +3127,16 @@ async def sandbox_run(
         tokens_in=tokens_in,
         tokens_out=tokens_out,
         cost_usd=cost_usd,
-        error=None if test_passed else "tests not green after run",
+        error=run_error,
         summary=test_out[-2000:],
         last_assistant_message=last_assistant_message,
         recent_tool_calls=recent_tool_calls,
         self_summary=self_summary,
         usage_reliable=_usage_meta.get("reliable", True),
         prose_continuations=int(_prose_continuations.get("n", 0)),
+        gate_rounds=list(_gate_state.get("rounds") or []),
+        gate_stop_reason=str(_gate_state.get("stop") or ""),
+        spend_cap_hit_usd=_gate_state.get("spend_cap_cost_usd"),
     )
 
 
