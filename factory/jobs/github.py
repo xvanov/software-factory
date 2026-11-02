@@ -146,15 +146,13 @@ class GitHubView:
             ["pr", "view", str(number), "--repo", self.repo, "--json", "statusCheckRollup"]
         )
         result: dict[str, Any] | None = None
-        if proc is None or proc.returncode != 0:
-            if proc is not None:
-                self._note(f"gh pr checks #{number} failed: {(proc.stderr or '').strip()[:200]}")
-        else:
+        # A failed CI read leaves ``ci`` unknown (``None``); it is NOT recorded
+        # as "GitHub unavailable" — the PR facts themselves were read fine.
+        if proc is not None and proc.returncode == 0:
             try:
                 rows = (json.loads(proc.stdout or "{}") or {}).get("statusCheckRollup") or []
             except (json.JSONDecodeError, AttributeError):
                 rows = None
-                self._note(f"gh pr view #{number} returned non-JSON checks")
             if isinstance(rows, list):
                 result = summarize_checks(rows)
         self._ci[number] = result
