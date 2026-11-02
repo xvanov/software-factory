@@ -10,17 +10,33 @@
 #   defaults.fallback: <model_id>             # used when persona missing from active routes
 #   defaults.azure_fallback: <model_id>       # used when persona missing under azure_routes
 #
-# API-key resolution is per-model-id prefix (factory/runner.py::_provider_env_key):
-#   azure/…       → AZURE_API_KEY        (Azure OpenAI, base_url from AZURE_ENDPOINT)
-#   deepseek/…    → DEEPSEEK_API_KEY     (DeepSeek direct)
-#   openrouter/…  → OPENROUTER_API_KEY   (supported by the plumbing; no routes today —
-#                                         operator decision 2026-07-16: Azure-only)
-# The router degrades any route whose provider key is missing to the block
-# fallback (warn-once) — see model_router.route().
+# API-key resolution is per-model-id prefix (factory/model_router.py::provider_env_key;
+# optional base URL from factory/model_router.py::provider_base_url):
+#   azure/…         → AZURE_API_KEY          (Azure OpenAI, base_url from AZURE_ENDPOINT)
+#   azure_ai/…      → AZURE_AI_API_KEY       (Azure AI Foundry)
+#   deepseek/…      → DEEPSEEK_API_KEY       (DeepSeek direct)
+#   anthropic/…     → ANTHROPIC_API_KEY      (optional ANTHROPIC_API_BASE)
+#   openrouter/…    → OPENROUTER_API_KEY     (optional OPENROUTER_API_BASE)
+#   openai/…        → OPENAI_API_KEY         (optional OPENAI_API_BASE)
+#   openai_compat/… → OPENAI_COMPAT_API_KEY  + OPENAI_COMPAT_API_BASE (REQUIRED) —
+#                     any OpenAI-compatible endpoint; sent to LiteLLM as openai/…
+# The same key/base URL reaches the dev's OpenHands sandbox (it runs in-process).
+# The router degrades any route — or per-app/per-job override — whose provider
+# key is missing to the block fallback (warn-once) — see model_router.route().
 #
-# Anthropic/Claude models are deliberately ABSENT: hard operator constraint
-# (2026-07-15) — the factory must be independent of Anthropic models/limits;
-# Claude Code is used only as an external benchmark baseline.
+# Anthropic/Claude models: the 2026-07-15 rule "deliberately ABSENT" was
+# REVERSED by operator decision 2026-11-02 — models/providers must be
+# swappable for ANY persona, Anthropic included. The DEFAULT routes below are
+# unchanged (Azure/DeepSeek); the reversal makes other providers POSSIBLE via
+# this file, `apps/<app>/config.yaml::models`, or a job's `models:` frontmatter
+# (`factory job submit --model persona=id`).
+#
+# Override precedence, per persona key (`persona` or `persona.<difficulty>`):
+#   job (direction frontmatter `models`) > app (`config.yaml::models`) > this file.
+# Resolved and stamped on the story at spawn (factory/job_routing.py). Reviewer
+# independence (reviewer ≠ any dev tier) is checked on the EFFECTIVE map; a
+# colliding override is REFUSED at submit/spawn, never auto-fixed, and the
+# FACTORY_ALLOW_REVIEW_COLLISION hatch (model_router) does not apply to overrides.
 #
 # Provider selection precedence at runtime:
 #   1. FACTORY_PROVIDER env var ("azure" or "direct") overrides everything.

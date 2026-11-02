@@ -256,6 +256,13 @@ class StoryRecord(SQLModel, table=True):
     # docs_enforcer for documentation-only deliverables. The orchestrator
     # reads this when dispatching out of STORY_CREATED.
     chain_kind: str = Field(default="tdd", index=True)
+    # Per-job routing, stamped ONCE at spawn (factory/job_routing.py) and never
+    # re-read from the direction/app config: ``pipeline`` is ``chain`` or
+    # ``solo``; ``model_overrides_json`` is the merged job>app persona->model
+    # map (NULL = routes.yaml only). Handlers resolve models via
+    # ``job_routing.route_for_story``.
+    pipeline: str = Field(default="chain")
+    model_overrides_json: str | None = None
     github_issue_number: int | None = None
     github_branch: str | None = None
     github_pr_number: int | None = None

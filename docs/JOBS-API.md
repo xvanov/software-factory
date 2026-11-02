@@ -34,6 +34,49 @@ default applies only when a job omits it.
 `chain` (PM→SM→dev→reviewer→gates), `solo` (single dev agent + gates, B.1 solo mode), `auto`
 (factory decides; v1: = app default, else `chain`).
 
+Sharpened 2026-11-02 (`factory/job_routing.py`):
+- Written to the direction frontmatter as `pipeline:`; absent = `auto`. `auto` resolves to the
+  app's `pipeline_default` (`apps/<app>/config.yaml`; `chain | solo | auto`, default `chain`;
+  an app default of `auto` also means `chain`). Change it with `factory app set <app>
+  --pipeline-default`.
+- Resolved ONCE at story spawn and stamped on the story (`StoryRecord.pipeline`); editing the
+  direction or app config afterwards does not change an in-flight story.
+- **`solo` is refused today** with `{"error": "pipeline_unavailable"}` — at submit and again at
+  spawn. B.1 solo exists only as a bench arm; the production chain cannot yet skip the
+  reviewer, so accepting `solo` would silently run `chain`. An `auto` job on an app whose
+  `pipeline_default` is `solo` is refused the same way (never downgraded to chain). Once the
+  engine lands, `solo` additionally requires the app to have `gates.acceptance_oracle: true`
+  AND a `gates.acceptance_boot` recipe (B.1: with no reviewer, the oracle is the only signal
+  the dev cannot influence); otherwise `pipeline_unavailable`.
+
+## Model overrides
+
+`--model <persona>=<model_id>` (repeatable) is written to the direction frontmatter as
+`models: {persona: model_id}`.
+- Keys: a persona name (`dev`, `reviewer`, `sm`, `pm`, `acceptance_author`, …) or
+  `<persona>.<difficulty>` (`dev.hard`); the tiered key wins over the bare one.
+- Values: `<provider>/<model>` LiteLLM ids. Providers: `azure/`, `azure_ai/`, `deepseek/`,
+  `anthropic/` (ANTHROPIC_API_KEY), `openrouter/` (OPENROUTER_API_KEY), `openai/`,
+  `openai_compat/` (generic OpenAI-compatible endpoint; OPENAI_COMPAT_API_KEY +
+  OPENAI_COMPAT_API_BASE, both required). Full table: `factory/routes.yaml` header.
+- **Precedence per key: job (`models:`) > app (`config.yaml::models`) > `factory/routes.yaml`.**
+- Resolved at spawn and stamped on the story (`StoryRecord.model_overrides_json`); every run
+  row records the model actually used, so cost/audit attribution follows the override.
+- A model whose provider key (or required base URL) is not set degrades to the routes.yaml
+  fallback with a warning, like a routes.yaml entry does — it is not an error.
+- **Reviewer independence**: the reviewer must not share a model with any dev tier, checked on
+  the MERGED map, and again on the models that will actually run here after missing-key
+  degradation — both an override degrading onto the dev model and a routes.yaml dev tier
+  degrading onto a job-named reviewer. A collision is refused with
+  `{"error": "review_independence"}` — never auto-fixed; `FACTORY_ALLOW_REVIEW_COLLISION`
+  does not apply to job/app overrides.
+- Other refusals: `bad_model_flag` (not `persona=id`, or a persona given twice),
+  `unknown_persona`, `bad_model_id` (no `<provider>/` prefix), `bad_pipeline`.
+- Submit should call `factory.job_routing.resolve_job_routing(app_cfg, job_models=…,
+  pipeline=…)` before writing the direction. A direction that reaches triage with a bad
+  request anyway is set to `needs-direction` with `state.yaml::job_routing_error: {code,
+  message}` before any PM call is spent.
+
 ## Commands
 
 ### `factory job submit --json`

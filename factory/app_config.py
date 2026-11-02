@@ -296,10 +296,17 @@ class AppConfig(BaseModel):
     app_repo_path: str = ""
     deploy: DeployConfig = Field(default_factory=DeployConfig)
     gates: AppGatesConfig = Field(default_factory=AppGatesConfig)
-    models: dict[str, str] = Field(default_factory=dict)  # persona overrides
+    # Persona -> model overrides for every story of this app (keys ``persona`` or
+    # ``persona.<difficulty>``). Precedence: job (direction frontmatter
+    # ``models``) > this > routes.yaml. Resolved and validated (incl. reviewer
+    # independence) at story spawn and stamped on the story — see
+    # ``factory/job_routing.py``. Was parsed-but-ignored until 2026-11-02.
+    models: dict[str, str] = Field(default_factory=dict)
     # The pipeline a job runs when it does not name one (or names ``auto``).
-    # ``auto`` here resolves to ``chain``. Set by ``factory app set
-    # --pipeline-default``; see docs/JOBS-API.md.
+    # ``auto`` here resolves to ``chain``. Stamped on the story at spawn.
+    # ``solo`` is refused at submit/spawn until the production solo engine
+    # exists — see ``job_routing.SOLO_PIPELINE_IMPLEMENTED``. Set by
+    # ``factory app set --pipeline-default``; see docs/JOBS-API.md.
     pipeline_default: PipelineName = "chain"
     # The delivery level a job gets when it does not request one. There is no
     # per-app ceiling: a job's requested level wins. Absent = today's

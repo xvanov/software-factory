@@ -176,6 +176,21 @@ treats the directory's `*.md` glob as the registry.
 
 - `factory/routes.yaml` — model routing, per-model output-token caps,
   sandbox LLM-constructor overrides. `factory/model_router.py` reads it.
+- `factory/job_routing.py` — per-app (`config.yaml::models`) and per-job
+  (direction frontmatter `models:` / `pipeline:`) overrides, 2026-11-02.
+  Precedence per persona key: job > app > routes.yaml. Resolved once in
+  `handle_stories_spawned` (pre-checked in `pm_sync` before the PM call) and
+  stamped on `StoryRecord.model_overrides_json` / `.pipeline`; handlers read
+  only the stamp (`handlers._route_for`). Reviewer independence is re-checked
+  on the merged map and a collision is refused (`review_independence`), never
+  repaired. `pipeline: auto` (or absent) takes `AppConfig.pipeline_default`
+  (`Literal["chain","solo","auto"]`, default `chain`; `auto` there = `chain`). `pipeline: solo` is refused (`pipeline_unavailable`) until a
+  production solo engine exists (`SOLO_PIPELINE_IMPLEMENTED`).
+- Providers: any persona may use `anthropic/…`, `openrouter/…`, `openai/…`, or
+  `openai_compat/…` (generic OpenAI-compatible endpoint; base URL mandatory)
+  in addition to Azure/DeepSeek — the 2026-07-15 "no Anthropic" rule was
+  reversed 2026-11-02. Default routes are unchanged. Key/base-URL table: the
+  `routes.yaml` header.
 - `factory/personas/loader.py` — frontmatter/body parsing + persona
   registry; `factory/personas/validator.py` — output-schema validation.
 - `factory/personas/{pm,analyst,architect,sm,ux_designer}.md` — direction
@@ -267,7 +282,16 @@ treats the directory's `*.md` glob as the registry.
 - **Provider-key degradation.** `model_router.route()` silently degrades any
   route whose provider API key is missing to the active block's fallback
   (warned once per persona+model) — a misconfigured `.env` changes which
-  model runs a persona without failing loudly.
+  model runs a persona without failing loudly. Per-app/per-job overrides
+  degrade the same way (`route_with_overrides`); `job_routing` returns a
+  warning at submit/spawn, and the story runs on the fallback. Independence
+  is checked on both the configured map and the models that will actually run
+  (`check_runtime_independence`: every reviewer/dev tier resolved through
+  `route_with_overrides`, so a routes.yaml dev tier degrading onto a job-named
+  reviewer is caught too) at submit/spawn
+  (today's `azure_fallback` IS the dev model, so an unprovisioned reviewer
+  override would otherwise review with the dev's model). A key removed from
+  `.env` AFTER spawn is not re-checked at dispatch.
 - **Unsafe deploy-plan acceptance.** The refusal in `release_manager` (missing
   safety command / destructive shell substring) is prompt-enforced
   (`deploy_plan: []` + `rationale`); no second code-side check is described

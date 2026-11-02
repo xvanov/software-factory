@@ -205,6 +205,10 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     # historical pipeline; new docs-scope stories opt in via PM's child_story
     # output (``chain_kind: "docs"``).
     "chain_kind": "TEXT NOT NULL DEFAULT 'tdd'",
+    # Per-job routing stamped at spawn (factory/job_routing.py). Pre-existing
+    # stories gain ``chain`` / NULL = exactly today's routing.
+    "pipeline": "TEXT NOT NULL DEFAULT 'chain'",
+    "model_overrides_json": "TEXT",
     # JSONL of prior dev sandbox attempts (one entry per chain-level retry):
     # ``[{attempt, ts, test_output_tail, files_touched, summary}, ...]``.
     # Fed forward into the next dev invocation's initial message so the LLM
@@ -362,6 +366,20 @@ A4_MAX_ITERATIONS_PER_DIRECTION = 400
 _SLUG_RE = re.compile(r"[^A-Za-z0-9]+")
 
 
+def _route_for(story: Any, persona: str, difficulty: str = "standard") -> str:
+    """Model for ``persona`` on ``story``: its spawn-stamped job/app override if
+    any (``factory/job_routing.py``), else routes.yaml via ``route``."""
+    from factory.job_routing import override_for_story
+
+    chosen = override_for_story(story, persona, difficulty)
+    if chosen:
+        return chosen
+    # Keep the exact pre-override call shapes (tests monkeypatch ``route``).
+    if difficulty == "standard":
+        return route(persona)
+    return route(persona, difficulty=difficulty)
+
+
 def _slug_of(text: str) -> str:
     s = _SLUG_RE.sub("-", text.strip().lower()).strip("-")
     return (s[:60] or "story").strip("-") or "story"
@@ -441,6 +459,38 @@ def handle_stories_spawned(
     db = db_path or (software_factory_root / "state" / "factory.db")
     out: list[StoryRecord] = []
 
+    # Per-job routing (operator decision 2026-11-02): resolve the direction's
+    # ``models``/``pipeline`` frontmatter against the app config ONCE, here, and
+    # stamp it on every story. Raises ``JobRoutingError`` (an unknown persona,
+    # a reviewer/dev model collision, an unavailable solo pipeline) BEFORE any
+    # issue or story is created — refused loudly, never silently repaired.
+    from factory.job_routing import resolve_for_direction
+
+    routing = resolve_for_direction(direction, app_config)
+    if routing.model_overrides or routing.pipeline != "chain":
+        for warning in routing.warnings:
+            _logger.warning("direction %s: %s", direction.id_slug, warning)
+        if not dry_run:
+            try:
+                from factory.manager.signals import write_event
+
+                write_event(
+                    "chain_steps",
+                    {
+                        "event": "job_routing_stamped",
+                        "app": direction.app,
+                        "direction_id": direction.id or direction.slug,
+                        "pipeline": routing.pipeline,
+                        "pipeline_requested": routing.pipeline_requested,
+                        "model_overrides": routing.model_overrides,
+                        "model_sources": routing.model_sources,
+                        "warnings": list(routing.warnings),
+                    },
+                    software_factory_root=software_factory_root,
+                )
+            except Exception:  # noqa: BLE001 - telemetry only, never fail spawn
+                pass
+
     # Phase 7: dual-draft branch — spawn two interpretation stories,
     # regardless of how many child_stories the PM emitted.
     if should_spawn_dual_draft(direction, pm_result):
@@ -448,6 +498,7 @@ def handle_stories_spawned(
             direction,
             pm_result,
             dry_run=dry_run,
+            model_overrides=routing.model_overrides,
         )
         # Pick scope from the first child_story if present; otherwise
         # default to ``backend`` (most common case for ambiguous asks).
@@ -511,6 +562,8 @@ def handle_stories_spawned(
                 scope=scope,
                 state=StoryState.STORY_CREATED.value,
                 chain_kind=chain_kind,
+                pipeline=routing.pipeline,
+                model_overrides_json=routing.overrides_json(),
                 github_issue_number=issue_number,
                 github_branch=f"story/{issue_number or 0}-{slug}",
                 story_file_path=story_file_path,
@@ -761,6 +814,8 @@ def handle_stories_spawned(
             scope=scope,
             state=StoryState.STORY_CREATED.value,
             chain_kind=chain_kind,
+            pipeline=routing.pipeline,
+            model_overrides_json=routing.overrides_json(),
             github_issue_number=issue_number,
             github_branch=f"story/{issue_number or 0}-{slug}",
             story_file_path=story_file_path,
@@ -1134,7 +1189,7 @@ def handle_sm(
             f"- target_path: {story.story_file_path}\n\n"
             "Return the JSON object. No prose outside the JSON."
         )
-        model_id = route(persona)
+        model_id = _route_for(story, persona)
         result_any = text_run(
             persona=persona,
             prompt=full_prompt,
@@ -2365,7 +2420,7 @@ def _handle_dev_once(
             else None
         )
 
-        llm = LLMConfig(model=route("dev", difficulty=difficulty))
+        llm = LLMConfig(model=_route_for(story, "dev", difficulty))
         import asyncio
 
         # Carry prior attempts forward — the LLM gets to see what was tried
@@ -4129,7 +4184,7 @@ def handle_review(
                 "Return the JSON object for the review. No prose outside the JSON."
             )
             _assert_no_broken_prompt_markers(full_prompt, where="handle_review")
-            model_id = route(persona)
+            model_id = _route_for(story, persona)
             result_any = text_run(
                 persona=persona,
                 prompt=full_prompt,
@@ -4485,7 +4540,7 @@ def handle_tech_writer(
             "Return the JSON object. No prose outside the JSON."
         )
         _assert_no_broken_prompt_markers(full_prompt, where="handle_tech_writer")
-        model_id = route(persona)
+        model_id = _route_for(story, persona)
         parse_error: str | None = None
         parsed: dict[str, Any] | None = None
         for attempt in range(1, _MAX_TECH_WRITER_PARSE_RETRIES + 1):
@@ -4686,7 +4741,7 @@ def handle_docs_sm(
         result_any = text_run(
             persona="sm",
             prompt=prompt,
-            model_id=route("sm"),
+            model_id=_route_for(story, "sm"),
             schema=schema,
             max_tokens=2048,
             db_path=db,
@@ -4777,7 +4832,7 @@ def handle_docs_onboarder(
     persist_story(story, db)
 
     story_file_path_obj = software_factory_root / "apps" / story.app / story.story_file_path
-    llm = LLMConfig(model=route("onboarder"))
+    llm = LLMConfig(model=_route_for(story, "onboarder"))
     import asyncio
 
     run_res = asyncio.run(
