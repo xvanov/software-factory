@@ -291,6 +291,38 @@ def test_moving_both_sides_apart_is_accepted() -> None:
     assert any("reviewer=anthropic/claude-opus-4-5" in w for w in routing.warnings)
 
 
+def test_routes_dev_tier_degrading_onto_a_job_reviewer_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The other direction: the job leaves dev alone, but routes.yaml's dev has
+    no key here and degrades to the fallback — which is the job's reviewer."""
+    routes = tmp_path / "routes.yaml"
+    routes.write_text(
+        "default_provider: direct\n"
+        "routes:\n  reviewer: azure/Kimi-K2.7-Code\n"
+        "  dev:\n    standard: deepseek/deepseek-coder\n    hard: deepseek/deepseek-coder\n"
+        "defaults:\n  fallback: azure/gpt-5.4\n"
+    )
+    monkeypatch.setenv("FACTORY_PROVIDER", "direct")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(mr, "_load_routes", lambda path=None: mr.yaml.safe_load(routes.read_text()))
+    with pytest.raises(jr.JobRoutingError) as ei:
+        jr.resolve_job_routing(_cfg(), job_models={"reviewer": "azure/gpt-5.4"})
+    assert ei.value.code == "review_independence"
+    assert "degradation" in ei.value.message
+    # With the dev provider provisioned nothing degrades, and it is accepted.
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "dk")
+    ok = jr.resolve_job_routing(_cfg(), job_models={"reviewer": "azure/gpt-5.4"})
+    assert ok.model_overrides == {"reviewer": "azure/gpt-5.4"}
+
+
+def test_non_review_overrides_skip_the_runtime_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[bool] = []
+    monkeypatch.setattr(jr, "route_with_overrides", lambda *a, **k: called.append(True) or "x/y")
+    jr.check_runtime_independence({"pm": "anthropic/claude-x"})
+    assert called == []
+
+
 def test_collision_escape_hatch_does_not_apply_to_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -309,6 +341,35 @@ def test_pipeline_auto_and_absent_resolve_to_chain() -> None:
         r = jr.resolve_job_routing(_cfg(), pipeline=req)
         assert r.pipeline == "chain"
     assert jr.resolve_job_routing(_cfg()).pipeline_requested == "auto"
+
+
+def test_auto_app_default_resolves_to_chain() -> None:
+    r = jr.resolve_job_routing(_cfg(pipeline_default="auto"), pipeline="auto")
+    assert (r.pipeline, r.pipeline_requested) == ("chain", "auto")
+    assert jr.resolve_job_routing(_cfg(pipeline_default="auto")).pipeline == "chain"
+
+
+def test_pipeline_vocabulary_is_shared_with_app_config() -> None:
+    from factory.app_config import PIPELINE_NAMES
+
+    assert jr.PIPELINES == PIPELINE_NAMES == ("chain", "solo", "auto")
+
+
+def test_reads_the_frontmatter_keys_job_submit_writes() -> None:
+    """``factory job submit`` writes ``pipeline:``, ``models:``, ``delivery:``."""
+
+    class _Dir:
+        id_slug = "001-x"
+        raw_frontmatter = {
+            "pipeline": "chain",
+            "delivery": "pr",
+            "models": {"pm": "anthropic/claude-sonnet-4-5"},
+        }
+
+    r = jr.resolve_for_direction(_Dir(), _cfg())
+    assert r.pipeline == "chain"
+    assert r.model_overrides == {"pm": "anthropic/claude-sonnet-4-5"}
+    assert r.model_sources == {"pm": "job"}
 
 
 def test_bad_pipeline_is_refused() -> None:

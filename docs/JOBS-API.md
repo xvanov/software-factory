@@ -36,7 +36,9 @@ default applies only when a job omits it.
 
 Sharpened 2026-11-02 (`factory/job_routing.py`):
 - Written to the direction frontmatter as `pipeline:`; absent = `auto`. `auto` resolves to the
-  app's `pipeline_default` (`apps/<app>/config.yaml`, `chain` when unset).
+  app's `pipeline_default` (`apps/<app>/config.yaml`; `chain | solo | auto`, default `chain`;
+  an app default of `auto` also means `chain`). Change it with `factory app set <app>
+  --pipeline-default`.
 - Resolved ONCE at story spawn and stamped on the story (`StoryRecord.pipeline`); editing the
   direction or app config afterwards does not change an in-flight story.
 - **`solo` is refused today** with `{"error": "pipeline_unavailable"}` — at submit and again at
@@ -63,7 +65,9 @@ Sharpened 2026-11-02 (`factory/job_routing.py`):
 - A model whose provider key (or required base URL) is not set degrades to the routes.yaml
   fallback with a warning, like a routes.yaml entry does — it is not an error.
 - **Reviewer independence**: the reviewer must not share a model with any dev tier, checked on
-  the MERGED map (and again after missing-key degradation). A collision is refused with
+  the MERGED map, and again on the models that will actually run here after missing-key
+  degradation — both an override degrading onto the dev model and a routes.yaml dev tier
+  degrading onto a job-named reviewer. A collision is refused with
   `{"error": "review_independence"}` — never auto-fixed; `FACTORY_ALLOW_REVIEW_COLLISION`
   does not apply to job/app overrides.
 - Other refusals: `bad_model_flag` (not `persona=id`, or a persona given twice),

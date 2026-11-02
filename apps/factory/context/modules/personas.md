@@ -183,7 +183,8 @@ treats the directory's `*.md` glob as the registry.
   stamped on `StoryRecord.model_overrides_json` / `.pipeline`; handlers read
   only the stamp (`handlers._route_for`). Reviewer independence is re-checked
   on the merged map and a collision is refused (`review_independence`), never
-  repaired. `pipeline: solo` is refused (`pipeline_unavailable`) until a
+  repaired. `pipeline: auto` (or absent) takes `AppConfig.pipeline_default`
+  (`Literal["chain","solo","auto"]`, default `chain`; `auto` there = `chain`). `pipeline: solo` is refused (`pipeline_unavailable`) until a
   production solo engine exists (`SOLO_PIPELINE_IMPLEMENTED`).
 - Providers: any persona may use `anthropic/…`, `openrouter/…`, `openai/…`, or
   `openai_compat/…` (generic OpenAI-compatible endpoint; base URL mandatory)
@@ -284,7 +285,10 @@ treats the directory's `*.md` glob as the registry.
   model runs a persona without failing loudly. Per-app/per-job overrides
   degrade the same way (`route_with_overrides`); `job_routing` returns a
   warning at submit/spawn, and the story runs on the fallback. Independence
-  is checked on both the configured and the degraded map at submit/spawn
+  is checked on both the configured map and the models that will actually run
+  (`check_runtime_independence`: every reviewer/dev tier resolved through
+  `route_with_overrides`, so a routes.yaml dev tier degrading onto a job-named
+  reviewer is caught too) at submit/spawn
   (today's `azure_fallback` IS the dev model, so an unprovisioned reviewer
   override would otherwise review with the dev's model). A key removed from
   `.env` AFTER spawn is not re-checked at dispatch.

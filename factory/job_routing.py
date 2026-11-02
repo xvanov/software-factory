@@ -12,7 +12,12 @@ on top of its app's config and ``factory/routes.yaml``:
   names falls through to ``routes.yaml`` via ``model_router.route``.
 
 * **Pipeline** — frontmatter ``pipeline: chain|solo|auto``. ``auto`` (or
-  absent) = the app's ``pipeline_default``, else ``chain``.
+  absent) = the app's ``AppConfig.pipeline_default``; a ``pipeline_default``
+  of ``auto`` (or none) means ``chain``.
+
+The frontmatter keys are exactly the ones ``factory job submit`` writes:
+``pipeline:`` and ``models:``. (``delivery:`` is the third; it is resolved by
+``factory/delivery.py``, not here.)
 
 Both are resolved ONCE, at story spawn (``handle_stories_spawned``), and stamped
 on the ``StoryRecord`` (``model_overrides_json``, ``pipeline``) — the same
@@ -35,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from factory.app_config import PIPELINE_NAMES
 from factory.model_router import (
     _dev_tier_models,
     configured_route_map,
@@ -45,7 +51,8 @@ from factory.model_router import (
 if TYPE_CHECKING:
     from factory.app_config import AppConfig
 
-PIPELINES = ("chain", "solo", "auto")
+#: The one pipeline vocabulary (``AppConfig.pipeline_default`` uses the same).
+PIPELINES: tuple[str, ...] = PIPELINE_NAMES
 _DIFFICULTIES = ("standard", "hard")
 _PERSONAS_DIR = Path(__file__).parent / "personas"
 # ``<provider>/<model>`` — a bare id would make provider-key resolution (and
@@ -224,6 +231,46 @@ def check_override_independence(
         )
 
 
+def check_runtime_independence(
+    overrides: dict[str, str],
+    sources: dict[str, str] | None = None,
+    *,
+    routes_path: Path | None = None,
+) -> None:
+    """The same rule on the models that will ACTUALLY run in this environment.
+
+    Every reviewer and dev-tier model is resolved the way a handler resolves it
+    (``route_with_overrides``: override, else routes.yaml, each through the
+    missing-key degradation). This catches BOTH directions of a degraded
+    collision: an override whose key is absent falling back onto the dev model,
+    and a routes.yaml dev tier whose key is absent falling back onto a
+    reviewer the job named. Only runs when the overrides touch reviewer or dev:
+    a job that leaves both alone runs exactly what the router-load check
+    already accepted for every other story.
+    """
+    if not any(k.split(".")[0] in ("reviewer", "dev") for k in overrides):
+        return
+    section = configured_route_map(routes_path=routes_path)
+    reviewer = route_with_overrides("reviewer", "standard", overrides, routes_path=routes_path)
+    tiers = sorted(set(_dev_tier_models(section)) | set(_DIFFICULTIES))
+    dev = {t: route_with_overrides("dev", t, overrides, routes_path=routes_path) for t in tiers}
+    collisions = sorted(t for t, m in dev.items() if m == reviewer)
+    if collisions:
+        srcs = sources or {}
+        blamed = sorted(
+            f"{k} ({srcs.get(k, 'override')})"
+            for k in overrides
+            if k.split(".")[0] in ("reviewer", "dev")
+        )
+        raise JobRoutingError(
+            "review_independence",
+            "after missing-key degradation to the routes.yaml fallback: reviewer and "
+            f"{', '.join(f'dev.{t}' for t in collisions)} would both run {reviewer!r} "
+            f"[{', '.join(blamed)}]. Set the missing provider key/base URL, or name a "
+            "reviewer/dev model whose provider is configured here.",
+        )
+
+
 # --------------------------------------------------------------------------- #
 # Pipeline
 # --------------------------------------------------------------------------- #
@@ -267,6 +314,9 @@ def resolve_pipeline(requested: str | None, app_config: AppConfig) -> tuple[str,
         )
     if req == "auto":
         effective = getattr(app_config, "pipeline_default", None) or "chain"
+        if effective == "auto":
+            # v1: "the factory decides" at the app level = chain.
+            effective = "chain"
         # An ``auto`` job inherits the app default; if that default is solo but
         # solo is unavailable, refuse rather than quietly fall back to chain —
         # the app config claims a mode the factory cannot deliver.
@@ -307,18 +357,8 @@ def resolve_job_routing(
     # whose provider is not provisioned degrades to the routes.yaml fallback,
     # and today's azure_fallback IS the dev model — so ``reviewer=anthropic/…``
     # with no ANTHROPIC_API_KEY would otherwise review with the dev's model.
-    degraded = {
-        k: route_with_overrides(k.split(".")[0], k.partition(".")[2] or "standard", {k: v})
-        for k, v in merged.items()
-    }
-    if degraded != merged:
-        try:
-            check_override_independence(degraded, sources, routes_path=routes_path)
-        except JobRoutingError as exc:
-            raise JobRoutingError(
-                exc.code,
-                "after missing-key degradation to the routes.yaml fallback: " + exc.message,
-            ) from exc
+    # (Also covers a routes.yaml dev tier degrading onto a job-named reviewer.)
+    check_runtime_independence(merged, sources, routes_path=routes_path)
     effective, requested = resolve_pipeline(pipeline, app_config)
     warnings = tuple(
         f"{k}={v}: provider not configured in this environment — will degrade to the "
