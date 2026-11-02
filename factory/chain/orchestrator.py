@@ -592,6 +592,23 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
     from factory.chain.dual_draft import _draft_alt_suffix
 
     story_is_alt = _draft_alt_suffix(story.slug or "") is not None
+    # DELIVERY LEVELS (finding 10, 2026-11-02): a story whose own recorded level
+    # does not merge (none / branch / draft_pr / pr) can never wait for a
+    # sibling to DEPLOY — at those levels nothing deploys until a human acts, so
+    # every multi-story job below auto_merge deadlocked on its first story. A
+    # sibling that reached its DELIVERED_* end state has done all the factory
+    # will do; for such a dependent it is not a pending dependency. Stories are
+    # NOT stacked: the dependent builds from the default branch, not from the
+    # sibling's unmerged branch. An unknown / merging level keeps the strict
+    # rule (fail safe: wait).
+    dependent_never_merges = False
+    try:
+        from factory.delivery import parse_level
+
+        _lvl = parse_level(getattr(story, "delivery_level", None))
+        dependent_never_merges = _lvl is not None and not _lvl.merges
+    except ValueError:
+        dependent_never_merges = False
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
         siblings = session.exec(
@@ -609,6 +626,8 @@ def _direction_deps_pending(db: Path, story: StoryRecord) -> list[int]:
         # A superseded sibling's work belongs to another story now — it is not an
         # un-built foundation, so it is not a dependency (see the docstring).
         and s.state != StoryState.SUPERSEDED_BY_SIBLING.value
+        # A delivered sibling is done as far as a non-merging dependent goes.
+        and not (dependent_never_merges and s.state in DELIVERED_UNMERGED_STATES)
         # Exempt same-direction dual-draft siblings from each other's deps.
         and not (story_is_alt and _draft_alt_suffix(s.slug or "") is not None)
     )
@@ -1929,7 +1948,8 @@ def reconcile_from_github(
         # SAME exception for ``delivered_pr``: the factory left the PR open for a
         # human (delivery level draft_pr / pr). When that human merges it, merge
         # reality must flow into DEPLOY_PENDING exactly like an auto-merge. A
-        # CLOSED-unmerged delivered PR is a no-op below (not a mergeable state).
+        # CLOSED-unmerged delivered PR settles to CLOSED_BY_OPERATOR below: the
+        # human discarded the work (finding 11, 2026-11-02).
         if state_value == StoryState.DELIVERED_PR.value:
             return False
         return _terminal(state_value) or state_value == StoryState.DEPLOY_PENDING.value
@@ -2001,6 +2021,16 @@ def reconcile_from_github(
                 new_state = advance(story, EVENT_MERGED)
             except IllegalTransitionError:
                 new_state = StoryState.DEPLOY_PENDING
+        elif from_state == StoryState.DELIVERED_PR.value:
+            # CLOSED-unmerged DELIVERED PR (level draft_pr / pr): the factory
+            # finished and handed the PR to a human, who closed it without
+            # merging — a ruling, like closing the story issue. Settle it to the
+            # operator-closed terminal sink so it stops being polled every tick
+            # and its job/direction can finish. Direct assignment (no
+            # ``_TRANSITIONS`` edge — adding one would make DELIVERED_PR
+            # non-terminal for ``is_terminal``); declared in the conformance model.
+            event = "delivered_pr_closed_unmerged"
+            new_state = StoryState.CLOSED_BY_OPERATOR
         else:
             # CLOSED (not merged). Only sink to the attention state from a
             # MERGEABLE state (a story whose OPEN PR was closed). A CLOSED PR on
@@ -2024,6 +2054,12 @@ def reconcile_from_github(
                 continue
 
         story.state = new_state.value
+        if event == "delivered_pr_closed_unmerged":
+            story.error = None
+            story.last_rejection_reason = (
+                f"delivered PR #{pr_number} was closed on GitHub without merging; "
+                "settled to closed_by_operator"
+            )
         if event == EVENT_PR_UNMERGEABLE:
             story.error = (
                 f"reconcile: PR #{pr_number} is CLOSED on GitHub (not merged) "
@@ -2994,8 +3030,7 @@ def tick(
                             f"deferrals {story.dependency_defer_count}/"
                             f"{_MAX_DEPENDENCY_DEFERRALS}"
                             + (
-                                f", holding for the {_MIN_DEP_STALL_SECONDS // 60}m "
-                                "stall window"
+                                f", holding for the {_MIN_DEP_STALL_SECONDS // 60}m stall window"
                                 if _deps_stalled
                                 and story.dependency_defer_count >= _MAX_DEPENDENCY_DEFERRALS
                                 else ""

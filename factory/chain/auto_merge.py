@@ -1033,7 +1033,12 @@ def _sibling_already_shipped(
 
 
 def _gate_block_history(
-    *, story_id: int, head_sha: str, root: Path | None, slug: str | None
+    *,
+    story_id: int,
+    head_sha: str,
+    root: Path | None,
+    slug: str | None,
+    per_story: bool = False,
 ) -> tuple[int, dict[str, Any] | None]:
     """Prior REQUIRED-gate blocks already recorded for THIS exact head sha.
 
@@ -1060,6 +1065,14 @@ def _gate_block_history(
     evaluation #1, and re-parked the story before the fixed gate ever ran. The
     reset is derived from the event stream exactly like the count itself, so the
     two can never disagree and no counter column is introduced.
+
+    ``per_story=True`` (delivery level ``push_to_main``): the COUNT is keyed by
+    the story, not the head sha — every real-run block since the last resume
+    counts, whatever commit it evaluated. A ``push_to_main`` story has no PR;
+    its "head" is the worktree commit, which can move between ticks without a
+    human pushing a fix (adversarial review 2026-11-02, finding 3), so a
+    per-sha count reset every tick and the gate set re-ran forever. The skip
+    payload stays sha-scoped: a verdict is only reused for the commit it judged.
     """
     from factory.chain.event_log import read_story_events
 
@@ -1072,6 +1085,16 @@ def _gate_block_history(
     for i, e in enumerate(events):
         if e.get("event") == "story_resumed":
             resume_idx = i
+    if per_story:
+        story_matches = [
+            e
+            for e in events[resume_idx + 1 :]
+            if e.get("event") == "merge_gates_failed"
+            and e.get("missing_labels")
+            and not e.get("dry_run")
+        ]
+        same_head = [e for e in story_matches if e.get("head_sha") == head_sha]
+        return len(story_matches), (same_head[-1] if same_head else None)
     matches = [
         e
         for e in events[resume_idx + 1 :]
@@ -1113,17 +1136,29 @@ def _park_gate_block_exhausted(
     from factory.chain.event_log import log_story_event
     from factory.chain.handlers import persist_story
 
-    reason = (
-        f"gate_block_exhausted: required gate(s) {missing_labels!r} never passed "
-        f"after {block_count} consecutive evaluations of head {fixture.head_sha[:12]}"
-    )
+    if fixture.pr_number > 0:
+        reason = (
+            f"gate_block_exhausted: required gate(s) {missing_labels!r} never passed "
+            f"after {block_count} consecutive evaluations of head {fixture.head_sha[:12]}"
+        )
+        hint = (
+            f"fix the failing gate(s) for PR #{fixture.pr_number} and push a new commit "
+            "to resume (a new head sha resets this), or close the PR by hand."
+        )
+    else:
+        # push_to_main: no PR, cap keyed per story (a new commit does NOT reset it).
+        reason = (
+            f"gate_block_exhausted: push_to_main — required gate(s) {missing_labels!r} "
+            f"never passed after {block_count} evaluations of this story "
+            f"(last head {fixture.head_sha[:12]})"
+        )
+        hint = (
+            "nothing was pushed to the default branch. Fix the failing gate(s) and "
+            "`factory resume-story` it, or re-submit the job at a PR level."
+        )
     story.state = StoryState.BLOCKED_CI_UNRESOLVED.value
     story.last_rejection_reason = reason
-    story.error = (
-        f"auto-merge: {reason}. Parked so it stops being re-evaluated every tick — "
-        f"fix the failing gate(s) for PR #{fixture.pr_number} and push a new commit "
-        "to resume (a new head sha resets this), or close the PR by hand."
-    )
+    story.error = f"auto-merge: {reason}. Parked so it stops being re-evaluated every tick — {hint}"
     if db_path is not None:
         try:
             persist_story(story, db_path)
@@ -1266,9 +1301,9 @@ def _evaluate_one_pr(
     # shape), and there is no stable per-commit key to cap without a real PR.
     gate_block_tracked = (
         not dry_run
-        # push_to_main has no PR but a REAL head sha, so the per-commit cap
-        # works for it too — without it a gate-red story would re-run the
-        # whole gate set every tick forever.
+        # push_to_main has no PR; its cap is keyed per STORY (see
+        # ``_gate_block_history(per_story=True)``) — without it a gate-red
+        # story would re-run the whole gate set every tick forever.
         and (fixture.pr_number > 0 or push_to_main)
         and story is not None
         and story.id is not None
@@ -1282,6 +1317,8 @@ def _evaluate_one_pr(
             head_sha=fixture.head_sha,
             root=software_factory_root,
             slug=story.slug,
+            # push_to_main: cap per STORY (its worktree sha is not a stable key).
+            per_story=push_to_main,
         )
 
     if docs_chain:
@@ -1340,9 +1377,7 @@ def _evaluate_one_pr(
         # fresh passing evaluation satisfies. A gate whose whole purpose is
         # "fail closed on the real artifact" cannot be satisfied by a label
         # somebody (or some bot) put on the PR.
-        present_labels = (
-            set(fixture.labels) - _RESULT_ONLY_GATE_LABELS
-        ) | set(gates_passed)
+        present_labels = (set(fixture.labels) - _RESULT_ONLY_GATE_LABELS) | set(gates_passed)
         missing_labels = [
             label
             for label in required_gate_labels(app_config, story)
@@ -2286,6 +2321,21 @@ _HOLD_REASON_PREFIX = "ci_hold_main_red:"
 #: look like a fresh episode and re-emit the transition event each tick.
 _HOLD_EPISODE_EVENTS = frozenset({"ci_hold_main_red", "ci_hold_rerun"})
 
+#: One-shot bookkeeping events that may land in a held story's stream WITHOUT
+#: ending the episode. ``delivery_gate.story_level`` records a legacy row's
+#: level on first touch (``delivery_level_resolved``) at the top of every
+#: auto-merge pass — before the hold check — so "the last event" stopped being
+#: a sound episode boundary the moment delivery levels shipped (compose bug,
+#: caught by ``test_pending_inside_a_hold_episode_is_not_evaluated``). The
+#: episode readers skip these instead of treating them as the boundary.
+_HOLD_TRANSPARENT_EVENTS = frozenset({"delivery_level_resolved", "delivery_level_lowered"})
+
+
+def _hold_stream(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``events`` minus ``_HOLD_TRANSPARENT_EVENTS`` — the stream the hold-episode
+    boundary is defined over."""
+    return [e for e in events if e.get("event") not in _HOLD_TRANSPARENT_EVENTS]
+
 
 #: Absolute per-episode ceiling on (b)'s rerun attempts. One rerun per new
 #: main commit is the dedupe; this is the backstop against a long red-main
@@ -2331,7 +2381,9 @@ def _in_hold_episode(story: StoryRecord | None, root: Path) -> bool:
     if story is None or story.id is None:
         return False
     try:
-        events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+        events = _hold_stream(
+            read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+        )
     except Exception:  # noqa: BLE001 - unknowable stream = not provably in a hold
         return False
     return bool(events) and events[-1].get("event") in _HOLD_EPISODE_EVENTS
@@ -2381,10 +2433,15 @@ def _main_head_sha(*, app_config: AppConfig, base_branch: str) -> str | None:
     try:
         proc = subprocess.run(
             [
-                "gh", "api", f"repos/{app_config.repo}/branches/{base_branch}",
-                "--jq", ".commit.sha",
+                "gh",
+                "api",
+                f"repos/{app_config.repo}/branches/{base_branch}",
+                "--jq",
+                ".commit.sha",
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
@@ -2409,7 +2466,9 @@ def _rerun_failed_main_green(*, app_config: AppConfig, pr_number: int) -> tuple[
     try:
         proc = subprocess.run(
             ["gh", "pr", "checks", str(pr_number), "--repo", app_config.repo, "--required"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         return False, f"gh pr checks unavailable: {exc!r}"
@@ -2435,12 +2494,17 @@ def _rerun_failed_main_green(*, app_config: AppConfig, pr_number: int) -> tuple[
     try:
         rerun = subprocess.run(
             ["gh", "run", "rerun", run_id, "--failed", "--repo", app_config.repo],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         return False, f"gh run rerun unavailable: {exc!r}"
     if rerun.returncode != 0:
-        return False, f"gh run rerun {run_id} exited {rerun.returncode}: {(rerun.stderr or '')[:200]}"
+        return (
+            False,
+            f"gh run rerun {run_id} exited {rerun.returncode}: {(rerun.stderr or '')[:200]}",
+        )
     return True, f"re-ran failed jobs of run {run_id}"
 
 
@@ -2489,7 +2553,8 @@ def _handle_main_green_hold(
     real history. We emit only when the story's most recent event is not
     already a hold-episode event (``_HOLD_EPISODE_EVENTS``), so a hold episode
     costs exactly one transition event and a hold that clears and returns is
-    legible as two. Nothing else writes to a held story's stream, so "last
+    legible as two. Nothing else writes to a held story's stream except the
+    one-shot ``_HOLD_TRANSPARENT_EVENTS``, which the boundary skips, so "last
     event" is a sound episode boundary.
 
     The SAME transition test gates the ``merge_actions`` row (adversarial
@@ -2513,11 +2578,18 @@ def _handle_main_green_hold(
     if story is None or story.id is None:
         return False
     try:
-        events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+        events = _hold_stream(
+            read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
+        )
         if events and events[-1].get("event") in _HOLD_EPISODE_EVENTS:
             _continue_hold_episode(
-                story=story, pr_number=pr_number, root=root, events=events,
-                app_config=app_config, base_branch=base_branch, db_path=db_path,
+                story=story,
+                pr_number=pr_number,
+                root=root,
+                events=events,
+                app_config=app_config,
+                base_branch=base_branch,
+                db_path=db_path,
             )
             return False
         log_story_event(
@@ -3208,9 +3280,16 @@ def _settle_non_merging_story(
     """Bring a merge-capable story whose level does NOT merge to its level's end.
 
     Reached when (a) a ``push_to_main`` fast-forward was refused and the story
-    falls back to ``pr``, or (b) the app's ceiling was LOWERED below
-    ``auto_merge`` while the story sat in a mergeable state. Never merges,
-    never marks a draft ready. A story with no PR yet gets one opened (draft
+    falls back to ``pr``, or (b) a story whose RECORDED level does not merge
+    sits in a mergeable state (e.g. a factory self-edit's ``push_to_main``
+    lowered to ``pr``, or a row whose level was changed by an operator). Never
+    merges, never marks a draft ready, and DISARMS any GitHub auto-merge a
+    previous tick armed with ``gh pr merge --auto`` (finding 2, 2026-11-02:
+    that arm otherwise survives the settle and GitHub merges the PR anyway).
+    A disarm failure is recorded on the story (``error`` + a
+    ``auto_merge_disarm_failed`` event) — the story still settles, and if
+    GitHub merges it regardless, ``reconcile_from_github`` routes that merge
+    to deploy like any human merge. A story with no PR yet gets one opened (draft
     for ``draft_pr``); a failure is retried by the next tick, bounded by
     ``handlers._MAX_PR_CREATE_RETRIES`` and then parked at
     ``BLOCKED_DEPLOY_FAILED``. Returns a one-line description for the
@@ -3230,6 +3309,17 @@ def _settle_non_merging_story(
     )
 
     has_pr = story.github_pr_number is not None and story.github_pr_number > 0
+    disarm_err: str | None = None
+    if has_pr:
+        disarm_err = delivery_gate.disable_auto_merge(app_config, story.github_pr_number)
+        if disarm_err is not None:
+            log_story_event(
+                story.id,
+                "auto_merge_disarm_failed",
+                {"pr_number": story.github_pr_number, "error": disarm_err},
+                software_factory_root=root,
+                slug_hint=story.slug,
+            )
     if has_pr or level in (DeliveryLevel.DRAFT_PR, DeliveryLevel.PR):
         if not has_pr:
             opened = _open_pr_for_story(
@@ -3260,7 +3350,12 @@ def _settle_non_merging_story(
     else:
         event = EVENT_DELIVERED_LOCAL
     story.state = advance(story, event).value
-    story.error = None
+    story.error = (
+        f"delivery {level.value}: could not disarm GitHub auto-merge on PR "
+        f"#{story.github_pr_number} — {disarm_err}"
+        if disarm_err
+        else None
+    )
     persist_story(story, db)
     log_story_event(
         story.id,
@@ -3275,6 +3370,86 @@ def _settle_non_merging_story(
         slug_hint=story.slug,
     )
     return f"delivery {level.value}: never merged by the factory — {reason}; story -> {story.state}"
+
+
+def _push_to_main_preflight_gate(
+    *,
+    story: StoryRecord,
+    fixture: FixturePR,
+    app: str,
+    cfg: AppConfig,
+    root: Path,
+    db: Path,
+    preflight_fn: Any = None,
+) -> MergeAction | None:
+    """The main-green hold + branch-protection check for ``push_to_main``.
+
+    PR merges get both for free from GitHub: ``main-green`` is a required PR
+    check (E6 stage 2) and branch protection runs the required checks on the
+    PR. A direct fast-forward has NO PR, so neither ran (adversarial review
+    2026-11-02, finding 4). This puts them back, in front of the gate set:
+
+    * HOLD (base is red / its checks are running / GitHub unreadable): nothing
+      runs and nothing is counted toward ``_MAX_GATE_BLOCK_CYCLES``; the story
+      stays put with a ``ci_hold_main_red:`` reason (so ``factory inbox`` shows
+      why) and is re-checked next tick — identical semantics to the PR hold.
+    * REFUSE (base requires status checks or a PR): the factory will not
+      bypass them, and will not force. The story parks in
+      ``BLOCKED_DEPLOY_FAILED`` with a ``push_to_main_refused:`` reason and a
+      ``push_to_main_refused`` event. Nothing was pushed to the default branch.
+    * OK: clears a stale hold reason and returns ``None`` (evaluate normally).
+
+    Never raises: an error in the check itself is a HOLD.
+    """
+    from factory.chain.event_log import log_story_event
+    from factory.chain.handlers import persist_story
+
+    try:
+        fn = preflight_fn or delivery_gate.push_to_main_preflight
+        verdict, detail = fn(cfg, fixture.base_branch)
+    except Exception as exc:  # noqa: BLE001 - fail safe
+        verdict, detail = delivery_gate.PREFLIGHT_HOLD, f"preflight error: {exc!r}"[:300]
+
+    if verdict == delivery_gate.PREFLIGHT_OK:
+        if (story.last_rejection_reason or "").startswith(_HOLD_REASON_PREFIX):
+            _set_hold_reason(story, db, None)
+        return None
+
+    if verdict == delivery_gate.PREFLIGHT_REFUSE:
+        reason = f"push_to_main_refused: {detail}"
+        story.state = StoryState.BLOCKED_DEPLOY_FAILED.value
+        story.last_rejection_reason = reason
+        story.error = (
+            f"delivery push_to_main: {detail}. Nothing was pushed. Re-submit the job "
+            "at level pr or auto_merge (which run the required checks), or change "
+            "the branch protection."
+        )
+        persist_story(story, db)
+        try:
+            log_story_event(
+                story.id,
+                "push_to_main_refused",
+                {"base": fixture.base_branch, "head_sha": fixture.head_sha, "reason": detail},
+                software_factory_root=root,
+                slug_hint=story.slug,
+            )
+        except Exception:  # noqa: BLE001 - telemetry only
+            pass
+        action = MergeAction(app=app, pr_number=fixture.pr_number, merged=False, reason=reason)
+        _record_merge_action(action, fixture.head_sha, db)
+        return action
+
+    # HOLD (anything not OK/REFUSE is a hold — fail safe).
+    hold_reason = f"{_HOLD_REASON_PREFIX} push_to_main held — {detail}"
+    if story.last_rejection_reason != hold_reason:
+        _set_hold_reason(story, db, hold_reason)
+        story.last_rejection_reason = hold_reason
+    return MergeAction(
+        app=app,
+        pr_number=fixture.pr_number,
+        merged=False,
+        reason=f"held: {detail}; story untouched, re-checked next tick",
+    )
 
 
 def auto_merge_tick(
@@ -3295,6 +3470,7 @@ def auto_merge_tick(
     pr_merged_query: Any = None,
     merge_commit_sha_provider: Any = None,
     fast_forward_fn: Any = None,
+    push_to_main_preflight_fn: Any = None,
 ) -> list[MergeAction]:
     """Single pass of the auto-merge worker against ``app``.
 
@@ -3303,7 +3479,11 @@ def auto_merge_tick(
     ``push_to_main`` (gates, then a fast-forward of the default branch via
     ``fast_forward_fn``). Any other level — and any DRAFT PR — is never merged
     and never marked ready; a mergeable-state story at such a level is settled
-    to its ``DELIVERED_*`` end state instead.
+    to its ``DELIVERED_*`` end state instead. Before a ``push_to_main`` story is
+    even evaluated, ``push_to_main_preflight_fn`` (default
+    ``delivery_gate.push_to_main_preflight``) applies the main-green hold and
+    refuses a base branch guarded by required checks / a required PR — see
+    ``_push_to_main_preflight_gate``.
 
     ``self_edit_gate`` / ``patch_provider`` / ``escalate`` are injection seams
     for the chain-side factory self-edit staging gate (``_evaluate_self_edit_gate``);
@@ -3563,13 +3743,26 @@ def auto_merge_tick(
                         app_config=cfg,
                         root=root,
                         db=db,
-                        reason="app delivery ceiling is below auto_merge",
+                        reason="recorded delivery level does not merge",
                     )
                 except Exception as exc:  # noqa: BLE001 - never merge on a settle error
                     reason = f"{reason}; settle failed: {exc!r}"
             actions.append(MergeAction(app=app, pr_number=f.pr_number, merged=False, reason=reason))
             continue
         is_p2m = f_level is DeliveryLevel.PUSH_TO_MAIN and f.pr_number <= 0
+        if is_p2m and not dry_run and f.story is not None:
+            p2m_action = _push_to_main_preflight_gate(
+                story=f.story,
+                fixture=f,
+                app=app,
+                cfg=cfg,
+                root=root,
+                db=db,
+                preflight_fn=push_to_main_preflight_fn,
+            )
+            if p2m_action is not None:
+                actions.append(p2m_action)
+                continue
         # E6 STAGE 2 — ENVIRONMENT HOLD (main is red). Checked BEFORE the
         # CI-failure loop AND before ``_evaluate_one_pr``, because both of the
         # downstream sinks would destroy the queue on a red main:
@@ -3631,11 +3824,15 @@ def auto_merge_tick(
 
         if not dry_run and f.pr_number > 0 and f.ci_state == _CI_STATE_HOLD:
             hold_is_new = _handle_main_green_hold(
-                story=f.story, pr_number=f.pr_number, root=root,
+                story=f.story,
+                pr_number=f.pr_number,
+                root=root,
                 # base_branch is pinned to "main": the main-green job itself
                 # hardcodes `repos/$REPO/commits/main`, so watching any other
                 # base would rerun on the wrong trigger (finding 9).
-                app_config=cfg, base_branch="main", db_path=db,
+                app_config=cfg,
+                base_branch="main",
+                db_path=db,
             )
             action = MergeAction(
                 app=app,

@@ -445,10 +445,11 @@ class StoryRecord(SQLModel, table=True):
     # point it's parked in ``BLOCKED_DEPLOY_FAILED``. Reset to 0 on success.
     pr_create_retries: int = 0
     # The story's delivery level (``factory.delivery.DeliveryLevel`` value),
-    # resolved ONCE at spawn from the app ceiling + the direction's
-    # ``delivery:`` frontmatter and recorded here so it cannot drift mid-flight:
-    # a later config change may LOWER it (de-escalation is always safe) but can
-    # never raise it. ``None`` only on rows that predate per-story recording;
+    # resolved ONCE at spawn from the direction's ``delivery:`` frontmatter
+    # (else the app's ``delivery.default``; there is no per-app ceiling) and
+    # recorded here so it cannot drift mid-flight: a later config change never
+    # moves it. Only fail-safe adjustments lower it (unreadable → ``none``;
+    # factory self-edit ``push_to_main`` → ``pr``). ``None`` only on rows that predate per-story recording;
     # ``factory.chain.delivery_gate.story_level`` resolves and records those on
     # first touch.
     delivery_level: str | None = None
@@ -612,7 +613,8 @@ _TRANSITIONS: dict[tuple[StoryState, str], StoryState] = {
     (StoryState.DOCS_ENFORCER_CHECK, EVENT_DELIVERED_BRANCH): StoryState.DELIVERED_BRANCH,
     (StoryState.DOCS_ENFORCER_CHECK, EVENT_DELIVERED_PR): StoryState.DELIVERED_PR,
     # A merge-capable story whose level turns out not to merge (a refused
-    # push_to_main fast-forward, or an app ceiling lowered mid-flight) settles
+    # push_to_main fast-forward, or a factory self-edit's push_to_main lowered
+    # to pr) settles
     # here from wherever the auto-merge worker holds it.
     (StoryState.PR_OPEN, EVENT_DELIVERED_PR): StoryState.DELIVERED_PR,
     (StoryState.CI_GREEN, EVENT_DELIVERED_PR): StoryState.DELIVERED_PR,

@@ -569,6 +569,15 @@ def _story_is_resolved(row: Any) -> bool:
     return (getattr(row, "state", "") or "") in _RESOLVED_STORY_STATES
 
 
+# Delivery-level end states (``StoryState.DELIVERED_*``). NOT resolved for a
+# STORY issue — the change is not on the default branch, so the story issue
+# stays open as the human's handle on it — but a direction whose every child is
+# resolved OR delivered has nothing left for the factory to do: the job ran to
+# the level it asked for. Kept separate from ``_RESOLVED_STORY_STATES`` so no
+# issue-closing / inbox / dependency consumer of that set changes meaning.
+_DELIVERED_STORY_STATES = frozenset({"delivered_local", "delivered_branch", "delivered_pr"})
+
+
 def _direction_is_complete(rows: list[Any]) -> bool:
     """True when EVERY child story is in a resolved state — nothing is left to do
     on this direction, whether it SHIPPED or was fully ABANDONED.
@@ -593,10 +602,19 @@ def _direction_is_complete(rows: list[Any]) -> bool:
     blocks (``blocked_deploy_failed`` / ``blocked_tests_need_clarification`` /
     ``blocked_budget_exceeded``), so any of those keeps the tracker open — a
     direction still doing (or revivable) work is never closed.
+
+    **delivered** (2026-11-02, finding 10) — a child in a ``delivered_*`` end
+    state (delivery level below ``auto_merge``) counts as complete for the
+    DIRECTION: the factory took it as far as the job asked. Without this a
+    direction below ``auto_merge`` could never complete, so its job never
+    reached a terminal state. The story issues themselves stay open.
     """
     if not rows:
         return False
-    return all(_story_is_resolved(r) for r in rows)
+    return all(
+        _story_is_resolved(r) or (getattr(r, "state", "") or "") in _DELIVERED_STORY_STATES
+        for r in rows
+    )
 
 
 def maybe_close_tracker_issue(
@@ -646,13 +664,19 @@ def maybe_close_tracker_issue(
             return False  # still active (or blocked) work for this direction
 
         deployed = sum(1 for r in rows if r.state == StoryState.DEPLOYED.value)
+        delivered = sum(1 for r in rows if r.state in _DELIVERED_STORY_STATES)
         repo = github_client.get_repo(app_config.repo)
         issue = repo.get_issue(int(tracker))
         if str(getattr(issue, "state", "")).lower() == "closed":
             return False
         issue.create_comment(
-            f"✅ Direction complete — {deployed} of {len(rows)} child stories deployed "
-            "(remaining resolved/superseded). Closing the direction tracker."
+            f"✅ Direction complete — {deployed} of {len(rows)} child stories deployed"
+            + (
+                f", {delivered} delivered at their job's level (not merged — see each story issue)"
+                if delivered
+                else ""
+            )
+            + " (remaining resolved/superseded). Closing the direction tracker."
         )
         issue.edit(state="closed")
         return True
@@ -797,9 +821,16 @@ def reconcile_completed_issues(
 
         if complete_by_children:
             deployed = sum(1 for r in rows if r.state == StoryState.DEPLOYED.value)
+            delivered = sum(1 for r in rows if r.state in _DELIVERED_STORY_STATES)
             tracker_comment = (
-                f"✅ Direction complete — {deployed} of {len(rows)} child stories deployed "
-                "(remaining resolved/superseded). Closing the direction tracker (reconcile)."
+                f"✅ Direction complete — {deployed} of {len(rows)} child stories deployed"
+                + (
+                    f", {delivered} delivered at their job's level (not merged — see each "
+                    "story issue)"
+                    if delivered
+                    else ""
+                )
+                + " (remaining resolved/superseded). Closing the direction tracker (reconcile)."
             )
             tracker_reason = None
         else:

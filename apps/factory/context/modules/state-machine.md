@@ -185,20 +185,21 @@ are absent from `_DISPATCH` and `auto_merge._MERGEABLE_STATES`:
 | `CLOSED_BY_OPERATOR` | `orchestrator.reconcile_closed_trackers` (direct assignment) | operator re-opens tracker issue, then `factory resume-story` |
 | `DELIVERED_LOCAL` | `EVENT_DELIVERED_LOCAL` — delivery level `none` | n/a — success at that level; the work is committed on the local `story/<n>-<slug>` branch, never pushed |
 | `DELIVERED_BRANCH` | `EVENT_DELIVERED_BRANCH` — delivery level `branch` | n/a — success at that level; branch pushed, no PR |
-| `DELIVERED_PR` | `EVENT_DELIVERED_PR` — level `draft_pr` / `pr`, or a refused `push_to_main` | n/a — a human merges; `reconcile_from_github` then routes it to `DEPLOY_PENDING` |
+| `DELIVERED_PR` | `EVENT_DELIVERED_PR` — level `draft_pr` / `pr`, or a refused `push_to_main` | n/a — a human merges; `reconcile_from_github` then routes it to `DEPLOY_PENDING`. Closed unmerged → `reconcile_from_github` settles it to `CLOSED_BY_OPERATOR` (direct assignment) |
 
 ### Delivery levels (how far finished work goes)
 
 Each story carries `StoryRecord.delivery_level` (`none < branch < draft_pr <
 pr < auto_merge < push_to_main`, vocabulary in `factory/delivery.py`). It is
 resolved ONCE at spawn (`handle_stories_spawned` →
-`delivery_gate.record_spawn_level`: app `delivery.max`/`default` + the
-direction's `delivery:` frontmatter, clamped to the ceiling, garbage → `none`)
-and logged as a `delivery_level_resolved` story event. Every later decision
-reads it through `delivery_gate.story_level()`, which may LOWER it (app
-ceiling lowered mid-flight; `push_to_main` on a factory self-edit → `pr`,
-because a direct push would skip the staging gate) and records that as
-`delivery_level_lowered`, but never raises it. Rows that predate the column
+`delivery_gate.record_spawn_level`: the direction's `delivery:` frontmatter
+wins outright — there is NO per-app ceiling — else the app's
+`delivery.default`; garbage → `none`) and logged as a
+`delivery_level_resolved` story event. Every later decision reads it through
+`delivery_gate.story_level()`; app-config edits never move it. The only
+adjustments are fail-safe ones (an unreadable value → `none`; `push_to_main`
+on a factory self-edit → `pr`, because a direct push would skip the staging
+gate), recorded as `delivery_level_lowered`. Rows that predate the column
 resolve on first touch: legacy app (no `delivery` block) → `auto_merge`
 (unchanged); anything undeterminable → `none`.
 
@@ -215,13 +216,22 @@ Enforcement sites:
 * `auto_merge.auto_merge_tick`: a guard at the top of the per-PR loop (before
   the main-green hold, the CI-failure re-dispatch and gate evaluation) skips
   draft PRs and settles any mergeable story whose level does not merge
-  (`_settle_non_merging_story` → `DELIVERED_*`). `push_to_main` stories are
+  (`_settle_non_merging_story` → `DELIVERED_*`; it first DISARMS any GitHub
+  auto-merge via `delivery_gate.disable_auto_merge`, recording
+  `auto_merge_disarm_failed` if gh refuses). `push_to_main` stories are
   synthesised from the worktree (`delivery_gate.worktree_head_and_files`, real
-  head sha, `pr_number = -(story.id)`), run the same gate set, and
-  `delivery_gate.fast_forward_default_branch` pushes the gated commit to the
-  default branch — non-force, refused unless it is a genuine fast-forward of
-  the exact gated sha. A refusal records the downgrade to `pr`, opens a ready
-  PR and ends in `DELIVERED_PR`.
+  head sha, `pr_number = -(story.id)`). Before any gate runs,
+  `_push_to_main_preflight_gate` (→ `delivery_gate.push_to_main_preflight`)
+  HOLDS while the base branch's checks are red/running/unreadable (no gate
+  run, nothing counted, `ci_hold_main_red:` reason) and REFUSES a base branch
+  that requires status checks or a PR (→ `BLOCKED_DEPLOY_FAILED`,
+  `push_to_main_refused:` reason, never forced). Then the same gate set runs;
+  its block cap is keyed per STORY (`_gate_block_history(per_story=True)`) —
+  the worktree sha is not a stable key — and parks in `BLOCKED_CI_UNRESOLVED`
+  after 3. `delivery_gate.fast_forward_default_branch` pushes the gated commit
+  to the default branch — non-force, refused unless it is a genuine
+  fast-forward of the exact gated sha. A refusal records the downgrade to
+  `pr`, opens a ready PR and ends in `DELIVERED_PR`.
 * `handlers.handle_deploy`: a `push_to_main` story deploys the sha recorded
   under `-(story.id)` instead of skipping for "no PR number".
 
@@ -229,7 +239,13 @@ Enforcement sites:
 (dependents are capped-then-surfaced, closing the story issue settles to
 `CLOSED_BY_OPERATOR`), shown in `factory inbox`, and deliberately NOT in
 `tracker_issue._RESOLVED_STORY_STATES` — unmerged work never closes its story
-issue or direction tracker.
+issue. They DO count toward `tracker_issue._direction_is_complete` (via
+`_DELIVERED_STORY_STATES`), so a job whose stories all end `DELIVERED_*`
+completes and its tracker closes. They are terminal in
+`manager/detectors/stalled_stories._TERMINAL_STATES` (never "stalled").
+`_direction_deps_pending` drops a `DELIVERED_*` sibling from the dependency
+set when the DEPENDENT's own level does not merge (otherwise multi-story jobs
+below `auto_merge` deadlock on story 1); stories are not stacked.
 
 ### Dependency ordering and the deferral cap
 

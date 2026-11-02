@@ -31,6 +31,7 @@ version: 1
 # direct-assignment writers below have no event at all.
 legal_edges:
   - {from: ci_green, to: blocked_deploy_failed}
+  - {from: ci_green, to: delivered_pr}
   - {from: ci_green, to: deploy_pending}
   - {from: deploy_pending, to: blocked_deploy_failed}
   - {from: deploy_pending, to: deploy_pending}
@@ -45,6 +46,9 @@ legal_edges:
   - {from: dev_retry, to: dev_in_progress}
   - {from: docs_enforcer_check, to: blocked_budget_exceeded}
   - {from: docs_enforcer_check, to: blocked_deploy_failed}
+  - {from: docs_enforcer_check, to: delivered_branch}
+  - {from: docs_enforcer_check, to: delivered_local}
+  - {from: docs_enforcer_check, to: delivered_pr}
   - {from: docs_enforcer_check, to: docs_enforcer_check}
   - {from: docs_enforcer_check, to: pr_open}
   - {from: docs_enforcer_check, to: reviewer_requested_changes}
@@ -56,8 +60,12 @@ legal_edges:
   - {from: docs_sm_done, to: docs_onboarder_in_progress}
   - {from: docs_sm_in_progress, to: docs_sm_done}
   - {from: pr_open, to: blocked_deploy_failed}
+  - {from: pr_open, to: delivered_branch}
+  - {from: pr_open, to: delivered_local}
+  - {from: pr_open, to: delivered_pr}
   - {from: pr_open, to: deploy_pending}
   - {from: ready_for_merge, to: blocked_deploy_failed}
+  - {from: ready_for_merge, to: delivered_pr}
   - {from: ready_for_merge, to: deploy_pending}
   - {from: reviewer_done, to: blocked_budget_exceeded}
   - {from: reviewer_done, to: tech_writer_in_progress}
@@ -156,6 +164,20 @@ allowed_direct_writes:
       `_park`'s CI-failure exhaustion, same terminal sink, so the worker stops
       re-evaluating (and re-paying for tests-green/smoke-green at 600s a piece)
       a verdict a new commit is required to change.
+  - writer: auto_merge._settle_non_merging_story
+    to: [blocked_deploy_failed]
+    why: >-
+      A story whose delivery level does not merge needed a PR opened and
+      `gh pr create` failed `_MAX_PR_CREATE_RETRIES` times; it parks for a
+      human, same sink and cap as the docs enforcer's PR-create exhaustion.
+      Its DELIVERED_* settles go through `advance()` and classify as edges.
+  - writer: auto_merge._push_to_main_preflight_gate
+    to: [blocked_deploy_failed]
+    from: [pr_open, ci_green, ready_for_merge]
+    why: >-
+      Delivery level `push_to_main` refused because the default branch requires
+      status checks or a pull request; a direct push would bypass them, so the
+      story parks with a `push_to_main_refused:` reason instead of forcing.
   - writer: auto_merge._handle_ci_failure
     to: [reviewer_requested_changes]
     why: >-
