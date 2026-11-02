@@ -17,7 +17,13 @@ from typer.testing import CliRunner
 from factory import cli_apps
 from factory.app_config import load_app_config
 from factory.app_detect import GATE_KEYS, detect
-from factory.cli_apps import AppAddError, add_app, enable_tick_command, list_registered_apps
+from factory.cli_apps import (
+    AppAddError,
+    add_app,
+    enable_tick_command,
+    list_registered_apps,
+    set_app,
+)
 
 # --------------------------------------------------------------------------- #
 # fixtures
@@ -249,6 +255,60 @@ def test_empty_repo_detects_nothing(tmp_path: Path) -> None:
     d = detect(_write(tmp_path, {"README.md": "hi"}))
     assert d.gates == {}
     assert d.missing == list(GATE_KEYS)
+    assert any("no supported toolchain" in n for n in d.notes)
+
+
+def test_detect_gradle_wrapper_with_spotless(tmp_path: Path) -> None:
+    d = detect(
+        _write(
+            tmp_path,
+            {
+                "build.gradle.kts": 'plugins { id("com.diffplug.spotless") }\n',
+                "gradlew": "#!/bin/sh\n",
+            },
+        )
+    )
+    assert d.toolchains == ["jvm (gradle)"]
+    assert d.gates["test_command"] == "./gradlew test"
+    assert d.gates["type_check_command"] == "./gradlew classes testClasses"
+    assert d.gates["format_check_command"] == "./gradlew spotlessCheck"
+    assert d.missing == ["lint_command"]
+
+
+def test_detect_maven_without_wrapper(tmp_path: Path) -> None:
+    d = detect(_write(tmp_path, {"pom.xml": "<project><artifactId>x</artifactId></project>"}))
+    assert d.toolchains == ["jvm (maven)"]
+    assert d.gates["test_command"] == "mvn -B -q test"
+    assert d.gates["type_check_command"] == "mvn -B -q test-compile"
+
+
+def test_detect_ruby_bundler(tmp_path: Path) -> None:
+    d = detect(
+        _write(
+            tmp_path,
+            {"Gemfile": 'gem "rspec"\ngem "rubocop"\n', "spec/x_spec.rb": ""},
+        )
+    )
+    assert d.toolchains == ["ruby (bundler)"]
+    assert d.gates["test_command"] == "bundle exec rspec"
+    assert d.gates["lint_command"] == "bundle exec rubocop"
+
+
+def test_detect_php_composer(tmp_path: Path) -> None:
+    composer = {
+        "require-dev": {
+            "phpunit/phpunit": "^10",
+            "phpstan/phpstan": "^1",
+            "laravel/pint": "^1",
+        }
+    }
+    d = detect(_write(tmp_path, {"composer.json": json.dumps(composer)}))
+    assert d.toolchains == ["php (composer)"]
+    assert d.gates == {
+        "test_command": "vendor/bin/phpunit",
+        "type_check_command": "vendor/bin/phpstan analyse",
+        "format_check_command": "vendor/bin/pint --test",
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -270,7 +330,8 @@ def test_add_existing_clone_writes_valid_config(factory_root: Path) -> None:
 
     assert res["app"] == "widget"
     assert res["path"] == str(repo.resolve())
-    assert res["delivery"] == {"max": "draft_pr", "default": "draft_pr"}
+    assert res["delivery"] == {"default": "draft_pr"}
+    assert res["pipeline_default"] == "chain"
     assert res["missing_gates"] == []
     assert res["cloned"] is False
     assert (factory_root / "apps/widget/directions").is_dir()
@@ -280,7 +341,12 @@ def test_add_existing_clone_writes_valid_config(factory_root: Path) -> None:
     assert cfg.repo == "Acme/Widget"
     assert cfg.app_repo_path == "../widget"  # sibling convention, written relative
     assert cfg.default_branch == "trunk"
-    assert cfg.delivery.max.value == "draft_pr"
+    assert cfg.delivery.default.value == "draft_pr"
+    assert cfg.pipeline_default == "chain"
+    assert (
+        "max"
+        not in (yaml.safe_load((factory_root / "apps/widget/config.yaml").read_text()))["delivery"]
+    )
     assert cfg.gates.test_command == "uv run --extra dev pytest -q"
     assert cfg.deploy.enabled is False
 
@@ -349,11 +415,8 @@ def test_refuses_non_git_dir(factory_root: Path, tmp_path: Path) -> None:
     [
         ({"repo": "not-a-repo"}, "invalid_repo"),
         ({"repo": "o/w", "name": "Bad Name"}, "invalid_name"),
-        ({"repo": "o/w", "delivery_max": "yolo"}, "invalid_delivery"),
-        (
-            {"repo": "o/w", "delivery_max": "pr", "delivery_default": "auto_merge"},
-            "invalid_delivery",
-        ),
+        ({"repo": "o/w", "delivery_default": "yolo"}, "invalid_delivery"),
+        ({"repo": "o/w", "pipeline_default": "swarm"}, "invalid_pipeline"),
     ],
 )
 def test_input_refusals_write_nothing(factory_root: Path, kwargs: dict, code: str) -> None:
@@ -363,19 +426,22 @@ def test_input_refusals_write_nothing(factory_root: Path, kwargs: dict, code: st
     assert list((factory_root / "apps").iterdir()) == []
 
 
-def test_delivery_flags_are_written(factory_root: Path, tmp_path: Path) -> None:
+@pytest.mark.parametrize("level", ["none", "branch", "pr", "auto_merge", "push_to_main"])
+def test_delivery_default_is_written(factory_root: Path, tmp_path: Path, level: str) -> None:
+    """Any level may be an app default — there is no ceiling to clamp it to."""
     repo = _git_repo(tmp_path / "w", PY_UV, "https://github.com/o/w")
     res = add_app(
         root=factory_root,
         repo="o/w",
         path=repo,
-        delivery_max="auto_merge",
-        delivery_default="pr",
+        delivery_default=level,
+        pipeline_default="AUTO",
         runner=_no_systemd,
     )
-    assert res["delivery"] == {"max": "auto_merge", "default": "pr"}
+    assert res["delivery"] == {"default": level}
+    assert res["pipeline_default"] == "auto"
     cfg = load_app_config("w", factory_root)
-    assert (cfg.delivery.max.value, cfg.delivery.default.value) == ("auto_merge", "pr")
+    assert (cfg.delivery.default.value, cfg.pipeline_default) == (level, "auto")
 
 
 def test_clones_to_sibling_when_absent(factory_root: Path) -> None:
@@ -472,7 +538,7 @@ def test_cli_add_json_shape(cli, tmp_path: Path) -> None:
     for key in ("app", "repo", "path", "config_path", "gates", "delivery"):
         assert key in payload
     assert set(payload["gates"]) == set(GATE_KEYS)
-    assert set(payload["delivery"]) == {"max", "default"}
+    assert payload["delivery"] == {"default": "draft_pr"}
 
 
 def test_cli_add_json_error_shape(cli, tmp_path: Path) -> None:
@@ -507,10 +573,154 @@ def test_cli_list_json_shape(cli, factory_root: Path, tmp_path: Path) -> None:
     assert set(apps) == {"w", "legacy"}
     for row in apps.values():
         assert set(row) == {"app", "repo", "path", "delivery", "pipeline_default"}
-    assert apps["w"]["delivery"] == {"max": "draft_pr", "default": "draft_pr"}
-    assert apps["legacy"]["delivery"] == {"max": "auto_merge", "default": "auto_merge"}
+    assert apps["w"]["delivery"] == {"default": "draft_pr"}
+    assert apps["legacy"]["delivery"] == {"default": "auto_merge"}
     assert apps["legacy"]["path"] == str((factory_root.parent / "legacy").resolve())
     assert apps["w"]["pipeline_default"] == "chain"
+    assert apps["legacy"]["pipeline_default"] == "chain"
+
+
+def test_cli_add_has_no_delivery_max_flag(cli, tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path / "w", PY_UV, "https://github.com/o/w.git")
+    r = cli("add", "--repo", "o/w", "--path", str(repo), "--delivery-max", "pr", "--json")
+    assert r.exit_code != 0
+    assert not (tmp_path / "software-factory/apps/w").exists()
+
+
+def test_list_reports_legacy_delivery_max_as_broken(factory_root: Path) -> None:
+    (factory_root / "apps/old").mkdir()
+    (factory_root / "apps/old/config.yaml").write_text(
+        yaml.safe_dump({"name": "old", "repo": "o/old", "delivery": {"max": "pr"}})
+    )
+    (row,) = list_registered_apps(factory_root)
+    assert "delivery.max is not supported" in row["error"]
+
+
+# --------------------------------------------------------------------------- #
+# app set
+# --------------------------------------------------------------------------- #
+
+HAND_WRITTEN = """\
+# Hand-written header — must survive.
+name: w
+repo: o/w   # the repo
+delivery:
+  # why draft: new repo
+  default: draft_pr  # keep me
+gates:
+  test_command: "pytest -q"
+models: {}
+"""
+
+
+def _app(factory_root: Path, text: str, name: str = "w") -> Path:
+    d = factory_root / "apps" / name
+    d.mkdir(parents=True)
+    (d / "config.yaml").write_text(text)
+    return d / "config.yaml"
+
+
+def test_set_edits_in_place_and_keeps_comments(factory_root: Path) -> None:
+    path = _app(factory_root, HAND_WRITTEN)
+    res = set_app(
+        root=factory_root, app="w", delivery_default="auto_merge", pipeline_default="solo"
+    )
+    assert res["delivery"] == {"default": "auto_merge"}
+    assert res["pipeline_default"] == "solo"
+    assert res["changed"] == ["delivery.default", "pipeline_default"]
+    assert res["comments_preserved"] is True
+    text = path.read_text()
+    assert "# Hand-written header — must survive." in text
+    assert "# why draft: new repo" in text
+    assert "  default: auto_merge  # keep me" in text
+    assert "repo: o/w   # the repo" in text
+    assert text.endswith("pipeline_default: solo\n")
+    cfg = load_app_config("w", factory_root)
+    assert (cfg.delivery.default.value, cfg.pipeline_default, cfg.gates.test_command) == (
+        "auto_merge",
+        "solo",
+        "pytest -q",
+    )
+
+
+def test_set_replaces_existing_pipeline_line(factory_root: Path) -> None:
+    path = _app(factory_root, HAND_WRITTEN + "pipeline_default: chain  # app default\n")
+    set_app(root=factory_root, app="w", pipeline_default="auto")
+    assert "pipeline_default: auto  # app default" in path.read_text()
+    assert path.read_text().count("pipeline_default") == 1
+
+
+def test_set_adds_delivery_block_to_a_legacy_app(factory_root: Path) -> None:
+    path = _app(factory_root, "name: w\nrepo: o/w\n# trailing comment\n")
+    assert load_app_config("w", factory_root).delivery.default.value == "auto_merge"
+    res = set_app(root=factory_root, app="w", delivery_default="pr")
+    assert res["comments_preserved"] is True
+    assert "# trailing comment" in path.read_text()
+    assert load_app_config("w", factory_root).delivery.default.value == "pr"
+
+
+def test_set_inserts_default_into_a_block_without_one(factory_root: Path) -> None:
+    # A delivery block that only has a comment child (and another top key after).
+    path = _app(factory_root, "name: w\nrepo: o/w\ndelivery:\n    # tbd\nmodels: {}\n")
+    res = set_app(root=factory_root, app="w", delivery_default="branch")
+    assert res["comments_preserved"] is True
+    assert load_app_config("w", factory_root).delivery.default.value == "branch"
+    assert "# tbd" in path.read_text()
+
+
+def test_set_falls_back_to_redump_for_flow_style(factory_root: Path) -> None:
+    path = _app(factory_root, "name: w\nrepo: o/w\ndelivery: {default: pr}  # flow\n")
+    res = set_app(root=factory_root, app="w", delivery_default="none")
+    assert res["comments_preserved"] is False
+    assert load_app_config("w", factory_root).delivery.default.value == "none"
+    assert yaml.safe_load(path.read_text())["repo"] == "o/w"
+
+
+def test_set_noop_reports_nothing_changed(factory_root: Path) -> None:
+    path = _app(factory_root, HAND_WRITTEN)
+    res = set_app(root=factory_root, app="w", delivery_default="draft_pr")
+    assert res["changed"] == []
+    assert path.read_text() == HAND_WRITTEN
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "code"),
+    [
+        ({"app": "ghost", "delivery_default": "pr"}, "unknown_app"),
+        ({"app": "w"}, "nothing_to_set"),
+        ({"app": "w", "delivery_default": "yolo"}, "invalid_delivery"),
+        ({"app": "w", "pipeline_default": "swarm"}, "invalid_pipeline"),
+        ({"app": "../etc", "delivery_default": "pr"}, "invalid_name"),
+    ],
+)
+def test_set_refusals_write_nothing(factory_root: Path, kwargs: dict, code: str) -> None:
+    path = _app(factory_root, HAND_WRITTEN)
+    with pytest.raises(AppAddError) as exc:
+        set_app(root=factory_root, **kwargs)
+    assert exc.value.code == code
+    assert path.read_text() == HAND_WRITTEN
+
+
+def test_set_refuses_a_config_that_still_has_delivery_max(factory_root: Path) -> None:
+    text = "name: w\nrepo: o/w\ndelivery:\n  max: pr\n  default: pr\n"
+    path = _app(factory_root, text)
+    with pytest.raises(AppAddError) as exc:
+        set_app(root=factory_root, app="w", delivery_default="branch")
+    assert exc.value.code == "invalid_config"
+    assert "delivery.max" in exc.value.message
+    assert path.read_text() == text
+
+
+def test_cli_set_json(cli, factory_root: Path) -> None:
+    _app(factory_root, HAND_WRITTEN)
+    r = cli("set", "w", "--delivery-default", "pr", "--pipeline-default", "chain", "--json")
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.stdout)
+    assert payload["delivery"] == {"default": "pr"}
+    assert payload["pipeline_default"] == "chain"
+    r = cli("set", "w", "--json")
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["error"] == "nothing_to_set"
 
 
 def test_list_reports_broken_config_without_hiding_others(factory_root: Path) -> None:
@@ -520,3 +730,15 @@ def test_list_reports_broken_config_without_hiding_others(factory_root: Path) ->
     rows = {r["app"]: r for r in list_registered_apps(factory_root)}
     assert rows["ok"]["repo"] == "o/ok"
     assert "error" in rows["bad"]
+
+
+def test_app_config_pipeline_default_is_a_closed_set() -> None:
+    from pydantic import ValidationError
+
+    from factory.app_config import AppConfig
+
+    assert AppConfig(name="a", repo="o/a").pipeline_default == "chain"
+    for ok in ("chain", "solo", "auto"):
+        assert AppConfig(name="a", repo="o/a", pipeline_default=ok).pipeline_default == ok
+    with pytest.raises(ValidationError):
+        AppConfig(name="a", repo="o/a", pipeline_default="swarm")

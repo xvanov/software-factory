@@ -245,15 +245,18 @@ Register an app — any GitHub repo — without hand-writing its config:
 
 ```bash
 uv run factory app add --repo owner/name [--path ~/name] [--name x] \
-    [--delivery-max draft_pr] [--delivery-default draft_pr] [--enable-tick] [--force] [--json]
+    [--delivery-default draft_pr] [--pipeline-default chain] [--enable-tick] [--force] [--json]
+uv run factory app set <app> [--delivery-default <level>] [--pipeline-default chain|solo|auto] [--json]
 uv run factory app list [--json]
 ```
 
 `app add` clones to `../<name>` when no local checkout exists, detects the
 toolchain (Makefile targets; Python uv/poetry/pip; Node/TS npm/pnpm/yarn/bun; Go;
-Rust; .NET) and writes `apps/<app>/config.yaml` plus `apps/<app>/directions/`.
-New apps default to `delivery: draft_pr` — the factory opens draft PRs and never
-merges until you widen it. Gates it cannot detect are left empty and listed as
+Rust; .NET; JVM Maven/Gradle; Ruby; PHP) and writes `apps/<app>/config.yaml` plus
+`apps/<app>/directions/`. New apps default to `delivery.default: draft_pr` — a job
+that requests no level gets a draft PR and is never merged. There is no per-app
+ceiling: a job's requested level always wins. `app set` changes an app's defaults
+later, editing only those lines of its config. Gates it cannot detect are left empty and listed as
 MISSING; an empty gate is "not configured", never "passing". It refuses to
 overwrite an existing config without `--force`. Details:
 `apps/factory/context/modules/app-registration.md`. For a hand-tuned example see

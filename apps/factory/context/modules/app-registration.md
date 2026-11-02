@@ -1,4 +1,4 @@
-# App registration — `factory app add` / `factory app list`
+# App registration — `factory app add` / `app set` / `app list`
 
 ## Overview
 
@@ -9,7 +9,7 @@ The contract the personal assistant builds against is `docs/JOBS-API.md`.
 | File | Role |
 |------|------|
 | `factory/app_detect.py` | Pure, read-only toolchain detection → proposed gate commands |
-| `factory/cli_apps.py` | `add_app()` / `list_registered_apps()` + the `factory app` Typer sub-app |
+| `factory/cli_apps.py` | `add_app()` / `set_app()` / `list_registered_apps()` + the `factory app` Typer sub-app |
 | `factory/cli.py` | Registration line only (`app.add_typer(apps_app, name="app")`) |
 | `tests/test_cli_app_add.py` | Fixture repos per toolchain, refusal paths, JSON shapes |
 
@@ -19,8 +19,11 @@ is not used: it writes `context/` docs, not gate commands.
 ## `app add` flow
 
 1. Validate `--repo owner/name`, the app name (default: repo name, slugged),
-   and the delivery flags (`DeliveryConfig`; default ceiling
-   `NEW_APP_DEFAULT = draft_pr`).
+   `--delivery-default` (any level; default `NEW_APP_DEFAULT = draft_pr`) and
+   `--pipeline-default` (`chain|solo|auto`; default `chain`). Bad values are
+   `invalid_delivery` / `invalid_pipeline`. There is no `--delivery-max`: the
+   per-app ceiling was removed (operator decision 2026-11-02), and a config
+   with `delivery.max` is refused at load.
 2. Refuse, writing nothing, when:
    - `apps/<app>/config.yaml` exists (`app_exists`), unless `--force`.
    - another app already registers the same repo (`repo_already_registered`),
@@ -38,9 +41,33 @@ is not used: it writes `context/` docs, not gate commands.
    config is already written.
 
 `--json` prints one object. Success:
-`{app, repo, path, config_path, gates, delivery, missing_gates, toolchains,
-smoke_command, notes, cloned, tick}`. Failure, exit 1:
+`{app, repo, path, config_path, gates, delivery: {default}, pipeline_default,
+missing_gates, toolchains, smoke_command, notes, cloned, tick}`. Failure, exit 1:
 `{"error": "<code>", "message": "..."}`.
+
+## `app set <app>`
+
+Changes `delivery.default` and/or `pipeline_default` of an existing app, so the
+assistant can change a repo's defaults after registration.
+
+- At least one of `--delivery-default` / `--pipeline-default` (`nothing_to_set`).
+- Edits only the affected lines: `delivery:` → its `default:` child (added if
+  absent; the block is added if absent), and the top-level `pipeline_default:`
+  line (appended if absent). Trailing comments on those lines survive.
+- The edit is parsed back and compared with the intended mapping. If the layout
+  defeated the line edit (flow style `delivery: {…}`, an empty value), the file
+  is re-dumped from parsed YAML and `comments_preserved` is `false`.
+- The result is validated through `AppConfig` first. A config that still has
+  `delivery.max`, or any other load error, is `invalid_config`; nothing is written.
+- Written atomically (temp file + rename).
+
+`--json` success: `{app, config_path, delivery: {default}, pipeline_default,
+changed: ["delivery.default", "pipeline_default"], comments_preserved}`.
+
+## `app list`
+
+`{"apps": [{app, repo, path, delivery: {default}, pipeline_default}]}`. A config
+that fails to load is a row `{app, error}`; it never hides the others.
 
 ## Detection rules
 
@@ -49,7 +76,7 @@ Per gate, first hit wins:
 1. **Makefile targets**: `lint`; `format-check`/`fmt-check`/…;
    `typecheck`/`type-check`/`types`/`mypy`; `test`/`tests`.
 2. **Toolchains at the root and one directory down.** Per gate and per family
-   (python, node, go, rust, .net), the shallowest provider wins. Different
+   (python, node, go, rust, .net, jvm, ruby, php), the shallowest provider wins. Different
    families are joined with `&&`, so all must pass. Example (sacrifice's
    shape): `ruff check . && (cd frontend && npm run lint)`.
 3. `scripts/ensure-deps.sh` present → every gate gets that prefix
@@ -62,7 +89,14 @@ Per gate, first hit wins:
 | Node/TS | `package.json`; PM from `packageManager`, then lockfile | scripts `lint`, `format:check`…, `typecheck`…, `test` (npm's placeholder test ignored); fallbacks `tsc --noEmit`, `prettier --check .` |
 | Go | `go.mod` | `golangci-lint run` (if configured) or `go vet ./...`, gofmt, `go build ./...`, `go test ./...` |
 | Rust | `Cargo.toml` | clippy `-D warnings`, `cargo fmt --check`, `cargo check`, `cargo test` |
+| JVM (Gradle) | `build.gradle[.kts]`; `./gradlew` if present, else `gradle` | `checkstyleMain`/`ktlintCheck` (if configured), `spotlessCheck` (if configured), `classes testClasses`, `test` |
+| JVM (Maven) | `pom.xml`; `./mvnw` if present, else `mvn` | `checkstyle:check`, `spotless:check` (if configured), `test-compile`, `test` |
+| Ruby | `Gemfile` | `bundle exec rubocop`, `srb tc`/`steep check`, `rspec` (or `rake test`) |
+| PHP | `composer.json` | `phpcs`, `php-cs-fixer --dry-run`/`pint --test`, `phpstan`/`psalm`, composer `test` script or `phpunit`/`pest` |
 | .NET | `*.sln`/`*.slnx`/`*.csproj`/`*.fsproj` at the root | `dotnet format analyzers/whitespace --verify-no-changes` (csharpier if in `dotnet-tools.json`), `dotnet build`, `dotnet test`; the target is named when unambiguous |
+
+A repo with no recognised toolchain still registers: every gate is empty and a
+note says so. Registration never fails on language.
 
 Smoke: `make smoke` or `scripts/smoke.sh` fills `smoke_command`, but
 `smoke_harness_ready` stays `false`. Flipping it makes `smoke-green` a

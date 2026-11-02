@@ -9,11 +9,19 @@ stack-specific value lives here.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
 
 from factory.delivery import DeliveryConfig
+
+#: The pipelines a job can run. ``chain`` = PM->SM->dev->reviewer->gates;
+#: ``solo`` = one dev agent + gates (B.1); ``auto`` = the factory decides
+#: (v1: the app's ``pipeline_default``, and ``auto`` there means ``chain``).
+#: Shared with ``docs/JOBS-API.md`` and ``factory/job_routing.py``.
+PipelineName = Literal["chain", "solo", "auto"]
+PIPELINE_NAMES: tuple[str, ...] = ("chain", "solo", "auto")
 
 #: The factory's OWN GitHub repo. An app whose ``config.yaml::repo`` matches
 #: this is building the factory itself (``apps/factory``); its merges are
@@ -289,8 +297,13 @@ class AppConfig(BaseModel):
     deploy: DeployConfig = Field(default_factory=DeployConfig)
     gates: AppGatesConfig = Field(default_factory=AppGatesConfig)
     models: dict[str, str] = Field(default_factory=dict)  # persona overrides
-    # How far the factory may take work in this repo on its own (ceiling +
-    # default). Absent = today's behaviour (auto_merge). See factory/delivery.py.
+    # The pipeline a job runs when it does not name one (or names ``auto``).
+    # ``auto`` here resolves to ``chain``. Set by ``factory app set
+    # --pipeline-default``; see docs/JOBS-API.md.
+    pipeline_default: PipelineName = "chain"
+    # The delivery level a job gets when it does not request one. There is no
+    # per-app ceiling: a job's requested level wins. Absent = today's
+    # behaviour (auto_merge). See factory/delivery.py.
     delivery: DeliveryConfig = Field(default_factory=DeliveryConfig)
 
     # Self-tick guard (Tier 3 — FACTORY-SELF-TICK). When this app builds the

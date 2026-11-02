@@ -16,7 +16,8 @@ Detection order per gate (first hit wins):
    factory's gates and local development cannot drift apart (the same reason
    ``apps/template-probe/config.yaml`` uses ``npm run`` scripts).
 2. The root toolchain(s): Python (uv / poetry / pip), Node/TS (npm / pnpm /
-   yarn / bun scripts), Go, Rust, .NET.
+   yarn / bun scripts), Go, Rust, .NET, JVM (Maven / Gradle), Ruby (Bundler),
+   PHP (Composer).
 3. Toolchains found one directory down (``backend/``, ``frontend/``, …),
    wrapped as ``(cd <dir> && <cmd>)``. When several subdirectories provide the
    same gate they are joined with ``&&`` so ALL must pass.
@@ -279,6 +280,88 @@ def _detect_node(d: Path) -> tuple[str, dict[str, str], list[str]] | None:
     return f"{lang} ({pm})", gates, notes
 
 
+def _detect_jvm(d: Path) -> tuple[str, dict[str, str], list[str]] | None:
+    gradle = [n for n in ("build.gradle", "build.gradle.kts") if (d / n).is_file()]
+    if gradle:
+        tool = "./gradlew" if (d / "gradlew").is_file() else "gradle"
+        build = _read(d / gradle[0]).lower()
+        gates = {
+            "type_check_command": f"{tool} classes testClasses",
+            "test_command": f"{tool} test",
+        }
+        if "spotless" in build:
+            gates["format_check_command"] = f"{tool} spotlessCheck"
+        if "checkstyle" in build:
+            gates["lint_command"] = f"{tool} checkstyleMain"
+        elif "ktlint" in build:
+            gates["lint_command"] = f"{tool} ktlintCheck"
+        return "jvm (gradle)", gates, []
+    if (d / "pom.xml").is_file():
+        tool = "./mvnw" if (d / "mvnw").is_file() else "mvn"
+        pom = _read(d / "pom.xml").lower()
+        gates = {
+            "type_check_command": f"{tool} -B -q test-compile",
+            "test_command": f"{tool} -B -q test",
+        }
+        if "spotless" in pom:
+            gates["format_check_command"] = f"{tool} -B -q spotless:check"
+        if "maven-checkstyle-plugin" in pom:
+            gates["lint_command"] = f"{tool} -B -q checkstyle:check"
+        return "jvm (maven)", gates, []
+    return None
+
+
+def _detect_ruby(d: Path) -> tuple[str, dict[str, str], list[str]] | None:
+    if not (d / "Gemfile").is_file():
+        return None
+    gemfile = _read(d / "Gemfile") + _read(d / "Gemfile.lock")
+    gates: dict[str, str] = {}
+    if "rubocop" in gemfile or (d / ".rubocop.yml").is_file():
+        gates["lint_command"] = "bundle exec rubocop"
+    if "sorbet" in gemfile:
+        gates["type_check_command"] = "bundle exec srb tc"
+    elif "steep" in gemfile:
+        gates["type_check_command"] = "bundle exec steep check"
+    if "rspec" in gemfile or (d / "spec").is_dir():
+        gates["test_command"] = "bundle exec rspec"
+    elif (d / "Rakefile").is_file() and (d / "test").is_dir():
+        gates["test_command"] = "bundle exec rake test"
+    notes = ["ruby (bundler): gates run in a fresh worktree — prefix `bundle install && …`"]
+    return "ruby (bundler)", gates, notes
+
+
+def _detect_php(d: Path) -> tuple[str, dict[str, str], list[str]] | None:
+    if not (d / "composer.json").is_file():
+        return None
+    pkg = _load_json(d / "composer.json")
+    deps: set[str] = set()
+    for key in ("require", "require-dev"):
+        val = pkg.get(key)
+        if isinstance(val, dict):
+            deps.update(val)
+    raw_scripts = pkg.get("scripts")
+    scripts: dict[str, Any] = raw_scripts if isinstance(raw_scripts, dict) else {}
+    gates: dict[str, str] = {}
+    if "test" in scripts:
+        gates["test_command"] = "composer run-script test"
+    elif "phpunit/phpunit" in deps:
+        gates["test_command"] = "vendor/bin/phpunit"
+    elif "pestphp/pest" in deps:
+        gates["test_command"] = "vendor/bin/pest"
+    if "phpstan/phpstan" in deps:
+        gates["type_check_command"] = "vendor/bin/phpstan analyse"
+    elif "vimeo/psalm" in deps:
+        gates["type_check_command"] = "vendor/bin/psalm"
+    if "friendsofphp/php-cs-fixer" in deps:
+        gates["format_check_command"] = "vendor/bin/php-cs-fixer fix --dry-run --diff"
+    elif "laravel/pint" in deps:
+        gates["format_check_command"] = "vendor/bin/pint --test"
+    if "squizlabs/php_codesniffer" in deps:
+        gates["lint_command"] = "vendor/bin/phpcs"
+    notes = ["php (composer): gates run in a fresh worktree — prefix `composer install && …`"]
+    return "php (composer)", gates, notes
+
+
 def _detect_go(d: Path) -> tuple[str, dict[str, str], list[str]] | None:
     if not (d / "go.mod").is_file():
         return None
@@ -344,7 +427,16 @@ def _detect_dotnet(d: Path) -> tuple[str, dict[str, str], list[str]] | None:
     return ".net", gates, notes
 
 
-_DETECTORS = (_detect_python, _detect_node, _detect_go, _detect_rust, _detect_dotnet)
+_DETECTORS = (
+    _detect_python,
+    _detect_node,
+    _detect_go,
+    _detect_rust,
+    _detect_dotnet,
+    _detect_jvm,
+    _detect_ruby,
+    _detect_php,
+)
 
 
 def _family(label: str) -> str:
@@ -429,6 +521,13 @@ def detect(repo: Path) -> Detection:
         )
         out.sources[gate] = ", ".join(
             f"{fam} at root" if not where else f"{fam} in {where}/" for fam, where, _ in entries
+        )
+
+    if not out.toolchains:
+        out.notes.append(
+            "no supported toolchain recognised (make, python, node/ts, go, rust, .net, "
+            "jvm, ruby, php): every gate is EMPTY — fill them in by hand before "
+            "submitting jobs, or the test gate can never go green"
         )
 
     # A template-derived repo bootstraps its own deps; every gate needs it in a
