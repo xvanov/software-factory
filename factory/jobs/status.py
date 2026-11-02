@@ -667,6 +667,10 @@ def cancel_job(
     state_yaml = read_state_yaml(ref.dir_path)
     if not isinstance(state_yaml.get(CANCEL_KEY), dict):
         merge_state(direction, {CANCEL_KEY: {"at": now, "by": by}})
+    # N2: the DURABLE marker, written BEFORE any story is parked. A handler's
+    # stale write-back can undo a story row, never this: the merge pass (inside
+    # its lock) and the orchestrator (before dispatch) both check it.
+    delivery_gate.mark_job_cancelled(db, ref.app, ref.direction_id, by=by)
 
     parked: list[int] = []
     left: list[dict[str, Any]] = []

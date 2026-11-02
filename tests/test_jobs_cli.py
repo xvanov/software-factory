@@ -580,15 +580,20 @@ def test_cancel_parks_live_stories_and_keeps_evidence(root: Path) -> None:
     assert code == 0 and obj["stories_parked"] == []
 
 
-def test_cancel_is_not_reported_while_a_story_was_written_back(root: Path) -> None:
+def test_n2_cancel_survives_a_stale_handler_writeback(root: Path) -> None:
     job = _submit()
     s = _story(root, "001", StoryState.DEV_IN_PROGRESS.value)
     cancel_job(root, job["job_id"])
     # An in-flight handler persists its stale in-memory row afterwards.
     s.state = StoryState.TESTS_GREEN.value
     persist_story(s, root / "state" / "factory.db")
-    st = job_status(root, job["job_id"])
-    assert st["state"] != "cancelled" and "re-run 'factory job cancel'" in st["why"]
+    # N2: the stale write-back is refused; the cancel holds.
+    from factory.chain.handlers import get_story
+
+    assert (
+        get_story(s.id, root / "state" / "factory.db").state == StoryState.CLOSED_BY_OPERATOR.value
+    )
+    assert job_status(root, job["job_id"])["state"] == "cancelled"
 
 
 # --------------------------------------------------------------------------- #
@@ -1035,3 +1040,25 @@ def test_nice11_job_delivery_is_the_spawn_stamp_not_todays_config(root: Path) ->
     )
     _write_app(root, "demo", "acme/demo", "delivery:\n  default: auto_merge\n")  # changed later
     assert job_status(root, job["job_id"], github=False)["delivery"] == "draft_pr"
+
+
+def test_n2_cancel_writes_the_durable_job_marker(root: Path) -> None:
+    from factory.chain import delivery_gate
+
+    job = _submit()
+    _story(root, "001", StoryState.DEV_IN_PROGRESS.value)
+    db = root / "state" / "factory.db"
+    assert not delivery_gate.is_job_cancelled(db, "demo", "001")
+    cancel_job(root, job["job_id"])
+    assert delivery_gate.is_job_cancelled(db, "demo", "001")
+
+
+def test_n2_cancel_noop_on_done_job_writes_no_marker(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factory.chain import delivery_gate
+
+    job = _submit("--delivery", "none")
+    _story(root, "001", StoryState.DELIVERED_LOCAL.value, delivery_level="none")
+    assert cancel_job(root, job["job_id"], github=False)["state"] == "done"
+    assert not delivery_gate.is_job_cancelled(root / "state" / "factory.db", "demo", "001")

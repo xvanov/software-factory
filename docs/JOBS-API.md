@@ -253,9 +253,10 @@ Open PRs are NOT closed. Each story is handled under the same per-story lock the
 holds around a merge: it is re-read inside the lock and parked with a compare-and-set. So a
 cancel can never be overwritten by a merge, nor a merge by a cancel. Fail safe: lock busy,
 GitHub unable to say whether the PR merged, or a failed disarm → that story is not parked and is
-listed in `stories_left` with the reason; re-run cancel. Idempotent. If an in-flight handler
-writes a story back after a cancel, `status` keeps reporting the live state with a `why`
-telling you to re-run cancel.
+listed in `stories_left` with the reason; re-run cancel. Idempotent. Cancel first records a
+durable per-job marker; an in-flight handler that later writes a stale state back cannot reopen
+a parked story, and the orchestrator re-parks any story of a cancelled job instead of
+dispatching it.
 
 ### `factory app add --json`
 ```
