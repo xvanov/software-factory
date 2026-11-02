@@ -31,12 +31,14 @@ from rich.panel import Panel
 from rich.table import Table
 
 from factory import __phase__, __version__
+from factory.cli_apps import apps_app
 from factory.model_router import route
 from factory.runner import LLMConfig, sandbox_run
 
 app = typer.Typer(help="Factory CLI — orchestrate the software factory.")
 test_persona_app = typer.Typer(help="Run a single persona end-to-end for testing.")
 app.add_typer(test_persona_app, name="test-persona")
+app.add_typer(apps_app, name="app")
 
 console = Console()
 
