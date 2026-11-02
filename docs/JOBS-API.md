@@ -82,13 +82,32 @@ Stops further dispatch for the job's stories (park/close), never deletes evidenc
 
 ### `factory app add --json`
 ```
---repo <owner/name>      required
---path <local clone>     optional; clones under the factory's repos root if absent
---delivery-default <level>   default draft_pr for newly added repos
+--repo <owner/name>          required
+--path <local clone>         optional; clones to ../<name> (sibling of the factory) if absent
+--name <app>                 optional; default = the repo name, slugged
+--delivery-default <level>   default draft_pr for newly added repos (any level allowed)
+--pipeline-default chain|solo|auto   default chain
+--enable-tick / --force      optional
 ```
 Registers any repo as a factory app: writes `apps/<app>/config.yaml` with detected gate commands
-(language/toolchain detection; may use the onboarder persona), creates `directions/`.
-`{"app", "repo", "path", "config_path", "gates": {...}, "delivery": {"default"}}`
+(deterministic toolchain detection: Makefile, Python, Node/TS, Go, Rust, .NET, JVM, Ruby, PHP;
+an unrecognised repo still registers, with empty gates listed in `missing_gates`), creates
+`directions/`.
+`{"app", "repo", "path", "config_path", "gates": {...}, "delivery": {"default"},
+"pipeline_default", "missing_gates": [...], "toolchains": [...], "notes": [...], "cloned", "tick"}`
+Errors: `invalid_repo`, `invalid_name`, `invalid_delivery`, `invalid_pipeline`, `app_exists`,
+`repo_already_registered`, `not_a_git_repo`, `repo_mismatch`, `clone_failed`, `enable_tick_failed`.
+
+### `factory app set <app> --json`
+```
+--delivery-default <level>           optional
+--pipeline-default chain|solo|auto   optional (at least one of the two)
+```
+Changes a registered app's defaults in place (only those lines of `config.yaml`; comments kept).
+`{"app", "config_path", "delivery": {"default"}, "pipeline_default", "changed": [...],
+"comments_preserved": bool}`
+Errors: `unknown_app`, `invalid_name`, `nothing_to_set`, `invalid_delivery`, `invalid_pipeline`,
+`invalid_config` (the result would not load, e.g. a leftover `delivery.max`).
 
 ### `factory app list --json`
 `{"apps": [{"app", "repo", "path", "delivery": {"default"}, "pipeline_default"}]}`

@@ -241,7 +241,28 @@ uv run pytest -q              # 2,368 tests, ~5 min (not the ~30s of the early r
 uv run factory --help
 ```
 
-Wire an app (see `apps/sacrifice/config.yaml` for a complete example), then:
+Register an app — any GitHub repo — without hand-writing its config:
+
+```bash
+uv run factory app add --repo owner/name [--path ~/name] [--name x] \
+    [--delivery-default draft_pr] [--pipeline-default chain] [--enable-tick] [--force] [--json]
+uv run factory app set <app> [--delivery-default <level>] [--pipeline-default chain|solo|auto] [--json]
+uv run factory app list [--json]
+```
+
+`app add` clones to `../<name>` when no local checkout exists, detects the
+toolchain (Makefile targets; Python uv/poetry/pip; Node/TS npm/pnpm/yarn/bun; Go;
+Rust; .NET; JVM Maven/Gradle; Ruby; PHP) and writes `apps/<app>/config.yaml` plus
+`apps/<app>/directions/`. New apps default to `delivery.default: draft_pr` — a job
+that requests no level gets a draft PR and is never merged. There is no per-app
+ceiling: a job's requested level always wins. `app set` changes an app's defaults
+later, editing only those lines of its config. Gates it cannot detect are left empty and listed as
+MISSING; an empty gate is "not configured", never "passing". It refuses to
+overwrite an existing config without `--force`. Details:
+`apps/factory/context/modules/app-registration.md`. For a hand-tuned example see
+`apps/sacrifice/config.yaml`.
+
+Then:
 
 ```bash
 uv run factory pm-sync --app <app>   # triage directions into stories
