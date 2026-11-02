@@ -211,7 +211,18 @@ def test_the_authored_oracle_is_relocated_out_of_the_factory_root(
     assert root.resolve() not in stored.resolve().parents
     assert repo.resolve() not in stored.resolve().parents
     assert wt.resolve() not in stored.resolve().parents
-    assert (A._work_root() / "_prepared").resolve() in stored.resolve().parents
+    # RELOCATED 2026-08-14: oracle-bearing trees moved from
+    # ``<work_root>/_prepared`` to ``_oracle_tree_root()``, a SIBLING of the scratch
+    # root rather than a child of it. The old location shared a parent with every
+    # agent's working tree, so an unguessable mkdtemp suffix was the only barrier —
+    # and `ls ../..` defeats an unguessable name. A grading tree for a live campaign
+    # instance was found stranded there with the hidden tests applied in plaintext.
+    #
+    # This assertion is the point of the test and still is; only the directory it
+    # names changed. Both halves are checked, so a regression that puts the tree
+    # back under the agents' root fails here.
+    assert A._oracle_tree_root().resolve() in stored.resolve().parents
+    assert A._work_root().resolve() not in stored.resolve().parents
     assert stored.parent.name.startswith("acceptance-inst-x-")
     # A walk of the factory root's state now finds nothing of the oracle.
     assert not any(

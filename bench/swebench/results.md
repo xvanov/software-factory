@@ -7,7 +7,7 @@ Every row here is backed by the evidence snapshot in
 `report --check` asserts that this table is still byte-for-byte
 re-derivable from it.
 
-Tables 1-5 are the shape fixed in `bench/swebench/PRE-REGISTRATION-1.6.md`
+Tables 1-5 are the shape fixed in `bench/swebench/frozen/PRE-REGISTRATION-1.6.md`
 before the run. Every cell is filled from an archived artifact or printed
 as `n/a` with a reason; no cell is filled by hand.
 

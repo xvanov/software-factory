@@ -1,10 +1,10 @@
 Checking patch server/tests/test_docker_service.py...
 Applied patch server/tests/test_docker_service.py cleanly.
 SWEBENCH_SETUP: test_patch applied
-SWEBENCH_BASELINE_916c334b8de66d38: OK (red as expected)
+SWEBENCH_BASELINE_23693d8c8e320a60: OK (red as expected)
 Checking patch server/opensandbox_server/services/docker.py...
 Applied patch server/opensandbox_server/services/docker.py cleanly.
-SWEBENCH_APPLY_916c334b8de66d38: OK
+SWEBENCH_APPLY_23693d8c8e320a60: OK
 server/opensandbox_server/api/schema.py:526
   /testbed/server/opensandbox_server/api/schema.py:526: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
     class PaginationRequest(BaseModel):
@@ -44,8 +44,8 @@ server/opensandbox_server/api/schema.py:742
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 =========================== short test summary info ============================
 PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_host_volume_symlink_bypass_rejected
-1 passed, 21 warnings in 0.05s
-SWEBENCH_TALLY_916c334b8de66d38: fail_to_pass 1 passed, 21 warnings in 0.05s
+1 passed, 21 warnings in 0.02s
+SWEBENCH_TALLY_23693d8c8e320a60: fail_to_pass 1 passed, 21 warnings in 0.02s
 [3 node outcomes for fail_to_pass -> grade-nodes.log]
 PASSED server/tests/test_docker_service.py::TestBuildVolumeBinds::test_multiple_host_volumes
 PASSED server/tests/test_docker_service.py::TestBuildVolumeBinds::test_single_pvc_volume_rw
@@ -86,7 +86,7 @@ PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_hos
 PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_empty_allowlist_rejects_host_path
 PASSED server/tests/test_docker_service.py::TestDockerVolumeValidation::test_no_volumes_omits_binds_from_host_config
 PASSED server/tests/test_docker_service.py::test_docker_get_endpoint_rejects_expires
-108 passed, 21 warnings in 0.60s
-SWEBENCH_TALLY_916c334b8de66d38: pass_to_pass 108 passed, 21 warnings in 0.60s
+108 passed, 21 warnings in 0.19s
+SWEBENCH_TALLY_23693d8c8e320a60: pass_to_pass 108 passed, 21 warnings in 0.19s
 [110 node outcomes for pass_to_pass -> grade-nodes.log]
-SWEBENCH_RESULT_916c334b8de66d38: RESOLVED
+SWEBENCH_RESULT_23693d8c8e320a60: RESOLVED

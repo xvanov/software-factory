@@ -1,0 +1,69 @@
+{
+  "arm": "kimi-solo",
+  "model": null,
+  "harness": "sssf ADW, builder only, on Kimi-K2.7-Code",
+  "workers": 1,
+  "finished_at": "2026-08-14T21:54:34.080145+00:00",
+  "wall_clock_s": 846.3,
+  "stopped_reason": null,
+  "instances": 1,
+  "ok": 1,
+  "failed": 0,
+  "statuses": {
+    "ok": 1
+  },
+  "outcomes": {
+    "resolved": 1
+  },
+  "audited_valid": 1,
+  "audit_failed": 0,
+  "not_audited": 0,
+  "resolved": 1,
+  "resolved_but_run_failed": 0,
+  "resolved_but_audit_failed": 0,
+  "grade_parse_failed": 0,
+  "provider_starved": 0,
+  "engine_crashed": 0,
+  "writes_scope_breach": 0,
+  "empty_response_turns": 0,
+  "budget_exhausted": 0,
+  "retried_rows": 1,
+  "gradable": 1,
+  "tokens_in": 59162,
+  "cache_read": 1225408,
+  "fresh_in": 0,
+  "tokens_out": 16535,
+  "cost_usd": 0.3922,
+  "cost_source": "price-table estimate",
+  "results": [
+    {
+      "instance_id": "zauberzeug__nicegui-5858",
+      "arm": "kimi-solo",
+      "model": null,
+      "status": "ok",
+      "error": null,
+      "audit_ok": true,
+      "run_rc": 0,
+      "grade_rc": 0,
+      "audit_rc": 0,
+      "final_state": "\u2014",
+      "tokens_in": 59162,
+      "cache_read": 1225408,
+      "tokens_out": 16535,
+      "cost_usd": 0.3922,
+      "factory_says_green": true,
+      "oracle_resolved": true,
+      "outcome": "resolved",
+      "attempt": 3,
+      "budget_exhausted": false,
+      "provider_starved": false,
+      "engine_crashed": false,
+      "writes_scope_breach": false,
+      "empty_response_turns": 0,
+      "models_used": [
+        "azure/Kimi-K2.7-Code"
+      ],
+      "sweep_wall_s": 846.3
+    }
+  ]
+}

@@ -6,6 +6,19 @@
 > read **[`swebench/README.md`](swebench/README.md)** and
 > **[`swebench/results.md`](swebench/results.md)**.
 
+> **SUPERSEDED 2026-08-15 — see
+> [`swebench/BENCHMARK-RECORDS.md`](swebench/BENCHMARK-RECORDS.md) for the current
+> record.** A nine-arm campaign (n=8, k=1) has since re-tested this on a different
+> engine and different models. **The central claim below is reconfirmed and
+> strengthened**: adding a planner to a DeepSeek-V3.2 builder scored **5/8 against
+> the bare builder's 6/8** — zero planner-only wins, one loss — at 1.6× the cost.
+> The winning pipeline is **builder DeepSeek-V4-Flash · reviewer gpt-5.4**, 6/8 at
+> **$0.472/task, 4.0× cheaper than the V3.2 baseline at equal quality**. Cost per
+> resolved instance for the planner graph vs the bare builder is now **$4.875 vs
+> $2.510 (1.9×)**, not the 2.8× quoted below. The `swebench/results.md` pointer
+> below is also stale — that file now holds the 2026-08-11 single-arm replay
+> (10/17 = 59%), not the 2026-08-04 five-arm table.
+
 **The measured answer, 2026-08-04, five arms, SWE-rebench n=19, k=1** (full table
 and caveats in `swebench/results.md`):
 

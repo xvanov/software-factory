@@ -3,12 +3,12 @@ Checking patch tests/test_universe_integration.py...
 Applied patch tests/test_universe.py cleanly.
 Applied patch tests/test_universe_integration.py cleanly.
 SWEBENCH_SETUP: test_patch applied
-SWEBENCH_BASELINE_945595646ecc0ae1: OK (red as expected)
+SWEBENCH_BASELINE_39f7bbe21e177bfe: OK (red as expected)
 Checking patch doc/source/changelog.rst...
 Checking patch montepy/cell.py...
 Applied patch doc/source/changelog.rst cleanly.
 Applied patch montepy/cell.py cleanly.
-SWEBENCH_APPLY_945595646ecc0ae1: OK
+SWEBENCH_APPLY_39f7bbe21e177bfe: OK
 ......                                                                   [100%]
 =========================== short test summary info ============================
 PASSED tests/test_universe.py::test_cell_universe_nullify_no_problem
@@ -17,8 +17,8 @@ PASSED tests/test_universe_integration.py::test_universe_nullify
 PASSED tests/test_universe_integration.py::test_cell_universe_nullify_with_problem
 PASSED tests/test_universe_integration.py::test_cell_universe_nullify_adds_zero_universe
 PASSED tests/test_universe_integration.py::test_cell_universe_delete_adds_zero_universe
-6 passed in 0.46s
-SWEBENCH_TALLY_945595646ecc0ae1: fail_to_pass 6 passed in 0.46s
+6 passed in 0.16s
+SWEBENCH_TALLY_39f7bbe21e177bfe: fail_to_pass 6 passed in 0.16s
 [8 node outcomes for fail_to_pass -> grade-nodes.log]
 PASSED tests/test_universe.py::TestUniverse::test_filled_cells_generator[1-expected_cells0]
 PASSED tests/test_universe.py::TestUniverse::test_detached_universe_returns_generator
@@ -59,7 +59,7 @@ PASSED tests/test_universe_integration.py::test_mc_workshop_edge_case
 PASSED tests/test_universe_integration.py::test_no_universe
 PASSED tests/test_universe_integration.py::test_fill_multi_universe_order
 PASSED tests/test_universe_integration.py::test_fill_long_mcnp_str_wrap
-44 passed in 1.76s
-SWEBENCH_TALLY_945595646ecc0ae1: pass_to_pass 44 passed in 1.76s
+44 passed in 0.77s
+SWEBENCH_TALLY_39f7bbe21e177bfe: pass_to_pass 44 passed in 0.77s
 [46 node outcomes for pass_to_pass -> grade-nodes.log]
-SWEBENCH_RESULT_945595646ecc0ae1: RESOLVED
+SWEBENCH_RESULT_39f7bbe21e177bfe: RESOLVED

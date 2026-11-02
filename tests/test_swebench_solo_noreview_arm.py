@@ -1,6 +1,6 @@
 """The ``solo-noreview`` arm — PLAN.md B.1 Phase 1a, the reviewer ablation.
 
-Pre-registration: ``bench/swebench/PRE-REGISTRATION-B1.md``.
+Pre-registration: ``bench/swebench/frozen/PRE-REGISTRATION-B1.md``.
 
 The arm exists to answer ONE question — does removing the reviewer round-trip
 change the resolve rate — and it can only answer it if exactly one thing differs
@@ -257,7 +257,17 @@ def test_the_result_row_records_which_green_claim_was_made(
 # cost guards or trajectory rules.
 _PUBLISHED_ARMS = ("factory", "openhands", "bare", "claude", "claude-5", "claude-4.8")
 _PUBLISHED_ARMS_SHA256 = (
-    "c1fa09873f46104831f9bdde953ac7d068530a5e62119056b9db0ebabb72c9c9"
+    # MOVED 2026-08-14, by the ADDITION OF A FIELD, not by a change to any of these
+# arms. ``ArmSpec`` gained ``max_workers: int | None = None``; every published
+# arm takes the default ``None``, which is byte-for-byte the previous behaviour
+# (bounded by ``_PROVIDER_SAFE_WORKERS``, nothing else). The digest is taken over
+# the whole NamedTuple repr, so a new field with a default moves it while
+# changing no arm's budget, cost guard or trajectory rule — the same
+# cosmetic-digest-move that ``_sssf_role_color`` documents for
+# ``sssf_roster_sha256``. Verified before re-pinning: all six read
+# ``max_workers=None``.
+    # was c1fa09873f46104831f9bdde953ac7d068530a5e62119056b9db0ebabb72c9c9
+    "1161fd0f8ba83059e7f0053ebeef470ea91fc1e09e7277662f67e0e71e7672f7"
 )
 
 
@@ -478,7 +488,7 @@ def test_the_pre_registration_exists_and_binds_the_mde(A: Any) -> None:  # noqa:
     """At n=19 the MDE is +/-38 pp. A decision rule phrased as a significance
     test would be unanswerable at any outcome — which is the mistake
     ``PRE-REGISTRATION-1.6.md``'s own "What this run cannot show" recorded."""
-    doc = (_REPO_ROOT / "bench" / "swebench" / "PRE-REGISTRATION-B1.md").read_text(
+    doc = (_REPO_ROOT / "bench" / "swebench" / "frozen" / "PRE-REGISTRATION-B1.md").read_text(
         encoding="utf-8"
     )
     assert "38 pp" in doc

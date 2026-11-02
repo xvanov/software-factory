@@ -1,17 +1,17 @@
 Checking patch tests/test_connectors/test_util.py...
 Applied patch tests/test_connectors/test_util.py cleanly.
 SWEBENCH_SETUP: test_patch applied
-SWEBENCH_BASELINE_98e965d0f8950fdc: OK (red as expected)
+SWEBENCH_BASELINE_c5baea09df5834a8: OK (red as expected)
 Checking patch src/pyinfra/connectors/util.py...
 Checking patch src/pyinfra/operations/server.py...
 Applied patch src/pyinfra/connectors/util.py cleanly.
 Applied patch src/pyinfra/operations/server.py cleanly.
-SWEBENCH_APPLY_98e965d0f8950fdc: OK
+SWEBENCH_APPLY_c5baea09df5834a8: OK
 .                                                                        [100%]
 =========================== short test summary info ============================
 PASSED tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_swallows_errors_and_clears_state
-1 passed in 0.31s
-SWEBENCH_TALLY_98e965d0f8950fdc: fail_to_pass 1 passed in 0.31s
+1 passed in 0.12s
+SWEBENCH_TALLY_c5baea09df5834a8: fail_to_pass 1 passed in 0.12s
 [3 node outcomes for fail_to_pass -> grade-nodes.log]
 .................................                                        [100%]
 =========================== short test summary info ============================
@@ -48,7 +48,7 @@ PASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::tes
 PASSED tests/test_connectors/test_util.py::TestMakeUnixCommandConnectorUtil::test_use_sudo_login_command
 PASSED tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_clears_state_and_runs_rm
 PASSED tests/test_connectors/test_util.py::TestRemoveAnySudoAskpassFile::test_noop_when_no_state
-33 passed in 0.39s
-SWEBENCH_TALLY_98e965d0f8950fdc: pass_to_pass 33 passed in 0.39s
+33 passed in 0.14s
+SWEBENCH_TALLY_c5baea09df5834a8: pass_to_pass 33 passed in 0.14s
 [35 node outcomes for pass_to_pass -> grade-nodes.log]
-SWEBENCH_RESULT_98e965d0f8950fdc: RESOLVED
+SWEBENCH_RESULT_c5baea09df5834a8: RESOLVED
