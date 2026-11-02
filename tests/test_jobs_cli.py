@@ -1,0 +1,593 @@
+"""``factory job …`` — submit / status / list / cancel / follow (docs/JOBS-API.md).
+
+Every test runs against a throwaway factory root (``tmp_path``); GitHub is
+mocked at the single ``factory.jobs.github._run_gh`` seam.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+from sqlmodel import Session, SQLModel, create_engine
+from typer.testing import CliRunner
+
+import factory.cli_jobs as cli_jobs
+import factory.jobs.github as gh_mod
+from factory.chain.handlers import persist_story
+from factory.chain.state_machine import StoryRecord, StoryState
+from factory.directions.approval import is_auto_buildable, requires_operator_approval
+from factory.directions.parser import parse_direction_dir
+from factory.directions.watcher import hydrate_direction_source
+from factory.jobs import status as status_mod
+from factory.jobs.follow import follow_job
+from factory.jobs.status import cancel_job, job_status, list_jobs
+
+# --------------------------------------------------------------------------- #
+# fixtures / helpers
+# --------------------------------------------------------------------------- #
+
+
+def _write_app(root: Path, name: str, repo: str, extra: str = "") -> None:
+    d = root / "apps" / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "config.yaml").write_text(f"name: {name}\nrepo: {repo}\n{extra}", encoding="utf-8")
+
+
+@pytest.fixture
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    _write_app(tmp_path, "demo", "acme/demo", "delivery:\n  max: pr\n  default: draft_pr\n")
+    _write_app(tmp_path, "legacy", "acme/legacy")  # no delivery block → auto_merge
+    (tmp_path / "state").mkdir()
+    monkeypatch.setattr(cli_jobs, "_FACTORY_ROOT", tmp_path)
+    monkeypatch.setenv("FACTORY_STATE_ROOT", str(tmp_path))
+    # Default: gh unreachable. Tests that need GitHub install their own fake.
+    monkeypatch.setattr(gh_mod, "_run_gh", _gh_down)
+    return tmp_path
+
+
+def _gh_down(args: list[str]) -> subprocess.CompletedProcess[str]:
+    raise FileNotFoundError("gh")
+
+
+def _fake_gh(prs: list[dict[str, Any]], branches: set[str] | None = None) -> Any:
+    calls: list[list[str]] = []
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:2] == ["pr", "list"]:
+            return subprocess.CompletedProcess(args, 0, json.dumps(prs), "")
+        if args[:2] == ["pr", "view"]:
+            return subprocess.CompletedProcess(args, 1, "", "no pull requests found")
+        if args[0] == "api":
+            branch = args[1].split("/branches/", 1)[1]
+            if branches and branch in branches:
+                return subprocess.CompletedProcess(args, 0, "", "")
+            return subprocess.CompletedProcess(args, 1, "", "gh: Not Found (HTTP 404)")
+        raise AssertionError(args)
+
+    run.calls = calls  # type: ignore[attr-defined]
+    return run
+
+
+def _cli(*args: str) -> tuple[int, Any]:
+    from factory.cli import app
+
+    result = CliRunner().invoke(app, ["job", *args])
+    out = result.stdout.strip()
+    return result.exit_code, (json.loads(out) if out.startswith("{") else out)
+
+
+def _submit(*extra: str, app: str = "demo") -> dict[str, Any]:
+    code, obj = _cli(
+        "submit",
+        "--json",
+        "--app",
+        app,
+        "--title",
+        "Add dark mode",
+        "--ask",
+        "Users want dark mode.",
+        "--done",
+        "The settings page shows a dark mode toggle",
+        *extra,
+    )
+    assert code == 0, obj
+    return obj
+
+
+def _story(root: Path, direction_id: str, state: str, **kw: Any) -> StoryRecord:
+    return persist_story(
+        StoryRecord(
+            direction_id=direction_id,
+            app=kw.pop("app", "demo"),
+            title="t",
+            slug=kw.pop("slug", f"s-{state}"),
+            scope="backend",
+            state=state,
+            **kw,
+        ),
+        root / "state" / "factory.db",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# submit
+# --------------------------------------------------------------------------- #
+
+
+def test_submit_writes_an_operator_approved_job_direction(root: Path) -> None:
+    obj = _submit("--delivery", "draft_pr", "--model", "reviewer=azure/some-reviewer")
+    assert obj["job_id"] == "demo:001"
+    assert obj["created"] is True
+    assert obj["delivery"] == "draft_pr"
+    assert obj["delivery_requested"] == "draft_pr"
+    assert obj["pipeline"] == "chain"  # auto → no app default → chain
+
+    d = Path(obj["direction_path"])
+    meta = parse_direction_dir("demo", d).raw_frontmatter
+    assert meta["source"] == "pa"
+    assert meta["pipeline"] == "auto"
+    assert meta["delivery"] == "draft_pr"
+    assert meta["models"] == {"reviewer": "azure/some-reviewer"}
+    assert (d / "artifacts" / "ask.md").read_text() == "Users want dark mode."
+
+    direction = hydrate_direction_source(
+        parse_direction_dir("demo", d), root / "state" / "factory.db"
+    )
+    assert direction.state["source"] == "pa"
+    assert direction.state["operator_approval"]["approved"] is True
+    assert is_auto_buildable(direction)
+    # No staging directory left behind.
+    assert [p.name for p in d.parent.iterdir()] == [d.name]
+
+
+def test_pa_source_is_operator_intent_even_without_an_approval_record(root: Path) -> None:
+    obj = _submit()
+    d = Path(obj["direction_path"])
+    state = yaml.safe_load((d / "state.yaml").read_text())
+    state.pop("operator_approval")
+    (d / "state.yaml").write_text(yaml.safe_dump(state))
+    direction = parse_direction_dir("demo", d)
+    assert not requires_operator_approval(direction)
+
+
+def test_other_sources_are_approved_by_the_signed_record(root: Path) -> None:
+    obj = _submit("--source", "slack-bot")
+    direction = parse_direction_dir("demo", Path(obj["direction_path"]))
+    assert requires_operator_approval(direction)  # not a human-family source…
+    assert is_auto_buildable(direction)  # …but submit signed an approval
+
+
+def test_submit_is_idempotent_on_source_and_external_id(root: Path) -> None:
+    a = _submit("--external-id", "run-1")
+    b = _submit("--external-id", "run-1")
+    assert a["created"] is True and b["created"] is False
+    assert a["job_id"] == b["job_id"]
+    c = _submit("--external-id", "run-1", "--source", "other")
+    assert c["created"] is True and c["job_id"] == "demo:002"
+    dirs = sorted(p.name for p in (root / "apps" / "demo" / "directions").iterdir())
+    assert len(dirs) == 2
+
+
+def test_submit_resolves_repo_to_app(root: Path) -> None:
+    code, obj = _cli("submit", "--json", "--repo", "Acme/Legacy", "--title", "x", "--ask", "y")
+    assert code == 0, obj
+    assert obj["app"] == "legacy"
+    assert obj["delivery"] == "auto_merge"  # no delivery block: today's behaviour
+
+
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [
+        (["--repo", "nobody/nothing"], "unknown_repo"),
+        (["--app", "ghost"], "unknown_app"),
+        (["--app", "demo", "--delivery", "yolo"], "invalid_delivery"),
+        (["--app", "demo", "--pipeline", "swarm"], "invalid_pipeline"),
+        (["--app", "demo", "--model", "nobody=x/y"], "invalid_model"),
+        (["--app", "demo", "--model", "reviewer"], "invalid_model"),
+        (["--app", "demo", "--repo", "acme/legacy"], "app_repo_mismatch"),
+        ([], "missing_argument"),
+    ],
+)
+def test_submit_errors_are_one_json_object(root: Path, args: list[str], code: str) -> None:
+    exit_code, obj = _cli("submit", "--json", "--title", "t", "--ask", "a", *args)
+    assert exit_code != 0
+    assert obj["error"] == code and obj["message"]
+    assert not (root / "apps" / "demo" / "directions").exists()
+
+
+def test_submit_refuses_a_reviewer_dev_model_collision(root: Path) -> None:
+    exit_code, obj = _cli(
+        "submit",
+        "--json",
+        "--app",
+        "demo",
+        "--title",
+        "t",
+        "--ask",
+        "a",
+        "--model",
+        "dev=azure/same",
+        "--model",
+        "reviewer=azure/same",
+    )
+    assert exit_code != 0 and obj["error"] == "invalid_model"
+    assert "independence" in obj["message"]
+
+
+def test_submit_requires_title_as_json_error(root: Path) -> None:
+    exit_code, obj = _cli("submit", "--json", "--app", "demo", "--ask", "a")
+    assert exit_code == 1
+    assert obj == {"error": "missing_argument", "message": "--title is required"}
+
+
+def test_requested_delivery_is_clamped_to_app_ceiling(root: Path) -> None:
+    obj = _submit("--delivery", "push_to_main")
+    assert obj["delivery_requested"] == "push_to_main"
+    assert obj["delivery"] == "pr"
+
+
+def test_pipeline_auto_uses_app_default(root: Path) -> None:
+    _write_app(root, "solo-app", "acme/solo", "pipeline_default: solo\n")
+    obj = _submit(app="solo-app")
+    assert obj["pipeline"] == "solo"
+
+
+def test_submit_warns_when_backpressure_will_park_it(root: Path, tmp_path: Path) -> None:
+    obj = _submit()
+    assert any("needs-direction" in w for w in obj["warnings"])
+    flow = tmp_path / "flow.md"
+    flow.write_text("1. User opens settings\n2. User clicks the dark mode toggle\n")
+    ok = _submit("--flow-file", str(flow))
+    assert not any("needs-direction" in w for w in ok["warnings"])
+    assert (Path(ok["direction_path"]) / "flow.md").exists()
+
+
+def test_ask_headings_do_not_break_direction_sections(root: Path) -> None:
+    code, obj = _cli(
+        "submit",
+        "--json",
+        "--app",
+        "demo",
+        "--title",
+        "t",
+        "--ask",
+        "# Context\nsome\n\n## Acceptance Criteria\n- fake",
+        "--done",
+        "real one",
+    )
+    assert code == 0
+    d = parse_direction_dir("demo", Path(obj["direction_path"]))
+    assert d.acceptance == ["real one"]
+    assert d.why and "**Context**" in d.why
+
+
+# --------------------------------------------------------------------------- #
+# status
+# --------------------------------------------------------------------------- #
+
+
+def test_status_queued_then_needs_direction_then_triaging(root: Path) -> None:
+    job = _submit()
+    st = job_status(root, job["job_id"])
+    assert st["state"] == "queued" and not st["terminal"]
+    assert st["stories"] == [] and st["cost_usd"] == 0.0
+
+    d = Path(job["direction_path"])
+    state = yaml.safe_load((d / "state.yaml").read_text())
+    state.update(status="needs-direction", missing=["user_flow"])
+    (d / "state.yaml").write_text(yaml.safe_dump(state))
+    # The directions row is authoritative over state.yaml — move it too.
+    from factory.directions.watcher import mark_direction_status
+
+    mark_direction_status(parse_direction_dir("demo", d), "needs-direction", by="test")
+    st = job_status(root, job["job_id"])
+    assert st["state"] == "needs_human" and "needs-direction" in st["why"]
+
+    mark_direction_status(parse_direction_dir("demo", d), "pm-validated", by="test")
+    assert job_status(root, job["job_id"])["state"] == "triaging"
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        (StoryState.DEV_IN_PROGRESS.value, "in_progress"),
+        (StoryState.BLOCKED_REVIEW_NONCONVERGENT.value, "needs_human"),
+        (StoryState.BLOCKED_BUDGET_EXCEEDED.value, "needs_human"),
+        (StoryState.BLOCKED_CI_UNRESOLVED.value, "failed"),
+        (StoryState.QUARANTINED_INVALID_STATE.value, "failed"),
+    ],
+)
+def test_status_story_state_mapping(root: Path, state: str, expected: str) -> None:
+    job = _submit()
+    _story(root, "001", state, last_rejection_reason="why it stopped")
+    st = job_status(root, job["job_id"])
+    assert st["state"] == expected
+    assert st["terminal"] is (expected == "failed")
+    assert st["stories"][0]["state"] == state
+
+
+def test_dependency_cap_park_is_needs_human_deadlock_is_failed(root: Path) -> None:
+    job = _submit()
+    s = _story(
+        root,
+        "001",
+        StoryState.BLOCKED_DEPENDENCY_UNMET.value,
+        last_rejection_reason="dependency_deferral_cap_exhausted: waiting",
+    )
+    assert job_status(root, job["job_id"])["state"] == "needs_human"
+    s.last_rejection_reason = "deadlock"
+    persist_story(s, root / "state" / "factory.db")
+    assert job_status(root, job["job_id"])["state"] == "failed"
+
+
+def test_auto_merge_done_only_when_github_says_merged(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = _submit(app="legacy")  # auto_merge
+    _story(root, "001", StoryState.PR_OPEN.value, app="legacy", github_pr_number=7)
+    url = "https://github.com/acme/legacy/pull/7"
+    fake = _fake_gh([{"number": 7, "state": "OPEN", "url": url, "headRefName": "b"}])
+    monkeypatch.setattr(gh_mod, "_run_gh", fake)
+    st = job_status(root, job["job_id"])
+    assert st["state"] == "in_progress" and st["merged"] is False
+    assert st["stories"][0]["pr_state"] == "open" and st["pr_urls"] == [url]
+
+    merged = _fake_gh([{"number": 7, "state": "MERGED", "url": url, "headRefName": "b"}])
+    monkeypatch.setattr(gh_mod, "_run_gh", merged)
+    st = job_status(root, job["job_id"])
+    assert st["state"] == "done" and st["terminal"] and st["merged"] is True
+    # one gh call per repo, not per story
+    assert len(merged.calls) == 1
+
+
+def test_local_merged_flag_is_not_trusted_when_github_disagrees(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = _submit(app="legacy")
+    _story(root, "001", StoryState.DEPLOY_PENDING.value, app="legacy", github_pr_number=7)
+    monkeypatch.setattr(
+        gh_mod,
+        "_run_gh",
+        _fake_gh([{"number": 7, "state": "CLOSED", "url": "u", "headRefName": "b"}]),
+    )
+    st = job_status(root, job["job_id"])
+    assert st["state"] != "done" and st["merged"] is False
+
+
+def test_pr_delivery_is_done_when_pr_is_open(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    job = _submit("--delivery", "pr")
+    _story(root, "001", StoryState.PR_OPEN.value, github_pr_number=3)
+    monkeypatch.setattr(
+        gh_mod,
+        "_run_gh",
+        _fake_gh([{"number": 3, "state": "OPEN", "url": "u3", "headRefName": "b"}]),
+    )
+    st = job_status(root, job["job_id"])
+    assert st["state"] == "done" and st["merged"] is False
+
+
+def test_github_failure_degrades_to_local_view_with_why(root: Path) -> None:
+    job = _submit(app="legacy")
+    _story(root, "001", StoryState.DEPLOYED.value, app="legacy", github_pr_number=9)
+    st = job_status(root, job["job_id"])  # gh down (fixture default)
+    # Local flags say merged; a terminal "done" needs GitHub's word for it.
+    assert st["state"] == "in_progress" and not st["terminal"]
+    assert "could not confirm" in st["why"]
+    assert st["stories"][0]["pr_state"] is None
+    assert st["stories"][0]["pr_url"] == "https://github.com/acme/legacy/pull/9"
+    assert "GitHub unavailable" in st["why"]
+
+
+def test_superseded_sibling_is_ignored(root: Path) -> None:
+    job = _submit("--delivery", "none")
+    _story(root, "001", StoryState.SUPERSEDED_BY_SIBLING.value)
+    _story(root, "001", StoryState.DEPLOYED.value, slug="winner")
+    assert job_status(root, job["job_id"])["state"] == "done"
+
+
+def test_paused_factory_reports_blocked(root: Path) -> None:
+    from factory.settings.modes import FactoryState
+
+    job = _submit()
+    _story(root, "001", StoryState.SM_DONE.value)
+    eng = create_engine(f"sqlite:///{root / 'state' / 'factory.db'}")
+    SQLModel.metadata.create_all(eng, tables=[FactoryState.__table__])  # type: ignore[attr-defined]
+    with Session(eng) as s:
+        s.add(FactoryState(id=1, mode="paused"))
+        s.commit()
+    st = job_status(root, job["job_id"])
+    assert st["state"] == "blocked" and "paused" in st["why"]
+
+
+def test_cost_sums_runs_for_the_job(root: Path) -> None:
+    from factory.runner import Run
+    from factory.runner import _engine as runs_engine
+
+    job = _submit()
+    story = _story(root, "001", StoryState.DEV_IN_PROGRESS.value)
+    eng = runs_engine(root / "state" / "factory.db")
+    with Session(eng) as s:
+        s.add(
+            Run(
+                ts="t",
+                persona="pm",
+                model="m",
+                mode="text",
+                cost_usd=0.5,
+                app="demo",
+                direction_id="001",
+            )
+        )
+        s.add(
+            Run(ts="t", persona="dev", model="m", mode="sandbox", cost_usd=1.25, story_id=story.id)
+        )
+        s.add(
+            Run(
+                ts="t",
+                persona="dev",
+                model="m",
+                mode="sandbox",
+                cost_usd=9.0,
+                app="demo",
+                direction_id="999",
+            )
+        )
+        s.commit()
+    assert job_status(root, job["job_id"])["cost_usd"] == 1.75
+
+
+def test_status_unknown_job_is_json_error(root: Path) -> None:
+    code, obj = _cli("status", "demo:404", "--json")
+    assert code == 1 and obj["error"] == "not_found"
+    code, obj = _cli("status", "garbage", "--json")
+    assert code == 1 and obj["error"] == "invalid_job_id"
+
+
+def test_human_states_mirror_the_orchestrator() -> None:
+    from factory.chain.orchestrator import _PENDING_HUMAN_STATES
+
+    assert status_mod.HUMAN_STATES == _PENDING_HUMAN_STATES
+
+
+# --------------------------------------------------------------------------- #
+# list
+# --------------------------------------------------------------------------- #
+
+
+def test_list_filters_by_source_active_and_app(root: Path) -> None:
+    _submit("--external-id", "a")  # demo:001 — will be terminal
+    _submit("--external-id", "b", "--source", "cli")  # demo:002
+    _submit("--external-id", "c", app="legacy")  # legacy:001
+    # Terminal without needing GitHub: both end in a failure sink.
+    _story(root, "001", StoryState.BLOCKED_CI_UNRESOLVED.value)
+    _story(root, "001", StoryState.BLOCKED_CI_UNRESOLVED.value, app="legacy")
+    # A classic (non-job) direction is not a job.
+    from factory.directions.creator import create_direction
+
+    create_direction(
+        "demo",
+        title="classic",
+        type_tag=None,
+        why="w",
+        has_ui=False,
+        flow_steps=None,
+        has_api=False,
+        api_spec_lines=None,
+        acceptance=[],
+        explore=False,
+        attach_files=None,
+        software_factory_root=root,
+    )
+
+    code, obj = _cli("list", "--json", "--no-github")
+    assert code == 0
+    assert [j["job_id"] for j in obj["jobs"]] == ["demo:001", "demo:002", "legacy:001"]
+    pa = list_jobs(root, source="pa", github=False)["jobs"]
+    assert [j["job_id"] for j in pa] == ["demo:001", "legacy:001"]
+    active = list_jobs(root, active=True, github=False)["jobs"]
+    assert [j["job_id"] for j in active] == ["demo:002"]
+    only_legacy = list_jobs(root, app="legacy", github=False)["jobs"]
+    assert [j["job_id"] for j in only_legacy] == ["legacy:001"]
+
+
+# --------------------------------------------------------------------------- #
+# cancel
+# --------------------------------------------------------------------------- #
+
+
+def test_cancel_parks_live_stories_and_keeps_evidence(root: Path) -> None:
+    from factory.chain.handlers import get_story
+
+    job = _submit()
+    live = _story(root, "001", StoryState.DEV_IN_PROGRESS.value, github_branch="story/1-x")
+    done = _story(root, "001", StoryState.BLOCKED_CI_UNRESOLVED.value, slug="other")
+    code, obj = _cli("cancel", job["job_id"], "--json")
+    assert code == 0
+    assert obj["job_id"] == job["job_id"] and obj["state"] == "cancelled"
+    assert obj["stories_parked"] == [live.id]
+
+    db = root / "state" / "factory.db"
+    parked = get_story(live.id, db)
+    assert parked.state == StoryState.CLOSED_BY_OPERATOR.value
+    assert parked.github_branch == "story/1-x"  # evidence kept
+    assert get_story(done.id, db).state == StoryState.BLOCKED_CI_UNRESOLVED.value
+    assert Path(job["direction_path"]).is_dir()
+
+    st = job_status(root, job["job_id"])
+    assert st["state"] == "cancelled" and st["terminal"]
+    # Closed direction: pm-sync will not triage it again.
+    from factory.directions.watcher import pending_directions
+
+    assert pending_directions("demo", root, db) == []
+    # Idempotent.
+    code, obj = _cli("cancel", job["job_id"], "--json")
+    assert code == 0 and obj["stories_parked"] == []
+
+
+def test_cancel_is_not_reported_while_a_story_was_written_back(root: Path) -> None:
+    job = _submit()
+    s = _story(root, "001", StoryState.DEV_IN_PROGRESS.value)
+    cancel_job(root, job["job_id"])
+    # An in-flight handler persists its stale in-memory row afterwards.
+    s.state = StoryState.TESTS_GREEN.value
+    persist_story(s, root / "state" / "factory.db")
+    st = job_status(root, job["job_id"])
+    assert st["state"] != "cancelled" and "re-run 'factory job cancel'" in st["why"]
+
+
+# --------------------------------------------------------------------------- #
+# follow
+# --------------------------------------------------------------------------- #
+
+
+def test_follow_streams_events_and_exits_when_terminal(root: Path) -> None:
+    from factory.chain.event_log import log_story_event
+
+    job = _submit("--delivery", "none")
+    s = _story(root, "001", StoryState.DEV_IN_PROGRESS.value, slug="slug-x")
+    log_story_event(
+        s.id, "handler_start", {"handler": "dev"}, software_factory_root=root, slug_hint="slug-x"
+    )
+    lines: list[str] = []
+    ticks = {"n": 0}
+
+    def fake_sleep(_: float) -> None:
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            log_story_event(
+                s.id,
+                "handler_end",
+                {"handler": "dev", "to_state": "deployed"},
+                software_factory_root=root,
+                slug_hint="slug-x",
+            )
+            s.state = StoryState.DEPLOYED.value
+            persist_story(s, root / "state" / "factory.db")
+
+    final = follow_job(
+        root, job["job_id"], emit=lines.append, sleep=fake_sleep, max_polls=5, github=False
+    )
+    text = "\n".join(lines)
+    assert final["state"] == "done"
+    assert "handler_start handler=dev" in text
+    assert "handler_end handler=dev to_state=deployed" in text
+    assert f"story {s.id} state dev_in_progress -> deployed" in text
+    assert "job in_progress -> done" in text
+    assert lines[-1].split(" ", 1)[1].startswith("job finished: done")
+    assert ticks["n"] == 1
+
+
+def test_dependency_deferred_story_reports_blocked(root: Path) -> None:
+    job = _submit()
+    _story(root, "001", StoryState.STORY_CREATED.value, dependency_defer_count=2)
+    st = job_status(root, job["job_id"])
+    assert st["state"] == "blocked" and "dependency" in st["why"]
+    # A stale counter on a story that has moved on is not a block.
+    _story(root, "001", StoryState.DEV_IN_PROGRESS.value, dependency_defer_count=3, slug="b")
+    assert job_status(root, job["job_id"])["state"] == "in_progress"

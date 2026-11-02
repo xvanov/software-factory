@@ -66,6 +66,7 @@ def _build_direction_md(
     acceptance: list[str],
     explore: bool,
     priority: str = "p2",
+    extra_frontmatter: dict[str, Any] | None = None,
 ) -> str:
     frontmatter_dict: dict[str, Any] = {
         "title": title,
@@ -74,6 +75,10 @@ def _build_direction_md(
         "explore": bool(explore),
         "created_at": datetime.now(UTC).isoformat(),
     }
+    # Extra keys (e.g. ``factory job submit``'s source/external_id/pipeline/
+    # delivery/models) never override the canonical ones above.
+    for key, value in (extra_frontmatter or {}).items():
+        frontmatter_dict.setdefault(key, value)
     fm_yaml = yaml.safe_dump(frontmatter_dict, sort_keys=False).strip()
 
     lines: list[str] = []

@@ -154,11 +154,30 @@ Sharpened 2026-11-02 (`factory/job_routing.py`):
 --source <name>                  default "pa"; recorded on the direction
 --external-id <id>               the PA's run id; idempotency key per (source, external-id):
                                  a resubmit returns the existing job, does not create a second
+--flow-file <path>               optional (added v1.1): becomes the direction's flow.md
+--api-spec-file <path>           optional (added v1.1): becomes the direction's api_spec.md
 ```
 Creates an OPERATOR-sourced (pre-approved) direction so auto_pm_sync triages it on the next tick.
 Success: `{"job_id": "<app>:<direction_id>", "app": "...", "direction_id": "...",
 "direction_path": "...", "pipeline": "...", "delivery": "<effective>",
-"delivery_requested": "<or null>", "created": true|false}`
+"delivery_requested": "<or null>", "created": true|false, "warnings": ["..."]}`
+
+`pipeline` is the RESOLVED pipeline (`auto` → app default, else `chain`); the frontmatter keeps
+the request. `warnings` (added v1.1, may be empty) — most importantly: the factory's backpressure
+gate needs a `flow.md`, an `api_spec.md` or an explore tag. A job with none of them is created but
+pm-sync deterministically marks it needs-direction, so `status` reports `needs_human`. Pass
+`--flow-file` (numbered user steps) or `--api-spec-file` (METHOD /path → status) to avoid that.
+A resubmit (`created: false`) returns the ORIGINAL job; the new flags are ignored.
+
+Validation errors (`{"error": code, ...}`, exit 1): `missing_argument`, `invalid_argument`,
+`unknown_app`, `unknown_repo`, `ambiguous_repo`, `app_repo_mismatch`, `invalid_delivery`,
+`invalid_pipeline`, `invalid_model` (unknown persona, bad `persona=model`, or a reviewer that
+would share a model with a dev tier), `file_unreadable`. Unexpected failures: `internal`, exit 2.
+
+A job IS a direction: `apps/<app>/directions/<id>-<slug>/`, frontmatter keys `source`,
+`external_id`, `pipeline`, `delivery`, `models`. Approval: `--source pa` is allowlisted as
+operator intent (the PA only submits what its human approved), and every job additionally gets
+a signed `operator_approval` record, so no `approve-direction` step is needed.
 
 ### `factory job status <job_id> --json`
 ```
@@ -173,17 +192,30 @@ Success: `{"job_id": "<app>:<direction_id>", "app": "...", "direction_id": "..."
 PR open for pr/draft_pr, branch pushed for branch, committed for none). Truth comes from
 GitHub where it can (merge reality), per the factory's own guardrail.
 
-### `factory job list --json [--source pa] [--active]`
-`{"jobs": [<status object>, ...]}`
+State mapping, first match wins: cancel requested and no story live → `cancelled`; no stories →
+direction `created`→`queued`, `pm-validated`→`triaging`, `needs-direction`→`needs_human`,
+`closed`→`failed`; all stories delivered AND GitHub confirmed it → `done` (a delivery only the
+local view claims stays `in_progress` with a `why`, never a terminal verdict from a local flag); any story in a pending-human sink →
+`needs_human`; any story live → `in_progress` (`blocked` if the factory is halted/paused or every
+live story is waiting on a dependency); else `failed`. Dual-draft losers are ignored. If `gh`
+fails, PR fields fall back to the local view (`pr_state: null`) and `why` says
+`GitHub unavailable, local view: …`. `--no-github` (added v1.1) skips GitHub on purpose.
+
+### `factory job list --json [--source pa] [--active] [--app <app>] [--no-github]`
+`{"jobs": [<status object>, ...]}` — one `gh pr list` per repo, however many jobs.
 
 ### `factory job follow <job_id>`
-Human-readable, NOT JSON. Streams the job's events (story transitions, handler runs, gate
+Human-readable, NOT JSON (`--interval <s>`, default 3). Streams the job's events (story transitions, handler runs, gate
 results, PR links, cost) as they happen, and exits 0 when the job is terminal. This is what a
 termhub session runs so the user can "walk into" a factory job.
 
 ### `factory job cancel <job_id> --json`
 Stops further dispatch for the job's stories (park/close), never deletes evidence.
-`{"job_id", "state": "cancelled"}`
+`{"job_id", "state": "cancelled", "stories_parked": [<story id>, ...]}`
+
+Live stories move to `closed_by_operator` and the direction is closed; open PRs are NOT closed
+(but are no longer auto-merged). Idempotent. If an in-flight handler writes a story back after a
+cancel, `status` keeps reporting the live state with a `why` telling you to re-run cancel.
 
 ### `factory app add --json`
 ```
