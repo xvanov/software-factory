@@ -132,10 +132,12 @@ def test_chain_job_keeps_its_split(tmp_path: Path) -> None:
 def _gate(
     monkeypatch: pytest.MonkeyPatch,
     results: dict[str, bool],
-    baseline: dict[str, bool | None],
+    baseline: dict[str, Any],
+    outputs: dict[str, str] | None = None,
 ) -> Any:
     def fake(repo: Path, test_command: str | None = None) -> tuple[bool, str]:
-        return results.get(str(test_command), True), f"out of {test_command}"
+        out = (outputs or {}).get(str(test_command), f"out of {test_command}")
+        return results.get(str(test_command), True), out
 
     monkeypatch.setattr(runner_module, "_run_pytest", fake)
     check = solo.make_gate_check(
@@ -156,16 +158,48 @@ def test_static_gate_green_on_base_red_now_blocks(monkeypatch: pytest.MonkeyPatc
     assert [c["name"] for c in v.checks][-1] == "format_check"
 
 
-def test_static_gate_already_red_on_base_does_not_block(monkeypatch: pytest.MonkeyPatch) -> None:
-    v = _gate(monkeypatch, {"npm run fmt": False}, {"lint": True, "format_check": False})
+def test_static_gate_red_only_on_preexisting_files_does_not_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    v = _gate(
+        monkeypatch,
+        {"npm run fmt": False},
+        {"lint": True, "format_check": frozenset({"old/a.ts", "old/b.md"})},
+        {"npm run fmt": "[warn] old/a.ts\n[warn] Code style issues found in 1 file."},
+    )
     assert v.passed
     fmt = [c for c in v.checks if c["name"] == "format_check"][0]
-    assert fmt["passed"] and "already red" in fmt["reason"]
+    assert fmt["passed"] and "already flagged" in fmt["reason"]
+
+
+def test_static_gate_new_finding_on_red_base_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The review's MUST-FIX 1: main already red must not wave new breakage through.
+    v = _gate(
+        monkeypatch,
+        {"npm run fmt": False},
+        {"lint": True, "format_check": frozenset({"old/a.ts"})},
+        {"npm run fmt": "[warn] old/a.ts\n[warn] packages/api/src/health.ts\n"},
+    )
+    assert not v.passed
+    assert "packages/api/src/health.ts" in v.reason and "old/a.ts" not in v.reason
+
+
+def test_static_gate_red_naming_no_file_on_red_base_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    v = _gate(
+        monkeypatch,
+        {"npm run fmt": False},
+        {"lint": True, "format_check": frozenset({"old/a.ts"})},
+        {"npm run fmt": "npm error code ECONNRESET"},
+    )
+    assert not v.passed and "no file named" in v.reason
 
 
 def test_static_gate_unknown_baseline_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
     v = _gate(monkeypatch, {"npm run lint": False}, {"lint": None, "format_check": True})
-    assert not v.passed and "lint" in v.reason
+    assert not v.passed and "lint" in v.reason and "unknown" in v.reason
+    assert "passed on the base" not in v.reason
 
 
 def test_static_gates_all_green_pass(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -207,9 +241,13 @@ def test_static_baseline_runs_on_the_base_commit_not_the_tree(tmp_path: Path) ->
     _git(wt, "push", "origin", "main")
     _git(wt, "checkout", "-b", "feat")
     (wt / "ok.txt").write_text("dirty\n")  # the dev's uncommitted change
-    gates = [("format_check", "grep -q clean ok.txt"), ("lint", "false")]
+    gates = [
+        ("format_check", "grep -q clean ok.txt"),
+        ("lint", "echo '[warn] src/x.ts' && false"),
+        ("type_check", "echo 'npm error ECONNRESET' && false"),  # red, names no file
+    ]
     base = solo.static_gate_baseline(wt, "main", gates)
-    assert base == {"format_check": True, "lint": False}
+    assert base == {"format_check": True, "lint": frozenset({"src/x.ts"}), "type_check": None}
     # The dev's tree is untouched and no temp worktree is left behind.
     assert (wt / "ok.txt").read_text() == "dirty\n"
     assert _git(wt, "worktree", "list").count("\n") == 1
@@ -261,3 +299,67 @@ def test_static_baseline_invocation_failure_is_unknown(
         lambda repo, test_command=None: (False, "test_command invocation failed: timeout"),
     )
     assert solo.static_gate_baseline(wt, "main", [("lint", "x")]) == {"lint": None}
+
+
+def test_finding_paths_real_tool_shapes(tmp_path: Path) -> None:
+    root = tmp_path / "base"
+    out = "\n".join(
+        [
+            "\x1b[33mwarn\x1b[39m] apps/web/src/app/api/health/route.ts",
+            "[warn] stories/d001-x.md",
+            "[warn] Code style issues found in 2 files. Run Prettier with --write to fix.",
+            "web:typecheck: src/components/dashboard.test.tsx(191,21): error TS2739: x",
+            f"{root}/packages/api/src/a.ts",
+            "  3:7  error  'x' is unused  no-unused-vars",
+            "/usr/lib/node_modules/npm/lib/cli.js:12",
+            "packages/env/node_modules/zod/index.d.ts:1",
+            "npm error path /home/runner/work/x/package.json",
+            "src/app.py:3:1: F401 unused import",
+        ]
+    )
+    assert solo.finding_paths(out, root) == frozenset(
+        {
+            "apps/web/src/app/api/health/route.ts",
+            "stories/d001-x.md",
+            "src/components/dashboard.test.tsx",
+            "packages/api/src/a.ts",
+            "src/app.py",
+        }
+    )
+
+
+def test_gate_check_carries_extra_grace() -> None:
+    check = solo.make_gate_check(
+        repo_path=Path("."),
+        test_command="t",
+        branch_is_empty=lambda: False,
+        static_gates=[("lint", "a"), ("type_check", "b")],
+        static_baseline={},
+    )
+    assert check.extra_grace_s == 2 * solo.STATIC_GATE_TIMEOUT_S
+
+
+def test_solo_docs_only_job_stays_docs(tmp_path: Path) -> None:
+    kids = [dict(_child("guide A"), chain_kind="docs"), dict(_child("guide B"), chain_kind="docs")]
+    stories = handle_stories_spawned(
+        direction=_direction(pipeline="solo"),
+        pm_result={"child_stories": kids, "confidence": 0.9},
+        app_config=_cfg(),
+        software_factory_root=_root(tmp_path),
+        dry_run=True,
+    )
+    assert len(stories) == 1 and stories[0].chain_kind == "docs"
+
+
+def test_summarize_checks_latest_run_wins_and_stale_ignored() -> None:
+    old = {
+        "__typename": "CheckRun",
+        "name": "ci",
+        "status": "COMPLETED",
+        "conclusion": "FAILURE",
+        "completedAt": "2026-11-02T10:00:00Z",
+    }
+    new = {**old, "conclusion": "SUCCESS", "completedAt": "2026-11-02T11:00:00Z"}
+    stale = {**old, "name": "other", "conclusion": "STALE"}
+    assert summarize_checks([old, new, stale])["state"] == "passing"
+    assert summarize_checks([new, old])["state"] == "passing"

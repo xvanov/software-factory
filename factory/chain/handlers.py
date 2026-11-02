@@ -470,8 +470,16 @@ def _collapse_child_stories(
         # The direction's own title, not the first slice's.
         "title": direction.title or child_stories[0].get("title") or "story",
         "scope": scope,
-        # NEVER inherited: the docs chain has no dev and skips the gates.
-        "chain_kind": "tdd",
+        # ``docs`` only when EVERY slice is docs (a pure-docs solo job stays a
+        # docs story). Otherwise ``tdd``, never inherited by position: an
+        # AC-carrying direction on the docs chain (no dev, gates skipped)
+        # wedges unmergeably.
+        "chain_kind": (
+            "docs"
+            if child_stories
+            and all(str(c.get("chain_kind") or "tdd") == "docs" for c in child_stories)
+            else "tdd"
+        ),
         "points": points,
         "rationale": merged_rationale
         or "Single story covering every acceptance criterion of the direction.",
@@ -771,7 +779,8 @@ def handle_stories_spawned(
     from factory.chain.acceptance import acceptance_expected_for
 
     if (
-        len(child_stories) > 1
+        not solo_job
+        and len(child_stories) > 1
         and app_config.gates.single_story_per_ac_direction
         and acceptance_expected_for(app_config, direction)
     ):
@@ -2694,7 +2703,15 @@ def _handle_dev_once(
                 log_story_event(
                     story.id,
                     "solo_static_baseline",
-                    {"commands": dict(_static), "base_green": _static_baseline},
+                    {
+                        "commands": dict(_static),
+                        # True = green on base; null = unknown (blocks);
+                        # list = files already flagged on base.
+                        "base": {
+                            k: (sorted(v) if isinstance(v, (set, frozenset)) else v)
+                            for k, v in _static_baseline.items()
+                        },
+                    },
                     software_factory_root=software_factory_root,
                     slug_hint=story.slug,
                 )

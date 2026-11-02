@@ -219,9 +219,27 @@ def summarize_checks(rows: list[Any]) -> dict[str, Any]:
     failing: list[str] = []
     pending: list[str] = []
     seen = 0
+    # One verdict per check name: the most recent run wins (a re-run's pass
+    # supersedes an old failure). STALE = superseded by GitHub: ignored.
+    latest: dict[str, dict[str, Any]] = {}
     for c in rows:
         if not isinstance(c, dict):
             continue
+        if str(c.get("conclusion") or "").upper() == "STALE":
+            continue
+        key = f"{c.get('__typename')}:{c.get('name') or c.get('context') or '?'}"
+        ts = str(c.get("completedAt") or c.get("startedAt") or c.get("createdAt") or "")
+        prev = latest.get(key)
+        prev_ts = (
+            ""
+            if prev is None
+            else str(
+                prev.get("completedAt") or prev.get("startedAt") or prev.get("createdAt") or ""
+            )
+        )
+        if prev is None or ts >= prev_ts:
+            latest[key] = c
+    for c in latest.values():
         seen += 1
         name = str(c.get("name") or c.get("context") or "?")
         if c.get("__typename") == "StatusContext" or ("state" in c and "status" not in c):

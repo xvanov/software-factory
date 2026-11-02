@@ -299,9 +299,7 @@ def _log_response_body(
             "model_id": model_id,
             "mode": mode,
             "response_length_total": len(response),
-            "response_hash": hashlib.sha256(
-                response.encode("utf-8", errors="replace")
-            ).hexdigest(),
+            "response_hash": hashlib.sha256(response.encode("utf-8", errors="replace")).hexdigest(),
             "prompt_hash": hashlib.sha256(prompt.encode("utf-8", errors="replace")).hexdigest(),
             "response": response,
         }
@@ -467,9 +465,7 @@ def _capture_trajectory(
                     raw = f.read_text(encoding="utf-8", errors="replace")
                     line = json.dumps(json.loads(raw), separators=(",", ":"))
                 except Exception:  # noqa: BLE001 — one bad event must not lose the rest
-                    line = json.dumps(
-                        {"event": "trajectory_event_unreadable", "file": f.name}
-                    )
+                    line = json.dumps({"event": "trajectory_event_unreadable", "file": f.name})
                 line_bytes = len(line.encode("utf-8", errors="replace")) + 1
                 if written + line_bytes > max_bytes:
                     out.write(
@@ -1528,11 +1524,7 @@ def _strip_bootstrap_noise(output: str) -> str:
     heuristic: a filter that guesses risks eating a real traceback, and losing
     failure detail is the bug this exists to fix. Anything unrecognised is KEPT.
     """
-    kept = [
-        ln
-        for ln in output.splitlines()
-        if not ln.lstrip().startswith(_TEST_NOISE_PREFIXES)
-    ]
+    kept = [ln for ln in output.splitlines() if not ln.lstrip().startswith(_TEST_NOISE_PREFIXES)]
     return "\n".join(kept)
 
 
@@ -2674,6 +2666,7 @@ async def sandbox_run(
                 )
         except Exception:  # noqa: BLE001 - a checkpoint must never break a run
             _log.warning("provisional ledger checkpoint failed", exc_info=True)
+
     # Starting fingerprint for the no-first-write abort. Taken BEFORE the
     # conversation exists so a write in the first second still counts.
     _start_fp: dict[str, str | None] = {
@@ -2924,7 +2917,11 @@ async def sandbox_run(
                 # With a gate loop the wall clock is a SOFT deadline enforced by
                 # the watchdog (pause + grade); this is the hard backstop.
                 timeout=effective_wall_clock_timeout_s
-                + (_GATE_GRADING_GRACE_S if gate_check is not None else 0),
+                + (
+                    _GATE_GRADING_GRACE_S + int(getattr(gate_check, "extra_grace_s", 0) or 0)
+                    if gate_check is not None
+                    else 0
+                ),
             )
     except TimeoutError:
         err = (

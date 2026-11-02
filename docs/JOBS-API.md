@@ -112,9 +112,11 @@ Sharpened 2026-11-02 (`factory/job_routing.py`):
   the test command, the merge gates and CI. A solo job is always ONE story and ONE PR: PM's
   slices are merged into one story (`solo_story_collapsed` event) and the dual-draft branch is
   skipped. Inside the conversation the gate also runs the app's own `lint_command`,
-  `format_check_command` and `type_check_command`; one that was green on the base commit and
-  is red on the dev's tree blocks the round, one already red on the base is recorded but does
-  not block, and an unknown base result blocks (`solo_static_baseline` event). Each story logs
+  `format_check_command` and `type_check_command`, measured first on a throwaway checkout of
+  the base commit. Red on the dev's tree blocks the round when the base was green or unknown,
+  or when the base was red but the tree's output names a file the base's did not (or names no
+  file). Only a red whose flagged files were all flagged on the base passes, so the dev is never
+  sent to fix unrelated files but cannot add to them (`solo_static_baseline` event). Each story logs
   what gated it (`solo_checks`, `solo_dev_rounds` events). `job_routing.SOLO_PIPELINE_IMPLEMENTED = False` is the kill
   switch (new solo requests → `pipeline_unavailable`; in-flight solo stories still finish
   as solo).
