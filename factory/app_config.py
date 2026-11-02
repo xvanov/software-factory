@@ -13,6 +13,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field
 
+from factory.delivery import DeliveryConfig
+
 #: The factory's OWN GitHub repo. An app whose ``config.yaml::repo`` matches
 #: this is building the factory itself (``apps/factory``); its merges are
 #: self-edits gated by the chain-side staging gate, and its pm-sync is gated by
@@ -287,6 +289,9 @@ class AppConfig(BaseModel):
     deploy: DeployConfig = Field(default_factory=DeployConfig)
     gates: AppGatesConfig = Field(default_factory=AppGatesConfig)
     models: dict[str, str] = Field(default_factory=dict)  # persona overrides
+    # How far the factory may take work in this repo on its own (ceiling +
+    # default). Absent = today's behaviour (auto_merge). See factory/delivery.py.
+    delivery: DeliveryConfig = Field(default_factory=DeliveryConfig)
 
     # Self-tick guard (Tier 3 — FACTORY-SELF-TICK). When this app builds the
     # factory's OWN repo (``apps/factory``), pm-sync will NOT turn its pending
