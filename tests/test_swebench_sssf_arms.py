@@ -44,6 +44,8 @@ from typing import Any
 import pytest
 import yaml
 
+from tests._bench_host import requires_bench_host
+
 _REPO_ROOT = Path(__file__).parent.parent
 _ADAPTER = _REPO_ROOT / "bench" / "swebench_adapter.py"
 
@@ -780,6 +782,7 @@ def _document(A: Any, arm: str, *, data_dir: Path, cmd: str = _DOCKER_CMD,
 
 
 @pytest.mark.parametrize("arm", _ARMS_UNDER_TEST)
+@requires_bench_host
 def test_the_roster_validates_under_the_engines_own_config_model(
     A: Any, arm: str, tmp_path: Path  # noqa: N803
 ) -> None:
@@ -796,6 +799,7 @@ def test_the_roster_validates_under_the_engines_own_config_model(
 
 
 @pytest.mark.parametrize("arm", _ARMS_UNDER_TEST)
+@requires_bench_host
 def test_every_path_in_the_roster_is_absolute(A: Any, arm: str, tmp_path: Path) -> None:
     """The engine resolves these against the process cwd, which is the CLONE. A
     relative prompt path would point inside a SWE-bench checkout that has never
@@ -839,6 +843,7 @@ def _shipped_colors(path: Path) -> dict[str, str]:
 
 
 @pytest.mark.parametrize("arm", _ARMS_UNDER_TEST)
+@requires_bench_host
 def test_every_role_in_every_arm_gets_a_non_empty_lane_colour(
     A: Any, arm: str, tmp_path: Path  # noqa: N803
 ) -> None:
@@ -969,6 +974,7 @@ def test_skip_phases_names_roster_roles_and_covers_every_missing_one(
     )
 
 
+@requires_bench_host
 def test_the_roster_is_emitted_where_the_engine_declares_the_key(A: Any) -> None:
     """The engine currently declares ``skip_phases`` on ``SSSFConfig`` (top level).
     The key is written at BOTH the top level and under ``defaults`` because these
@@ -999,6 +1005,7 @@ def test_the_quality_check_is_the_docker_pytest_command(
 
 
 @pytest.mark.parametrize("arm", _ARMS_UNDER_TEST)
+@requires_bench_host
 def test_the_check_timeout_is_far_above_the_engines_default(
     A: Any, arm: str, tmp_path: Path  # noqa: N803
 ) -> None:
@@ -1142,6 +1149,7 @@ def test_the_config_flag_is_always_passed(run_sssf_ast: ast.FunctionDef) -> None
 # --------------------------------------------------------------------------- #
 
 
+@requires_bench_host
 def test_skip_phases_support_is_verified_against_the_live_engine(A: Any) -> None:
     """Both halves are required: a config model that DECLARES the field (else the
     key is dropped at parse time, because these models do not forbid extras) and
@@ -1154,6 +1162,7 @@ def test_skip_phases_support_is_verified_against_the_live_engine(A: Any) -> None
     assert "skip_phases" in A._sssf_engine_config_model().model_fields
 
 
+@requires_bench_host
 def test_an_engine_that_only_declares_the_field_is_not_good_enough(
     A: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path  # noqa: N803
 ) -> None:
@@ -1467,6 +1476,7 @@ def test_the_phase_count_is_the_arms_step_measure(A: Any, tmp_path: Path) -> Non
     assert A._sssf_phase_count(A._sssf_read_events(events)) == 2
 
 
+@requires_bench_host
 def test_the_phase_cap_is_the_graphs_own_maximum(A: Any) -> None:
     """Derived from the engine's own loop bounds rather than guessed: request 1 +
     plan 1 + commit_plan 1 + build 1 + (test,fix)*fix_loops + (review,revise)
@@ -1755,6 +1765,7 @@ def test_an_absent_or_truncated_stream_reads_as_zero_not_as_an_exception(
     assert usage["tokens_in"] == 1_000
 
 
+@requires_bench_host
 def test_the_provider_figure_is_checked_against_an_independent_re_derivation(
     A: Any, tmp_path: Path  # noqa: N803
 ) -> None:
@@ -1803,6 +1814,7 @@ def test_the_turn_digest_survives_the_work_dir_that_holds_the_streams(
     assert A._sssf_read_turn_digest(tmp_path / "absent.jsonl") == []
 
 
+@requires_bench_host
 def test_the_driver_publishes_the_stream_and_records_the_other_two_sources(
     A: Any,  # noqa: N803
     fake_instance: dict[str, Any],
@@ -2229,6 +2241,7 @@ def test_the_audit_refuses_a_starved_row_that_does_not_terminate_as_starved(
 # --------------------------------------------------------------------------- #
 
 
+@requires_bench_host
 def test_the_price_table_is_serialised_with_its_content_hash(A: Any) -> None:
     """Dollars here are DERIVED: pi multiplies measured token counts by this file
     locally. Recording the rates AND the hash is what lets a later price change be
@@ -2296,6 +2309,7 @@ def test_an_unreadable_price_table_is_recorded_rather_than_assumed(
     assert "unreadable" in str(block["error"])
 
 
+@requires_bench_host
 def test_every_roster_model_is_priced_by_the_live_table(A: Any) -> None:
     """A typo'd deployment id would otherwise be discovered as a $0 cost column on
     a row that really spent money."""
@@ -2779,6 +2793,7 @@ def fake_instance(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     }
 
 
+@requires_bench_host
 def test_the_probe_runs_the_whole_pipeline_for_zero_dollars(
     A: Any,  # noqa: N803
     fake_instance: dict[str, Any],
@@ -2864,8 +2879,8 @@ def test_the_probe_runs_the_whole_pipeline_for_zero_dollars(
     # --- the diff, captured ACROSS THREE COMMITS plus a dirty tree ----------
     assert result["files_changed"] == [A._SSSF_PROBE_FILE]
     assert sorted(result["sssf_paths_excluded"]) == [
-        "app_docs/%s.md" % result["sssf_adw_id"],
-        "specs/%s_plan.md" % result["sssf_adw_id"],
+        f"app_docs/{result['sssf_adw_id']}.md",
+        f"specs/{result['sssf_adw_id']}_plan.md",
     ]
     assert result["test_files_stripped"] == ["test_swebench_sssf_plumbing_probe.py"]
     assert result["diff_bytes"] > 0
@@ -3245,6 +3260,7 @@ def test_the_audit_reads_the_sssf_state_root_from_the_run_family(A: Any) -> None
 # --------------------------------------------------------------------------- #
 
 
+@requires_bench_host
 def test_the_harness_states_the_loop_bounds_in_the_roster_it_writes(A: Any) -> None:
     """A limit the row does not state is a limit the row cannot be reproduced under.
 

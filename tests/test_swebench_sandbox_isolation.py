@@ -37,6 +37,8 @@ from typing import Any
 
 import pytest
 
+from tests._bench_host import requires_bench_host
+
 _ADAPTER = Path(__file__).parent.parent / "bench" / "swebench_adapter.py"
 
 # The sentinels. Distinct strings, because "the read failed" and "the read succeeded
@@ -277,6 +279,7 @@ def test_an_oracle_tree_does_not_exist_inside_the_sandbox(A: Any, tree: _Tree) -
     )
 
 
+@requires_bench_host
 def test_writes_outside_the_runs_own_tree_never_land(A: Any, tree: _Tree) -> None:  # noqa: N803
     """Asserted on the HOST after the sandbox exits, not from the error message.
 
@@ -307,6 +310,7 @@ def test_writes_outside_the_runs_own_tree_never_land(A: Any, tree: _Tree) -> Non
     assert not landed, f"writes escaped the sandbox and landed on the host: {landed}"
 
 
+@requires_bench_host
 def test_the_engine_is_readable_but_cannot_be_tampered_with(A: Any, tree: _Tree) -> None:  # noqa: N803
     """A stated limitation, pinned so it cannot quietly get worse.
 
@@ -327,6 +331,7 @@ def test_the_engine_is_readable_but_cannot_be_tampered_with(A: Any, tree: _Tree)
     assert not Path(f"{adw}.pwn").exists(), "a write to the engine tree LANDED"
 
 
+@requires_bench_host
 def test_slash_tmp_is_private_and_must_exist(A: Any, tree: _Tree) -> None:  # noqa: N803
     """Both halves matter, and they pull in opposite directions.
 
@@ -399,6 +404,7 @@ def test_other_runs_are_invisible_in_the_process_table(A: Any, tree: _Tree) -> N
 # --------------------------------------------------------------------------- #
 
 
+@requires_bench_host
 def test_the_toolchain_the_run_needs_is_still_reachable(A: Any, tree: _Tree) -> None:  # noqa: N803
     """uv, its python toolchain, pi, models.json, the prompt library, the ledger.
 
@@ -427,6 +433,7 @@ def test_the_toolchain_the_run_needs_is_still_reachable(A: Any, tree: _Tree) -> 
         )
 
 
+@requires_bench_host
 def test_the_real_engine_starts_inside_the_sandbox_for_zero_dollars(A: Any, tree: _Tree) -> None:  # noqa: N803
     """``uv run <the real ADW> --help`` — the strongest check that spends nothing.
 
@@ -473,6 +480,7 @@ def _model_host() -> str | None:
     return re.sub(r"^https?://", "", endpoint).split("/")[0] or None
 
 
+@requires_bench_host
 def test_the_model_endpoint_is_still_reachable_from_inside(A: Any, tree: _Tree) -> None:  # noqa: N803
     """NO ``--unshare-net``, and the reason is that the run cannot work without it.
 
@@ -506,6 +514,7 @@ def test_the_model_endpoint_is_still_reachable_from_inside(A: Any, tree: _Tree) 
     )
 
 
+@requires_bench_host
 def test_the_spend_guard_still_reaches_through_the_namespace(A: Any, tree: _Tree) -> None:  # noqa: N803
     """THE MOST DANGEROUS THING A SANDBOX COULD BREAK, so it is checked directly.
 
@@ -622,6 +631,7 @@ def brokered(A: Any, tree: _Tree) -> Any:  # noqa: N803
         broker.stop()
 
 
+@requires_bench_host
 def test_the_graded_test_commands_own_shape_still_runs(A: Any, tree: _Tree, brokered: Any) -> None:  # noqa: N803
     """The exact flag set ``instance_test_command`` emits, end to end, through the broker.
 
@@ -655,6 +665,7 @@ def test_the_graded_test_commands_own_shape_still_runs(A: Any, tree: _Tree, brok
     )
 
 
+@requires_bench_host
 def test_the_broker_relays_the_exit_code_and_both_streams_faithfully(A: Any, tree: _Tree, brokered: Any) -> None:  # noqa: N803
     """A failing test run must still LOOK like a failing test run to the agent.
 
@@ -679,6 +690,7 @@ def test_the_broker_relays_the_exit_code_and_both_streams_faithfully(A: Any, tre
     )
 
 
+@requires_bench_host
 def test_docker_cannot_be_turned_into_an_escape(A: Any, tree: _Tree, brokered: Any) -> None:  # noqa: N803
     """The escape that motivates the broker, tried six ways, denied six ways.
 

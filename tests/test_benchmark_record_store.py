@@ -35,10 +35,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
-import re
 from typing import Any
 
 import pytest

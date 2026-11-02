@@ -51,6 +51,8 @@ from typing import Any
 
 import pytest
 
+from tests._bench_host import requires_bench_host
+
 _REPO_ROOT = Path(__file__).parent.parent
 _ADAPTER = _REPO_ROOT / "bench" / "swebench_adapter.py"
 
@@ -438,6 +440,7 @@ def _reported_row(
 # --------------------------------------------------------------------------- #
 
 
+@requires_bench_host
 def test_every_deepseek_deployment_declares_supportsdeveloperrole_false(A: Any) -> None:
     """THE BUG. ``pi`` sends the system message under the ``developer`` role unless
     the price table says otherwise. Azure's DeepSeek serving rejects that role with
@@ -505,6 +508,7 @@ def test_every_deepseek_deployment_declares_supportsdeveloperrole_false(A: Any) 
     assert f"{A._SSSF_CHEAP}" in seen
 
 
+@requires_bench_host
 def test_the_sail_rate_card_is_the_one_discovered_pre_freeze(A: Any) -> None:
     """Pins the P-2a rate card so a later hand-edit cannot drift it quietly.
 
@@ -523,6 +527,7 @@ def test_the_sail_rate_card_is_the_one_discovered_pre_freeze(A: Any) -> None:
     }, "docs.sailresearch.com/pricing.md, asap tier — see SAIL-DISCOVERY.md"
 
 
+@requires_bench_host
 def test_the_row_records_the_compat_flag_it_ran_under(A: Any) -> None:
     """The flag is not a rate, and the row carries it anyway.
 
@@ -582,6 +587,7 @@ def test_an_empty_zero_usage_turn_is_starvation_and_not_a_real_answer(
     assert clean["empty_response_by_role"] == {"builder": 1}
 
 
+@requires_bench_host
 def test_the_probe_sends_the_role_pi_will_send(A: Any) -> None:
     """The reachability probe (defect 11) derives its role name from the SAME flag.
 
@@ -1290,6 +1296,7 @@ def test_preflight_cannot_report_a_clean_credential_while_the_model_is_unreachab
     assert "supportsDeveloperRole" in msg
 
 
+@requires_bench_host
 def test_a_reachable_model_passes_the_probe_and_the_probe_costs_are_kept_apart(
     A: Any, monkeypatch: pytest.MonkeyPatch  # noqa: N803
 ) -> None:
@@ -1341,6 +1348,7 @@ def test_a_reachable_model_passes_the_probe_and_the_probe_costs_are_kept_apart(
     assert report["probe_cost_usd"] == pytest.approx(expected, abs=1e-9)
 
 
+@requires_bench_host
 def test_a_200_with_an_empty_message_is_not_a_reachable_model(
     A: Any, monkeypatch: pytest.MonkeyPatch  # noqa: N803
 ) -> None:
@@ -1368,6 +1376,7 @@ def test_a_200_with_an_empty_message_is_not_a_reachable_model(
     assert report["problem"]
 
 
+@requires_bench_host
 def test_a_transport_failure_is_recorded_as_such_and_is_not_retried_blindly(
     A: Any, monkeypatch: pytest.MonkeyPatch  # noqa: N803
 ) -> None:

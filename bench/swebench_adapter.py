@@ -5336,7 +5336,8 @@ _TRAJECTORIES_SSSF_EVENTS = "sssf-events"
 # something, so without it whole stretches of the engine and of this harness — the
 # documenter's writes, the ``changes`` phase, the third commit, the phase cap at its
 # full derivation — were configuration nothing had ever executed.
-_SSSF_ROOT = Path("/home/k/sssf")
+# Overridable so CI (which has no sssf checkout) can be reproduced locally.
+_SSSF_ROOT = Path(os.environ.get("SSSF_ROOT", "/home/k/sssf"))
 _SSSF_ADW = _SSSF_ROOT / "adws" / "adw_simple_sdlc.py"
 _SSSF_PROMPT_ROOT = _SSSF_ROOT / "adws" / "adw_data" / "prompt_engineering"
 
@@ -10605,7 +10606,7 @@ def _sssf_adw_id(instance_id: str, arm: str) -> str:
     two arms of one instance can never share a session and continue each other's
     phase sequence.
     """
-    return hashlib.sha256(f"{instance_id}|{arm}".encode("utf-8")).hexdigest()[:8]
+    return hashlib.sha256(f"{instance_id}|{arm}".encode()).hexdigest()[:8]
 
 
 # The file the plumbing probe writes as its "production change", so the run has a
