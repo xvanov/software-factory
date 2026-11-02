@@ -109,8 +109,13 @@ Sharpened 2026-11-02 (`factory/job_routing.py`):
   level → the SAME merge gates and CI as `chain`. Only the reviewer round-trip is removed.
   The acceptance oracle is NOT required: when the app enables it, it is a required merge gate
   and its leak check blocks every solo dev dispatch; otherwise the independent checks are
-  the test command, the merge gates and CI. Each story logs what gated it (`solo_checks`,
-  `solo_dev_rounds` events). `job_routing.SOLO_PIPELINE_IMPLEMENTED = False` is the kill
+  the test command, the merge gates and CI. A solo job is always ONE story and ONE PR: PM's
+  slices are merged into one story (`solo_story_collapsed` event) and the dual-draft branch is
+  skipped. Inside the conversation the gate also runs the app's own `lint_command`,
+  `format_check_command` and `type_check_command`; one that was green on the base commit and
+  is red on the dev's tree blocks the round, one already red on the base is recorded but does
+  not block, and an unknown base result blocks (`solo_static_baseline` event). Each story logs
+  what gated it (`solo_checks`, `solo_dev_rounds` events). `job_routing.SOLO_PIPELINE_IMPLEMENTED = False` is the kill
   switch (new solo requests → `pipeline_unavailable`; in-flight solo stories still finish
   as solo).
   The factory's own app (`apps/factory`) refuses solo with `pipeline_unavailable` unless its
@@ -205,7 +210,9 @@ sources such as `operator-*` still auto-build there): `status` reports `needs_hu
  "state": "queued|triaging|in_progress|blocked|needs_human|done|failed|cancelled",
  "terminal": bool, "pipeline", "delivery",
  "stories": [{"id", "state", "pr_url", "pr_state": "open|merged|closed|null", "branch",
-              "delivery_level", "delivery_note": "<or null>"}],
+              "delivery_level", "delivery_note": "<or null>",
+              "ci": {"state": "passing|failing|pending|none", "failing": [...], "pending": [...]}
+                    | null}],
  "pr_urls": [...], "merged": bool, "cost_usd": number, "updated_at": ISO-8601 UTC,
  "why": "<one line: why blocked / what is happening, or null>"}
 ```
@@ -220,6 +227,11 @@ is never `done`. A `push_to_main` job whose default branch is protected is deliv
 auto-merge PR instead (see delivery levels above): that story's `delivery_level` reads
 `auto_merge`, its `delivery_note` is `push_to_main_fell_back_to_pr:<why>`, and its merged PR
 makes the job `done`.
+
+`done` says the delivery exists, NOT that its CI is green. For every still-OPEN PR the status
+reads the PR's check rollup into `stories[].ci` (`null` when the PR is not open or GitHub could
+not be asked), and any failing PR is named in `why` (`PR #N CI failing: <checks>`). A caller
+reporting a job to a human must surface a failing `ci`.
 
 State mapping, first match wins: cancel requested and no story live → `cancelled`; no stories →
 direction `created`→`queued`, `pm-validated`→`triaging`, `needs-direction`→`needs_human`,

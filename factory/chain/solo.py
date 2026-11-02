@@ -243,6 +243,8 @@ def make_gate_check(
     test_command: str | None,
     branch_is_empty: Any,
     production_delta: Any | None = None,
+    static_gates: list[tuple[str, str]] | None = None,
+    static_baseline: dict[str, bool | None] | None = None,
 ) -> Any:
     """Build the ``gate_check`` callable ``sandbox_run`` runs between rounds.
 
@@ -257,8 +259,19 @@ def make_gate_check(
     3. ``production_delta`` (only when the app sets
        ``gates.require_production_delta``) — the branch has a non-test change.
        Same True/False/None contract.
+    4. ``static_gates`` — the app's own lint / format-check / type-check
+       commands (``gates.lint_command`` etc.), the same ones its CI runs. A
+       check that was GREEN on the base commit (``static_baseline``) and is red
+       now BLOCKS: the dev broke it. One already red on the base is recorded but
+       does not block — the dev must not be sent to fix unrelated files. An
+       unknown baseline (``None``) blocks: fail safe. Observed live
+       2026-11-02: job template-probe:005 shipped 4 PRs whose CI failed
+       ``format:check`` because only the test command ran in-conversation.
     """
     from factory.runner import _run_pytest
+
+    _static = list(static_gates or [])
+    _baseline = dict(static_baseline or {})
 
     def _check() -> GateVerdict:
         checks: list[dict[str, Any]] = []
@@ -332,11 +345,107 @@ def make_gate_check(
                     "reason": "present" if delta is True else "unknown (fail open)",
                 }
             )
+        for name, cmd in _static:
+            ok, sout = _run_pytest(Path(repo_path), test_command=cmd)
+            base_ok = _baseline.get(name)
+            if ok:
+                checks.append({"name": name, "passed": True, "reason": "green"})
+                continue
+            if base_ok is False:
+                checks.append(
+                    {
+                        "name": name,
+                        "passed": True,
+                        "reason": "red, but already red on the base commit (not blocking)",
+                    }
+                )
+                continue
+            checks.append(
+                {
+                    "name": name,
+                    "passed": False,
+                    "reason": (
+                        "green on the base commit, red on your tree"
+                        if base_ok is True
+                        else "red on your tree (base result unknown)"
+                    ),
+                }
+            )
+            return GateVerdict(
+                passed=False,
+                reason=(
+                    f"tests are green but the repo's {name} check (`{cmd}`) fails on "
+                    "your working tree and passed on the base commit — the repo's CI "
+                    "runs it. Fix the files you changed (e.g. run the formatter or "
+                    "fix the lint/type errors); do not touch unrelated files."
+                ),
+                output=sout,
+                checks=checks,
+            )
         return GateVerdict(
             passed=True, reason="all in-conversation checks green", output=out, checks=checks
         )
 
     return _check
+
+
+STATIC_GATE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("lint", "lint_command"),
+    ("format_check", "format_check_command"),
+    ("type_check", "type_check_command"),
+)
+
+
+def static_gate_commands(app_config: Any) -> list[tuple[str, str]]:
+    """The app's configured lint / format / type commands, in a fixed order."""
+    gates = getattr(app_config, "gates", None)
+    out: list[tuple[str, str]] = []
+    for name, field_name in STATIC_GATE_FIELDS:
+        cmd = str(getattr(gates, field_name, "") or "").strip()
+        if cmd:
+            out.append((name, cmd))
+    return out
+
+
+def static_gate_baseline(
+    repo: Path, base_branch: str, gates: list[tuple[str, str]]
+) -> dict[str, bool | None]:
+    """Run each static gate on a throwaway checkout of the merge-base.
+
+    ``True``/``False`` = green/red on the base; ``None`` = could not tell (no
+    merge-base, checkout failed). Never touches ``repo``'s working tree.
+    """
+    import shutil
+    import tempfile
+
+    from factory.runner import _run_pytest
+
+    if not gates:
+        return {}
+    mb = _merge_base(repo, base_branch)
+    if mb is None:
+        return {name: None for name, _ in gates}
+    tmp = Path(tempfile.mkdtemp(prefix="solo-baseline-"))
+    wt = tmp / "base"
+    try:
+        rc, _ = _git_ro(repo, "worktree", "add", "--detach", str(wt), mb)
+        if rc != 0:
+            return {name: None for name, _ in gates}
+        result: dict[str, bool | None] = {}
+        for name, cmd in gates:
+            ok, out = _run_pytest(wt, test_command=cmd)
+            # A command that could not run (timeout, missing binary) says
+            # nothing about the base: unknown, which BLOCKS later — never
+            # "already red", which would wave the dev's breakage through.
+            if not ok and out.startswith("test_command invocation failed"):
+                result[name] = None
+            else:
+                result[name] = bool(ok)
+        return result
+    finally:
+        _git_ro(repo, "worktree", "remove", "--force", str(wt))
+        shutil.rmtree(tmp, ignore_errors=True)
+        _git_ro(repo, "worktree", "prune")
 
 
 # --------------------------------------------------------------------------- #
@@ -457,6 +566,7 @@ def checks_plan(app_config: Any, story: Any) -> dict[str, Any]:
     in_conv = ["test_command", "non_empty_change"]
     if requires_production_delta(app_config):
         in_conv.append("production_delta")
+    in_conv.extend(name for name, _ in static_gate_commands(app_config))
     return {
         "pipeline": SOLO,
         "reviewer": "skipped (solo pipeline)",
@@ -484,6 +594,8 @@ __all__ = [
     "SOLO_NO_PROGRESS_ABORT_S",
     "build_solo_brief",
     "checks_plan",
+    "static_gate_baseline",
+    "static_gate_commands",
     "is_solo",
     "make_gate_check",
     "max_dev_attempts",

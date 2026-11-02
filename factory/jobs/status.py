@@ -528,6 +528,23 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
             f": {v.note}" if v.note else _story_reason(v.row)
         )
 
+    # CI of every still-open PR: "delivered" means the PR exists, not that its
+    # checks pass — say so, so the caller never reports a red PR as done-and-good.
+    ci_by_story: dict[Any, dict[str, Any] | None] = {}
+    for v in views:
+        if gh is not None and v.pr_number and v.pr_state == "open":
+            ci_by_story[v.row.get("id")] = gh.ci(v.pr_number)
+    red = [
+        (v.pr_number, ci_by_story[v.row.get("id")])
+        for v in views
+        if (ci_by_story.get(v.row.get("id")) or {}).get("state") == "failing"
+    ]
+    if red:
+        ci_note = "; ".join(
+            f"PR #{n} CI failing: {', '.join(c['failing'][:5])}" for n, c in red if c
+        )
+        why = f"{why}; {ci_note}" if why else ci_note
+
     if gh is not None and gh.errors:
         note = "GitHub unavailable, local view: " + gh.errors[0]
         why = f"{why}; {note}" if why else note
@@ -541,6 +558,7 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
             "branch": v.row.get("github_branch"),
             "delivery_level": v.level,
             "delivery_note": _delivery_note(ctx, v.row),
+            "ci": ci_by_story.get(v.row.get("id")),
         }
         for v in views
     ]

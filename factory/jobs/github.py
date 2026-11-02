@@ -64,6 +64,7 @@ class GitHubView:
     _index_failed: bool = False
     _branches: dict[str, bool | None] = field(default_factory=dict)
     _contains: dict[str, bool | None] = field(default_factory=dict)
+    _ci: dict[int, dict[str, Any] | None] = field(default_factory=dict)
 
     def _call(self, args: list[str]) -> subprocess.CompletedProcess[str] | None:
         try:
@@ -132,6 +133,33 @@ class GitHubView:
             index[number] = info
         return info
 
+    def ci(self, number: int) -> dict[str, Any] | None:
+        """The PR's CI rollup: ``{"state", "failing", "pending"}``, or ``None``.
+
+        ``state`` is ``passing`` (every check finished green), ``failing`` (any
+        check failed), ``pending`` (none failed, some still running) or
+        ``none`` (no checks reported). One ``gh pr view`` per PR, cached.
+        """
+        if number in self._ci:
+            return self._ci[number]
+        proc = self._call(
+            ["pr", "view", str(number), "--repo", self.repo, "--json", "statusCheckRollup"]
+        )
+        result: dict[str, Any] | None = None
+        if proc is None or proc.returncode != 0:
+            if proc is not None:
+                self._note(f"gh pr checks #{number} failed: {(proc.stderr or '').strip()[:200]}")
+        else:
+            try:
+                rows = (json.loads(proc.stdout or "{}") or {}).get("statusCheckRollup") or []
+            except (json.JSONDecodeError, AttributeError):
+                rows = None
+                self._note(f"gh pr view #{number} returned non-JSON checks")
+            if isinstance(rows, list):
+                result = summarize_checks(rows)
+        self._ci[number] = result
+        return result
+
     def branch_exists(self, branch: str) -> bool | None:
         """True/False from GitHub, ``None`` when unknown."""
         if branch in self._branches:
@@ -182,6 +210,44 @@ class GitHubView:
             result = None
         self._contains[key] = result
         return result
+
+
+_GREEN = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+_RED = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+
+
+def summarize_checks(rows: list[Any]) -> dict[str, Any]:
+    """Collapse ``statusCheckRollup`` entries (CheckRun + StatusContext)."""
+    failing: list[str] = []
+    pending: list[str] = []
+    seen = 0
+    for c in rows:
+        if not isinstance(c, dict):
+            continue
+        seen += 1
+        name = str(c.get("name") or c.get("context") or "?")
+        if c.get("__typename") == "StatusContext" or ("state" in c and "status" not in c):
+            verdict = str(c.get("state") or "").upper()
+            if verdict in ("PENDING", "EXPECTED", ""):
+                pending.append(name)
+            elif verdict not in _GREEN:
+                failing.append(name)
+            continue
+        if str(c.get("status") or "").upper() != "COMPLETED":
+            pending.append(name)
+            continue
+        conclusion = str(c.get("conclusion") or "").upper()
+        if conclusion in _RED or conclusion not in _GREEN:
+            failing.append(name)
+    if failing:
+        state = "failing"
+    elif pending:
+        state = "pending"
+    elif seen:
+        state = "passing"
+    else:
+        state = "none"
+    return {"state": state, "failing": sorted(set(failing)), "pending": sorted(set(pending))}
 
 
 class GitHubCache:
