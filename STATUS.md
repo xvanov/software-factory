@@ -60,6 +60,14 @@ Merged: **#321** (the replay result), **#322** (the postmortem), **#323**
 (corrections to it). Full analysis: **`POSTMORTEM-2026-08-11.md`**.
 
 **Step 4 was the last open item in the post-sweep-2 plan. Nothing remains in it.**
+**Successor proposed 2026-08-11: `docs/PLAN-2026-08-11-decomposition-arm.md`** —
+build a bench arm that runs the REAL chain from a direction (PM/SM/contract, not
+just dev+review), smoke it on SWE-rebench as the single-unit negative control,
+then measure on Commit0 where decomposition is published to win. $0 to build,
+$20-40 to prove plumbing, $40-80 for a 3-repo pilot. NOT STARTED.
+Its premise: the bench arm has only ever run `{dev, review}`, so the product
+claim has never been benchmarked, and our resolving patches touch a median of
+**1.5 files / 2.5 hunks** — there is nothing on this suite to decompose.
 Phase C (best-of-N selection) was cancelled earlier on evidence. **Phase D — move
 the primary gate to live-chain units (merged stories/day, $ per merged story) —
 is defined but NOT started.** That is the only remaining work, and it is the
